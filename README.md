@@ -1,6 +1,9 @@
 # Ctorch - 一个轻量级 C++ 深度学习框架
 
-![Ctorch Logo](images/logo.png) 
+<picture>
+  <source srcset="images/logo-dark.png" media="(prefers-color-scheme: dark)">
+  <img src="images/logo-light.png" alt="Ctorch Logo">
+</picture>
 
 ## 项目简介
 
