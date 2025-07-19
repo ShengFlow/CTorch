@@ -8,6 +8,7 @@
 - ### 完成Tensor类
 - ### Commit Dev log
 - ### fix：idx与索引的报错问题
+### todo: 在大批量测试中有error抛出，后续解决
 
 ## 2025.7.20
 ### todo：
