@@ -1,4 +1,4 @@
-### Tensor 库 API 文档 (Tensor.h(未审核))
+### Tensor 库 API 文档 (Tensor_fixed.h(未审核))
 
 #### **1. 枚举类型**
 ##### **`DeviceType`**
@@ -197,7 +197,7 @@ if (X == Y) {
 ---
 ## example:
 ```cpp
-    // 测试1: 0维张量（标量）
+     // 测试1: 0维张量（标量）
     std::cout << "=== Test 1: Scalar Tensor ===" << std::endl;
     Tensor scalar = 3.14f;
     std::cout << "Scalar: ";
@@ -211,22 +211,25 @@ if (X == Y) {
     empty.print();
 
     // 测试3: 大张量打印
-   // std::cout << "\n=== Test 3: Large Tensor Printing ===" << std::endl;
-    //Tensor large(ShapeTag{}, std::vector<size_t>{2u, 4u, 3u}, DType::kInt);
+    std::cout << "\n=== Test 3: Large Tensor Printing ===" << std::endl;
+    Tensor large(ShapeTag{}, std::vector<size_t>{2u, 4u, 3u}, DType::kInt);
 
-    // 填充数据
-    //int value = 1;
-    //for (size_t i = 0; i < 2; ++i) {
-      //  for (size_t j = 0; j < 4; ++j) {
-        //    for (size_t k = 0; k < 3; ++k) {
-          //      large({i, j, k}) = value++;
-            //}
-        //}
-    //}
+    // 填充数据 - 使用正确的类型(fixed)
+    int32_t* data_ptr = large.data<int32_t>();
+    int value = 1;
+    for (size_t i = 0; i < 2; ++i) {
+        for (size_t j = 0; j < 4; ++j) {
+            for (size_t k = 0; k < 3; ++k) {
+                // 计算线性索引: i * (4*3) + j * 3 + k
+                size_t index = i * (4 * 3) + j * 3 + k;
+                data_ptr[index] = value++;
+            }
+        }
+    }
 
-    //std::cout << "Large tensor: ";
-    //large.print();
-//此处有数据类型问题！！！
+    std::cout << "Large tensor: ";
+    large.print();
+
     // 测试4: 布尔张量 (使用新增的构造函数)
     std::cout << "\n=== Test 4: Boolean Tensor ===" << std::endl;
     Tensor bool_tensor{true, false, true};  // 使用布尔列表初始化
