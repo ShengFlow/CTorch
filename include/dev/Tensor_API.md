@@ -195,3 +195,73 @@ if (X == Y) {
 > **设备支持**：当前仅实现CPU支持，CUDA/MPS为预留接口
 
 ---
+## example:
+```cpp
+    // 测试1: 0维张量（标量）
+    std::cout << "=== Test 1: Scalar Tensor ===" << std::endl;
+    Tensor scalar = 3.14f;
+    std::cout << "Scalar: ";
+    scalar.print();
+    std::cout << "Scalar value: " << scalar.item() << std::endl;
+
+    // 测试2: 空张量
+    std::cout << "\n=== Test 2: Empty Tensor ===" << std::endl;
+    Tensor empty(ShapeTag{}, std::vector<size_t>{0u});
+    std::cout << "Empty tensor: ";
+    empty.print();
+
+    // 测试3: 大张量打印
+   // std::cout << "\n=== Test 3: Large Tensor Printing ===" << std::endl;
+    //Tensor large(ShapeTag{}, std::vector<size_t>{2u, 4u, 3u}, DType::kInt);
+
+    // 填充数据
+    //int value = 1;
+    //for (size_t i = 0; i < 2; ++i) {
+      //  for (size_t j = 0; j < 4; ++j) {
+        //    for (size_t k = 0; k < 3; ++k) {
+          //      large({i, j, k}) = value++;
+            //}
+        //}
+    //}
+
+    //std::cout << "Large tensor: ";
+    //large.print();
+//此处有数据类型问题！！！
+    // 测试4: 布尔张量 (使用新增的构造函数)
+    std::cout << "\n=== Test 4: Boolean Tensor ===" << std::endl;
+    Tensor bool_tensor{true, false, true};  // 使用布尔列表初始化
+    std::cout << "Boolean tensor: ";
+    bool_tensor.print();
+
+    // 测试5: 0维视图操作
+    std::cout << "\n=== Test 5: 0D View Operation ===" << std::endl;
+    Tensor t(ShapeTag{}, std::vector<size_t>{});  // 0维张量
+    t.item() = 42.0f;
+    Tensor t_view = t.view(std::vector<size_t>{1});
+    std::cout << "Original (0D): ";
+    t.print();
+    std::cout << "View (1D): ";
+    t_view.print();
+
+    // 测试6: 视图共享存储
+    std::cout << "\n=== Test 6: View Shares Storage ===" << std::endl;
+    Tensor original = {1.0f, 2.0f, 3.0f, 4.0f};
+    Tensor view = original.view(std::vector<size_t>{2, 2});
+
+    // 修改视图中的值
+    view({0, 1}) = 10.0f;
+
+    std::cout << "Original after view modification: ";
+    original.print();
+    std::cout << "View after modification: ";
+    view.print();
+
+    // 测试7: 张量比较
+    std::cout << "\n=== Test 7: Tensor Comparison ===" << std::endl;
+    Tensor a = {1.0f, 2.0f, 3.0f};
+    Tensor b = {1.0f, 2.0f, 3.0f};
+    Tensor c = {1.0f, 5.0f, 3.0f};
+
+    std::cout << "a == b: " << (a == b) << std::endl;
+    std::cout << "a == c: " << (a == c) << std::endl;
+   ```
