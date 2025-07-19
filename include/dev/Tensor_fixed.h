@@ -1,13 +1,11 @@
 /*
- * Tensor.h
+ * Tensor.cppm
  * Created by Beapoe & GhostFace on 2025.7
  * Main Classes: Storage & Tensor
  */
-// Dev:此文件并未使用cpp20的特性，仅做开发测试使用，后续会支持
-// includes
-
 #ifndef CTT_TENSOR_H
-#define CTT_TENSOR_FIXED_H
+#define CTT_TENSOR_H
+// includes
 #include <algorithm>
 #include <cstddef>
 #include <initializer_list>
@@ -142,6 +140,8 @@ private:
             (std::is_same_v<T, int32_t> && dtype_ != DType::kInt) ||
             (std::is_same_v<T, int64_t> && dtype_ != DType::kLong) ||
             (std::is_same_v<T, bool> && dtype_ != DType::kBool)) {
+            std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
+                      << ", dtype=" << dtypeToString(dtype_) << std::endl;
             throw std::runtime_error("Storage data type mismatch");
         }
     }
@@ -466,16 +466,20 @@ public:
             oss << "[]";
         } else {
             oss << "[";
-            if (dtype_ == DType::kFloat) {
-                printRecursive<float>(oss, 0, std::vector<size_t>());
-            } else if (dtype_ == DType::kDouble) {
-                printRecursive<double>(oss, 0, std::vector<size_t>());
-            } else if (dtype_ == DType::kInt) {
-                printRecursive<int32_t>(oss, 0, std::vector<size_t>());
-            } else if (dtype_ == DType::kLong) {
-                printRecursive<int64_t>(oss, 0, std::vector<size_t>());
-            } else if (dtype_ == DType::kBool) {
-                printRecursive<bool>(oss, 0, std::vector<size_t>());
+            try {
+                if (dtype_ == DType::kFloat) {
+                    printRecursive<float>(oss, 0, std::vector<size_t>());
+                } else if (dtype_ == DType::kDouble) {
+                    printRecursive<double>(oss, 0, std::vector<size_t>());
+                } else if (dtype_ == DType::kInt) {
+                    printRecursive<int32_t>(oss, 0, std::vector<size_t>());
+                } else if (dtype_ == DType::kLong) {
+                    printRecursive<int64_t>(oss, 0, std::vector<size_t>());
+                } else if (dtype_ == DType::kBool) {
+                    printRecursive<bool>(oss, 0, std::vector<size_t>());
+                }
+            } catch (const std::exception& e) {
+                oss << "Error: " << e.what();
             }
             oss << "]";
         }
@@ -500,7 +504,7 @@ private:
         strides_.resize(shape_.size());
         // 行优先布局: 最后一个维度步幅为1
         strides_[shape_.size() - 1] = 1;
-        for (int i = shape_.size() - 2; i >= 0; --i) {
+        for (int i = static_cast<int>(shape_.size()) - 2; i >= 0; --i) {
             strides_[i] = strides_[i + 1] * shape_[i + 1];
         }
     }
@@ -557,10 +561,11 @@ private:
     void printRecursive(std::ostream& os, size_t dim, std::vector<size_t> indices) const {
         if (dim == this->dim()) {
             // 到达最后一个维度，打印元素
-            size_t index = storage_offset_;
+            size_t index = 0;
             for (size_t i = 0; i < indices.size(); ++i) {
                 index += indices[i] * strides_[i];
             }
+            index += storage_offset_;
 
             if constexpr (std::is_same_v<T, bool>) {
                 os << (storage_.data<T>()[index] ? "true" : "false");
@@ -608,4 +613,5 @@ private:
     DType dtype_;                 ///< 张量元素的数据类型
     Storage storage_;             ///< 存储张量数据的存储对象
 };
+
 #endif //CTT_TENSOR_H
