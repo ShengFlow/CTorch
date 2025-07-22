@@ -8,8 +8,7 @@
  * Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
  */
 
-export module Tensor;
-
+module;
 // includes
 #include <algorithm>
 #include <cstddef>
@@ -26,6 +25,7 @@ export module Tensor;
 #include <string>
 // ======================= 类型定义和枚举 =======================
 
+export module Tensor;
 // 设备类型 - 定义张量存储的位置
 export enum class DeviceType {
     kCPU,    //< 主存储器 (RAM)
@@ -554,6 +554,33 @@ public:
     }
 
     // ======================= 运算符重载 =======================
+
+    // 广播变形数据结构体
+    struct LogicData{
+        std::vector<size_t> logicShape; // 由于广播之后shape和strides都发生了改变，所以广播之后的计算应该依赖于logicShape和logicStrides
+        std::vector<size_t> logicStrides;
+    };
+
+    // 广播变形
+    LogicData BroadCast(Tensor& a,Tensor& b){
+        Tensor* large = &(a._shape.size()>b._shape.size()?a:b);
+        Tensor* min = &(a._shape.size()<b._shape.size()?a:b);
+        for(size_t i{large->_shape.size()-1};i>=0 && (a._shape[i] && b._shape[i]);i--){
+            if(a._shape[i] != b._shape[i] && (a._shape[i] != 1 || b._shape[i] != 1)) throw std::runtime_error("The shape of Tensor provided is incompatible.");
+        }
+
+        std::vector<size_t> logicShape(large->_shape.size(),1);
+        std::vector<size_t> logicStrides(large->_shape.size(),0);
+
+        for(size_t i{large->_shape.size()-1};i>=0;i--){
+            if((*large)._shape[i] && (*min)._shape[i] && (*min)._shape[i] !=1){
+                logicShape[i] = (*min)._shape[i];
+                logicStrides[i] = (*min)._strides[i];
+            }
+            logicShape[i] = (*large)._shape[i];
+        }
+        return {logicShape,logicStrides};
+    }
 
     // 张量加法 (逐元素)
     Tensor operator+(const Tensor& rhs) const {
