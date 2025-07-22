@@ -89,7 +89,7 @@ export constexpr const char* dtypeToString(DType dtype) {
 }
 
 // 获取数据类型的字节大小
-constexpr size_t dtypeSize(DType dtype) {
+export constexpr size_t dtypeSize(DType dtype) {
     switch (dtype) {
         case DType::kFloat:  return sizeof(float);
         case DType::kDouble: return sizeof(double);
@@ -128,7 +128,7 @@ constexpr size_t dtypeSize(DType dtype) {
  * Storage& operator=(const Storage&) = default;    // 拷贝赋值
  */
 
-class Storage {
+export class Storage {
 private:
     size_t _size{};                     // 存储的元素数量，此处使用C++11的新特性花括号初始化，避免类型转换，实际上等同于size_t _size = 0;
     DType _dtype;                       // 数据类型 用于枚举
@@ -226,7 +226,7 @@ public:
 // ======================= 张量类 (Tensor) =======================
 struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
-class Tensor {
+export class Tensor {
 private:
     bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
     std::vector<size_t> _shape;   // 张量的维度大小
@@ -736,7 +736,7 @@ public:
     }
 };
 // ======================= 自动微分类 (Auto_Diff) ===================
-class AutoDiff{
+export class AutoDiff{
 
 };
 //TENSOR_CPPM
