@@ -11,8 +11,7 @@
 git clone https://github.com/Beapoe/CTorch.git
 cd CTorch
 mkdir build && cd build
-cmake .. -DCMAKE_PREFIX_PATH=<你的 LibTorch 路径>  # 需提前下载 LibTorch
-make -j4
+cmake .. 
 ```
 
 ### 2. **选择任务**
@@ -39,12 +38,13 @@ git push origin feat/your-feature-name
 ## ⚙️ 质量与规范
 
 ### 代码要求
-- **C++ 风格**:
+- **C++ 风格**: 缩进使用LLVM风格
   - 使用 `clang-format` 格式化（配置文件见 `.clang-format`）
 - **测试覆盖**：
   - 新增 C++ 代码需包含单元测试（`tests/` 目录）
   - 接口变更需更新 API 文档（`docs/api/`）
 - **模块化**：避免深层继承，优先组合模式 。
+### 命名规范
 - **所有的类（class）名首字母均大写（除torch类）**
 - **所有的函数名小写，如果过长，使用小驼峰命名规范 如getIndex()**
 - **所有的宏、常量均全大写**
