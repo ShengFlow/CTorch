@@ -1,1 +1,7 @@
 .vscode
+build
+*.pcm
+.clangd
+.cache
+compile_commands.json
+compile_flags.txt

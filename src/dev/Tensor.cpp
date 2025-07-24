@@ -1,3 +1,17 @@
+module;
+// includes
+#include <algorithm>
+#include <cstddef>
+#include <initializer_list>
+#include <iostream>
+#include <memory>
+#include <numeric>
+#include <stdexcept>
+#include <vector>
+#include <sstream>
+#include <functional>
+#include <cstring>
+#include <string>
 module Tensor;
 
 // 自动微分类操作符枚举
@@ -32,7 +46,7 @@ enum class op {
     BCE, // 二元交叉熵损失
 };
 
-constexpr const char *dtypeToString(Dtype dtype) const {
+constexpr const char *dtypeToString(DType dtype) {
     switch (dtype) {
     case DType::kFloat:
         return "float32";
@@ -63,18 +77,6 @@ constexpr size_t dtypeSize(DType dtype) {
         return sizeof(bool);
     default:
         throw std::runtime_error("Unsupported dtype");
-    }
-}
-
-void Storage::checkDType() const {
-    if ((std::is_same_v<T, float> && _dtype != DType::kFloat) ||
-        (std::is_same_v<T, double> && _dtype != DType::kDouble) ||
-        (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||
-        (std::is_same_v<T, int64_t> && _dtype != DType::kLong) ||
-        (std::is_same_v<T, bool> && _dtype != DType::kBool)) {
-        std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
-                  << ", dtype=" << dtypeToString(_dtype) << std::endl;
-        throw std::runtime_error("Storage data type mismatch");
     }
 }
 
@@ -115,6 +117,27 @@ void Tensor::computeStrides() {
 }
 
 size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices) const {
+    if (indices.size() != dim()) {
+        throw std::runtime_error("Indices count mismatch");
+    }
+
+    if (dim() == 0) {
+        return _storage_offset; // 标量情况
+    }
+
+    size_t index = _storage_offset;
+    size_t i     = 0;
+    for (const auto &idx : indices) {
+        if (idx >= _shape[i]) {
+            throw std::out_of_range("Tensor index out of bounds");
+        }
+        index += idx * _strides[i];
+        ++i;
+    }
+    return index;
+}
+
+size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,std::vector<>) const {
     if (indices.size() != dim()) {
         throw std::runtime_error("Indices count mismatch");
     }
@@ -194,6 +217,10 @@ DType Tensor::dtype() const { return _dtype; }
 
 DeviceType Tensor::device() const { return _device; }
 
+std::vector<size_t> Tensor::shape() const { return _shape; }
+
+std::vector<size_t> Tensor::strides() const { return _strides; }
+
 Tensor Tensor::clone() const {
     Tensor copy;
     copy._shape          = _shape;
@@ -247,23 +274,23 @@ Tensor Tensor::transpose() const {
     return result;
 }
 
-const Tensor::broadCast(Tensor &a, Tensor &b) const {
-    Tensor *large = &(a._shape.size() > b._shape.size() ? a : b);
-    Tensor *min   = &(a._shape.size() < b._shape.size() ? a : b);
-    for (size_t i{large->_shape.size() - 1}; i >= 0 && (a._shape[i] && b._shape[i]); i--) {
-        if (a._shape[i] != b._shape[i] && (a._shape[i] != 1 || b._shape[i] != 1))
+const LogicData broadCast(Tensor &a, Tensor &b) {
+    Tensor *large = &(a.shape().size() > b.shape().size() ? a : b);
+    Tensor *min   = &(a.shape().size() < b.shape().size() ? a : b);
+    for (size_t i{large->shape().size() - 1}; i >= 0 && (a.shape()[i] && b.shape()[i]); i--) {
+        if (a.shape()[i] != b.shape()[i] && (a.shape()[i] != 1 || b.shape()[i] != 1))
             throw std::runtime_error("The shape of Tensor provided is incompatible.");
     }
 
-    std::vector<size_t> logicShape(large->_shape.size(), 1);
-    std::vector<size_t> logicStrides(large->_shape.size(), 0);
+    std::vector<size_t> logicShape(large->shape().size(), 1);
+    std::vector<size_t> logicStrides(large->shape().size(), 0);
 
-    for (size_t i{large->_shape.size() - 1}; i >= 0; i--) {
-        if ((*large)._shape[i] && (*min)._shape[i] && (*min)._shape[i] != 1) {
-            logicShape[i]   = (*min)._shape[i];
-            logicStrides[i] = (*min)._strides[i];
+    for (size_t i{large->shape().size() - 1}; i >= 0; i--) {
+        if ((*large).shape()[i] && (*min).shape()[i] && (*min).shape()[i] != 1) {
+            logicShape[i]   = (*min).shape()[i];
+            logicStrides[i] = (*min).strides()[i];
         }
-        logicShape[i] = (*large)._shape[i];
+        logicShape[i] = (*large).shape()[i];
     }
     return {logicShape, logicStrides};
 }
@@ -355,6 +382,30 @@ bool Tensor::operator==(const Tensor &other) const {
     }
 }
 
+Tensor matMul(Tensor &a, Tensor &b) {
+    Tensor *min = (a.shape().size() > b.shape().size() ? &a : &b);
+    Tensor *max = (a.shape().size() < b.shape().size() ? &a : &b);
+    if ((*min).shape().size() > 2 || (*max).shape().size() < 2)
+        throw std::runtime_error("Tensors provided are not matrix");
+    Tensor result;
+    if (!(a.shape() == b.shape())) {
+        LogicData logics;
+        logics = broadCast(a, b);
+        ShapeTag tag;
+        result = Tensor(tag, std::vector<size_t>({(*max).shape()[0], logics.logicShape[1]}));
+        for (size_t row{0}; row < (*max).shape()[0]; row++) {
+            int product   = 0;
+            size_t column = 0;
+            for (; column < logics.logicShape[1]; column++) {
+                product += 
+            }
+            result({row, column}) = product;
+        }
+    }
+
+    return result;
+}
+
 std::string Tensor::toString() const {
     std::string str;
     _requires_grad ? str = "True" : str = "False";
@@ -396,7 +447,7 @@ std::string Tensor::toString() const {
 
 void Tensor::print() const { std::cout << toString() << std::endl; }
 
-bool is_contiguous() const {
+bool Tensor::is_contiguous() const {
     size_t stride = 1;
     for (int i = dim() - 1; i >= 0; --i) {
         if (_strides[i] != stride)

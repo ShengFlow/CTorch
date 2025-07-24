@@ -9,24 +9,21 @@
  * 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
  */
 
-module;
-// includes
-#include <algorithm>
-#include <cstddef>
-#include <initializer_list>
-#include <iostream>
-#include <memory>
-#include <numeric>
-#include <stdexcept>
-#include <vector>
-#include <sstream>
-#include <functional>
-#include <cstring>
-#include <iomanip>
-#include <string>
 // ======================= 类型定义和枚举 =======================
-
+module;
+#include <vector>
+#include <memory>
+#include <stdexcept>
+#include <iostream>
+#include <iomanip>
 export module Tensor;
+// 广播变形数据结构体
+export struct LogicData {
+    std::vector<size_t>
+        logicShape; // 由于广播之后shape和strides都发生了改变，所以广播之后的计算应该依赖于logicShape和logicStrides
+    std::vector<size_t> logicStrides;
+};
+
 // 设备类型 - 定义张量存储的位置
 export enum class DeviceType {
     kCPU,  //< 主存储器 (RAM)
@@ -46,7 +43,7 @@ export enum class DType {
 // ======================= 辅助函数 =======================
 
 // 将数据类型转换为字符串表示
-export constexpr const char *dtypeToString(DType dtype) const;
+export constexpr const char *dtypeToString(DType dtype);
 
 // 获取数据类型的字节大小
 export constexpr size_t dtypeSize(DType dtype);
@@ -93,21 +90,28 @@ export class Storage {
     // 在需要深拷贝时，提供了一个clone函数，可以调用
 
     // 检查模板类型是否与存储类型匹配
-    template <typename T>
-
     // 在如下的checkDType函数中，std::is_same_v的用法为is_same_v<type,type>，返回true/false，用以判断两个类型是否相同
     // 此函数用来强制类型检查，避免不必要的内存问题
-
-    void checkDType() const;
+    template <typename T> void checkDType() const {
+        if ((std::is_same_v<T, float> && _dtype != DType::kFloat) ||
+            (std::is_same_v<T, double> && _dtype != DType::kDouble) ||
+            (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||
+            (std::is_same_v<T, int64_t> && _dtype != DType::kLong) ||
+            (std::is_same_v<T, bool> && _dtype != DType::kBool)) {
+            std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
+                      << ", dtype=" << dtypeToString(_dtype) << std::endl;
+            throw std::runtime_error("Storage data type mismatch");
+        }
+    }
 
   public:
     // 构造函数：分配未初始化的内存
-    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU);
+    Storage(size_t size, DType dtype, DeviceType device);
     // 如果初始化列表中_size为0，那么初始化为nullptr
 
     // 构造函数：从现有数据复制
     template <typename T>
-    Storage(const T *data, size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
+    Storage(const T *data, size_t size, DType dtype, DeviceType device)
         : Storage(size, dtype, device) {
         if (size > 0 && _data.get()) {
             std::memcpy(_data.get(), data, size * dtypeSize(dtype));
@@ -124,9 +128,9 @@ export class Storage {
     Storage(Storage &&)            = default;
     Storage &operator=(Storage &&) = default;
 
-    Storage()
+    Storage();
 
-        ~Storage() = default;
+    ~Storage() = default;
 
     // 获取原始数据的类型化指针
     template <typename T> T *data() {
@@ -161,7 +165,7 @@ export class Storage {
 };
 
 // ======================= 张量类 (Tensor) =======================
-struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
+export struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
 export class Tensor {
   private:
@@ -178,8 +182,11 @@ export class Tensor {
     // 计算步幅 (基于行优先顺序)
     void computeStrides();
 
-    // 计算存储中的索引
+    // 计算存储中的索引(原本步长)
     size_t computeStorageIndex(std::initializer_list<size_t> indices) const;
+
+    // 计算存储中的索引(自定义步长)
+    size_t computeStorageIndex(std::initializer_list<size_t> indices,std::vector<size_t> strides,std::vector<size_t> shape);
 
     // 检查数据类型是否匹配
     template <typename T> void checkDType() const {
@@ -268,8 +275,8 @@ export class Tensor {
     Tensor(std::initializer_list<bool> values);
 
     // 构造函数：指定形状和数据类型（使用 ShapeTag 避免歧义）
-    Tensor(ShapeTag, const std::vector<size_t> &shape, DType dtype = DType::kFloat,
-           DeviceType device = DeviceType::kCPU, bool zero_init = true);
+    Tensor(ShapeTag, const std::vector<size_t> &shape, DType dtype, DeviceType device,
+           bool zero_init);
 
     // 拷贝构造函数：创建深拷贝
     Tensor(const Tensor &other); // 深拷贝存储
@@ -288,13 +295,19 @@ export class Tensor {
     const std::vector<size_t> &sizes() const;
 
     // 获取张量中元素的总数
-    size_t numel() const
+    size_t numel() const;
 
-        // 获取张量的数据类型
-        DType dtype() const;
+    // 获取张量的数据类型
+    DType dtype() const;
 
     // 获取张量所在的设备
     DeviceType device() const;
+
+    // 获取张量的形状
+    std::vector<size_t> shape() const;
+
+    // 获取张量步长
+    std::vector<size_t> strides() const;
 
     // ======================= 索引和访问 =======================
 
@@ -371,16 +384,6 @@ export class Tensor {
 
     // ======================= 运算符重载 =======================
 
-    // 广播变形数据结构体
-    struct LogicData {
-        std::vector<size_t>
-            logicShape; // 由于广播之后shape和strides都发生了改变，所以广播之后的计算应该依赖于logicShape和logicStrides
-        std::vector<size_t> logicStrides;
-    };
-
-    // 广播变形
-    const LogicData broadCast(Tensor &a, Tensor &b) const;
-
     // 张量加法 (逐元素)
     Tensor operator+(const Tensor &rhs) const;
 
@@ -424,6 +427,13 @@ export class Tensor {
 
     void grad();
 };
+
+// 广播变形
+export const LogicData broadCast(Tensor &a, Tensor &b);
+
+// 矩阵乘法
+Tensor matMul(Tensor &a, Tensor &b);
+
 // ======================= 自动微分类 (Auto_Diff) ===================
 export class AutoDiff {};
 // TENSOR_CPPM
