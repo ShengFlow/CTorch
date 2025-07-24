@@ -186,7 +186,8 @@ export class Tensor {
     size_t computeStorageIndex(std::initializer_list<size_t> indices) const;
 
     // 计算存储中的索引(自定义步长)
-    size_t computeStorageIndex(std::initializer_list<size_t> indices,std::vector<size_t> strides,std::vector<size_t> shape);
+    size_t computeStorageIndex(std::initializer_list<size_t> indices, std::vector<size_t> strides,
+                               std::vector<size_t> shape) const;
 
     // 检查数据类型是否匹配
     template <typename T> void checkDType() const {

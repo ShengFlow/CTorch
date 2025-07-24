@@ -137,7 +137,8 @@ size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices) const 
     return index;
 }
 
-size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,std::vector<>) const {
+size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,
+                                   std::vector<size_t> strides, std::vector<size_t> shape) const {
     if (indices.size() != dim()) {
         throw std::runtime_error("Indices count mismatch");
     }
@@ -149,10 +150,10 @@ size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,std::ve
     size_t index = _storage_offset;
     size_t i     = 0;
     for (const auto &idx : indices) {
-        if (idx >= _shape[i]) {
+        if (idx >= shape[i]) {
             throw std::out_of_range("Tensor index out of bounds");
         }
-        index += idx * _strides[i];
+        index += idx * strides[i];
         ++i;
     }
     return index;
@@ -397,7 +398,7 @@ Tensor matMul(Tensor &a, Tensor &b) {
             int product   = 0;
             size_t column = 0;
             for (; column < logics.logicShape[1]; column++) {
-                product += 
+                product +=
             }
             result({row, column}) = product;
         }
