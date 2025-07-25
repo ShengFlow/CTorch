@@ -92,7 +92,7 @@ export class Storage {
     // 检查模板类型是否与存储类型匹配
     // 在如下的checkDType函数中，std::is_same_v的用法为is_same_v<type,type>，返回true/false，用以判断两个类型是否相同
     // 此函数用来强制类型检查，避免不必要的内存问题
-    template <typename T> void checkDType() const {
+    template <typename T> void checkDType() const { // 此处T应该是基础数据类型
         if ((std::is_same_v<T, float> && _dtype != DType::kFloat) ||
             (std::is_same_v<T, double> && _dtype != DType::kDouble) ||
             (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||

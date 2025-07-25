@@ -394,11 +394,60 @@ Tensor matMul(Tensor &a, Tensor &b) {
         logics = broadCast(a, b);
         ShapeTag tag;
         result = Tensor(tag, std::vector<size_t>({(*max).shape()[0], logics.logicShape[1]}));
+        if ((*max).dtype() != (*min).dtype())
+            throw std::runtime_error("DType dosen't match");
         for (size_t row{0}; row < (*max).shape()[0]; row++) {
             int product   = 0;
             size_t column = 0;
             for (; column < logics.logicShape[1]; column++) {
-                product +=
+                switch ((*max).dtype()) {
+                case DType::kFloat:
+                    product += (*max).data<float>()[row * (*max).strides()[1]] *
+                               (*min).data<float>()[column * logics.logicStrides[0]];
+                case DType::kDouble:
+                    product += (*max).data<double>()[row * (*max).strides()[1]] *
+                               (*min).data<double>()[column * logics.logicStrides[0]];
+                case DType::kInt:
+                    product += (*max).data<int>()[row * (*max).strides()[1]] *
+                               (*min).data<int>()[column * logics.logicStrides[0]];
+                case DType::kLong:
+                    product += (*max).data<long>()[row * (*max).strides()[1]] *
+                               (*min).data<long>()[column * logics.logicStrides[0]];
+                case DType::kBool:
+                    throw std::runtime_error("Boolean type is not supported for multiplication");
+                default:
+                    throw std::runtime_error("Unsupported data type for multiplication");
+                    break;
+                }
+            }
+            result({row, column}) = product;
+        }
+    } else {
+        ShapeTag tag;
+        result = Tensor(tag, std::vector<size_t>({a.shape()[0], a.shape()[1]}));
+        for (size_t row{0}; row < a.shape()[0]; row++) {
+            int product   = 0;
+            size_t column = 0;
+            for (; column < a.shape()[1]; column++) {
+                switch (a.dtype()) {
+                case DType::kFloat:
+                    product += a.data<float>()[row * a.strides()[1]] *
+                               a.data<float>()[column * b.strides()[0]];
+                case DType::kDouble:
+                    product += a.data<double>()[row * a.strides()[1]] *
+                               a.data<double>()[column * b.strides()[0]];
+                case DType::kInt:
+                    product += a.data<int>()[row * a.strides()[1]] *
+                               a.data<int>()[column * b.strides()[0]];
+                case DType::kLong:
+                    product += a.data<long>()[row * a.strides()[1]] *
+                               a.data<long>()[column * b.strides()[0]];
+                case DType::kBool:
+                    throw std::runtime_error("Boolean type is not supported for multiplication");
+                default:
+                    throw std::runtime_error("Unsupported data type for multiplication");
+                    break;
+                }
             }
             result({row, column}) = product;
         }
