@@ -17,6 +17,7 @@
 #include <memory>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 #include <sstream>
 #include <functional>
@@ -182,7 +183,8 @@ class Storage {
         }
     }
 
-  public:
+
+public:
     // 构造函数：分配未初始化的内存
     Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
         : _size(size), _dtype(dtype), _device(device),
@@ -249,6 +251,23 @@ class Storage {
     // 检查存储是否为空
     bool empty() const { return _size == 0 || !_data; }
 };
+
+template<typename T>
+DType cppType2Dtype(){
+    if constexpr (std::is_same_v<T, float>) {
+        return DType::kFloat;
+    } else if constexpr (std::is_same_v<T, double>) {
+        return DType::kDouble;
+    } else if constexpr (std::is_same_v<T, int32_t> || (std::is_integral_v<T> && sizeof(T) == 4)) {
+        return DType::kInt;
+    } else if constexpr (std::is_same_v<T, int64_t> || (std::is_integral_v<T> && sizeof(T) == 8)) {
+        return DType::kLong;
+    } else if constexpr (std::is_same_v<T, bool>) {
+        return DType::kBool;
+    } else {
+        throw std::runtime_error("Unsupported data type in initializer_list");
+    }
+}
 
 // ======================= 张量类 (Tensor) =======================
 struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
@@ -398,12 +417,15 @@ class Tensor {
     }
 
     // 构造函数：从初始值列表创建1D张量
-    Tensor(std::initializer_list<float> values)
-        : _shape({values.size()}), _storage_offset(0), _device(DeviceType::kCPU),
-          _dtype(DType::kFloat) {
+    template <typename T>
+    Tensor(std::initializer_list<T> values,std::vector<size_t> shape)
+        : _storage_offset(0), _device(DeviceType::kCPU), _dtype(cppType2Dtype<T>()),
+          _shape(std::move(shape)) {
         computeStrides();
         _storage = Storage(values.begin(), values.size(), _dtype, _device);
     }
+
+    // TODO: 考虑把下面这个构造合并到上面
 
     // 添加布尔张量构造函数
     Tensor(std::initializer_list<bool> values)
@@ -642,12 +664,13 @@ class Tensor {
     // 逐元素减法
     Tensor operator-(const Tensor &rhs) const;
 
-    Tensor operator*(const Tensor &rhs) const;
-
     // 逐元素除法
     Tensor operator/(const Tensor &rhs) const;
     // 负号
     Tensor operator-() const;
+
+    // 乘法
+    Tensor operator*(const Tensor &rhs) const;
 
     // 成员函数：Tensor - float
     Tensor operator-(float scalar) const;
@@ -1438,7 +1461,7 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
 }
 void Tensor::setDtype(const DType dtype) { _dtype = dtype; }
 
-const LogicData broadCast(Tensor &a, Tensor &b) {
+LogicData broadCast(Tensor &a, Tensor &b) {
     Tensor *large = &(a.shape().size() > b.shape().size() ? a : b);
     Tensor *min   = &(a.shape().size() < b.shape().size() ? a : b);
     for (size_t i{large->shape().size() - 1}; i >= 0 && (a.shape()[i] && b.shape()[i]); i--) {
@@ -1561,6 +1584,78 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
                                 {const_cast<Tensor *>(this), const_cast<Tensor *>(&rhs)});
     }
 
+    return result;
+}
+
+inline Tensor operator*(const float &factor,const Tensor a) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<float>()[i] = factor * result.data<float>()[i];
+    result.setDtype(cppType2Dtype<float>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const Tensor a,const float &factor) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<float>()[i] = factor * result.data<float>()[i];
+    result.setDtype(cppType2Dtype<float>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const double &factor,const Tensor a) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<double>()[i] = factor * result.data<double>()[i];
+    result.setDtype(cppType2Dtype<double>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const Tensor a,const double &factor) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<double>()[i] = factor * result.data<double>()[i];
+    result.setDtype(cppType2Dtype<double>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const int &factor,const Tensor a) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<int>()[i] = factor * result.data<int>()[i];
+    result.setDtype(cppType2Dtype<int>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const Tensor a,const int &factor) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<int>()[i] = factor * result.data<int>()[i];
+    result.setDtype(cppType2Dtype<int>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const long &factor,const Tensor a) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<long>()[i] = factor * result.data<long>()[i];
+    result.setDtype(cppType2Dtype<long>());
+
+    // TODO: 补全自动微分相关
+    return result;
+}
+
+inline Tensor operator*(const Tensor a,const long &factor) {
+    Tensor result = a;
+    for (size_t i{0};i<a.numel();i++) result.data<long>()[i] = factor * result.data<long>()[i];
+    result.setDtype(cppType2Dtype<long>());
+
+    // TODO: 补全自动微分相关
     return result;
 }
 

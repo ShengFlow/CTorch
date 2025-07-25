@@ -443,17 +443,22 @@ Tensor matMul(Tensor &a, Tensor &b) {
                 case DType::kFloat:
                     product += (*max).data<float>()[row * (*max).strides()[1]] *
                                (*min).data<float>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kDouble:
                     product += (*max).data<double>()[row * (*max).strides()[1]] *
                                (*min).data<double>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kInt:
                     product += (*max).data<int>()[row * (*max).strides()[1]] *
                                (*min).data<int>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kLong:
                     product += (*max).data<long>()[row * (*max).strides()[1]] *
                                (*min).data<long>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kBool:
                     throw std::runtime_error("Boolean type is not supported for multiplication");
+                    break;
                 default:
                     throw std::runtime_error("Unsupported data type for multiplication");
                     break;
@@ -472,17 +477,22 @@ Tensor matMul(Tensor &a, Tensor &b) {
                 case DType::kFloat:
                     product += a.data<float>()[row * a.strides()[1]] *
                                a.data<float>()[column * b.strides()[0]];
+                    break;
                 case DType::kDouble:
                     product += a.data<double>()[row * a.strides()[1]] *
                                a.data<double>()[column * b.strides()[0]];
+                    break;
                 case DType::kInt:
                     product += a.data<int>()[row * a.strides()[1]] *
                                a.data<int>()[column * b.strides()[0]];
+                    break;
                 case DType::kLong:
                     product += a.data<long>()[row * a.strides()[1]] *
                                a.data<long>()[column * b.strides()[0]];
+                    break;
                 case DType::kBool:
                     throw std::runtime_error("Boolean type is not supported for multiplication");
+                    break;
                 default:
                     throw std::runtime_error("Unsupported data type for multiplication");
                     break;
@@ -495,7 +505,7 @@ Tensor matMul(Tensor &a, Tensor &b) {
     return result;
 }
 
-const LogicData broadCast(Tensor &a, Tensor &b) {
+LogicData broadCast(Tensor &a, Tensor &b) {
     Tensor *large = &(a.shape().size() > b.shape().size() ? a : b);
     Tensor *min   = &(a.shape().size() < b.shape().size() ? a : b);
     for (size_t i{large->shape().size() - 1}; i >= 0 && (a.shape()[i] && b.shape()[i]); i--) {

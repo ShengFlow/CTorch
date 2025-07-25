@@ -435,7 +435,7 @@ export class Tensor {
 };
 
 // 广播变形
-export const LogicData broadCast(Tensor &a, Tensor &b);
+export LogicData broadCast(Tensor &a, Tensor &b);
 
 // 矩阵乘法
 Tensor matMul(Tensor &a, Tensor &b);
