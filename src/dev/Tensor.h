@@ -561,6 +561,10 @@ class Tensor {
             throw std::runtime_error("Shape size mismatch in view()");
         }
 
+        if (!is_contiguous()) {
+            throw std::runtime_error("Cannot view non-contiguous tensor. Call clone() first.");
+        }
+
         Tensor result(ShapeTag{}, new_shape, _dtype, _device);
         result._storage        = _storage; // 共享存储（使用shared_ptr实现共享所有权）
         result._storage_offset = _storage_offset;
@@ -822,6 +826,7 @@ class Tensor {
     // 是否设置自动微分
     bool isAuto_diff() { return _requires_grad; }
 
+    void requires_grad(bool key) { _requires_grad = key; }
     void set_autograd_ctx(AutoDiff *ctx);
 
     bool empty() const { return numel() == 0; }
@@ -864,9 +869,9 @@ class AutoDiff {
   public:
     // 创建叶子节点
     void make_leaf(Tensor &t, bool requires_grad) {
-        if (tensor_to_node.find(&t) != tensor_to_node.end())
-            return;
-
+        if (tensor_to_node.find(&t) != tensor_to_node.end()) {
+            return; // 已注册，跳过
+        }
         auto node          = std::make_unique<Node>(t.clone(), requires_grad);
         tensor_to_node[&t] = node.get();
         nodes.push_back(std::move(node));
@@ -1475,20 +1480,23 @@ Tensor matMul(Tensor &a, Tensor &b) {
                 case DType::kFloat:
                     product += (*max).data<float>()[row * (*max).strides()[1]] *
                                (*min).data<float>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kDouble:
                     product += (*max).data<double>()[row * (*max).strides()[1]] *
                                (*min).data<double>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kInt:
                     product += (*max).data<int>()[row * (*max).strides()[1]] *
                                (*min).data<int>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kLong:
                     product += (*max).data<long>()[row * (*max).strides()[1]] *
                                (*min).data<long>()[column * logics.logicStrides[0]];
+                    break;
                 case DType::kBool:
                     throw std::runtime_error("Boolean type is not supported for multiplication");
                 default:
                     throw std::runtime_error("Unsupported data type for multiplication");
-                    break;
                 }
             }
             result({row, column}) = product;
@@ -1504,15 +1512,19 @@ Tensor matMul(Tensor &a, Tensor &b) {
                 case DType::kFloat:
                     product += a.data<float>()[row * a.strides()[1]] *
                                a.data<float>()[column * b.strides()[0]];
+                    break;
                 case DType::kDouble:
                     product += a.data<double>()[row * a.strides()[1]] *
                                a.data<double>()[column * b.strides()[0]];
+                    break;
                 case DType::kInt:
                     product += a.data<int>()[row * a.strides()[1]] *
                                a.data<int>()[column * b.strides()[0]];
+                    break;
                 case DType::kLong:
                     product += a.data<long>()[row * a.strides()[1]] *
                                a.data<long>()[column * b.strides()[0]];
+                    break;
                 case DType::kBool:
                     throw std::runtime_error("Boolean type is not supported for multiplication");
                 default:
