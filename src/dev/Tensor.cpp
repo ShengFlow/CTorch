@@ -137,28 +137,6 @@ size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices) const 
     return index;
 }
 
-size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,
-                                   std::vector<size_t> strides, std::vector<size_t> shape) const {
-    if (indices.size() != dim()) {
-        throw std::runtime_error("Indices count mismatch");
-    }
-
-    if (dim() == 0) {
-        return _storage_offset; // 标量情况
-    }
-
-    size_t index = _storage_offset;
-    size_t i     = 0;
-    for (const auto &idx : indices) {
-        if (idx >= shape[i]) {
-            throw std::out_of_range("Tensor index out of bounds");
-        }
-        index += idx * strides[i];
-        ++i;
-    }
-    return index;
-}
-
 Tensor::Tensor() : _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
     computeStrides();
     _storage = Storage(numel(), _dtype, _device);
@@ -275,27 +253,6 @@ Tensor Tensor::transpose() const {
     return result;
 }
 
-const LogicData broadCast(Tensor &a, Tensor &b) {
-    Tensor *large = &(a.shape().size() > b.shape().size() ? a : b);
-    Tensor *min   = &(a.shape().size() < b.shape().size() ? a : b);
-    for (size_t i{large->shape().size() - 1}; i >= 0 && (a.shape()[i] && b.shape()[i]); i--) {
-        if (a.shape()[i] != b.shape()[i] && (a.shape()[i] != 1 || b.shape()[i] != 1))
-            throw std::runtime_error("The shape of Tensor provided is incompatible.");
-    }
-
-    std::vector<size_t> logicShape(large->shape().size(), 1);
-    std::vector<size_t> logicStrides(large->shape().size(), 0);
-
-    for (size_t i{large->shape().size() - 1}; i >= 0; i--) {
-        if ((*large).shape()[i] && (*min).shape()[i] && (*min).shape()[i] != 1) {
-            logicShape[i]   = (*min).shape()[i];
-            logicStrides[i] = (*min).strides()[i];
-        }
-        logicShape[i] = (*large).shape()[i];
-    }
-    return {logicShape, logicStrides};
-}
-
 Tensor Tensor::operator+(const Tensor &rhs) const {
     // 验证形状和类型匹配
     if (_shape != rhs._shape)
@@ -383,79 +340,6 @@ bool Tensor::operator==(const Tensor &other) const {
     }
 }
 
-Tensor matMul(Tensor &a, Tensor &b) {
-    Tensor *min = (a.shape().size() > b.shape().size() ? &a : &b);
-    Tensor *max = (a.shape().size() < b.shape().size() ? &a : &b);
-    if ((*min).shape().size() > 2 || (*max).shape().size() < 2)
-        throw std::runtime_error("Tensors provided are not matrix");
-    Tensor result;
-    if (!(a.shape() == b.shape())) {
-        LogicData logics;
-        logics = broadCast(a, b);
-        ShapeTag tag;
-        result = Tensor(tag, std::vector<size_t>({(*max).shape()[0], logics.logicShape[1]}));
-        if ((*max).dtype() != (*min).dtype())
-            throw std::runtime_error("DType dosen't match");
-        for (size_t row{0}; row < (*max).shape()[0]; row++) {
-            int product   = 0;
-            size_t column = 0;
-            for (; column < logics.logicShape[1]; column++) {
-                switch ((*max).dtype()) {
-                case DType::kFloat:
-                    product += (*max).data<float>()[row * (*max).strides()[1]] *
-                               (*min).data<float>()[column * logics.logicStrides[0]];
-                case DType::kDouble:
-                    product += (*max).data<double>()[row * (*max).strides()[1]] *
-                               (*min).data<double>()[column * logics.logicStrides[0]];
-                case DType::kInt:
-                    product += (*max).data<int>()[row * (*max).strides()[1]] *
-                               (*min).data<int>()[column * logics.logicStrides[0]];
-                case DType::kLong:
-                    product += (*max).data<long>()[row * (*max).strides()[1]] *
-                               (*min).data<long>()[column * logics.logicStrides[0]];
-                case DType::kBool:
-                    throw std::runtime_error("Boolean type is not supported for multiplication");
-                default:
-                    throw std::runtime_error("Unsupported data type for multiplication");
-                    break;
-                }
-            }
-            result({row, column}) = product;
-        }
-    } else {
-        ShapeTag tag;
-        result = Tensor(tag, std::vector<size_t>({a.shape()[0], a.shape()[1]}));
-        for (size_t row{0}; row < a.shape()[0]; row++) {
-            int product   = 0;
-            size_t column = 0;
-            for (; column < a.shape()[1]; column++) {
-                switch (a.dtype()) {
-                case DType::kFloat:
-                    product += a.data<float>()[row * a.strides()[1]] *
-                               a.data<float>()[column * b.strides()[0]];
-                case DType::kDouble:
-                    product += a.data<double>()[row * a.strides()[1]] *
-                               a.data<double>()[column * b.strides()[0]];
-                case DType::kInt:
-                    product += a.data<int>()[row * a.strides()[1]] *
-                               a.data<int>()[column * b.strides()[0]];
-                case DType::kLong:
-                    product += a.data<long>()[row * a.strides()[1]] *
-                               a.data<long>()[column * b.strides()[0]];
-                case DType::kBool:
-                    throw std::runtime_error("Boolean type is not supported for multiplication");
-                default:
-                    throw std::runtime_error("Unsupported data type for multiplication");
-                    break;
-                }
-            }
-            result({row, column}) = product;
-        }
-    }
-
-    return result;
-}
-
 std::string Tensor::toString() const {
     std::string str;
     _requires_grad ? str = "True" : str = "False";
@@ -534,3 +418,122 @@ void Tensor::ones() {
 bool Tensor::isAuto_diff() { return _requires_grad; }
 
 void Tensor::grad() {}
+
+// ===============*^_^*================
+void Tensor::setDtype(const DType dtype) { _dtype = dtype; }
+
+Tensor matMul(Tensor &a, Tensor &b) {
+    Tensor *min = (a.shape().size() > b.shape().size() ? &a : &b);
+    Tensor *max = (a.shape().size() < b.shape().size() ? &a : &b);
+    if ((*min).shape().size() > 2 || (*max).shape().size() < 2)
+        throw std::runtime_error("Tensors provided are not matrix");
+    Tensor result;
+    if (!(a.shape() == b.shape())) {
+        LogicData logics;
+        logics = broadCast(a, b);
+        ShapeTag tag;
+        result = Tensor(tag, std::vector<size_t>({(*max).shape()[0], logics.logicShape[1]}));
+        if ((*max).dtype() != (*min).dtype())
+            throw std::runtime_error("DType dosen't match");
+        for (size_t row{0}; row < (*max).shape()[0]; row++) {
+            int product   = 0;
+            size_t column = 0;
+            for (; column < logics.logicShape[1]; column++) {
+                switch ((*max).dtype()) {
+                case DType::kFloat:
+                    product += (*max).data<float>()[row * (*max).strides()[1]] *
+                               (*min).data<float>()[column * logics.logicStrides[0]];
+                case DType::kDouble:
+                    product += (*max).data<double>()[row * (*max).strides()[1]] *
+                               (*min).data<double>()[column * logics.logicStrides[0]];
+                case DType::kInt:
+                    product += (*max).data<int>()[row * (*max).strides()[1]] *
+                               (*min).data<int>()[column * logics.logicStrides[0]];
+                case DType::kLong:
+                    product += (*max).data<long>()[row * (*max).strides()[1]] *
+                               (*min).data<long>()[column * logics.logicStrides[0]];
+                case DType::kBool:
+                    throw std::runtime_error("Boolean type is not supported for multiplication");
+                default:
+                    throw std::runtime_error("Unsupported data type for multiplication");
+                    break;
+                }
+            }
+            result({row, column}) = product;
+        }
+    } else {
+        ShapeTag tag;
+        result = Tensor(tag, std::vector<size_t>({a.shape()[0], a.shape()[1]}));
+        for (size_t row{0}; row < a.shape()[0]; row++) {
+            int product   = 0;
+            size_t column = 0;
+            for (; column < a.shape()[1]; column++) {
+                switch (a.dtype()) {
+                case DType::kFloat:
+                    product += a.data<float>()[row * a.strides()[1]] *
+                               a.data<float>()[column * b.strides()[0]];
+                case DType::kDouble:
+                    product += a.data<double>()[row * a.strides()[1]] *
+                               a.data<double>()[column * b.strides()[0]];
+                case DType::kInt:
+                    product += a.data<int>()[row * a.strides()[1]] *
+                               a.data<int>()[column * b.strides()[0]];
+                case DType::kLong:
+                    product += a.data<long>()[row * a.strides()[1]] *
+                               a.data<long>()[column * b.strides()[0]];
+                case DType::kBool:
+                    throw std::runtime_error("Boolean type is not supported for multiplication");
+                default:
+                    throw std::runtime_error("Unsupported data type for multiplication");
+                    break;
+                }
+            }
+            result({row, column}) = product;
+        }
+    }
+
+    return result;
+}
+
+const LogicData broadCast(Tensor &a, Tensor &b) {
+    Tensor *large = &(a.shape().size() > b.shape().size() ? a : b);
+    Tensor *min   = &(a.shape().size() < b.shape().size() ? a : b);
+    for (size_t i{large->shape().size() - 1}; i >= 0 && (a.shape()[i] && b.shape()[i]); i--) {
+        if (a.shape()[i] != b.shape()[i] && (a.shape()[i] != 1 || b.shape()[i] != 1))
+            throw std::runtime_error("The shape of Tensor provided is incompatible.");
+    }
+
+    std::vector<size_t> logicShape(large->shape().size(), 1);
+    std::vector<size_t> logicStrides(large->shape().size(), 0);
+
+    for (size_t i{large->shape().size() - 1}; i >= 0; i--) {
+        if ((*large).shape()[i] && (*min).shape()[i] && (*min).shape()[i] != 1) {
+            logicShape[i]   = (*min).shape()[i];
+            logicStrides[i] = (*min).strides()[i];
+        }
+        logicShape[i] = (*large).shape()[i];
+    }
+    return {logicShape, logicStrides};
+}
+
+size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices,
+                                   std::vector<size_t> strides, std::vector<size_t> shape) const {
+    if (indices.size() != dim()) {
+        throw std::runtime_error("Indices count mismatch");
+    }
+
+    if (dim() == 0) {
+        return _storage_offset; // 标量情况
+    }
+
+    size_t index = _storage_offset;
+    size_t i     = 0;
+    for (const auto &idx : indices) {
+        if (idx >= shape[i]) {
+            throw std::out_of_range("Tensor index out of bounds");
+        }
+        index += idx * strides[i];
+        ++i;
+    }
+    return index;
+}

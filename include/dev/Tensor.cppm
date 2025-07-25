@@ -1,12 +1,13 @@
 /*
- * Tensor.h
+ * Tensor.cppm
  * Created by Beapoe & GhostFace on 2025.7
  * Main Classes: Storage & Tensor & Auto_diff
- * Version : v1.5 (fixed on 2025.7.22 12:18)
+ * Version : v1.6 (fixed on 2025.7.25 10:18)
  * Log 1.3: 增加了注释及代码易读性
  * Log 1.4: 增加了AutoDiff自动微分类
  * Log 1.5:
- * 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
+增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
+*  Log 1.6:完成了矩阵乘法
  */
 
 // ======================= 类型定义和枚举 =======================
@@ -17,6 +18,7 @@ module;
 #include <iostream>
 #include <iomanip>
 export module Tensor;
+
 // 广播变形数据结构体
 export struct LogicData {
     std::vector<size_t>
@@ -300,6 +302,9 @@ export class Tensor {
 
     // 获取张量的数据类型
     DType dtype() const;
+
+    // 设置张量的数据类型
+    void setDtype(const DType dtype); 
 
     // 获取张量所在的设备
     DeviceType device() const;
