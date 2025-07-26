@@ -595,6 +595,10 @@ class Tensor {
         return result;
     }
 
+    Tensor sum() const {
+        return sum(std::vector<>{},false);
+    }
+
     Tensor sum(const std::vector<int> &dims, bool keepdim = false) const {
         // 只支持全维度求和
         Tensor result(ShapeTag{}, {}, _dtype, _device);
@@ -625,6 +629,12 @@ class Tensor {
             *dst            = std::accumulate(src, src + numel(), 0.0L);
             break;
         }
+            case DType::kBool:
+                throw std::runtime_error("Bool is not allowed");
+                break;
+            default:
+                throw std::runtime_error("Unsupported data type");
+                break;
         }
         return result;
     }
@@ -1572,10 +1582,23 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
 
     switch (_dtype) {
-    case DType::kFloat:
-        elementwiseOp<float>(result, *this, rhs, [](float a, float b) { return a * b; });
-        break;
-        // 其他数据类型类似...
+        case DType::kFloat:
+            elementwiseOp<float>(result, *this, rhs, [](float a, float b) { return a * b; });
+            break;
+        case DType::kDouble:
+            elementwiseOp<double>(result, *this, rhs, [](double a, double b) {return a * b;});
+            break;
+        case DType::kInt:
+            elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a * b; });
+            break;
+        case DType::kLong:
+            elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a * b; });
+            break;
+        case DType::kBool:
+            throw std::runtime_error("Boolean type is not supported for multiplication");
+        default:
+            throw std::runtime_error("Unsupported data type for multiplication");
+
     }
 
     // 记录操作到自动微分计算图

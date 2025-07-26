@@ -1,6 +1,16 @@
-#include "Tensor.h"
+#include "src/dev/Tensor.h"
 
 int main() {
+    // F1
+    std::cout<<"DType::kInt对应的基础数据类型是："<<dtypeToString(DType::kInt)<<std::endl;
+
+    // F2
+    std::cout<<"DType::kBool的大小是："<<dtypeSize(DType::kBool);
+    std::cout<<" Bool的大小是："<<sizeof(bool)<<std::endl;
+
+    // Storage
+    // Storage sto()
+
     // 创建自动微分上下文
     AutoDiff ctx;
 
@@ -28,7 +38,7 @@ int main() {
     Tensor sum_dim = x.sum({0}, true);
 
     // 反向传播
-    mat_result.backward();
+    ctx.backward(mat_result);
 
     std::cout << "x gradient:\n" << x.grad().toString() << std::endl;
     std::cout << "w gradient:\n" << w.grad().toString() << std::endl;
