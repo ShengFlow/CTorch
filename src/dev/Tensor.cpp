@@ -12,7 +12,7 @@ module;
 #include <functional>
 #include <cstring>
 #include <string>
-module Tensor;
+module tensor;
 
 // 自动微分类操作符枚举
 enum class op {

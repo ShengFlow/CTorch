@@ -17,7 +17,7 @@ module;
 #include <stdexcept>
 #include <iostream>
 #include <iomanip>
-export module Tensor;
+export module tensor;
 
 // 广播变形数据结构体
 export struct LogicData {

@@ -1,4 +1,4 @@
-#include "src/dev/Tensor.h"
+#include "../Tensor.h"
 
 int main() {
     // F1
