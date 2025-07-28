@@ -2,11 +2,11 @@
 
 int main() {
     // F1
-    std::cout<<"DType::kInt对应的基础数据类型是："<<dtypeToString(DType::kInt)<<std::endl;
+    std::cout << "DType::kInt对应的基础数据类型是：" << dtypeToString(DType::kInt) << std::endl;
 
     // F2
-    std::cout<<"DType::kBool的大小是："<<dtypeSize(DType::kBool);
-    std::cout<<" Bool的大小是："<<sizeof(bool)<<std::endl;
+    std::cout << "DType::kBool的大小是：" << dtypeSize(DType::kBool);
+    std::cout << " Bool的大小是：" << sizeof(bool) << std::endl;
 
     // Storage
     // Storage sto()
@@ -14,7 +14,7 @@ int main() {
     // 创建自动微分上下文
     AutoDiff ctx;
 
-    auto x = Tensor({1.0f, 2.0f,3.0f, 4.0f},{2,2});
+    auto x = Tensor({1.0f, 2.0f, 3.0f, 4.0f}, {2, 2});
     x.set_autograd_ctx(&ctx);
     x.requires_grad(true);
 
@@ -28,7 +28,7 @@ int main() {
     Tensor z = x + Tensor({5.0f});
 
     // 使用矩阵乘法
-    Tensor w = Tensor({0.5f, -0.2f,1.0f, 0.8f},{2,2});
+    Tensor w = Tensor({0.5f, -0.2f, 1.0f, 0.8f}, {2, 2});
     w.set_autograd_ctx(&ctx);
     w.requires_grad(true);
     Tensor mat_result = matMul(x, w);

@@ -304,7 +304,7 @@ export class Tensor {
     DType dtype() const;
 
     // 设置张量的数据类型
-    void setDtype(const DType dtype); 
+    void setDtype(const DType dtype);
 
     // 获取张量所在的设备
     DeviceType device() const;

@@ -11,7 +11,6 @@
 
 // includes
 #include <algorithm>
-#include <cstddef>
 #include <initializer_list>
 #include <iostream>
 #include <memory>
@@ -21,11 +20,11 @@
 #include <vector>
 #include <sstream>
 #include <functional>
-#include <cstring>
 #include <iomanip>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <stack>
 // ======================= 类型定义和枚举 =======================
 
 // 设备类型 - 定义张量存储的位置
@@ -183,8 +182,7 @@ class Storage {
         }
     }
 
-
-public:
+  public:
     // 构造函数：分配未初始化的内存
     Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
         : _size(size), _dtype(dtype), _device(device),
@@ -252,8 +250,7 @@ public:
     bool empty() const { return _size == 0 || !_data; }
 };
 
-template<typename T>
-DType cppType2Dtype(){
+template <typename T> DType cppType2Dtype() {
     if constexpr (std::is_same_v<T, float>) {
         return DType::kFloat;
     } else if constexpr (std::is_same_v<T, double>) {
@@ -418,7 +415,7 @@ class Tensor {
 
     // 构造函数：从初始值列表创建1D张量
     template <typename T>
-    Tensor(std::initializer_list<T> values,std::vector<size_t> shape)
+    Tensor(std::initializer_list<T> values, std::vector<size_t> shape)
         : _storage_offset(0), _device(DeviceType::kCPU), _dtype(cppType2Dtype<T>()),
           _shape(std::move(shape)) {
         computeStrides();
@@ -595,9 +592,7 @@ class Tensor {
         return result;
     }
 
-    Tensor sum() const {
-        return sum(std::vector<>{},false);
-    }
+    Tensor sum() const { return sum(std::vector<>{}, false); }
 
     Tensor sum(const std::vector<int> &dims, bool keepdim = false) const {
         // 只支持全维度求和
@@ -629,12 +624,12 @@ class Tensor {
             *dst            = std::accumulate(src, src + numel(), 0.0L);
             break;
         }
-            case DType::kBool:
-                throw std::runtime_error("Bool is not allowed");
-                break;
-            default:
-                throw std::runtime_error("Unsupported data type");
-                break;
+        case DType::kBool:
+            throw std::runtime_error("Bool is not allowed");
+            break;
+        default:
+            throw std::runtime_error("Unsupported data type");
+            break;
         }
         return result;
     }
@@ -867,7 +862,17 @@ class Tensor {
     Tensor grad() const;
 
     void setDtype(const DType dtype);
+
+    bool hasGrad() const;
+
+    void recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs);
 };
+
+inline bool Tensor::hasGrad() const {
+    if (autograd_ctx) return true;
+    else return false;
+}
+
 Tensor matMul(Tensor &a, Tensor &b);
 // ======================= 自动微分类 (Auto_Diff) ===================
 // ======================= AutoDiff类反向传播实现 =======================
@@ -1346,7 +1351,36 @@ class AutoDiff {
 
         return grad;
     }
+
+public:
+    static void zero_grad(Node* root) {
+        std::stack<Node*> stack;
+        std::unordered_set<Node*> visited;
+        stack.push(root);
+
+        while (!stack.empty()) {
+            Node* current = stack.top();
+            stack.pop();
+            if (!visited.contains(current)) {
+                if (current->is_leaf || current->retain_count) {
+                    if (current->requires_grad) current->grad.zero();
+                }else current->grad = Tensor(ShapeTag{},current->grad.shape(),current->grad.dtype(),current->grad.device(),false);
+                visited.insert(current);
+                for (Node* input:current->inputs) {
+                    if (!visited.contains(input)) {
+                        stack.push(input);
+                    }
+                }
+            }
+        }
+    }
+
+    Node* rootPtr(){return nodes.back().get();}// 由于push_back是把最后的运算符推入到最后面的，所以取最后一个
 };
+
+inline void Tensor::recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs) {
+    autograd_ctx->record_op(result,operation,inputs);
+}
 
 Tensor Tensor::operator+(const Tensor &rhs) const {
     // 验证形状和类型匹配
@@ -1582,23 +1616,22 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
 
     switch (_dtype) {
-        case DType::kFloat:
-            elementwiseOp<float>(result, *this, rhs, [](float a, float b) { return a * b; });
-            break;
-        case DType::kDouble:
-            elementwiseOp<double>(result, *this, rhs, [](double a, double b) {return a * b;});
-            break;
-        case DType::kInt:
-            elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a * b; });
-            break;
-        case DType::kLong:
-            elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a * b; });
-            break;
-        case DType::kBool:
-            throw std::runtime_error("Boolean type is not supported for multiplication");
-        default:
-            throw std::runtime_error("Unsupported data type for multiplication");
-
+    case DType::kFloat:
+        elementwiseOp<float>(result, *this, rhs, [](float a, float b) { return a * b; });
+        break;
+    case DType::kDouble:
+        elementwiseOp<double>(result, *this, rhs, [](double a, double b) { return a * b; });
+        break;
+    case DType::kInt:
+        elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a * b; });
+        break;
+    case DType::kLong:
+        elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a * b; });
+        break;
+    case DType::kBool:
+        throw std::runtime_error("Boolean type is not supported for multiplication");
+    default:
+        throw std::runtime_error("Unsupported data type for multiplication");
     }
 
     // 记录操作到自动微分计算图
@@ -1610,72 +1643,80 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
     return result;
 }
 
-inline Tensor operator*(const float &factor,const Tensor a) {
+inline Tensor operator*(const float &factor, const Tensor a) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<float>()[i] = factor * result.data<float>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<float>()[i] = factor * result.data<float>()[i];
     result.setDtype(cppType2Dtype<float>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const Tensor a,const float &factor) {
+inline Tensor operator*(const Tensor a, const float &factor) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<float>()[i] = factor * result.data<float>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<float>()[i] = factor * result.data<float>()[i];
     result.setDtype(cppType2Dtype<float>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const double &factor,const Tensor a) {
+inline Tensor operator*(const double &factor, const Tensor a) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<double>()[i] = factor * result.data<double>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<double>()[i] = factor * result.data<double>()[i];
     result.setDtype(cppType2Dtype<double>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const Tensor a,const double &factor) {
+inline Tensor operator*(const Tensor a, const double &factor) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<double>()[i] = factor * result.data<double>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<double>()[i] = factor * result.data<double>()[i];
     result.setDtype(cppType2Dtype<double>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const int &factor,const Tensor a) {
+inline Tensor operator*(const int &factor, const Tensor a) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<int>()[i] = factor * result.data<int>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<int>()[i] = factor * result.data<int>()[i];
     result.setDtype(cppType2Dtype<int>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const Tensor a,const int &factor) {
+inline Tensor operator*(const Tensor a, const int &factor) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<int>()[i] = factor * result.data<int>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<int>()[i] = factor * result.data<int>()[i];
     result.setDtype(cppType2Dtype<int>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const long &factor,const Tensor a) {
+inline Tensor operator*(const long &factor, const Tensor a) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<long>()[i] = factor * result.data<long>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<long>()[i] = factor * result.data<long>()[i];
     result.setDtype(cppType2Dtype<long>());
 
     // TODO: 补全自动微分相关
     return result;
 }
 
-inline Tensor operator*(const Tensor a,const long &factor) {
+inline Tensor operator*(const Tensor a, const long &factor) {
     Tensor result = a;
-    for (size_t i{0};i<a.numel();i++) result.data<long>()[i] = factor * result.data<long>()[i];
+    for (size_t i{0}; i < a.numel(); i++)
+        result.data<long>()[i] = factor * result.data<long>()[i];
     result.setDtype(cppType2Dtype<long>());
 
     // TODO: 补全自动微分相关
