@@ -2,11 +2,12 @@
 * Tensor.h
 * Created by Beapoe & GhostFace on 2025.7
 * Main Classes: Storage & Tensor & Auto_diff
-* Version : v1.6 (fixed on 2025.7.28 21:48)
+* Version : v1.7 (fixed on 2025.7.29 15:59)
 * Log 1.3: 增加了注释及代码易读性
 * Log 1.4: 增加了AutoDiff自动微分类
 * Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
 * Log 1.6: 修复了广播操作并对所有二元操作进行广播处理，优化了矩阵乘法
+* Log 1.7: 增加了标量运算
 * Unfix : matMul
 */
 
@@ -14,7 +15,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <initializer_list>
-// #include <immintrin.h> 未支持ARM
+// #include <immintrin.h> 未支持ARM，等待在x86-64机器测试
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -875,7 +876,84 @@ class Tensor {
    Tensor grad() const;
 
    void setDtype(const DType dtype);
+
+   bool hasGrad() const;
+
+   // 标量乘法成员函数
+   Tensor Tensor::operator*(double scalar) const {
+       Tensor result(ShapeTag{}, _shape, _dtype, _device);
+
+       switch (_dtype) {
+       case DType::kFloat: {
+           const float* src = data<float>();
+           float* dst = result.data<float>();
+           for (size_t i = 0; i < numel(); ++i) {
+               dst[i] = src[i] * scalar;
+           }
+           break;
+       }
+       case DType::kDouble: {
+           const double* src = data<double>();
+           double* dst = result.data<double>();
+           for (size_t i = 0; i < numel(); ++i) {
+               dst[i] = src[i] * static_cast<double>(scalar);
+           }
+           break;
+       }
+       case DType::kInt: {
+           const int32_t* src = data<int32_t>();
+           int32_t* dst = result.data<int32_t>();
+           for (size_t i = 0; i < numel(); ++i) {
+               dst[i] = src[i] * static_cast<int32_t>(scalar);
+           }
+           break;
+       }
+       case DType::kLong: {
+           const int64_t* src = data<int64_t>();
+           int64_t* dst = result.data<int64_t>();
+           for (size_t i = 0; i < numel(); ++i) {
+               dst[i] = src[i] * static_cast<int64_t>(scalar);
+           }
+           break;
+       }
+       case DType::kBool:
+           throw std::runtime_error("Boolean type is not supported for multiplication");
+       default:
+           throw std::runtime_error("Unsupported data type for multiplication");
+       }
+
+       // 自动微分记录
+       if (autograd_ctx) {
+           autograd_ctx->record_op(result, op::Mul, {const_cast<Tensor*>(this)});
+       }
+
+       return result;
+   }
+
+   // 新增标量函数
+   Tensor operator*(float scalar) const;
+   Tensor operator*(double scalar) const;
+   Tensor operator*(int scalar) const;
+   Tensor operator*(long scalar) const;
+
 };
+
+inline Tensor operator*(float factor, const Tensor& a) {
+    return a * factor;
+}
+
+inline Tensor operator*(const Tensor& a, float factor) {
+    return a * factor;
+}
+
+inline Tensor operator*(double factor, const Tensor& a) {
+    return a * factor; // 或实现double版本
+}
+
+inline bool Tensor::hasGrad() const {
+    if (autograd_ctx) return true;
+    else return false;
+}
 
 Tensor matMul(Tensor &a, Tensor &b);        // 矩阵乘前置声明
 
@@ -1092,7 +1170,6 @@ class AutoDiff {
 
        Node* a = node->inputs[0];
        Node* b = node->inputs[1];
-
        if (a->requires_grad) {
            Tensor grad_a = reduce_to_match(grad_out, a->tensor.sizes());
            a->grad = a->grad + grad_a;
@@ -1400,27 +1477,6 @@ class AutoDiff {
        return grad;
    }
 };
-// 辅助函数：仅广播形状（不依赖张量）
-std::vector<size_t> broadcastShapes(const std::vector<size_t>& shapeA, const std::vector<size_t>& shapeB) {
-   size_t max_dims = std::max(shapeA.size(), shapeB.size());
-   std::vector<size_t> result(max_dims, 0);
-
-   for (int i = max_dims - 1, idxA = shapeA.size()-1, idxB = shapeB.size()-1; i >= 0; --i, --idxA, --idxB) {
-       size_t dimA = (idxA >= 0) ? shapeA[idxA] : 1;
-       size_t dimB = (idxB >= 0) ? shapeB[idxB] : 1;
-
-       if (dimA == dimB) {
-           result[i] = dimA;
-       } else if (dimA == 1) {
-           result[i] = dimB;
-       } else if (dimB == 1) {
-           result[i] = dimA;
-       } else {
-           throw std::runtime_error("The shape of Tensor provided is incompatible for broadcasting");
-       }
-   }
-   return result;
-}
 
 BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
    const std::vector<size_t>& shapeA = a.shape();
@@ -1739,42 +1795,31 @@ Tensor matMul(Tensor &a, Tensor &b) {
        throw std::runtime_error("Both tensors must be at least 2D for matrix multiplication");
    }
 
-   // 提取批量维度（排除最后两个矩阵维度）
-   std::vector<size_t> batchA, batchB;
-   if (a.dim() > 2) {
-       batchA = std::vector<size_t>(a.shape().begin(), a.shape().end()-2);
-   }
-   if (b.dim() > 2) {
-       batchB = std::vector<size_t>(b.shape().begin(), b.shape().end()-2);
-   }
-
-   // 广播批量维度
-   std::vector<size_t> batch_shape;
-   try {
-       batch_shape = broadcastShapes(batchA, batchB);
-   } catch (const std::runtime_error& e) {
-       throw std::runtime_error("Incompatible batch dimensions in matMul: " + std::string(e.what()));
-   }
-
    // 检查内层维度是否匹配
-   size_t a_cols = a.shape()[a.dim()-1];
-   size_t b_rows = b.shape()[b.dim()-2];
+   size_t a_cols = a.shape()[a.dim() - 1];
+   size_t b_rows = b.shape()[b.dim() - 2];
+
    if (a_cols != b_rows) {
        std::ostringstream oss;
        oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
        throw std::runtime_error(oss.str());
    }
 
-   size_t M = a.shape()[a.dim()-2];
-   size_t K = a_cols;
-   size_t N = b.shape()[b.dim()-1];
-   size_t batch_size = std::accumulate(batch_shape.begin(), batch_shape.end(), 1, std::multiplies<size_t>());
+   // 处理批量矩阵乘法
+   BroadCastResult logic = broadCast(a, b);
+   const std::vector<size_t>& batch_dims = logic.logicShape;
+   size_t batch_size = std::accumulate(batch_dims.begin(), batch_dims.end() - 2, 1, std::multiplies<size_t>());
+   size_t M = a.shape()[a.dim() - 2];
+   size_t K = a.shape()[a.dim() - 1];
+   size_t N = b.shape()[b.dim() - 1];
 
    // 创建结果张量
-   std::vector<size_t> result_shape = batch_shape;
-   result_shape.push_back(M);
-   result_shape.push_back(N);
-   Tensor result(ShapeTag{}, result_shape, a.dtype(), a.device());
+   std::vector<size_t> result_shape = batch_dims;
+   result_shape[result_shape.size() - 2] = M;
+   result_shape[result_shape.size() - 1] = N;
+
+   ShapeTag tag;
+   Tensor result(tag, result_shape, a.dtype(), a.device());
    result.zero();
 
    // 根据数据类型进行计算
@@ -1784,19 +1829,77 @@ Tensor matMul(Tensor &a, Tensor &b) {
        const float* b_data = b.data<float>();
        float* r_data = result.data<float>();
 
+       // 批量矩阵乘法
        for (size_t batch = 0; batch < batch_size; ++batch) {
            for (size_t i = 0; i < M; ++i) {
                for (size_t k = 0; k < K; ++k) {
                    float a_val = a_data[batch * M * K + i * K + k];
                    for (size_t j = 0; j < N; ++j) {
-                       r_data[batch * M * N + i * N + j] += a_val * b_data[batch * K * N + k * N + j];
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
                    }
                }
            }
        }
        break;
    }
-       // 其他数据类型（Double, Int, Long）的处理类似，此处省略...
+   case DType::kDouble: {
+       const double * a_data = a.data<double>();
+       const double* b_data = b.data<double>();
+       double* r_data = result.data<double>();
+
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kInt: {
+       const int* a_data = a.data<int>();
+       const int* b_data = b.data<int>();
+       int* r_data = result.data<int>();
+
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kLong: {
+       const long * a_data = a.data<long>();
+       const long * b_data = b.data<long>();
+       long* r_data = result.data<long>();
+
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
    default:
        throw std::runtime_error("Unsupported dtype for matMul");
    }
