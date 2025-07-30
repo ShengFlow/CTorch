@@ -149,7 +149,32 @@ constexpr size_t dtypeSize(DType dtype) {
 * Storage& operator=(const Storage&) = default;    // 拷贝赋值
 */
 
-class AutoDiff;                         // 前置声明，避免循环引用
+class AutoDiff;// 前置声明，避免循环引用
+
+template <typename T>
+    constexpr DType cpp2DType() noexcept {
+    if constexpr (std::is_same_v<T, float>) {
+        return DType::kFloat;
+    } else if constexpr (std::is_same_v<T, double>) {
+        return DType::kDouble;
+    } else if constexpr (std::is_same_v<T, int32_t>) {
+        return DType::kInt;
+    } else if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, long>) {
+        return DType::kLong;
+    } else if constexpr (std::is_same_v<T, bool>) {
+        return DType::kBool;
+    } else if constexpr (std::is_same_v<T, int>) {
+        // 处理int类型，根据系统架构选择
+        if constexpr (sizeof(int) == sizeof(int32_t)) {
+            return DType::kInt;
+        } else {
+            return DType::kLong;
+        }
+    } else {
+        // 不支持的类型（编译时错误）
+        throw std::runtime_error("Unsupported type for DType conversion");
+    }
+}
 
 class Storage {
  private:
@@ -179,7 +204,7 @@ class Storage {
        }
    }
 
- public:
+  public:
    // 构造函数：分配未初始化的内存
    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)]) : nullptr) {}
    // 如果初始化列表中_size为0，那么初始化为nullptr
@@ -449,6 +474,14 @@ public:
         computeStrides();
         _storage = Storage(numel(), _dtype, _device);
         if(zero_init) zero();
+    }
+
+    template <typename T>
+    Tensor(std::initializer_list<T> data, std::initializer_list<size_t> shape)
+        : _storage_offset(0), _storage(Storage(data, data.size(), cpp2DType<T>())),
+          _shape(std::vector<size_t>(shape)) {
+        _dtype  = cpp2DType<T>();
+        _device = DeviceType::kCPU;
     }
 
     // 拷贝构造函数：创建深拷贝
