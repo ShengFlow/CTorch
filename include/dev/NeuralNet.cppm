@@ -5,6 +5,7 @@ module;
 
 #include "../../src/dev/Tensor.h"
 #include <vector>
+#include <unordered_map>
 import functional;
 
 export module nn;
@@ -20,7 +21,7 @@ export class Module {
   private:
     bool _train{true};
     Module* _parent{nullptr};
-    std::vector<Module*> _children{nullptr};
+    std::unordered_map<std::string,Module*> _children;
     std::vector<neuron*> _neurons{nullptr};
 
   protected:
@@ -34,15 +35,24 @@ export class Module {
     Tensor operator()(Tensor &input);
 
     // 基本属性
-    void setTrain(bool train,bool recur);
-    void addChild(Module* child);
-    void addChildren(std::vector<Module*> children);
+    void train(bool recur);
+
+    void eval(bool recur);
+
+    void addChild(std::string name,Module* child);
+
+    void addChildren(std::unordered_map<std::string,Module*> children);
+
+    std::unordered_map<std::string,Module*> children() const;
+
+    std::vector<Module*> childrenRecur(Module* root) const;
+
     template<typename...Args>
     void Module::apply(Module* root,auto func,Args...args) {
         auto recursive = [&func, &recursive, &args](Module* root)->void {
-            std::vector<Module *> children = root->_children;
-            for (size_t i = 0; i < children.size(); ++i) {
-                if (children[i]->_children.size() > 0) recursive(children[i]);
+            std::unordered_map<std::string,Module*> children = root->_children;
+            for (auto [_,child]:children) {
+                if (child->_children.size()) recursive(child);
                 else func(args);
             }
         }(root);

@@ -11,29 +11,73 @@ module nn;
 // Module
 Tensor Module::operator()(Tensor &input) { return forward(input); }
 
-void Module::setTrain(bool train, bool recur) {
+void Module::train(bool recur) {
     if (recur) {
         auto root      = this;
         auto recursive = [&train, &recursive, &recur](const Module *root) -> void {
-            std::vector<Module *> nodes = root->_children;
-            for (size_t i = 0; i < nodes.size(); ++i) {
-                if (nodes[i]->_children.size() > 0)
-                    recursive(nodes[i]);
+            std::unordered_map<std::string,Module*> children = root->_children;
+            for (auto& [_,child]:children) {
+                if (child->_children.size() > 0)
+                    recursive(child);
                 else
-                    nodes[i]->setTrain(train, recur);
+                    child->_train = true;
             }
         }(root);
     } else
-        _train = train;
+        _train = true;
 }
 
-void Module::addChild(Module *child) {
-    _children.push_back(child);
+void Module::eval(bool recur) {
+    if (recur) {
+        auto root      = this;
+        auto recursive = [&train, &recursive, &recur](const Module *root) -> void {
+            std::unordered_map<std::string,Module*> children = root->_children;
+            for (auto& [_,child]:children) {
+                if (child->_children.size() > 0)
+                    recursive(child);
+                else
+                    child->_train = false;
+            }
+        }(root);
+    } else
+        _train = false;
 }
 
-void Module::addChildren(std::vector<Module*> children) {
+void Module::addChild(std::string name,Module *child) {
+    _children.emplace(name,child);
+}
+
+void Module::addChildren(std::unordered_map<std::string,Module*> children) {
     _children.reserve(_children.size()+children.size());
-    _children.insert(_children.end(), children.begin(), children.end());
+    for (auto it = children.begin();it!=children.end();) {
+        auto node = children.extract(it++);
+        if (!_children.insert(std::move(node)).inserted) {
+            children.insert(std::move(node));
+            for (auto rit = it;rit!=children.end();) {
+                auto prev = _children.extract(rit->first);
+                if (!prev.empty()) children.insert(std::move(prev));
+                ++rit;
+            }
+            throw std::runtime_error("Duplicate key found:"+node.key());
+        }
+    }
+}
+
+std::unordered_map<std::string,Module*> Module::children() const{
+    return _children;
+}
+
+std::vector<Module*> Module::childrenRecur(Module* root) const {
+    std::vector<Module*> result;
+    auto recursive = [&result, &recursive](const Module *root) -> void {
+        std::unordered_map<std::string,Module*> children = root->_children;
+        for (auto& [_,child]:children) {
+            if (child->_children.size() > 0)
+                recursive(child);
+            else
+                result.push_back(child);
+        }
+    }(root);
 }
 
 void Module::zero_grad() const {
