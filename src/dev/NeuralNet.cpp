@@ -8,6 +8,18 @@ module;
 
 module nn;
 
+// Parameter
+ Parameter::Parameter(Tensor data, bool requiresGrad = true) {
+     _data = data;
+     _data.requires_grad(requiresGrad);
+     _initialized = true;
+ }
+
+bool Parameter::isInitialized() const {
+     return _initialized;
+ }
+
+
 // Module
 Tensor Module::operator()(Tensor &input) { return forward(input); }
 
@@ -70,15 +82,38 @@ std::unordered_map<std::string,Module*> Module::children() const{
 std::vector<Module*> Module::childrenRecur(Module* root) const {
     std::vector<Module*> result;
     auto recursive = [&result, &recursive](const Module *root) -> void {
-        std::unordered_map<std::string,Module*> children = root->_children;
-        for (auto& [_,child]:children) {
+        std::unordered_map<std::string, Module *> children = root->_children;
+        for (auto &[_, child] : children) {
             if (child->_children.size() > 0)
                 recursive(child);
             else
                 result.push_back(child);
         }
     }(root);
+    return result;
 }
+
+void Module::registerParameter(std::string name, Parameter *parameter) {
+     if (parameter->isInitialized()) _parameters.emplace(name,parameter);
+     else throw std::runtime_error("Parameter '"+name+"' is not initialized");
+ }
+
+void Module::registerParameters(std::unordered_map<std::string,Parameter*> parameters) {
+     _parameters.reserve(_parameters.size()+parameters.size());
+     for (auto it = parameters.begin();it != parameters.end();) {
+         if (it->second->isInitialized()) {
+             auto node = parameters.extract(it++);
+             if (!_parameters.insert(std::move(node)).inserted) {
+                 for (auto rit = it;rit!=parameters.end();) {
+                     auto prev = parameters.extract(it->first);
+                     if (!prev.empty()) _parameters.insert(std::move(prev));
+                     ++rit;
+                 }
+                 throw std::runtime_error("Duplicate key found:"+node.key());
+             }
+         }else throw std::runtime_error("Parameter '"+it->first+"' is not initialized");
+     }
+ }
 
 void Module::zero_grad() const {
     for (neuron *n : _neurons)

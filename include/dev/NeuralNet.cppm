@@ -16,12 +16,26 @@ struct neuron {
     AutoDiff ctx;
 };
 
+export class Parameter : public Tensor{
+private:
+    Tensor _data;
+    bool _initialized{false};
+public:
+    // 构造
+    Parameter(Tensor data,bool requiresGrad);
+
+    //基本属性
+    bool isInitialized() const;
+};
+
 // 神经网络基类
 export class Module {
   private:
     bool _train{true};
     Module* _parent{nullptr};
     std::unordered_map<std::string,Module*> _children;
+    std::unordered_map<std::string,Parameter*> _parameters;
+    std::unordered_map<std::string,Tensor*> _buffers;
     std::vector<neuron*> _neurons{nullptr};
 
   protected:
@@ -58,18 +72,11 @@ export class Module {
         }(root);
     }
 
+    void registerParameter(std::string name,Parameter* parameter);
+
+    void registerParameters(std::unordered_map<std::string,Parameter*> parameters);
+
     // 梯度相关
     void zero_grad() const;
-};
-
-// 线性层
-export class Linear {
-  private:
-    size_t _input_size{0};
-    size_t _output_size{0};
-    bool _bias{true};
-
-  public:
-    Linear(size_t input_s, size_t output_s, bool bias);
 };
 
