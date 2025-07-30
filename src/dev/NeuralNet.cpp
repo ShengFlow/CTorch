@@ -174,6 +174,13 @@ std::vector<Buffer> Module::buffers(std::initializer_list<std::string> names) co
      return result;
  }
 
+std::string Module::extra_expr() const {
+     return "";
+ }
+
+
+
+
 void Module::zero_grad() const {
     for (neuron *n : _neurons)
         n->ctx.zero_grad(n->ctx.rootPtr());

@@ -36,7 +36,7 @@ private:
     bool _initialized{false};
 public:
     //构造
-    Buffer(Tensor data);
+    explicit Buffer(Tensor data);
 
     //基本属性
     bool isInitialized() const;
@@ -103,6 +103,27 @@ export class Module {
     Buffer buffer(std::string name) const;
 
     std::vector<Buffer> buffers(std::initializer_list<std::string> names) const;
+
+    template <typename T>
+    void setType(Module* root) {
+        auto root      = this;
+        auto recursive = [&train, &recursive](const Module *root) -> void {
+            std::unordered_map<std::string,Module*> children = root->_children;
+            for (auto& [_,child]:children) {
+                if (child->_children.size() > 0)
+                    recursive(child);
+                else {
+                    for (auto& [_,param]:child->_parameters) param->data().setDtype(cpp2DType<T>());
+                    for (auto& [_,buffer]:child->_buffers) buffer->data().setDtype(cpp2DType<T>());
+                }
+            }
+        }(root);
+    }
+
+    // 输出
+    virtual std::string extra_expr() const;
+
+    void operator<<(Module* content) const;
 
     // 梯度相关
     void zero_grad() const;
