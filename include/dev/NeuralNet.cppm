@@ -24,6 +24,20 @@ public:
     // 构造
     Parameter(Tensor data,bool requiresGrad);
 
+    // 基本属性
+    bool isInitialized() const;
+
+    Tensor data() const;
+};
+
+export class Buffer : public Tensor {
+private:
+    Tensor _data;
+    bool _initialized{false};
+public:
+    //构造
+    Buffer(Tensor data);
+
     //基本属性
     bool isInitialized() const;
 
@@ -37,7 +51,7 @@ export class Module {
     Module* _parent{nullptr};
     std::unordered_map<std::string,Module*> _children;
     std::unordered_map<std::string,Parameter*> _parameters;
-    std::unordered_map<std::string,Tensor*> _buffers;
+    std::unordered_map<std::string,Buffer*> _buffers;
     std::vector<neuron*> _neurons{nullptr};
 
   protected:
@@ -80,7 +94,15 @@ export class Module {
 
     Parameter parameter(std::string name) const;
 
-    std::vector<Parameter*> parameters(std::initializer_list<std::string> names) const;
+    std::vector<Parameter> parameters(std::initializer_list<std::string> names) const;
+
+    void registerBuffer(std::string name,Buffer* buffer);
+
+    void registerBuffers(std::unordered_map<std::string,Buffer*> buffers);
+
+    Buffer buffer(std::string name) const;
+
+    std::vector<Buffer> buffers(std::initializer_list<std::string> names) const;
 
     // 梯度相关
     void zero_grad() const;

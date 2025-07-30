@@ -23,6 +23,20 @@ Tensor Parameter::data() const {
      return _data;
  }
 
+// Buffer
+ Buffer::Buffer(Tensor data) {
+     _data = data;
+     _initialized = true;
+ }
+
+bool Buffer::isInitialized() const {
+     return _initialized;
+ }
+
+Tensor Buffer::data() const {
+     return _data;
+ }
+
 // Module
 Tensor Module::operator()(Tensor &input) { return forward(input); }
 
@@ -122,9 +136,41 @@ Parameter Module::parameter(std::string name) const {
      return *_parameters.at(name);
  }
 
-std::vector<Parameter*> Module::parameters(std::initializer_list<std::string> names) const {
-     std::vector<Parameter*> result;
-     for (std::string name:names) result.push_back(_parameters.at(name));
+std::vector<Parameter> Module::parameters(std::initializer_list<std::string> names) const {
+     std::vector<Parameter> result;
+     for (std::string name:names) result.push_back(*(_parameters.at(name)));
+     return result;
+ }
+
+void Module::registerBuffer(std::string name,Buffer *buffer) {
+     if (buffer->isInitialized()) _buffers.emplace(name,buffer);
+     else throw std::runtime_error("Buffer '"+name+"' is not initialized");
+ }
+
+void Module::registerBuffers(std::unordered_map<std::string,Buffer*> buffers) {
+     _parameters.reserve(_buffers.size()+buffers.size());
+     for (auto it = buffers.begin();it != buffers.end();) {
+         if (it->second->isInitialized()) {
+             auto node = buffers.extract(it++);
+             if (!_buffers.insert(std::move(node)).inserted) {
+                 for (auto rit = it;rit!=buffers.end();) {
+                     auto prev = buffers.extract(it->first);
+                     if (!prev.empty()) _buffers.insert(std::move(prev));
+                     ++rit;
+                 }
+                 throw std::runtime_error("Duplicate key found:"+node.key());
+             }
+         }else throw std::runtime_error("Buffer '"+it->first+"' is not initialized");
+     }
+ }
+
+Buffer Module::buffer(std::string name) const {
+     return *_buffers.at(name);
+}
+
+std::vector<Buffer> Module::buffers(std::initializer_list<std::string> names) const {
+     std::vector<Buffer> result;
+     for (std::string name:names) result.push_back(*(_buffers.at(name)));
      return result;
  }
 
