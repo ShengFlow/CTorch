@@ -78,6 +78,10 @@ export class Module {
 
     void registerParameters(std::unordered_map<std::string,Parameter*> parameters);
 
+    Parameter parameter(std::string name) const;
+
+    std::vector<Parameter*> parameters(std::initializer_list<std::string> names) const;
+
     // 梯度相关
     void zero_grad() const;
 };

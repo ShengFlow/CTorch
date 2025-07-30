@@ -118,6 +118,16 @@ void Module::registerParameters(std::unordered_map<std::string,Parameter*> param
      }
  }
 
+Parameter Module::parameter(std::string name) const {
+     return *_parameters.at(name);
+ }
+
+std::vector<Parameter*> Module::parameters(std::initializer_list<std::string> names) const {
+     std::vector<Parameter*> result;
+     for (std::string name:names) result.push_back(_parameters.at(name));
+     return result;
+ }
+
 void Module::zero_grad() const {
     for (neuron *n : _neurons)
         n->ctx.zero_grad(n->ctx.rootPtr());
