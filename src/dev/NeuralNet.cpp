@@ -19,6 +19,9 @@ bool Parameter::isInitialized() const {
      return _initialized;
  }
 
+Tensor Parameter::data() const {
+     return _data;
+ }
 
 // Module
 Tensor Module::operator()(Tensor &input) { return forward(input); }

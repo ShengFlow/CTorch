@@ -26,6 +26,8 @@ public:
 
     //基本属性
     bool isInitialized() const;
+
+    Tensor data() const;
 };
 
 // 神经网络基类
