@@ -14,7 +14,7 @@ int main() {
     // 创建自动微分上下文
     AutoDiff ctx;
 
-    auto x = Tensor({1.0f, 2.0f, 3.0f, 4.0f}, {2, 2});
+    auto x = Tensor({1.0f, 2.0f, 3.0f, 4.0f},{2,2});
     x.set_autograd_ctx(&ctx);
     x.requires_grad(true);
 
