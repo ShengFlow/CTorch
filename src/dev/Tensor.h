@@ -24,6 +24,7 @@
 #include <sstream>
 #include <functional>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <string>
 #include <unordered_set>
@@ -268,6 +269,48 @@ class Storage {
    // 检查存储是否为空
    bool empty() const { return _size == 0 || !_data; }
 
+    void serialize(std::ofstream& os) const {
+       if (!os) {
+           throw std::runtime_error("序列化失败：输出流无效");
+       }
+
+       // 写入基本属性（size、dtype、device）
+       os.write(reinterpret_cast<const char*>(&_size), sizeof(_size));
+       os.write(reinterpret_cast<const char*>(&_dtype), sizeof(_dtype));
+       os.write(reinterpret_cast<const char*>(&_device), sizeof(_device));
+
+       // 写入原始数据（仅当有数据时）
+       if (_size > 0 && _data) {
+           size_t elem_size = dtypeSize(_dtype);
+           os.write(_data.get(), _size * elem_size);  // 一次性写入所有数据，提升性能
+       }
+   }
+
+    void deserialize(std::ifstream& is) {
+       if (!is) {
+           throw std::runtime_error("反序列化失败：输入流无效");
+       }
+
+       // 读取基本属性
+       is.read(reinterpret_cast<char*>(&_size), sizeof(_size));
+       is.read(reinterpret_cast<char*>(&_dtype), sizeof(_dtype));
+       is.read(reinterpret_cast<char*>(&_device), sizeof(_device));
+
+       // 读取原始数据（仅当有数据时）
+       if (_size > 0) {
+           size_t elem_size = dtypeSize(_dtype);
+           size_t total_bytes = _size * elem_size;
+           _data = std::make_shared<char[]>(total_bytes);  // 分配内存
+           is.read(_data.get(), total_bytes);              // 一次性读取所有数据
+
+           // 检查读取是否完整
+           if (is.gcount() != static_cast<std::streamsize>(total_bytes)) {
+               throw std::runtime_error("反序列化失败：数据不完整");
+           }
+       } else {
+           _data = nullptr;  // 空数据
+       }
+   }
 
 };
 
@@ -663,11 +706,11 @@ public:
     }
 
     // 设置上下文并传播到新张量
-    Tensor with_ctx(AutoDiff* ctx) const {
-        Tensor result = *this;
+    Tensor with_ctx(AutoDiff *ctx) const {
+        Tensor result       = *this;
         result.autograd_ctx = ctx;
         return result;
-    }
+    }void deserialize(std::ifstream & is);
 
     // 创建新张量时继承上下文
     static Tensor create_with_ctx(AutoDiff* ctx, const std::vector<size_t>& shape,
@@ -914,6 +957,18 @@ public:
     bool hasGrad() const;
 
     void recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs);
+
+    void zeroGrad() const;
+
+    void setRetainGraph(bool retain) const;
+
+    bool isGradRequired() const;
+
+    void serialize(std::ofstream &os) const;
+
+    size_t storageOffset() const;
+
+    void clearCtx();
 
    // 标量乘法成员函数
    Tensor Tensor::operator*(double scalar) const {
@@ -1539,10 +1594,35 @@ public:
     }
 
     Node* rootPtr(){return nodes.back().get();}// 由于push_back是把最后的运算符推入到最后面的，所以取最后一个
+
+    void reset();
 };
 
 inline void Tensor::recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs) {
     autograd_ctx->record_op(result,operation,inputs);
+}
+
+inline void AutoDiff::reset() {
+    tensor_to_node.clear();
+    nodes.clear();
+    retain_graph = false;
+}
+
+inline void Tensor::zeroGrad() const { autograd_ctx->zero_grad(autograd_ctx->rootPtr());}
+
+inline void Tensor::setRetainGraph(bool retain) const { autograd_ctx->set_retain_graph(retain); }
+
+inline bool Tensor::isGradRequired() const { return _requires_grad; }
+
+inline void Tensor::serialize(std::ofstream &os) const { _storage.serialize(os); }
+
+inline size_t Tensor::storageOffset() const { return  _storage_offset; }
+
+inline void Tensor::deserialize(std::ifstream &is) { _storage.deserialize(is); }
+
+inline void Tensor::clearCtx() {
+    delete autograd_ctx;
+    autograd_ctx = nullptr;
 }
 
 

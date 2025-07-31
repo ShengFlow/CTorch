@@ -5,8 +5,32 @@ module;
 
 #include "../../src/dev/Tensor.h"
 #include <vector>
+#include <functional>
+#include <fstream>
+#include <cstring>
+#include <stdexcept>
+#include <typeinfo>
 
 module nn;
+
+// Neuron
+void neuron::save(std::ofstream& os) const {
+    if (!os) {
+        throw std::runtime_error("神经元保存失败：输出流无效");
+    }
+    // 仅保存stage（ctx在加载时重新初始化）
+    os.write(reinterpret_cast<const char*>(&stage), sizeof(stage));
+}
+
+void neuron::load(std::ifstream& is) {
+    if (!is) {
+        throw std::runtime_error("神经元加载失败：输入流无效");
+    }
+    // 读取stage
+    is.read(reinterpret_cast<char*>(&stage), sizeof(stage));
+    // 重置自动微分上下文（不加载原有ctx，避免计算图状态不一致）
+    ctx.reset();
+}
 
 // Parameter
  Parameter::Parameter(Tensor data, bool requiresGrad = true) {
@@ -19,8 +43,14 @@ bool Parameter::isInitialized() const {
      return _initialized;
  }
 
+void Parameter::setInitialized(bool status) {_initialized = status;}
+
 Tensor Parameter::data() const {
      return _data;
+ }
+
+void Parameter::setData(Tensor data) {
+     _data = std::move(data);
  }
 
 // Buffer
@@ -33,25 +63,294 @@ bool Buffer::isInitialized() const {
      return _initialized;
  }
 
+void Buffer::setInitialized(bool status) { _initialized = status; }
+
+
 Tensor Buffer::data() const {
      return _data;
  }
 
+void Buffer::setData(Tensor data) {
+     _data = std::move(data);
+ }
+
+
 // Module
+Module* Module::findModule(const std::string& path) {
+     // 分割路径为组件
+     std::vector<std::string> components;
+     size_t start = 0, end = 0;
+     while ((end = path.find('.', start)) != std::string::npos) {
+         components.push_back(path.substr(start, end - start));
+         start = end + 1;
+     }
+     components.push_back(path.substr(start));
+
+     // 从当前模块开始遍历
+     Module* current = this;
+     for (const auto& comp : components) {
+         auto it = current->_children.find(comp);
+         if (it == current->_children.end()) {
+             return nullptr; // 未找到
+         }
+         current = it->second;
+     }
+     return current;
+ }
+
+void Module::save_impl(std::ofstream& os) const {
+    // 保存基本状态
+    os.write(reinterpret_cast<const char*>(&_train), sizeof(_train));
+
+    // 保存子模块数量及子模块
+    size_t children_count = _children.size();
+    os.write(reinterpret_cast<const char*>(&children_count), sizeof(children_count));
+
+    for (const auto& pair : _children) {
+        // 保存名称长度和名称
+        size_t name_len = pair.first.length();
+        os.write(reinterpret_cast<const char*>(&name_len), sizeof(name_len));
+        os.write(pair.first.c_str(), name_len);
+
+        // 递归保存子模块
+        pair.second->save_impl(os);
+    }
+
+    // 保存参数数量及参数
+    size_t params_count = _parameters.size();
+    os.write(reinterpret_cast<const char*>(&params_count), sizeof(params_count));
+
+    for (const auto& pair : _parameters) {
+        // 保存名称
+        size_t name_len = pair.first.length();
+        os.write(reinterpret_cast<const char*>(&name_len), sizeof(name_len));
+        os.write(pair.first.c_str(), name_len);
+
+        // 保存参数是否初始化
+        bool initializeStatus = pair.second->isInitialized();
+        os.write(reinterpret_cast<const char*>(&initializeStatus), sizeof(bool));
+
+        // 如果已初始化，保存数据
+        if (pair.second->isInitialized()) {
+            save_tensor(os, pair.second->data());
+        }
+    }
+
+    // 保存缓冲区数量及缓冲区
+    size_t buffers_count = _buffers.size();
+    os.write(reinterpret_cast<const char*>(&buffers_count), sizeof(buffers_count));
+
+    for (const auto& pair : _buffers) {
+        // 保存名称
+        size_t name_len = pair.first.length();
+        os.write(reinterpret_cast<const char*>(&name_len), sizeof(name_len));
+        os.write(pair.first.c_str(), name_len);
+
+        // 保存缓冲区是否初始化
+        bool initializeStatus = pair.second->isInitialized();
+        os.write(reinterpret_cast<const char*>(&initializeStatus), sizeof(bool));
+
+        // 如果已初始化，保存数据
+        if (pair.second->isInitialized()) {
+            save_tensor(os, pair.second->data());
+        }
+    }
+
+    // 保存神经元信息
+    size_t neurons_count = _neurons.size();
+    os.write(reinterpret_cast<const char*>(&neurons_count), sizeof(neurons_count));
+
+    // 这里假设neuron类也有save方法
+    for (const auto& neuron : _neurons) {
+        if (neuron) {
+            neuron->save(os);
+        }
+    }
+}
+
+void Module::load_impl(std::ifstream& is) {
+    // 加载基本状态
+    is.read(reinterpret_cast<char*>(&_train), sizeof(_train));
+
+    // 加载子模块
+    size_t children_count;
+    is.read(reinterpret_cast<char*>(&children_count), sizeof(children_count));
+
+    for (size_t i = 0; i < children_count; ++i) {
+        // 读取名称
+        size_t name_len;
+        is.read(reinterpret_cast<char*>(&name_len), sizeof(name_len));
+
+        std::string name(name_len, '\0');
+        is.read(&name[0], name_len);
+
+        // 假设子模块已存在且类型匹配
+        auto it = _children.find(name);
+        if (it == _children.end()) {
+            throw std::runtime_error("加载模型时找不到子模块: " + name);
+        }
+
+        // 递归加载子模块
+        it->second->load_impl(is);
+    }
+
+    // 加载参数
+    size_t params_count;
+    is.read(reinterpret_cast<char*>(&params_count), sizeof(params_count));
+
+    for (size_t i = 0; i < params_count; ++i) {
+        // 读取名称
+        size_t name_len;
+        is.read(reinterpret_cast<char*>(&name_len), sizeof(name_len));
+
+        std::string name(name_len, '\0');
+        is.read(&name[0], name_len);
+
+        // 查找参数
+        auto it = _parameters.find(name);
+        if (it == _parameters.end()) {
+            throw std::runtime_error("加载模型时找不到参数: " + name);
+        }
+
+        // 读取初始化状态
+        bool initialized;
+        is.read(reinterpret_cast<char*>(&initialized), sizeof(bool));
+
+        // 如果已初始化，加载数据
+        if (initialized) {
+            Tensor data;
+            load_tensor(is, data);
+            it->second->setData(data);
+            it->second->setInitialized(true);
+        } else {
+            it->second->setInitialized(false);
+        }
+    }
+
+    // 加载缓冲区
+    size_t buffers_count;
+    is.read(reinterpret_cast<char*>(&buffers_count), sizeof(buffers_count));
+
+    for (size_t i = 0; i < buffers_count; ++i) {
+        // 读取名称
+        size_t name_len;
+        is.read(reinterpret_cast<char*>(&name_len), sizeof(name_len));
+
+        std::string name(name_len, '\0');
+        is.read(&name[0], name_len);
+
+        // 查找缓冲区
+        auto it = _buffers.find(name);
+        if (it == _buffers.end()) {
+            throw std::runtime_error("加载模型时找不到缓冲区: " + name);
+        }
+
+        // 读取初始化状态
+        bool initialized;
+        is.read(reinterpret_cast<char*>(&initialized), sizeof(bool));
+
+        // 如果已初始化，加载数据
+        if (initialized) {
+            Tensor data;
+            load_tensor(is, data);
+            it->second->setData(data);
+            it->second->setInitialized(true);
+        } else {
+            it->second->setInitialized(false);
+        }
+    }
+
+    // 加载神经元信息
+    size_t neurons_count;
+    is.read(reinterpret_cast<char*>(&neurons_count), sizeof(neurons_count));
+
+    if (neurons_count != _neurons.size()) {
+        throw std::runtime_error("神经元数量不匹配");
+    }
+
+    // 这里假设neuron类也有load方法
+    for (auto& neuron : _neurons) {
+        if (neuron) {
+            neuron->load(is);
+        }
+    }
+}
+
+void Module::save_tensor(std::ofstream& os, const Tensor& tensor) {
+     // 保存requires_grad
+    bool gradRequired = tensor.isGradRequired();
+     os.write(reinterpret_cast<const char*>(&gradRequired), sizeof(bool));
+
+     // 保存维度大小
+     size_t strides_size = tensor.strides().size();
+     os.write(reinterpret_cast<const char*>(&strides_size), sizeof(strides_size));
+     os.write(reinterpret_cast<const char*>(tensor.strides().data()),
+              strides_size * sizeof(size_t));
+
+     // 保存存储偏移量
+    size_t offset = tensor.storageOffset();
+     os.write(reinterpret_cast<const char*>(&offset), sizeof(size_t));
+
+     // 保存设备类型
+    DeviceType device = tensor.device();
+     os.write(reinterpret_cast<const char*>(&device), sizeof(DeviceType));
+
+     // 保存数据类型
+    DType dtype = tensor.dtype();
+     os.write(reinterpret_cast<const char*>(&dtype), sizeof(DType));
+
+     // 保存存储数据
+     // 假设Storage类有serialize方法
+     tensor.serialize(os);
+
+     // 自动微分上下文不需要保存，加载时重新创建
+ }
+
+void Module::load_tensor(std::ifstream& is, Tensor& tensor) {
+     // 加载requires_grad
+    bool gradRequired = tensor.isGradRequired();
+     is.read(reinterpret_cast<char*>(&gradRequired), sizeof(bool));
+
+     // 加载维度大小
+     size_t strides_size;
+     is.read(reinterpret_cast<char*>(&strides_size), sizeof(strides_size));
+     tensor.strides().resize(strides_size);
+     is.read(reinterpret_cast<char*>(tensor.strides().data()),
+             strides_size * sizeof(size_t));
+
+     // 加载存储偏移量
+    size_t offset = tensor.storageOffset();
+     is.read(reinterpret_cast<char*>(&offset), sizeof(size_t));
+
+     // 加载设备类型
+    DeviceType device = tensor.device();
+     is.read(reinterpret_cast<char*>(&device), sizeof(DeviceType));
+
+     // 加载数据类型
+    DType dtype = tensor.dtype();
+     is.read(reinterpret_cast<char*>(&dtype), sizeof(DType));
+
+     // 加载存储数据
+     // 假设Storage类有deserialize方法
+     tensor.deserialize(is);
+
+     // 重置自动微分上下文
+     if (tensor.hasGrad()) {
+         tensor.clearCtx();
+     }
+ }
+
 Tensor Module::operator()(Tensor &input) { return forward(input); }
 
 void Module::train(bool recur) {
     if (recur) {
         auto root      = this;
-        auto recursive = [&train, &recursive, &recur](const Module *root) -> void {
-            std::unordered_map<std::string,Module*> children = root->_children;
-            for (auto& [_,child]:children) {
-                if (child->_children.size() > 0)
-                    recursive(child);
-                else
-                    child->_train = true;
-            }
-        }(root);
+        auto recursive = [&recursive](Module *root) -> void {
+            root->_train = true;
+            std::unordered_map<std::string,Module*>* children = &root->_children;
+            for (auto& [_,child]:*children) recursive(child);
+        };
+        recursive(root);
     } else
         _train = true;
 }
@@ -59,15 +358,12 @@ void Module::train(bool recur) {
 void Module::eval(bool recur) {
     if (recur) {
         auto root      = this;
-        auto recursive = [&train, &recursive, &recur](const Module *root) -> void {
-            std::unordered_map<std::string,Module*> children = root->_children;
-            for (auto& [_,child]:children) {
-                if (child->_children.size() > 0)
-                    recursive(child);
-                else
-                    child->_train = false;
-            }
-        }(root);
+        auto recursive = [&recursive](Module *root) -> void {
+            root->_train = false;
+            std::unordered_map<std::string,Module*>* children = &root->_children;
+            for (auto& [_,child]:*children) recursive(child);
+        };
+        recursive(root);
     } else
         _train = false;
 }
@@ -98,15 +394,12 @@ std::unordered_map<std::string,Module*> Module::children() const{
 
 std::vector<Module*> Module::childrenRecur(Module* root) const {
     std::vector<Module*> result;
-    auto recursive = [&result, &recursive](const Module *root) -> void {
-        std::unordered_map<std::string, Module *> children = root->_children;
-        for (auto &[_, child] : children) {
-            if (child->_children.size() > 0)
-                recursive(child);
-            else
-                result.push_back(child);
-        }
-    }(root);
+    auto recursive = [&result, &recursive](Module *root) -> void {
+        result.push_back(root);
+        std::unordered_map<std::string, Module *>* children = &root->_children;
+        for (auto &[_, child] : children) recursive(child);
+    };
+     recursive(root);
     return result;
 }
 
@@ -174,12 +467,198 @@ std::vector<Buffer> Module::buffers(std::initializer_list<std::string> names) co
      return result;
  }
 
+std::vector<std::unordered_map<std::string,Tensor*>>  Module::state(std::string prefix="",bool keepVars=false) const {
+     std::unordered_map<std::string,Tensor*> parameters;
+     std::unordered_map<std::string,Tensor*> buffers;
+
+     std::function<void(const std::string,const Module*)> recursive;
+     recursive = [&recursive,&prefix,&keepVars,&parameters,&buffers](const std::string name,const Module* root) {
+         for (auto [key,val]:root->_parameters) {
+             if (!val->isInitialized()) throw std::runtime_error("Parameter '"+name+"' is not initialized");
+             Tensor data = val->data().clone();
+             if (keepVars) {
+                 data.requires_grad(false);
+                 data.zeroGrad();
+             }
+             parameters.emplace(prefix+name+key,&data);
+         }
+         for (auto [key,val]:root->_buffers) {
+             if (!val->isInitialized()) throw std::runtime_error("Buffer '"+name+"' is not initialized");
+             Tensor data = val->data().clone();
+             if (keepVars) {
+                 data.requires_grad(false);
+                 data.zeroGrad();
+                 data.setRetainGraph(false);
+             }
+             buffers.emplace(prefix+name+key,&data);
+         }
+         for (auto& [mo_name,child] : root->_children) {
+             // 添加分隔符构建新前缀: parent_prefix + child_name + "."
+             std::string new_prefix = prefix + mo_name + ".";
+             recursive(new_prefix, child);
+         }
+     };
+     recursive(prefix,this);
+     return {std::move(parameters), std::move(buffers)};
+}
+
+void Module::loadState(std::vector<std::unordered_map<std::string,Tensor*>> state,bool strict){
+    // 提取参数和缓冲区状态
+    const auto& param_state = state[0];  // 参数状态
+    const auto& buffer_state = state[1]; // 缓冲区状态
+
+    // 存储未匹配的键
+    std::unordered_set<std::string> unmatched_keys;
+
+    // 1. 加载参数
+    for (const auto& [key, tensor] : param_state) {
+        // 分割键为模块路径和参数名
+        size_t pos = key.find_last_of('.');
+        if (pos == std::string::npos) {
+            // 根节点参数
+            auto it = _parameters.find(key);
+            if (it != _parameters.end()) {
+                // 复制张量值
+                it->second->setData(*tensor);
+            } else if (strict) {
+                throw std::runtime_error("Parameter '" + key + "' not found in model");
+            } else {
+                unmatched_keys.insert(key);
+            }
+        } else {
+            // 递归查找模块
+            std::string module_path = key.substr(0, pos);
+            std::string param_name = key.substr(pos + 1);
+
+            Module* module = findModule(module_path);
+            if (module) {
+                auto it = module->_parameters.find(param_name);
+                if (it != module->_parameters.end()) {
+                    // 复制张量值
+                    it->second->setData(*tensor);
+                } else if (strict) {
+                    throw std::runtime_error("Parameter '" + key + "' not found in model");
+                } else {
+                    unmatched_keys.insert(key);
+                }
+            } else if (strict) {
+                throw std::runtime_error("Module '" + module_path + "' not found for parameter '" + key + "'");
+            } else {
+                unmatched_keys.insert(key);
+            }
+        }
+    }
+
+    // 2. 加载缓冲区
+    for (const auto& [key, tensor] : buffer_state) {
+        // 分割键为模块路径和缓冲区名
+        size_t pos = key.find_last_of('.');
+        if (pos == std::string::npos) {
+            // 根节点缓冲区
+            auto it = _buffers.find(key);
+            if (it != _buffers.end()) {
+                // 复制张量值
+                it->second->setData(*tensor);
+            } else if (strict) {
+                throw std::runtime_error("Buffer '" + key + "' not found in model");
+            } else {
+                unmatched_keys.insert(key);
+            }
+        } else {
+            // 递归查找模块
+            std::string module_path = key.substr(0, pos);
+            std::string buffer_name = key.substr(pos + 1);
+
+            Module* module = findModule(module_path);
+            if (module) {
+                auto it = module->_buffers.find(buffer_name);
+                if (it != module->_buffers.end()) {
+                    // 复制张量值
+                    it->second->setData(*tensor);
+                } else if (strict) {
+                    throw std::runtime_error("Buffer '" + key + "' not found in model");
+                } else {
+                    unmatched_keys.insert(key);
+                }
+            } else if (strict) {
+                throw std::runtime_error("Module '" + module_path + "' not found for buffer '" + key + "'");
+            } else {
+                unmatched_keys.insert(key);
+            }
+        }
+    }
+
+    // 3. 在strict模式下检查未匹配的键
+    if (strict && !unmatched_keys.empty()) {
+        std::string error_msg = "Unmatched keys in state dict:";
+        for (const auto& key : unmatched_keys) {
+            error_msg += "\n  " + key;
+        }
+        throw std::runtime_error(error_msg);
+    }
+}
+
+
 std::string Module::extra_expr() const {
      return "";
  }
 
+void Module::operator<<(Module *content) const {
+     std::cout<<extra_expr()<<std::endl;
 
+     std::cout<<className()<<"(\n"<<"   Submodules(\n";
+     auto recursive = [&recursive](std::string name,Module* root)->void {
+         auto children = root->_children;
+         for (auto& [key,val]:children) {
+             if (val->_children.size()) recursive(key,val);
+             else std::cout<<"      Submodule Name:"<<key<<" Submodule ClassName:"<<val->className()<<" Parent:"<<name<<std::endl;
+         }
+     };
+     for (auto& [key,val]:_children) recursive(key,val);
+     std::cout<<"   )\n";
+     std::cout<<"   Parameters(\n";
 
+     for (auto& [key,_]:_parameters) std::cout<<"Parameter Name:"<<key<<std::endl;
+     std::cout<<"   )\n";
+     std::cout<<"   Buffers(\n";
+     for (auto& [key,_]:_buffers) std::cout<<"Buffer Name:"<<key<<std::endl;
+     std::cout<<"   )\n"<<")";
+ }
+
+void Module::save(const std::string& filename) const {
+     std::ofstream os(filename, std::ios::binary | std::ios::trunc);
+     if (!os.is_open()) {
+         throw std::runtime_error("无法打开文件进行写入: " + filename);
+     }
+
+     // 写入文件标识和版本信息
+     const char* magic = "PTH1.0";
+     os.write(magic, 6);
+
+     // 递归保存模块数据
+     save_impl(os);
+ }
+
+void Module::load(const std::string& filename) {
+     std::ifstream is(filename, std::ios::binary);
+     if (!is.is_open()) {
+         throw std::runtime_error("无法打开文件进行读取: " + filename);
+     }
+
+     // 验证文件标识和版本
+     char magic[6];
+     is.read(magic, 6);
+     if (std::strncmp(magic, "PTH1.0", 6) != 0) {
+         throw std::runtime_error("无效的pth文件格式");
+     }
+
+     // 递归加载模块数据
+     load_impl(is);
+ }
+
+void Module::setExtraState(std::vector<std::unordered_map<std::string, Tensor *>> state) {}
+
+std::vector<std::unordered_map<std::string, Tensor *>> Module::getExtraState() const { return std::vector<std::unordered_map<std::string, Tensor *>>();}
 
 void Module::zero_grad() const {
     for (neuron *n : _neurons)

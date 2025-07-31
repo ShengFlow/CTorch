@@ -6,6 +6,7 @@ module;
 #include "../../src/dev/Tensor.h"
 #include <vector>
 #include <unordered_map>
+#include <fstream>
 import functional;
 
 export module nn;
@@ -14,6 +15,10 @@ export module nn;
 struct neuron {
     size_t stage;
     AutoDiff ctx;
+
+    void save(std::ofstream& os) const;
+
+    void load(std::ifstream& is);
 };
 
 export class Parameter : public Tensor{
@@ -27,7 +32,11 @@ public:
     // 基本属性
     bool isInitialized() const;
 
+    void setInitialized(bool status);
+
     Tensor data() const;
+
+    void setData(Tensor data);
 };
 
 export class Buffer : public Tensor {
@@ -41,7 +50,11 @@ public:
     //基本属性
     bool isInitialized() const;
 
+    void setInitialized(bool status);
+
     Tensor data() const;
+
+    void setData(Tensor data);
 };
 
 // 神经网络基类
@@ -53,6 +66,16 @@ export class Module {
     std::unordered_map<std::string,Parameter*> _parameters;
     std::unordered_map<std::string,Buffer*> _buffers;
     std::vector<neuron*> _neurons{nullptr};
+
+    Module* findModule(const std::string& path);
+
+    void save_impl(std::ofstream& os) const;
+
+    void load_impl(std::ifstream& is);
+
+    static void save_tensor(std::ofstream& os, const Tensor& tensor);
+
+    static void load_tensor(std::ifstream& is, Tensor& tensor);
 
   protected:
     virtual Tensor forward(Tensor &input) = 0;
@@ -120,12 +143,26 @@ export class Module {
         }(root);
     }
 
-    // 输出
+    virtual std::string className() const =0;
+
+    // IO
+    std::vector<std::unordered_map<std::string,Tensor*>> state(std::string prefix,bool keepVars) const;
+
+    void loadState(std::vector<std::unordered_map<std::string,Tensor*>> state,bool strict);
+
     virtual std::string extra_expr() const;
 
     void operator<<(Module* content) const;
 
-    // 梯度相关
+    void save(const std::string& filename) const;
+
+    void load(const std::string& filename);
+
+    virtual void setExtraState(std::vector<std::unordered_map<std::string,Tensor*>> state);
+
+    virtual std::vector<std::unordered_map<std::string,Tensor*>> getExtraState() const;
+
+    // 梯度
     void zero_grad() const;
 };
 
