@@ -64,9 +64,6 @@ export class Module {
     std::vector<ForwardHook> _forwardHooks;
     std::vector<FullModuleBackwardHook> _fullModuleBackwardHooks;
 
-
-    Module* findModule(const std::string& path);
-
     void save_impl(std::ofstream& os) const;
 
     void load_impl(std::ifstream& is);
@@ -176,6 +173,12 @@ export class Module {
     ForwardHook forwardHook(size_t idx) const;
 
     FullModuleBackwardHook fullModuleBackwardHook(size_t idx) const;
+
+    Module* findModule(const std::string& path);
+
+    Parameter* findParameter(std::string& path);
+
+    Buffer* findBuffer(std::string& path);
 
     // IO
     std::vector<std::unordered_map<std::string,Tensor*>> state(std::string prefix,bool keepVars) const;

@@ -83,7 +83,7 @@ Module* Module::findModule(const std::string& path) {
      for (const auto& comp : components) {
          auto it = current->_children.find(comp);
          if (it == current->_children.end()) {
-             return nullptr; // 未找到
+             throw std::runtime_error("Module:"+comp+" not found."); // 未找到
          }
          current = it->second;
      }
@@ -489,6 +489,50 @@ FullModuleBackwardHook Module::fullModuleBackwardHook(size_t idx) const {
     if (idx < _fullModuleBackwardHooks.size())
         return _fullModuleBackwardHooks[idx];
     throw std::runtime_error("fullModuleBackwardHook index out of range");
+}
+
+Parameter *Module::findParameter(std::string &path) {
+    // 分割路径为组件
+    std::vector<std::string> components;
+    size_t start = 0, end = 0;
+    while ((end = path.find('.', start)) != std::string::npos) {
+        components.push_back(path.substr(start, end - start));
+        start = end + 1;
+    }
+    components.push_back(path.substr(start));
+
+    // 从当前模块开始遍历
+    Module* parent = this;
+    for (size_t i{0};i<components.size()-1;i++) {
+        auto it = parent->_children.find(components[i]);
+        if (it == parent->_children.end()) {
+            throw std::runtime_error("Module:"+components[i]+" not found."); // 未找到
+        }
+        parent = it->second;
+    }
+    return parent->_parameters.at(components.back());
+}
+
+Buffer* Module::findBuffer(std::string &path) {
+    // 分割路径为组件
+    std::vector<std::string> components;
+    size_t start = 0, end = 0;
+    while ((end = path.find('.', start)) != std::string::npos) {
+        components.push_back(path.substr(start, end - start));
+        start = end + 1;
+    }
+    components.push_back(path.substr(start));
+
+    // 从当前模块开始遍历
+    Module* parent = this;
+    for (size_t i{0};i<components.size()-1;i++) {
+        auto it = parent->_children.find(components[i]);
+        if (it == parent->_children.end()) {
+            throw std::runtime_error("Module:"+components[i]+" not found."); // 未找到
+        }
+        parent = it->second;
+    }
+    return parent->_buffers.at(components.back());
 }
 
 std::vector<std::unordered_map<std::string,Tensor*>>  Module::state(std::string prefix="",bool keepVars=false) const {
