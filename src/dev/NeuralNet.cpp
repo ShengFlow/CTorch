@@ -13,25 +13,6 @@ module;
 
 module nn;
 
-// Neuron
-void neuron::save(std::ofstream& os) const {
-    if (!os) {
-        throw std::runtime_error("神经元保存失败：输出流无效");
-    }
-    // 仅保存stage（ctx在加载时重新初始化）
-    os.write(reinterpret_cast<const char*>(&stage), sizeof(stage));
-}
-
-void neuron::load(std::ifstream& is) {
-    if (!is) {
-        throw std::runtime_error("神经元加载失败：输入流无效");
-    }
-    // 读取stage
-    is.read(reinterpret_cast<char*>(&stage), sizeof(stage));
-    // 重置自动微分上下文（不加载原有ctx，避免计算图状态不一致）
-    ctx.reset();
-}
-
 // Parameter
  Parameter::Parameter(Tensor data, bool requiresGrad = true) {
      _data = data;
@@ -76,6 +57,17 @@ void Buffer::setData(Tensor data) {
 
 
 // Module
+using ForwardPreHook = HOOK_RET(*)(const Module* self,const std::vector<Tensor&> input);
+using ForwardHook = HOOK_RET(*)(const Module* self,const std::vector<Tensor&> grad_input, std::vector<Tensor&> grad_output);
+using FullModuleBackwardHook = HOOK_RET(*)(const Module& self,const std::vector<Tensor&> grad_input, std::vector<Tensor&> grad_output);
+
+void Module::zero_grad() {ctx.zero_grad(ctx.rootPtr());}
+
+void Module::backward() {
+     ctx.backward((ctx.rootPtr())->tensor);
+     for (auto fn:_fullModuleBackwardHooks) fn(*this,ctx.inputGrad(),ctx.outputGrad()); // TODO：这里要等奕帆修完才行，应该多输出对应多梯度张量
+ }
+
 Module* Module::findModule(const std::string& path) {
      // 分割路径为组件
      std::vector<std::string> components;
@@ -153,17 +145,6 @@ void Module::save_impl(std::ofstream& os) const {
         // 如果已初始化，保存数据
         if (pair.second->isInitialized()) {
             save_tensor(os, pair.second->data());
-        }
-    }
-
-    // 保存神经元信息
-    size_t neurons_count = _neurons.size();
-    os.write(reinterpret_cast<const char*>(&neurons_count), sizeof(neurons_count));
-
-    // 这里假设neuron类也有save方法
-    for (const auto& neuron : _neurons) {
-        if (neuron) {
-            neuron->save(os);
         }
     }
 }
@@ -259,21 +240,6 @@ void Module::load_impl(std::ifstream& is) {
             it->second->setInitialized(false);
         }
     }
-
-    // 加载神经元信息
-    size_t neurons_count;
-    is.read(reinterpret_cast<char*>(&neurons_count), sizeof(neurons_count));
-
-    if (neurons_count != _neurons.size()) {
-        throw std::runtime_error("神经元数量不匹配");
-    }
-
-    // 这里假设neuron类也有load方法
-    for (auto& neuron : _neurons) {
-        if (neuron) {
-            neuron->load(is);
-        }
-    }
 }
 
 void Module::save_tensor(std::ofstream& os, const Tensor& tensor) {
@@ -340,7 +306,14 @@ void Module::load_tensor(std::ifstream& is, Tensor& tensor) {
      }
  }
 
-Tensor Module::operator()(Tensor &input) { return forward(input); }
+Tensor Module::operator()(Tensor &input) {
+     for (auto fn:_forwardPreHooks)
+         if (fn(this,input).has_value()) input = fn(this, input).value();
+    Tensor result = forward(input);
+    for (auto fn:_forwardHooks)
+        if (fn(this,input,result).has_value()) result = fn(this, input, result).value();
+    return result;
+ }
 
 void Module::train(bool recur) {
     if (recur) {
@@ -466,6 +439,57 @@ std::vector<Buffer> Module::buffers(std::initializer_list<std::string> names) co
      for (std::string name:names) result.push_back(*(_buffers.at(name)));
      return result;
  }
+
+void Module::registerForwardPreHook(const ForwardPreHook func) { _forwardPreHooks.push_back(func); }
+
+void Module::registerForwardHook(const ForwardHook func) { _forwardHooks.push_back(func); }
+
+void Module::registerFullModuleBackwardHook(const FullModuleBackwardHook func) { _fullModuleBackwardHooks.push_back(func); }
+
+void Module::removeForwardPreHook(const size_t idx) {
+     if (idx<_forwardPreHooks.size()) _forwardPreHooks.erase(_forwardPreHooks.begin()+idx);
+     else throw std::runtime_error("removeForwardPreHook index out of range");
+ }
+
+void Module::removeForwardHook(const size_t idx) {
+     if (idx<_forwardHooks.size()) _forwardHooks.erase(_forwardHooks.begin()+idx);
+     else throw std::runtime_error("removeForwardHook index out of range");
+ }
+
+void Module::removeFullModuleBackwardHook(const size_t idx) {
+     if (idx<_fullModuleBackwardHooks.size()) _fullModuleBackwardHooks.erase(_fullModuleBackwardHooks.begin()+idx);
+     else throw std::runtime_error("removeFullModuleBackwardHook index out of range");
+ }
+
+void Module::removeAllForwardPreHooks() { _forwardPreHooks.clear(); }
+
+void Module::removeAllForwardHooks() { _fullModuleBackwardHooks.clear(); }
+
+void Module::removeAllFullModuleBackwardHooks() { _fullModuleBackwardHooks.clear(); }
+
+std::vector<ForwardPreHook> Module::forwardPreHooks() const {return _forwardPreHooks;}
+
+std::vector<ForwardHook> Module::forwardHooks() const {return _forwardHooks;}
+
+std::vector<FullModuleBackwardHook> Module::fullModuleBackwardHooks() const { return _fullModuleBackwardHooks; }
+
+ForwardPreHook Module::forwardPreHook(size_t idx) const {
+    if (idx < _forwardPreHooks.size())
+        return _forwardPreHooks[idx];
+    throw std::runtime_error("forwardPreHook index out of range");
+}
+
+ForwardHook Module::forwardHook(size_t idx) const {
+    if (idx < _forwardHooks.size())
+        return _forwardHooks[idx];
+    throw std::runtime_error("forwardHook index out of range");
+}
+
+FullModuleBackwardHook Module::fullModuleBackwardHook(size_t idx) const {
+    if (idx < _fullModuleBackwardHooks.size())
+        return _fullModuleBackwardHooks[idx];
+    throw std::runtime_error("fullModuleBackwardHook index out of range");
+}
 
 std::vector<std::unordered_map<std::string,Tensor*>>  Module::state(std::string prefix="",bool keepVars=false) const {
      std::unordered_map<std::string,Tensor*> parameters;
@@ -659,9 +683,4 @@ void Module::load(const std::string& filename) {
 void Module::setExtraState(std::vector<std::unordered_map<std::string, Tensor *>> state) {}
 
 std::vector<std::unordered_map<std::string, Tensor *>> Module::getExtraState() const { return std::vector<std::unordered_map<std::string, Tensor *>>();}
-
-void Module::zero_grad() const {
-    for (neuron *n : _neurons)
-        n->ctx.zero_grad(n->ctx.rootPtr());
-}
 

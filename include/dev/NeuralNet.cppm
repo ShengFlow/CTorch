@@ -11,23 +11,13 @@ import functional;
 
 export module nn;
 
-// 神经元结构体
-struct neuron {
-    size_t stage;
-    AutoDiff ctx;
-
-    void save(std::ofstream& os) const;
-
-    void load(std::ifstream& is);
-};
-
 export class Parameter : public Tensor{
 private:
     Tensor _data;
     bool _initialized{false};
 public:
     // 构造
-    Parameter(Tensor data,bool requiresGrad);
+    explicit Parameter(Tensor data,bool requiresGrad);
 
     // 基本属性
     bool isInitialized() const;
@@ -65,7 +55,15 @@ export class Module {
     std::unordered_map<std::string,Module*> _children;
     std::unordered_map<std::string,Parameter*> _parameters;
     std::unordered_map<std::string,Buffer*> _buffers;
-    std::vector<neuron*> _neurons{nullptr};
+    AutoDiff ctx;
+
+    using ForwardPreHook = HOOK_RET(*)(const Module* self,const std::vector<Tensor&> input);
+    using ForwardHook = HOOK_RET(*)(const Module* self,const std::vector<Tensor&> grad_input, std::vector<Tensor&> grad_output);
+    using FullModuleBackwardHook = HOOK_RET(*)(const Module& self,const std::vector<Tensor&> grad_input, std::vector<Tensor&> grad_output);
+    std::vector<ForwardPreHook> _forwardPreHooks;
+    std::vector<ForwardHook> _forwardHooks;
+    std::vector<FullModuleBackwardHook> _fullModuleBackwardHooks;
+
 
     Module* findModule(const std::string& path);
 
@@ -77,12 +75,16 @@ export class Module {
 
     static void load_tensor(std::ifstream& is, Tensor& tensor);
 
-  protected:
-    virtual Tensor forward(Tensor &input) = 0;
-
   public:
     // 构造&析构
     virtual ~Module() = default;
+
+    // 功能性函数
+    void zero_grad();
+
+    virtual Tensor forward(Tensor &input) = 0;
+
+    void backward();
 
     // 运算符重载
     Tensor operator()(Tensor &input);
@@ -101,7 +103,7 @@ export class Module {
     std::vector<Module*> childrenRecur(Module* root) const;
 
     template<typename...Args>
-    void Module::apply(Module* root,auto func,Args...args) {
+    void apply(Module* root,auto func,Args...args) {
         auto recursive = [&func, &recursive, &args](Module* root)->void {
             std::unordered_map<std::string,Module*> children = root->_children;
             for (auto [_,child]:children) {
@@ -145,6 +147,36 @@ export class Module {
 
     virtual std::string className() const =0;
 
+    void registerForwardPreHook(ForwardPreHook func);
+
+    void registerForwardHook(ForwardHook func);
+
+    void registerFullModuleBackwardHook(FullModuleBackwardHook func);
+
+    void removeForwardPreHook(size_t idx);
+
+    void removeForwardHook(size_t idx);
+
+    void removeFullModuleBackwardHook(size_t idx);
+
+    void removeAllForwardPreHooks();
+
+    void removeAllForwardHooks();
+
+    void removeAllFullModuleBackwardHooks();
+
+    std::vector<ForwardPreHook> forwardPreHooks() const;
+
+    std::vector<ForwardHook> forwardHooks() const;
+
+    std::vector<FullModuleBackwardHook> fullModuleBackwardHooks() const;
+
+    ForwardPreHook forwardPreHook(size_t idx) const;
+
+    ForwardHook forwardHook(size_t idx) const;
+
+    FullModuleBackwardHook fullModuleBackwardHook(size_t idx) const;
+
     // IO
     std::vector<std::unordered_map<std::string,Tensor*>> state(std::string prefix,bool keepVars) const;
 
@@ -161,8 +193,5 @@ export class Module {
     virtual void setExtraState(std::vector<std::unordered_map<std::string,Tensor*>> state);
 
     virtual std::vector<std::unordered_map<std::string,Tensor*>> getExtraState() const;
-
-    // 梯度
-    void zero_grad() const;
 };
 

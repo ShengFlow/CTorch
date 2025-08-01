@@ -29,6 +29,12 @@
 #include <string>
 #include <unordered_set>
 #include <stack>
+#include <optional>
+
+#ifndef HOOK_RET
+#define HOOK_RET std::optional<Tensor>
+#endif
+
 // ======================= 类型定义和枚举 =======================
 
 // 设备类型 - 定义张量存储的位置
@@ -327,6 +333,9 @@ private:
     DType _dtype;                 // 张量元素的数据类型
     Storage _storage;             // 存储张量数据的对象
     AutoDiff* autograd_ctx = nullptr; // 自动微分上下文指针
+
+    using Hook = HOOK_RET(*)(Tensor& self);
+    std::vector<Hook> _hooks;
 
     // ======================= 内部辅助函数 =======================
 
@@ -946,11 +955,9 @@ public:
     }
     void set_autograd_ctx(AutoDiff* ctx);
 
-    bool empty() const {
-        return numel() == 0;
-    }
+    bool empty() const { return numel() == 0; }
 
-    Tensor grad() const;
+    Tensor &grad() const;
 
     void setDtype(const DType dtype);
 
@@ -969,6 +976,16 @@ public:
     size_t storageOffset() const;
 
     void clearCtx();
+
+    void registerHook(Hook _fn);
+
+    void removeHook(size_t idx);
+
+    void removeAllHooks();
+
+    std::vector<Hook> hooks() const;
+
+    Hook hook(size_t idx) const;
 
    // 标量乘法成员函数
    Tensor Tensor::operator*(double scalar) const {
@@ -1056,7 +1073,8 @@ class AutoDiff {
    // 计算图节点定义
    struct Node {
        Tensor tensor;                  // 存储的Tensor值
-       Tensor grad;                    // 梯度值
+       Tensor grad;                    // 传入梯度值
+       Tensor output_grad;             // 传出梯度值
        std::vector<Node*> inputs;      // 输入节点指针
        op operation;                   // 操作类型
        bool requires_grad;             // 是否需要梯度
@@ -1078,6 +1096,9 @@ class AutoDiff {
    bool retain_graph = false;                          // 是否保留计算图
 
  public:
+    Tensor inputGrad();
+   Tensor &outputGrad();
+
    // 创建叶子节点
    void make_leaf(Tensor& t, bool requires_grad) {
        if (tensor_to_node.find(&t) != tensor_to_node.end()) {
@@ -1156,6 +1177,8 @@ class AutoDiff {
            root_node->grad = grad_output;
        }
 
+       for (auto fn:root.hooks()) (*fn)(root.grad());
+
        // 拓扑排序（深度优先）
        std::vector<Node*> order;
        std::unordered_set<Node*> visited;
@@ -1220,6 +1243,7 @@ class AutoDiff {
            default:
                throw std::runtime_error("Unsupported operation in backward");
            }
+           for (auto fn:node->tensor.hooks()) (*fn)(node->tensor.grad());
 
            // 如果不是保留计算图，释放中间梯度
            if (!retain_graph && !node->is_leaf) {
@@ -1251,6 +1275,7 @@ class AutoDiff {
            // 处理广播：将梯度reduce到输入形状
            Tensor grad_input = reduce_to_match(grad_out, input_node->tensor.sizes());
            input_node->grad = input_node->grad + grad_input;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1266,11 +1291,13 @@ class AutoDiff {
        if (a->requires_grad) {
            Tensor grad_a = reduce_to_match(grad_out, a->tensor.sizes());
            a->grad = a->grad + grad_a;
+           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            Tensor grad_b = reduce_to_match(grad_out, b->tensor.sizes());
            b->grad = b->grad - grad_b;
+           node->output_grad = b->grad;
        }
    }
 
@@ -1289,6 +1316,7 @@ class AutoDiff {
            // 处理广播梯度
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
+           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
@@ -1296,6 +1324,7 @@ class AutoDiff {
            // 处理广播梯度
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
+           node->output_grad = b->grad;
        }
    }
 
@@ -1313,12 +1342,14 @@ class AutoDiff {
            Tensor grad_a = grad_out / b->tensor;
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
+           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            Tensor grad_b = grad_out * (-a->tensor) / (b->tensor * b->tensor);
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
+           node->output_grad = b->grad;
        }
    }
 
@@ -1338,6 +1369,7 @@ class AutoDiff {
            Tensor grad_a = matMul(grad_out,b_t);
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
+           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
@@ -1346,6 +1378,7 @@ class AutoDiff {
            Tensor grad_b = matMul(a_t,grad_out);
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
+           node->output_grad = b->grad;
        }
    }
 
@@ -1363,12 +1396,14 @@ class AutoDiff {
            // dL/da = dL/dout * b
            Tensor grad_a = grad_out * b->tensor;
            a->grad = a->grad + grad_a;
+           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            // dL/db = dL/dout * a
            Tensor grad_b = grad_out * a->tensor;
            b->grad = b->grad + grad_b;
+           node->output_grad = b->grad;
        }
    }
 
@@ -1382,6 +1417,7 @@ class AutoDiff {
            Tensor sin_x = input_node->tensor.sin();
            Tensor grad = grad_out * (-sin_x);
            input_node->grad = input_node->grad + grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1395,6 +1431,7 @@ class AutoDiff {
            Tensor cos_x = input_node->tensor.cos();
            Tensor grad = grad_out * cos_x;
            input_node->grad = input_node->grad + grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1408,6 +1445,7 @@ class AutoDiff {
            Tensor mask = input_node->tensor > 0.0f;
            Tensor grad = grad_out * mask;
            input_node->grad = input_node->grad + grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1421,6 +1459,7 @@ class AutoDiff {
            Tensor sig_x = node->tensor;
            Tensor grad = grad_out * sig_x * (1.0f - sig_x);
            input_node->grad = input_node->grad + grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1434,6 +1473,7 @@ class AutoDiff {
            Tensor tanh_x = node->tensor;
            Tensor grad = grad_out * (1.0f - tanh_x * tanh_x);
            input_node->grad = input_node->grad + grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1454,6 +1494,7 @@ class AutoDiff {
            Tensor grad_input = s * (grad_out - sum_term);
 
            input_node->grad = input_node->grad + grad_input;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1508,6 +1549,7 @@ class AutoDiff {
            }
 
            input_node->grad = input_node->grad + expanded_grad;
+           node->output_grad = input_node->grad;
        }
    }
 
@@ -1595,6 +1637,8 @@ public:
 
     Node* rootPtr(){return nodes.back().get();}// 由于push_back是把最后的运算符推入到最后面的，所以取最后一个
 
+    Node* topPtr(){return nodes[0].get();}
+
     void reset();
 };
 
@@ -1606,6 +1650,7 @@ inline void AutoDiff::reset() {
     tensor_to_node.clear();
     nodes.clear();
     retain_graph = false;
+    clear_graph();
 }
 
 inline void Tensor::zeroGrad() const { autograd_ctx->zero_grad(autograd_ctx->rootPtr());}
@@ -1625,6 +1670,25 @@ inline void Tensor::clearCtx() {
     autograd_ctx = nullptr;
 }
 
+void Tensor::registerHook(Hook _fn) {
+    _hooks.push_back(std::move(_fn));
+}
+
+inline void Tensor::removeHook(size_t idx) {
+    if (idx < _hooks.size()) {
+        _hooks.erase(_hooks.begin() + idx);
+    }else throw std::runtime_error("Tensor::removeHook: index out of range");
+}
+
+inline void Tensor::removeAllHooks() { _hooks.clear(); }
+
+using Hook = HOOK_RET(*)(Tensor& self);
+inline std::vector<Hook> Tensor::hooks() const{return _hooks;}
+
+inline Hook Tensor::hook(size_t idx) const {
+    if (idx<_hooks.size()) return _hooks[idx];
+    else throw std::runtime_error("Tensor::hook index out of range");
+}
 
 BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
    const std::vector<size_t>& shapeA = a.shape();
@@ -1938,122 +2002,126 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
 }
 
 Tensor matMul(Tensor &a, Tensor &b) {
-   // 检查维度
-   if (a.dim() < 2 || b.dim() < 2) {
-       throw std::runtime_error("Both tensors must be at least 2D for matrix multiplication");
-   }
+    // 检查维度
+    if (a.dim() < 2 || b.dim() < 2) {
+        throw std::runtime_error("Both tensors must be at least 2D for matrix multiplication");
+    }
 
-   // 检查内层维度是否匹配
-   size_t a_cols = a.shape()[a.dim() - 1];
-   size_t b_rows = b.shape()[b.dim() - 2];
+    // 检查内层维度是否匹配
+    size_t a_cols = a.shape()[a.dim() - 1];
+    size_t b_rows = b.shape()[b.dim() - 2];
 
-   if (a_cols != b_rows) {
-       std::ostringstream oss;
-       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
-       throw std::runtime_error(oss.str());
-   }
+    if (a_cols != b_rows) {
+        std::ostringstream oss;
+        oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+        throw std::runtime_error(oss.str());
+    }
 
-   // 处理批量矩阵乘法
-   BroadCastResult logic = broadCast(a, b);
-   const std::vector<size_t>& batch_dims = logic.logicShape;
-   size_t batch_size = std::accumulate(batch_dims.begin(), batch_dims.end() - 2, 1, std::multiplies<size_t>());
-   size_t M = a.shape()[a.dim() - 2];
-   size_t K = a.shape()[a.dim() - 1];
-   size_t N = b.shape()[b.dim() - 1];
+    // 处理批量矩阵乘法
+    BroadCastResult logic                 = broadCast(a, b);
+    const std::vector<size_t> &batch_dims = logic.logicShape;
+    size_t batch_size =
+        std::accumulate(batch_dims.begin(), batch_dims.end() - 2, 1, std::multiplies<size_t>());
+    size_t M = a.shape()[a.dim() - 2];
+    size_t K = a.shape()[a.dim() - 1];
+    size_t N = b.shape()[b.dim() - 1];
 
-   // 创建结果张量
-   std::vector<size_t> result_shape = batch_dims;
-   result_shape[result_shape.size() - 2] = M;
-   result_shape[result_shape.size() - 1] = N;
+    // 创建结果张量
+    std::vector<size_t> result_shape      = batch_dims;
+    result_shape[result_shape.size() - 2] = M;
+    result_shape[result_shape.size() - 1] = N;
 
-   ShapeTag tag;
-   Tensor result(tag, result_shape, a.dtype(), a.device());
-   result.zero();
+    ShapeTag tag;
+    Tensor result(tag, result_shape, a.dtype(), a.device());
+    result.zero();
 
-   // 根据数据类型进行计算
-   switch (a.dtype()) {
-   case DType::kFloat: {
-       const float* a_data = a.data<float>();
-       const float* b_data = b.data<float>();
-       float* r_data = result.data<float>();
+    // 根据数据类型进行计算
+    switch (a.dtype()) {
+    case DType::kFloat: {
+        const float *a_data = a.data<float>();
+        const float *b_data = b.data<float>();
+        float *r_data       = result.data<float>();
 
-       // 批量矩阵乘法
-       for (size_t batch = 0; batch < batch_size; ++batch) {
-           for (size_t i = 0; i < M; ++i) {
-               for (size_t k = 0; k < K; ++k) {
-                   float a_val = a_data[batch * M * K + i * K + k];
-                   for (size_t j = 0; j < N; ++j) {
-                       r_data[batch * M * N + i * N + j] +=
-                           a_val * b_data[batch * K * N + k * N + j];
-                   }
-               }
-           }
-       }
-       break;
-   }
-   case DType::kDouble: {
-       const double * a_data = a.data<double>();
-       const double* b_data = b.data<double>();
-       double* r_data = result.data<double>();
+        // 批量矩阵乘法
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t k = 0; k < K; ++k) {
+                    float a_val = a_data[batch * M * K + i * K + k];
+                    for (size_t j = 0; j < N; ++j) {
+                        r_data[batch * M * N + i * N + j] +=
+                            a_val * b_data[batch * K * N + k * N + j];
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double *a_data = a.data<double>();
+        const double *b_data = b.data<double>();
+        double *r_data       = result.data<double>();
 
-       // 批量矩阵乘法
-       for (size_t batch = 0; batch < batch_size; ++batch) {
-           for (size_t i = 0; i < M; ++i) {
-               for (size_t k = 0; k < K; ++k) {
-                   float a_val = a_data[batch * M * K + i * K + k];
-                   for (size_t j = 0; j < N; ++j) {
-                       r_data[batch * M * N + i * N + j] +=
-                           a_val * b_data[batch * K * N + k * N + j];
-                   }
-               }
-           }
-       }
-       break;
-   }
-   case DType::kInt: {
-       const int* a_data = a.data<int>();
-       const int* b_data = b.data<int>();
-       int* r_data = result.data<int>();
+        // 批量矩阵乘法
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t k = 0; k < K; ++k) {
+                    float a_val = a_data[batch * M * K + i * K + k];
+                    for (size_t j = 0; j < N; ++j) {
+                        r_data[batch * M * N + i * N + j] +=
+                            a_val * b_data[batch * K * N + k * N + j];
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case DType::kInt: {
+        const int *a_data = a.data<int>();
+        const int *b_data = b.data<int>();
+        int *r_data       = result.data<int>();
 
-       // 批量矩阵乘法
-       for (size_t batch = 0; batch < batch_size; ++batch) {
-           for (size_t i = 0; i < M; ++i) {
-               for (size_t k = 0; k < K; ++k) {
-                   float a_val = a_data[batch * M * K + i * K + k];
-                   for (size_t j = 0; j < N; ++j) {
-                       r_data[batch * M * N + i * N + j] +=
-                           a_val * b_data[batch * K * N + k * N + j];
-                   }
-               }
-           }
-       }
-       break;
-   }
-   case DType::kLong: {
-       const long * a_data = a.data<long>();
-       const long * b_data = b.data<long>();
-       long* r_data = result.data<long>();
+        // 批量矩阵乘法
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t k = 0; k < K; ++k) {
+                    float a_val = a_data[batch * M * K + i * K + k];
+                    for (size_t j = 0; j < N; ++j) {
+                        r_data[batch * M * N + i * N + j] +=
+                            a_val * b_data[batch * K * N + k * N + j];
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case DType::kLong: {
+        const long *a_data = a.data<long>();
+        const long *b_data = b.data<long>();
+        long *r_data       = result.data<long>();
 
-       // 批量矩阵乘法
-       for (size_t batch = 0; batch < batch_size; ++batch) {
-           for (size_t i = 0; i < M; ++i) {
-               for (size_t k = 0; k < K; ++k) {
-                   float a_val = a_data[batch * M * K + i * K + k];
-                   for (size_t j = 0; j < N; ++j) {
-                       r_data[batch * M * N + i * N + j] +=
-                           a_val * b_data[batch * K * N + k * N + j];
-                   }
-               }
-           }
-       }
-       break;
-   }
-   default:
-       throw std::runtime_error("Unsupported dtype for matMul");
-   }
+        // 批量矩阵乘法
+        for (size_t batch = 0; batch < batch_size; ++batch) {
+            for (size_t i = 0; i < M; ++i) {
+                for (size_t k = 0; k < K; ++k) {
+                    float a_val = a_data[batch * M * K + i * K + k];
+                    for (size_t j = 0; j < N; ++j) {
+                        r_data[batch * M * N + i * N + j] +=
+                            a_val * b_data[batch * K * N + k * N + j];
+                    }
+                }
+            }
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported dtype for matMul");
+    }
 
-   return result;
+    return result;
 }
+
+inline Tensor AutoDiff::inputGrad() { return rootPtr()->grad; }
+inline Tensor &AutoDiff::outputGrad() { return topPtr()->output_grad; }
 
 Tensor Tensor::operator*(const Tensor &rhs) const {
    // 验证形状和类型匹配
@@ -2383,42 +2451,38 @@ Tensor Tensor::sin() const {
 }
 
 Tensor Tensor::cos() const {
-   Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
-   switch (_dtype) {
-   case DType::kFloat: {
-       const float* src = data<float>();
-       float* dst = result.data<float>();
-       for (size_t i = 0; i < numel(); ++i) {
-           dst[i] = std::cos(src[i]);
-       }
-       break;
-   }
-   case DType::kDouble: {
-       const double* src = data<double>();
-       double* dst = result.data<double>();
-       for (size_t i = 0; i < numel(); ++i) {
-           dst[i] = std::cos(src[i]);
-       }
-       break;
-   }
-   default:
-       throw std::runtime_error("Unsupported dtype for cos");
-   }
+    Tensor result(ShapeTag{}, _shape, _dtype, _device);
+    result.autograd_ctx = this->autograd_ctx; // 继承上下文
+    switch (_dtype) {
+    case DType::kFloat: {
+        const float *src = data<float>();
+        float *dst       = result.data<float>();
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = std::cos(src[i]);
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double *src = data<double>();
+        double *dst       = result.data<double>();
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = std::cos(src[i]);
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported dtype for cos");
+    }
 
-   // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
-           op::Cos,
-           {const_cast<Tensor*>(this)}
-       );
-   }
+    // 记录操作到自动微分计算图
+    if (autograd_ctx) {
+        autograd_ctx->record_op(result, op::Cos, {const_cast<Tensor *>(this)});
+    }
 
-   return result;
+    return result;
 }
 
-Tensor Tensor::grad() const {
+Tensor &Tensor::grad() const {
    if (!autograd_ctx) throw std::runtime_error("No autograd context");
    auto* node = autograd_ctx->get_node(const_cast<Tensor*>(this));
    if (!node || node->grad.empty()) throw std::runtime_error("No gradient available");
