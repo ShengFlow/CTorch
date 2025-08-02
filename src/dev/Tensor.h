@@ -1,15 +1,3 @@
-/*
-* Tensor.h
-* Created by Beapoe & GhostFace on 2025.7
-* Main Classes: Storage & Tensor & Auto_diff
-* Version : v1.7 (fixed on 2025.7.29 15:59)
-* Log 1.3: 增加了注释及代码易读性
-* Log 1.4: 增加了AutoDiff自动微分类
-* Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
-* Log 1.6: 修复了广播操作并对所有二元操作进行广播处理，优化了矩阵乘法
-* Log 1.7: 增加了标量运算
-* Unfix : matMul
-*/
 
 // includes
 #include <algorithm>
@@ -178,7 +166,7 @@ template <typename T>
             return DType::kLong;
         }
     } else {
-        // 不支持的类型（编译时错误）
+        // 不支持的类型（运行时错误）
         throw std::runtime_error("Unsupported type for DType conversion");
     }
 }
@@ -326,7 +314,6 @@ struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 class Tensor {
 private:
     bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
-    // 张量的维度大小
     std::vector<size_t> _strides; // 每个维度的步幅
     size_t _storage_offset;       // 存储中的起始偏移量
     DeviceType _device;           // 张量所在的设备
@@ -1040,13 +1027,12 @@ public:
 
    // 新增标量函数
    Tensor operator*(float scalar) const;
-   Tensor operator*(double scalar) const;
+
    Tensor operator*(int scalar) const;
+
    Tensor operator*(long scalar) const;
 
 };
-
-
 
 inline Tensor operator*(float factor, const Tensor& a) {
     return a * factor;
@@ -1264,7 +1250,7 @@ class AutoDiff {
    }
 
  private:
-   // ======================= 反向传播函数 =======================
+
 
    // 加法反向传播（已支持广播）
    void backward_add(Node* node) {

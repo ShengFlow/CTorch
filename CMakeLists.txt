@@ -14,11 +14,13 @@ target_sources(CTorch
         include/dev/Tensor.cppm
         include/dev/NeuralNet.cppm
         include/dev/Functional.cppm
+        include/dev/Tensor_dev.cppm
 
         PRIVATE
         src/dev/Tensor.cpp
         src/dev/NeuralNet.cpp
         src/dev/Functional.cpp
+        src/dev/Tensor_dev.cpp
 )
 
 add_executable(test src/dev/test/test.cpp)
