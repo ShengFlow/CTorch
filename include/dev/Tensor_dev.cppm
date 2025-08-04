@@ -926,23 +926,16 @@ class AutoGrad {
 private:
     // 计算图节点定义
     struct Node {
-        Tensor tensor;                  // 存储的Tensor值
-        Tensor input_grad;              // 传出梯度值
-        Tensor output_grad;             // 传入梯度值
-        std::vector<Node*> inputs;      // 输入节点指针
-        op operation;                   // 操作类型
-        bool requires_grad;             // 是否需要梯度
-        bool is_leaf;                   // 是否为叶子节点
-        size_t retain_count = 0;        // 保留计数（用于高阶导数）
+        Tensor tensor;                   // 存储的Tensor值
+        Tensor grad;                     // 传出梯度值
+        std::vector<Tensor> output_grads;// 传入梯度值
+        std::vector<Node*> inputs;       // 输入节点指针
+        op operation;                    // 操作类型
+        bool requires_grad;              // 是否需要梯度
+        bool is_leaf;                    // 是否为叶子节点
+        size_t retain_count = 0;         // 保留计数（用于高阶导数）
 
-        Node(Tensor t, bool req_grad, bool leaf = true)
-            : tensor(std::move(t)), requires_grad(req_grad), is_leaf(leaf) {
-            if (requires_grad) {
-                // 初始化梯度为相同形状的零张量
-                input_grad = Tensor(ShapeTag{}, tensor.shape(), tensor.dtype(), tensor.device());
-                input_grad.zero();
-            }
-        }
+        Node(Tensor t, bool req_grad, bool leaf = true);
     };
 
     std::unordered_map<Tensor*, Node*> tensor_to_node;  // Tensor到节点的映射
@@ -1014,11 +1007,11 @@ public:
     // 获取节点
     Node* get_node(Tensor *t);
 
-    // 获取计算图起始节点
-    const Node* rootPtr();
-
-    // 获取计算图终节点
-    const Node* topPtr();
+    // // 获取计算图起始节点
+    // const Node* rootPtr();
+    //
+    // // 获取计算图终节点
+    // const Node* topPtr();
 
     // ======================= 操作 =======================
     // 创建叶子节点
@@ -1031,11 +1024,11 @@ public:
     // 反向传播
     void backward(Tensor& root, Tensor grad_output = Tensor());
 
-    // 清空梯度
-    static void zero_grad(Node* root);
+    // // 清空梯度
+    // static void zero_grad(Node* root);
 
     // 清空计算图
     void clearGraph();
 };
 
-BroadCastResult broadCast(const Tensor& a, const Tensor& b); // 广播函数
+export BroadCastResult broadCast(const Tensor& a, const Tensor& b); // 广播函数

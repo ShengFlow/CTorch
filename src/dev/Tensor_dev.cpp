@@ -17,6 +17,7 @@ module;
 #include <stdexcept>
 #include <numeric>
 #include <iostream>
+#include <unordered_set>
 
 module Tensor_dev;
 
@@ -129,7 +130,7 @@ Tensor Tensor::cos() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
+        const auto* src = data<float>();
         float* dst = result.data<float>();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = std::cos(src[i]);
@@ -1788,3 +1789,524 @@ AutoGradContext::Guard::Guard(AutoGrad *ctx):prev_ctx(current()) {
 }
 
  AutoGradContext::Guard::~Guard() { current() = prev_ctx; }
+
+AutoGrad::Node::Node(Tensor t, bool req_grad, bool leaf)
+    : tensor(std::move(t)), requires_grad(req_grad), is_leaf(leaf) {
+    if (requires_grad) {
+        // 初始化梯度为相同形状的零张量
+        grad = Tensor(ShapeTag{}, tensor.shape(), tensor.dtype(), tensor.device());
+        grad.zero();
+    }
+}
+
+void AutoGrad::backward_add(Node *node) {
+    Tensor& grad_out = node->grad;
+    for (Node* input_node : node->inputs) {
+        if (!input_node->requires_grad) continue;
+
+        // 处理广播：将梯度reduce到输入形状
+        Tensor grad_input = reduce_to_match(grad_out, input_node->tensor.shape());
+        input_node->grad = input_node->grad + grad_input;
+    }
+}
+
+void AutoGrad::backward_sub(Node *node) {
+    Tensor& grad_out = node->grad;
+    if (node->inputs.size() != 2) {
+        throw std::runtime_error("Subtraction requires exactly 2 inputs");
+    }
+
+    Node* a = node->inputs[0];
+    Node* b = node->inputs[1];
+
+    if (a->requires_grad) {
+        Tensor grad_a = reduce_to_match(grad_out, a->tensor.shape());
+        a->grad = a->grad + grad_a;
+    }
+
+    if (b->requires_grad) {
+        Tensor grad_b = reduce_to_match(grad_out, b->tensor.shape());
+        b->grad = b->grad - grad_b;
+    }
+}
+
+void AutoGrad::backward_mul(Node *node) {
+    Tensor& grad_out = node->grad;
+    if (node->inputs.size() != 2) {
+        throw std::runtime_error("Multiplication requires exactly 2 inputs");
+    }
+
+    Node* a = node->inputs[0];
+    Node* b = node->inputs[1];
+
+    if (a->requires_grad) {
+        Tensor grad_a = grad_out * b->tensor;
+        // 处理广播梯度
+        grad_a = reduce_to_match(grad_a, a->tensor.shape());
+        a->grad = a->grad + grad_a;
+    }
+
+    if (b->requires_grad) {
+        Tensor grad_b = grad_out * a->tensor;
+        // 处理广播梯度
+        grad_b = reduce_to_match(grad_b, b->tensor.shape());
+        b->grad = b->grad + grad_b;
+    }
+}
+
+void AutoGrad::backward_div(Node *node) {
+    Tensor& grad_out = node->grad;
+    if (node->inputs.size() != 2) {
+        throw std::runtime_error("Division requires exactly 2 inputs");
+    }
+
+    Node* a = node->inputs[0];
+    Node* b = node->inputs[1];
+
+    if (a->requires_grad) {
+        Tensor grad_a = grad_out / b->tensor;
+        grad_a = reduce_to_match(grad_a, a->tensor.shape());
+        a->grad = a->grad + grad_a;
+    }
+
+    if (b->requires_grad) {
+        Tensor grad_b = grad_out * (-a->tensor) / (b->tensor * b->tensor);
+        grad_b = reduce_to_match(grad_b, b->tensor.shape());
+        b->grad = b->grad + grad_b;
+    }
+}
+
+void AutoGrad::backward_matmul(Node *node) {
+    Tensor& grad_out = node->grad;
+    if (node->inputs.size() != 2) {
+        throw std::runtime_error("Matrix multiplication requires exactly 2 inputs");
+    }
+
+    Node* a = node->inputs[0];
+    Node* b = node->inputs[1];
+
+    if (a->requires_grad) {
+        // dL/dA = dL/dC * B^T
+        Tensor b_t = b->tensor.transpose_last_two();
+        Tensor grad_a = matMul(grad_out,b_t);
+        grad_a = reduce_to_match(grad_a, a->tensor.shape());
+        a->grad = a->grad + grad_a;
+    }
+
+    if (b->requires_grad) {
+        // dL/dB = A^T * dL/dC
+        Tensor a_t = a->tensor.transpose_last_two();
+        Tensor grad_b = matMul(a_t,grad_out);
+        grad_b = reduce_to_match(grad_b, b->tensor.shape());
+        b->grad = b->grad + grad_b;
+    }
+}
+
+void AutoGrad::backward_dot(Node *node) {
+    Tensor& grad_out = node->grad;
+    if (node->inputs.size() != 2) {
+        throw std::runtime_error("Dot product requires exactly 2 inputs");
+    }
+
+    Node* a = node->inputs[0];
+    Node* b = node->inputs[1];
+
+    if (a->requires_grad) {
+        // dL/da = dL/dout * b
+        Tensor grad_a = grad_out * b->tensor;
+        a->grad = a->grad + grad_a;
+    }
+
+    if (b->requires_grad) {
+        // dL/db = dL/dout * a
+        Tensor grad_b = grad_out * a->tensor;
+        b->grad = b->grad + grad_b;
+    }
+}
+
+void AutoGrad::backward_cos(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // ∂cos(x)/∂x = -sin(x)
+        Tensor sin_x = input_node->tensor.sin();
+        Tensor grad = grad_out * (-sin_x);
+        input_node->grad = input_node->grad + grad;
+    }
+}
+
+void AutoGrad::backward_sin(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // ∂sin(x)/∂x = cos(x)
+        Tensor cos_x = input_node->tensor.cos();
+        Tensor grad = grad_out * cos_x;
+        input_node->grad = input_node->grad + grad;
+    }
+}
+
+void AutoGrad::backward_relu(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // ∂ReLU(x)/∂x = {1 if x > 0, else 0}
+        Tensor mask = input_node->tensor > 0.0f;
+        Tensor grad = grad_out * mask;
+        input_node->grad = input_node->grad + grad;
+    }
+}
+
+void AutoGrad::backward_sigmoid(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // ∂sigmoid(x)/∂x = sigmoid(x) * (1 - sigmoid(x))
+        Tensor sig_x = node->tensor;
+        Tensor grad = grad_out * sig_x * (1.0f - sig_x);
+        input_node->grad = input_node->grad + grad;
+    }
+}
+
+void AutoGrad::backward_tanh(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // ∂tanh(x)/∂x = 1 - tanh²(x)
+        Tensor tanh_x = node->tensor;
+        Tensor grad = grad_out * (1.0f - tanh_x * tanh_x);
+        input_node->grad = input_node->grad + grad;
+    }
+}
+
+void AutoGrad::backward_softmax(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // 简化实现：更高效的方式是使用雅可比矩阵
+        Tensor s = node->tensor;
+        Tensor grad = grad_out;
+
+        // 计算 (grad_out * s) 的和
+        Tensor sum_term = (grad_out * s).sum(-1, true);
+
+        // ∂L/∂x = s * (grad_out - sum_term)
+        Tensor grad_input = s * (grad_out - sum_term);
+
+        input_node->grad = input_node->grad + grad_input;
+    }
+}
+
+void AutoGrad::backward_sum(Node *node) {
+    Tensor& grad_out = node->grad;
+    Node* input_node = node->inputs[0];
+
+    if (input_node->requires_grad) {
+        // 将梯度广播回原始形状
+        Tensor expanded_grad;
+
+        // 如果原始张量是标量，直接使用梯度
+        if (input_node->tensor.shape().empty()) {
+            expanded_grad = grad_out;
+        }
+        // 如果梯度形状与输入形状匹配
+        else if (grad_out.shape() == input_node->tensor.shape()) {
+            expanded_grad = grad_out;
+        }
+        // 需要广播的情况
+        else {
+            // 创建与输入相同形状的张量
+            expanded_grad = Tensor(ShapeTag{}, input_node->tensor.shape(),
+                                   grad_out.dtype(), grad_out.device());
+
+            // 用梯度值填充整个张量
+            switch (grad_out.dtype()) {
+            case DType::kFloat: {
+                float value = grad_out.item<float>();
+                expanded_grad.fill(value);
+                break;
+            }
+            case DType::kDouble: {
+                double value = grad_out.item<double>();
+                expanded_grad.fill(value);
+                break;
+            }
+            case DType::kInt: {
+                int32_t value = grad_out.item<int32_t>();
+                expanded_grad.fill(static_cast<float>(value));
+                break;
+            }
+            case DType::kLong: {
+                int64_t value = grad_out.item<int64_t>();
+                expanded_grad.fill(static_cast<float>(value));
+                break;
+            }
+            default:
+                throw std::runtime_error("Unsupported dtype in sum backward");
+            }
+        }
+
+        input_node->grad = input_node->grad + expanded_grad;
+    }
+}
+
+Tensor AutoGrad::reduce_to_match(Tensor grad, const std::vector<size_t> &target_shape) {
+    if (grad.shape() == target_shape) {
+        return grad;
+    }
+
+    // 计算需要求和的维度
+    std::vector<int> reduce_dims;
+    std::vector<size_t> grad_shape = grad.shape();
+    std::vector<size_t> target = target_shape;
+
+    // 从后往前对齐维度
+    int g_idx = static_cast<int>(grad_shape.size()) - 1;
+    int t_idx = static_cast<int>(target.size()) - 1;
+
+    while (g_idx >= 0 || t_idx >= 0) {
+        size_t g_dim = (g_idx >= 0) ? grad_shape[g_idx] : 1;
+        size_t t_dim = (t_idx >= 0) ? target[t_idx] : 1;
+
+        if (g_dim != t_dim) {
+            if (t_dim == 1) {
+                // 梯度在这个维度上需要求和
+                reduce_dims.push_back(g_idx);
+            } else if (g_dim == 1) {
+                // 不需要操作，维度大小1会自动扩展
+            } else {
+                throw std::runtime_error("Cannot reduce gradient to target shape");
+            }
+        }
+
+        if (g_idx >= 0) g_idx--;
+        if (t_idx >= 0) t_idx--;
+    }
+
+    // 在需要求和的维度上求和
+    if (!reduce_dims.empty()) {
+        Tensor reduced = grad.sum(reduce_dims, true);
+
+        // 移除多余的维度（如果需要）
+        std::vector<size_t> reduced_shape = reduced.shape();
+        std::vector<size_t> new_shape;
+        for (size_t i = 0; i < reduced_shape.size(); i++) {
+            if (std::find(reduce_dims.begin(), reduce_dims.end(), i) == reduce_dims.end()) {
+                new_shape.push_back(reduced_shape[i]);
+            }
+        }
+
+        if (new_shape != target_shape) {
+            throw std::runtime_error("Failed to reduce gradient to target shape");
+        }
+
+        return reduced;
+    }
+
+    return grad;
+}
+
+Tensor AutoGrad::getGrad(Tensor *t) {
+    auto it = tensor_to_node.find(t);
+    if (it != tensor_to_node.end() && it->second) {
+        return it->second->grad;
+    }
+    return {}; // 返回空张量
+}
+
+void AutoGrad::zeroGrad(Tensor *t) {
+    auto it = tensor_to_node.find(t);
+    if (it != tensor_to_node.end() && it->second) {
+        it->second->grad = Tensor();
+    }
+}
+
+void AutoGrad::set_retain_graph(bool retain) { retain_graph = retain; }
+
+AutoGrad::Node *AutoGrad::get_node(Tensor *t) {
+    auto it = tensor_to_node.find(t);
+    return it != tensor_to_node.end() ? it->second : nullptr;
+}
+
+void AutoGrad::make_leaf(Tensor &t, bool requires_grad) {
+    if (tensor_to_node.find(&t) != tensor_to_node.end()) {
+        return; // 已注册，跳过
+    }
+    auto node = std::make_unique<Node>(t.clone(), requires_grad);
+    tensor_to_node[&t] = node.get();
+    nodes.push_back(std::move(node));
+}
+
+void AutoGrad::record_op(const std::vector<Tensor *> &outputs, op operation,
+                         const std::vector<Tensor *> &inputs) {
+    std::vector<Tensor*> inputs_copy = inputs;
+    // 为每个输出创建节点
+    for (Tensor* out : outputs) {
+        if (tensor_to_node.find(out) == tensor_to_node.end()) {
+            auto new_node = std::make_unique<Node>(out->clone(), false, false);
+            tensor_to_node[out] = new_node.get();
+            nodes.push_back(std::move(new_node));
+        }
+
+        Node* node = tensor_to_node[out];
+        node->operation = operation;
+        node->inputs.clear();
+
+        for (Tensor* input : inputs_copy) {
+            if (tensor_to_node.find(input) == tensor_to_node.end()) {
+                make_leaf(*input, input->isGradRequired());
+            }
+            node->inputs.push_back(tensor_to_node[input]);
+        }
+    }
+}
+
+void AutoGrad::backward(Tensor &root, Tensor grad_output) {
+    if (tensor_to_node.find(&root) == tensor_to_node.end()) {
+           throw std::runtime_error("Tensor not in computation graph");
+       }
+
+       Node* root_node = tensor_to_node[&root];
+       if (!root_node->requires_grad) {
+           throw std::runtime_error("Root tensor doesn't require gradient");
+       }
+
+       // 设置初始梯度
+       if (grad_output.empty()) {
+           // 默认标量输出梯度为1
+           if (root.numel() == 1) {
+               root_node->grad.fill(1.0f);
+           } else {
+               throw std::runtime_error("Grad output must be specified for non-scalar tensors");
+           }
+       } else {
+           // 检查梯度形状是否匹配
+           if (grad_output.shape() != root.shape()) {
+               throw std::runtime_error("Grad output shape mismatch");
+           }
+           root_node->grad = grad_output;
+       }
+
+       // 拓扑排序（深度优先）
+       std::vector<Node*> order;
+       std::unordered_set<Node*> visited;
+       std::function<void(Node*)> dfs = [&](Node* node) {
+           if (visited.find(node) != visited.end()) return;
+           visited.insert(node);
+
+           for (Node* input : node->inputs) {
+               dfs(input);
+           }
+           order.push_back(node);
+       };
+       dfs(root_node);
+
+       // 反向遍历计算梯度
+       std::reverse(order.begin(), order.end());
+       for (Node* node : order) {
+           // 跳过叶子节点（梯度已存储）
+           if (node->is_leaf) continue;
+
+           // 根据操作类型计算梯度
+           switch (node->operation) {
+           case op::Add:
+               backward_add(node);
+               break;
+           case op::Sub:
+               backward_sub(node);
+               break;
+           case op::Mul:
+               backward_mul(node);
+               break;
+           case op::Div:
+               backward_div(node);
+               break;
+           case op::MatMul:
+               backward_matmul(node);
+               break;
+           case op::Dot:
+               backward_dot(node);
+               break;
+           case op::Cos:
+               backward_cos(node);
+               break;
+           case op::Sin:
+               backward_sin(node);
+               break;
+           case op::ReLU:
+               backward_relu(node);
+               break;
+           case op::Sigmoid:
+               backward_sigmoid(node);
+               break;
+           case op::Tanh:
+               backward_tanh(node);
+               break;
+           case op::Softmax:
+               backward_softmax(node);
+               break;
+           case op::Sum:
+               backward_sum(node);
+               break;
+           default:
+               throw std::runtime_error("Unsupported operation in backward");
+           }
+
+           // 如果不是保留计算图，释放中间梯度
+           if (!retain_graph && !node->is_leaf) {
+               node->grad = Tensor(); // 释放梯度内存
+           }
+       }
+
+       // 如果不保留计算图，清除所有节点
+       if (!retain_graph) {
+           clearGraph();
+       }
+}
+
+void AutoGrad::clearGraph() {
+    tensor_to_node.clear();
+    nodes.clear();
+}
+
+BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
+    const std::vector<size_t>& shapeA = a.shape();
+    const std::vector<size_t>& shapeB = b.shape();
+
+    // 确定最大维度
+    size_t max_dims = std::max(shapeA.size(), shapeB.size());
+    std::vector<size_t> logicShape(max_dims);
+    std::vector<size_t> logicStridesA(max_dims, 0);
+    std::vector<size_t> logicStridesB(max_dims, 0);
+
+    // 从后往前对齐维度
+    for (int i = max_dims - 1, idxA = shapeA.size() - 1, idxB = shapeB.size() - 1;
+         i >= 0; i--, idxA--, idxB--) {
+        size_t dimA = (idxA >= 0) ? shapeA[idxA] : 1;
+        size_t dimB = (idxB >= 0) ? shapeB[idxB] : 1;
+
+        if (dimA == dimB) {
+            logicShape[i] = dimA;
+            logicStridesA[i] = (idxA >= 0) ? a.strides()[idxA] : 0;
+            logicStridesB[i] = (idxB >= 0) ? b.strides()[idxB] : 0;
+        } else if (dimA == 1) {
+            logicShape[i] = dimB;
+            logicStridesA[i] = 0; // 广播维度步幅为0
+            logicStridesB[i] = (idxB >= 0) ? b.strides()[idxB] : 0;
+        } else if (dimB == 1) {
+            logicShape[i] = dimA;
+            logicStridesA[i] = (idxA >= 0) ? a.strides()[idxA] : 0;
+            logicStridesB[i] = 0; // 广播维度步幅为0
+        } else {
+            throw std::runtime_error("The shape of Tensor provided is incompatible for broadcasting");
+        }
+         }
+
+    return {logicShape, logicStridesA, logicStridesB};
+}
