@@ -17,6 +17,9 @@ export module Tensor_dev;
 #include <cstddef>
 #include <initializer_list>
 // #include <immintrin.h> 未支持ARM，等待在x86-64机器测试
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>  // 使用Apple的BLAS实现
+#endif
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -28,9 +31,11 @@ export module Tensor_dev;
 #include <fstream>
 #include <iomanip>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <stack>
 #include <optional>
+#include <limits>
+// #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 
 #ifndef HOOK_RET
 #define HOOK_RET std::optional<Tensor>
@@ -92,7 +97,7 @@ enum class op{
  };
 
 // 广播变形数据结构体
-struct BroadCastResult {
+export struct BroadCastResult {
     std::vector<size_t> logicShape;    // 广播后的逻辑形状
     std::vector<size_t> logicStridesA; // 张量A的逻辑步幅
     std::vector<size_t> logicStridesB; // 张量B的逻辑步幅
@@ -132,6 +137,8 @@ template <typename T>
     }
 }
 
+export int minx(int a, int b);
+
 // ======================= 存储类 (Storage) =======================
 
 // 存储类 - 管理张量的原始内存
@@ -164,7 +171,7 @@ template <typename T>
 
 class AutoGrad;// 前置声明，避免循环引用
 
-class Storage {
+export class Storage {
 private:
     size_t _size{};                     // 存储的元素数量，此处使用C++11的新特性花括号初始化，避免类型转换，实际上等同于size_t _size = 0;
     DType _dtype;                       // 数据类型 用于枚举
@@ -380,9 +387,9 @@ public:
 * Tensor& operator=(Tensor&& other) noexcept：张量移动赋值运算符
 * bool operator==(const Tensor& other) const：张量相等比较
 */
-struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
+export struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
-class Tensor {
+export class Tensor {
 private:
     bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
     std::vector<size_t> _strides; // 每个维度的步幅
@@ -390,7 +397,7 @@ private:
     DeviceType _device;           // 张量所在的设备
     DType _dtype;                 // 张量元素的数据类型
     Storage _storage;             // 存储张量数据的对象
-    AutoGrad* autograd_ctx = nullptr; // 自动微分上下文指针
+    // AutoGrad* autograd_ctx = nullptr; // 自动微分上下文指针
     friend class AutoGrad;        // 允许自动微分类访问私有
 
     using Hook = HOOK_RET(*)(Tensor& self);
@@ -554,7 +561,12 @@ public:
 
     // 初始化构造
     template <typename T>
-    Tensor(std::initializer_list<T> data, std::initializer_list<size_t> shape);
+    Tensor(std::initializer_list<T> data, std::initializer_list<size_t> shape):
+    _storage(Storage(data,data.size(),cpp2DType<T>(),DeviceType::kCPU)),
+    _shape(std::move(shape)),
+    _storage_offset(0),
+    _device(DeviceType::kCPU),
+    _dtype(cpp2DType<T>()){computeStrides();}
 
     // 拷贝构造函数：创建深拷贝
     Tensor(const Tensor& other);
@@ -610,17 +622,17 @@ public:
     // 设置自动微分标志
     void requires_grad(bool key);
 
-    // 设置自动微分上下文
-    void set_autograd_ctx(AutoGrad* ctx);
+    // // 设置自动微分上下文
+    // void set_autograd_ctx(AutoGrad* ctx);
 
     // 获取Tensor当前梯度
-    [[nodiscard]] Tensor &grad() const;
+    [[nodiscard]] Tensor grad() const;
 
     // 设置Tensor的DType
     void setDtype(DType dtype);
 
-    // 是否有自动微分上下文
-    [[nodiscard]] bool hasGrad() const;
+    // // 是否有自动微分上下文
+    // [[nodiscard]] bool hasGrad() const;
 
     // 获取原始储存内存偏移
     [[nodiscard]] size_t storageOffset() const;
@@ -689,12 +701,12 @@ public:
     // 转置最后两个维度
     [[nodiscard]] Tensor transpose() const;
 
-    // 设置上下文并传播到新张量
-    Tensor with_ctx(AutoGrad *ctx) const;
-
-    // 创建新张量时继承上下文
-    static Tensor create_with_ctx(AutoGrad* ctx, const std::vector<size_t>& shape,
-                                  DType dtype, DeviceType device);
+    // // 设置上下文并传播到新张量
+    // Tensor with_ctx(AutoGrad *ctx) const;
+    //
+    // // 创建新张量时继承上下文
+    // static Tensor create_with_ctx(AutoGrad* ctx, const std::vector<size_t>& shape,
+    //                               DType dtype, DeviceType device);
 
     // 用指定值填充整个张量
     void fill(float value);
@@ -705,14 +717,11 @@ public:
     // 将张量所有元素设置为1
     void ones();
 
-    //  清空张量
+    // 张量是否为空
     [[nodiscard]] bool empty() const;
 
     // 清空梯度
     void zeroGrad() const;
-
-    // 清空自动微分上下文
-    void clearCtx();
 
     // ======================= IO函数 =======================
     // 序列化
@@ -787,11 +796,14 @@ public:
     bool operator==(const Tensor& other) const;
 
     // ======================= AutoGrad操作 =======================
-    // 记录当前运算
-    void recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs);
+    // // 记录当前运算
+    // void recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs);
+    //
+    // // 设置保留计算图标志
+    // void setRetainGraph(bool retain) const;
 
-    // 设置保留计算图标志
-    void setRetainGraph(bool retain) const;
+    // 反向传播
+    void backward(Tensor& root,Tensor grad_output = Tensor());
 
     // ======================= Hook =======================
     // 注册钩子
@@ -810,7 +822,53 @@ public:
     [[nodiscard]] Hook hook(size_t idx) const;
 };
 
-Tensor matMul(Tensor &a, Tensor &b);        // 矩阵乘前置声明
+// ======================= 矩阵乘(MatMul) =======================
+// Tensor matMul(const Tensor &a, const Tensor &b);        // 矩阵乘前置声明（8.3 upt:这里为老版的声明，暂时保留）
+
+export Tensor matMul(const Tensor &a, const Tensor &b);  // 矩阵乘新版声明
+
+export Tensor matMulNative(const Tensor &a,const Tensor &b); // 循环优化矩阵乘
+
+export Tensor matMulBlocked(const Tensor &a,const Tensor &b); // 分块算法矩阵乘
+
+export Tensor matMulAMX(const Tensor &a, const Tensor &b); // AMX优化矩阵乘
+
+// 定义矩阵大小的阈值
+constexpr size_t SMALL_SIZE = 64;
+
+constexpr size_t MEDIUM_SIZE = 512;
+
+export Tensor matMulRecursive(const Tensor &a, const Tensor &b); // 递归的Strassen矩阵乘法
+
+export Tensor matMulTest(const Tensor &a, const Tensor &b); // 矩阵乘主函数
+
+// ======================= 自动微分上下文类 (AutoGradContext) =======================
+/*
+ * class AutoGradContext
+ * 成员函数：
+ * 1.current() 获取自动微分公共上下文单例
+ *
+ * 内部类：
+ * Guard：
+ *      成员函数：
+ *      1.Guard(AutoGrad* ctx) 哨兵构造函数
+ *      2.~Guard() 哨兵析构函数
+ *      成员变量：
+ *      AutoGrad* ctx 公共上下文指针
+ */
+class AutoGradContext {
+public:
+    static AutoGrad*& current();
+
+    class Guard {
+    public:
+        explicit Guard(AutoGrad* ctx);
+        ~Guard();
+
+    private:
+        AutoGrad* prev_ctx;
+    };
+};
 
 // ======================= 自动微分类 (AutoGrad) =======================
 /* class AutoGrad
@@ -826,6 +884,10 @@ bool requires_grad：是否需要梯度
 bool is_leaf：是否为叶子节点
 size_t retain_count = 0：保留计数（用于高阶导数）
 构造函数：Node (Tensor t, bool req_grad, bool leaf = true)
+
+std::unordered_map<Tensor*, Node*> tensor_to_node;  // Tensor到节点的映射
+std::vector<std::unique_ptr<Node>> nodes;           // 节点存储
+bool retain_graph = false;                          // 是否保留计算图
 成员函数：
 反向传播算子
 void backward_add (Node* node)：加法反向传播（已支持广播）
@@ -934,11 +996,17 @@ private:
 
 public:
     // ======================= 基本属性 =======================
-    // 获取输出梯度
-    const Tensor inputGrad();
+    // // 获取输出梯度
+    // const Tensor inputGrad();
+    //
+    // // 获取输入梯度
+    // const Tensor &outputGrad();
 
-    // 获取输入梯度
-    const Tensor &outputGrad();
+    // 获取梯度
+    Tensor getGrad(Tensor* t);
+
+    // 清空梯度
+    void zeroGrad(Tensor* t);
 
     // 设置是否保留计算图
     void set_retain_graph(bool retain);
@@ -957,13 +1025,17 @@ public:
     void make_leaf(Tensor& t, bool requires_grad);
 
     // 记录操作
-    void record_op(Tensor& result, op operation, std::initializer_list<Tensor*> inputs);
+    void record_op(const std::vector<Tensor*>& outputs, op operation,
+                  const std::vector<Tensor*>& inputs);
 
     // 反向传播
     void backward(Tensor& root, Tensor grad_output = Tensor());
 
     // 清空梯度
     static void zero_grad(Node* root);
+
+    // 清空计算图
+    void clearGraph();
 };
 
 BroadCastResult broadCast(const Tensor& a, const Tensor& b); // 广播函数
