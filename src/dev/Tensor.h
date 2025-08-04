@@ -1,9 +1,21 @@
+/*
+* Tensor.h
+* Created by Beapoe & GhostFace on 2025.7
+* Main Classes: Storage & Tensor & Auto_diff
+* Version : v1.6 (fixed on 2025.7.28 21:48)
+* Log 1.3: 增加了注释及代码易读性
+* Log 1.4: 增加了AutoDiff自动微分类
+* Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
+* Log 1.6: 修复了广播操作并对所有二元操作进行广播处理，优化了矩阵乘法
+* Unfix : matMul
+*/
 
 // includes
 #include <algorithm>
 #include <cstddef>
+#include <Accelerate/Accelerate.h>  // 使用Apple的BLAS实现
 #include <initializer_list>
-// #include <immintrin.h> 未支持ARM，等待在x86-64机器测试
+// #include <immintrin.h> 未支持ARM
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -12,17 +24,11 @@
 #include <sstream>
 #include <functional>
 #include <cstring>
-#include <fstream>
 #include <iomanip>
 #include <string>
 #include <unordered_set>
-#include <stack>
-#include <optional>
-
-#ifndef HOOK_RET
-#define HOOK_RET std::optional<Tensor>
-#endif
-
+#include <limits>
+// #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 // ======================= 类型定义和枚举 =======================
 
 // 设备类型 - 定义张量存储的位置
@@ -116,6 +122,11 @@ constexpr size_t dtypeSize(DType dtype) {
    }
 }
 
+// 辅助函数
+int minx(int a, int b){
+   int diff = b - a;
+   return a + (diff & (diff >> 31));
+}
 // ======================= 存储类 (Storage) =======================
 
 // 存储类 - 管理张量的原始内存
@@ -144,32 +155,7 @@ constexpr size_t dtypeSize(DType dtype) {
 * Storage& operator=(const Storage&) = default;    // 拷贝赋值
 */
 
-class AutoDiff;// 前置声明，避免循环引用
-
-template <typename T>
-    constexpr DType cpp2DType() noexcept {
-    if constexpr (std::is_same_v<T, float>) {
-        return DType::kFloat;
-    } else if constexpr (std::is_same_v<T, double>) {
-        return DType::kDouble;
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return DType::kInt;
-    } else if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, long>) {
-        return DType::kLong;
-    } else if constexpr (std::is_same_v<T, bool>) {
-        return DType::kBool;
-    } else if constexpr (std::is_same_v<T, int>) {
-        // 处理int类型，根据系统架构选择
-        if constexpr (sizeof(int) == sizeof(int32_t)) {
-            return DType::kInt;
-        } else {
-            return DType::kLong;
-        }
-    } else {
-        // 不支持的类型（运行时错误）
-        throw std::runtime_error("Unsupported type for DType conversion");
-    }
-}
+class AutoDiff;                         // 前置声明，避免循环引用
 
 class Storage {
  private:
@@ -199,7 +185,7 @@ class Storage {
        }
    }
 
-  public:
+ public:
    // 构造函数：分配未初始化的内存
    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)]) : nullptr) {}
    // 如果初始化列表中_size为0，那么初始化为nullptr
@@ -263,48 +249,6 @@ class Storage {
    // 检查存储是否为空
    bool empty() const { return _size == 0 || !_data; }
 
-    void serialize(std::ofstream& os) const {
-       if (!os) {
-           throw std::runtime_error("序列化失败：输出流无效");
-       }
-
-       // 写入基本属性（size、dtype、device）
-       os.write(reinterpret_cast<const char*>(&_size), sizeof(_size));
-       os.write(reinterpret_cast<const char*>(&_dtype), sizeof(_dtype));
-       os.write(reinterpret_cast<const char*>(&_device), sizeof(_device));
-
-       // 写入原始数据（仅当有数据时）
-       if (_size > 0 && _data) {
-           size_t elem_size = dtypeSize(_dtype);
-           os.write(_data.get(), _size * elem_size);  // 一次性写入所有数据，提升性能
-       }
-   }
-
-    void deserialize(std::ifstream& is) {
-       if (!is) {
-           throw std::runtime_error("反序列化失败：输入流无效");
-       }
-
-       // 读取基本属性
-       is.read(reinterpret_cast<char*>(&_size), sizeof(_size));
-       is.read(reinterpret_cast<char*>(&_dtype), sizeof(_dtype));
-       is.read(reinterpret_cast<char*>(&_device), sizeof(_device));
-
-       // 读取原始数据（仅当有数据时）
-       if (_size > 0) {
-           size_t elem_size = dtypeSize(_dtype);
-           size_t total_bytes = _size * elem_size;
-           _data = std::make_shared<char[]>(total_bytes);  // 分配内存
-           is.read(_data.get(), total_bytes);              // 一次性读取所有数据
-
-           // 检查读取是否完整
-           if (is.gcount() != static_cast<std::streamsize>(total_bytes)) {
-               throw std::runtime_error("反序列化失败：数据不完整");
-           }
-       } else {
-           _data = nullptr;  // 空数据
-       }
-   }
 
 };
 
@@ -312,760 +256,653 @@ class Storage {
 struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
 class Tensor {
-private:
-    bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
-    std::vector<size_t> _strides; // 每个维度的步幅
-    size_t _storage_offset;       // 存储中的起始偏移量
-    DeviceType _device;           // 张量所在的设备
-    DType _dtype;                 // 张量元素的数据类型
-    Storage _storage;             // 存储张量数据的对象
-    AutoDiff* autograd_ctx = nullptr; // 自动微分上下文指针
-
-    using Hook = HOOK_RET(*)(Tensor& self);
-    std::vector<Hook> _hooks;
-
-    // ======================= 内部辅助函数 =======================
-
-    // 计算步幅 (基于行优先顺序)
-    void computeStrides() {
-        if (_shape.empty()) {
-            _strides.clear();
-            return;
-        }
-        _strides.resize(_shape.size());
-
-        // 行优先布局: 最后一个维度步幅为1
-        _strides[_shape.size() - 1] = 1;
-        for (int i = static_cast<int>(_shape.size()) - 2; i >= 0; --i) {
-            _strides[i] = _strides[i + 1] * _shape[i + 1];
-        }
-    }
-
-    // 计算存储中的索引
-    size_t computeStorageIndex(std::initializer_list<size_t> indices) const {
-        if (indices.size() != dim()) {
-            throw std::runtime_error("Indices count mismatch");
-        }
-
-        if (dim() == 0) {
-            return _storage_offset; // 标量情况
-        }
-
-        size_t index = _storage_offset;
-        size_t i = 0;
-        for (const auto& idx : indices) {
-            if (idx >= _shape[i]) {
-                throw std::out_of_range("Tensor index out of bounds");
-            }
-            index += idx * _strides[i];
-            ++i;
-        }
-        return index;
-    }
-
-    // 检查数据类型是否匹配
-    template <typename T>
-    void checkDType() const {
-        if ((std::is_same_v<T, float> && _dtype != DType::kFloat) ||
-            (std::is_same_v<T, double> && _dtype != DType::kDouble) ||
-            (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||
-            (std::is_same_v<T, int64_t> && _dtype != DType::kLong) ||
-            (std::is_same_v<T, bool> && _dtype != DType::kBool)) {
-            throw std::runtime_error("Tensor data type mismatch");
-            }
-    }
-
-    // 通用逐元素操作
-    template <typename T, typename Op>
-    void elementwiseOp(Tensor& result, const Tensor& a, const Tensor& b, Op op) const {
-        const size_t n = a.numel();
-        T* out = result.data<T>();
-        const T* a_data = a.data<T>();
-        const T* b_data = b.data<T>();
-
-        for (size_t i = 0; i < n; ++i) {
-            out[i] = op(a_data[i], b_data[i]);
-        }
-    }
-
-    // 支持广播的逐元素操作
-    template <typename T, typename Op>
-    void broadcast_elementwise_op(Tensor& result, const Tensor& a, const Tensor& b,
-                                  const BroadCastResult& bc, Op op) const {
-        const std::vector<size_t>& shape = bc.logicShape;
-        const std::vector<size_t>& stridesA = bc.logicStridesA;
-        const std::vector<size_t>& stridesB = bc.logicStridesB;
-
-        T* out = result.data<T>();
-        const T* a_data = a.data<T>();
-        const T* b_data = b.data<T>();
-
-        size_t total_elements = 1;
-        for (auto dim : shape) total_elements *= dim;
-
-        // 遍历广播后的每个元素
-        for (size_t flat_idx = 0; flat_idx < total_elements; ++flat_idx) {
-            size_t a_idx = 0;
-            size_t b_idx = 0;
-            size_t tmp_idx = flat_idx;
-
-            // 计算每个维度上的坐标
-            for (int i = shape.size() - 1; i >= 0; --i) {
-                size_t dim_size = shape[i];
-                size_t coord = tmp_idx % dim_size;
-                tmp_idx /= dim_size;
-
-                a_idx += coord * stridesA[i];
-                b_idx += coord * stridesB[i];
-            }
-
-            out[flat_idx] = op(a_data[a_idx], b_data[b_idx]);
-        }
-    }
-    // 递归打印张量内容（改进版）
-    template <typename T>
-    void printRecursive(std::ostream& os, size_t dim, std::vector<size_t> indices) const {
-        if (dim == this->dim()) {
-            // 到达最后一个维度，打印元素
-            size_t index = 0;
-            for (size_t i = 0; i < indices.size(); ++i) {
-                index += indices[i] * _strides[i];
-            }
-            index += _storage_offset;
-
-            if constexpr (std::is_same_v<T, bool>) {
-                os << (_storage.data<T>()[index] ? "true" : "false");
-            } else if constexpr (std::is_floating_point_v<T>) {
-                os << std::fixed << std::setprecision(2) << _storage.data<T>()[index];
-            } else {
-                os << _storage.data<T>()[index];
-            }
-            return;
-        }
-
-        // 添加换行和缩进
-        if (dim > 0) {
-            os << "\n";
-            for (size_t i = 0; i < dim; ++i) os << "  ";
-        }
-        os << "[";
-
-        const size_t max_display = 3; // 每维度最大显示元素数
-        const size_t display_count = std::min(_shape[dim], max_display);
-        const bool truncated = _shape[dim] > max_display;
-
-        for (size_t i = 0; i < display_count; ++i) {
-            indices.push_back(i);
-            printRecursive<T>(os, dim + 1, indices);
-            indices.pop_back();
-
-            if (i < display_count - 1) {
-                os << ", ";
-            }
-        }
-
-        if (truncated) {
-            os << ", ..."; // 添加截断指示
-        }
-
-        os << "]";
-    }
-
-protected:
-    std::vector<size_t> _shape;
-public:
-    // ======================= 构造和析构 =======================
-
-    // 默认构造函数：创建空张量
-    Tensor() : _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
-        computeStrides();
-        _storage = Storage(numel(), _dtype, _device);
-    }
-
-    // 标量构造函数
-    Tensor(float value) : _shape({}), _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
-        computeStrides();
-        _storage = Storage(1, _dtype, _device);
-        *_storage.data<float>() = value;
-    }
-
-    // 构造函数：从初始值列表创建1D张量
-    Tensor(std::initializer_list<float> values): _shape({values.size()}), _storage_offset(0),_device(DeviceType::kCPU), _dtype(DType::kFloat) {
-        computeStrides();
-        _storage = Storage(values.begin(), values.size(), _dtype, _device);
-    }
-
-    // 添加布尔张量构造函数
-    Tensor(std::initializer_list<bool> values)
-        : _shape({values.size()}), _storage_offset(0),
-          _device(DeviceType::kCPU), _dtype(DType::kBool) {
-        computeStrides();
-        _storage = Storage(values.size(), _dtype, _device);
-        bool* data = _storage.data<bool>();
-        size_t i = 0;
-        for (bool val : values) {
-            data[i++] = val;
-        }
-    }
-
-    // 构造函数：指定形状和数据类型（使用 ShapeTag 避免歧义）
-    Tensor(ShapeTag, const std::vector<size_t>& shape, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU, bool zero_init = true): _shape(shape), _storage_offset(0), _device(device), _dtype(dtype) {
-        computeStrides();
-        _storage = Storage(numel(), _dtype, _device);
-        if(zero_init) zero();
-    }
-
-    template <typename T>
-    Tensor(std::initializer_list<T> data, std::initializer_list<size_t> shape)
-        : _storage_offset(0), _storage(Storage(data, data.size(), cpp2DType<T>())),
-          _shape(std::vector<size_t>(shape)) {
-        _dtype  = cpp2DType<T>();
-        _device = DeviceType::kCPU;
-    }
-
-    // 拷贝构造函数：创建深拷贝
-    Tensor(const Tensor& other)
-        : _shape(other._shape), _strides(other._strides),
-          _storage_offset(other._storage_offset),
-          _device(other._device), _dtype(other._dtype),
-          _storage(other._storage.clone()) {}  // 深拷贝存储
-
-    // 移动构造函数
-    Tensor(Tensor&& other) noexcept
-        : _shape(std::move(other._shape)),
-          _strides(std::move(other._strides)),
-          _storage_offset(other._storage_offset),
-          _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)) {
-        other._storage_offset = 0;
-        other._shape.clear();
-        other._strides.clear();
-    }
-
-    ~Tensor() = default;
-    std::vector<size_t> shape() const { return _shape; }
-    std::vector<size_t> strides() const { return _strides; }
-
-    // ======================= 基本属性 =======================
-
-    // 获取张量的维度数
-    size_t dim() const { return _shape.size(); }
-
-    // 获取张量的形状
-    const std::vector<size_t>& sizes() const { return _shape; }
-
-    // 获取张量中元素的总数
-    size_t numel() const {
-        if (_shape.empty()) return 1; // 标量有1个元素
-        return std::accumulate(_shape.begin(), _shape.end(), 1, std::multiplies<>());
-    }
-
-    // 获取张量的数据类型
-    DType dtype() const { return _dtype; }
-
-    // 获取张量所在的设备
-    DeviceType device() const { return _device; }
-
-    // ======================= 索引和访问 =======================
-
-    // 1D张量的索引访问
-    template <typename T = float>
-    T& operator[](size_t index) {
-        checkDType<T>();
-        if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
-        if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
-        return _storage.data<T>()[_storage_offset + index];
-    }
-
-    // 1D张量的常量索引访问
-    template <typename T = float>
-    const T& operator[](size_t index) const {
-        checkDType<T>();
-        if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
-        if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
-        return _storage.data<T>()[_storage_offset + index];
-    }
-
-    // 多维张量的索引访问
-    template <typename T = float>
-    T& operator()(std::initializer_list<size_t> indices) {
-        return _storage.data<T>()[computeStorageIndex(indices)];
-    }
-
-    // 多维张量的常量索引访问
-    template <typename T = float>
-    const T& operator()(std::initializer_list<size_t> indices) const {
-        return _storage.data<T>()[computeStorageIndex(indices)];
-    }
-
-    // 标量访问（0维张量）
-    template <typename T = float>
-    T& item() {
-        if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
-        return *_storage.data<T>();
-    }
-
-    // 常量标量访问
-    template <typename T = float>
-    const T& item() const {
-        if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
-        return *_storage.data<T>();
-    }
-
-    // 获取原始数据的类型化指针
-    template <typename T = float>
-    T* data() {
-        checkDType<T>();
-        if (_storage.empty()) return nullptr;
-        return _storage.data<T>() + _storage_offset;
-    }
-
-    // 获取常量原始数据的类型化指针
-    template <typename T = float>
-    const T* data() const {
-        checkDType<T>();
-        if (_storage.empty()) return nullptr;
-        return _storage.data<T>() + _storage_offset;
-    }
-
-    // ======================= 张量操作 =======================
-
-    // 创建张量的深拷贝
-    Tensor clone() const {
-        Tensor copy;
-        copy._shape = _shape;
-        copy._strides = _strides;
-        copy._storage_offset = 0;
-        copy._device = _device;
-        copy._dtype = _dtype;
-        copy._storage = _storage.clone(); // 深拷贝存储
-        copy._requires_grad = _requires_grad;
-        copy.autograd_ctx = autograd_ctx;  // 修复:继承上下文
-        return copy;
-    }
-
-    // 改变张量的形状 (不改变内存布局)
-    Tensor view(const std::vector<size_t>& new_shape) const {
-        // 计算新形状的元素总数
-        size_t new_numel = 1;
-        for (auto dim : new_shape) {
-            if (dim == 0) throw std::runtime_error("Zero dimension in shape");
-            new_numel *= dim;
-        }
-
-        // 验证新形状的元素总数是否匹配
-        if (new_numel != numel()) {
-            throw std::runtime_error("Shape size mismatch in view()");
-        }
-
-        if (!is_contiguous()) {
-            throw std::runtime_error("Cannot view non-contiguous tensor. Call clone() first.");
-        }
-
-        Tensor result(ShapeTag{}, new_shape, _dtype, _device);
-        result._storage = _storage;  // 共享存储（使用shared_ptr实现共享所有权）
-        result._storage_offset = _storage_offset;
-        result.computeStrides();  // 根据新形状重新计算步幅
-        result._requires_grad= _requires_grad;
-        result.autograd_ctx = autograd_ctx;  // 修复:继承上下文
-        return result;
-    }
-
-    Tensor sum(const std::vector<int>& dims, bool keepdim = false) const;
-
-    Tensor sum(int dim, bool keepdim = false) const {
-        return sum(std::vector<int>{dim}, keepdim);
-    }
-
-    Tensor sum() const {
-        return sum(std::vector<int>{}, false);
-    }
-
-    // 转置最后两个维度
-    Tensor transpose() const {
-        if (dim() < 2) {
-            throw std::runtime_error("transpose requires at least 2 dimensions");
-        }
-
-        // 创建新的形状和步幅
-        std::vector<size_t> new_shape = _shape;
-        std::vector<size_t> new_strides = _strides;
-
-        // 交换最后两个维度
-        std::swap(new_shape[dim()-1], new_shape[dim()-2]);
-        std::swap(new_strides[dim()-1], new_strides[dim()-2]);
-
-        Tensor result = *this;
-        result._shape = new_shape;
-        result._strides = new_strides;
-        return result;
-    }
-
-    // 设置上下文并传播到新张量
-    Tensor with_ctx(AutoDiff *ctx) const {
-        Tensor result       = *this;
-        result.autograd_ctx = ctx;
-        return result;
-    }void deserialize(std::ifstream & is);
-
-    // 创建新张量时继承上下文
-    static Tensor create_with_ctx(AutoDiff* ctx, const std::vector<size_t>& shape,
-                                  DType dtype, DeviceType device) {
-        Tensor result(ShapeTag{}, shape, dtype, device);
-        result.autograd_ctx = ctx;
-        return result;
-    }
-
-    // ======================= 运算符重载 =======================
-
-    Tensor transpose_last_two() const {
-        return this->transpose();
-    }
-
-    // 大于运算符，用于ad类
-    Tensor operator>(float scalar) const;
-
-    // 张量加法 (逐元素)
-    Tensor operator+(const Tensor& rhs) const;
-
-    // 逐元素减法
-    Tensor operator-(const Tensor& rhs) const;
-
-    Tensor operator*(const Tensor& rhs) const;
-
-    // 逐元素除法
-    Tensor operator/(const Tensor& rhs) const;
-    // 负号
-    Tensor operator-() const;
-
-    // 成员函数：Tensor - float
-    Tensor operator-(float scalar) const;
-
-    // 成员函数：float - Tensor（友元，需放在类外）
-    friend Tensor operator-(float scalar, const Tensor& tensor);
-
-    // 逐元素余弦
-    Tensor cos() const;
-
-    // 逐元素正弦
-    Tensor sin() const;
-
-    // ReLU激活函数
-    Tensor relu() const;
-
-    // Sigmoid激活函数
-    Tensor sigmoid() const;
-
-    // Tanh激活函数
-    Tensor tanh() const;
-
-    // Softmax激活函数
-    Tensor softmax(int dim = -1) const;
-
-    // 张量赋值运算符（深拷贝）
-    Tensor& operator=(const Tensor& other) {
-        if (this != &other) {
-            _shape = other._shape;
-            _strides = other._strides;
-            _storage_offset = other._storage_offset;
-            _device = other._device;
-            _dtype = other._dtype;
-            _storage = other._storage.clone(); // 深拷贝存储
-            _requires_grad = other._requires_grad;
-        }
-        return *this;
-    }
-
-    // 张量移动赋值运算符
-    Tensor& operator=(Tensor&& other) noexcept {
-        if (this != &other) {
-            _shape = std::move(other._shape);
-            _strides = std::move(other._strides);
-            _storage_offset = other._storage_offset;
-            _device = other._device;
-            _dtype = other._dtype;
-            _storage = std::move(other._storage);
-            _requires_grad = other._requires_grad;
-
-            other._storage_offset = 0;
-            other._shape.clear();
-            other._strides.clear();
-        }
-        return *this;
-    }
-
-    // 张量相等比较
-    bool operator==(const Tensor& other) const {
-        if (_shape != other._shape || _dtype != other._dtype) {
-            return false;
-        }
-
-        const size_t n = numel();
-        if (n == 0) return true; // 空张量相等
-
-        switch (_dtype) {
-        case DType::kFloat:
-            return std::equal(data<float>(), data<float>() + n, other.data<float>());
-        case DType::kDouble:
-            return std::equal(data<double>(), data<double>() + n, other.data<double>());
-        case DType::kInt:
-            return std::equal(data<int32_t>(), data<int32_t>() + n, other.data<int32_t>());
-        case DType::kLong:
-            return std::equal(data<int64_t>(), data<int64_t>() + n, other.data<int64_t>());
-        case DType::kBool:
-            return std::equal(data<bool>(), data<bool>() + n, other.data<bool>());
-        default:
-            return false;
-        }
-    }
-
-    // ======================= 输出和调试 =======================
-
-    // 将张量转换为字符串表示
-    std::string toString() const {
-        std::string str;
-        _requires_grad ? str = "True" : str = "False";
-        std::ostringstream oss;
-        oss << "Tensor(shape=[";
-        for (size_t i = 0; i < _shape.size(); ++i) {
-            oss << _shape[i];
-            if (i < _shape.size() - 1) oss << ", ";
-        }
-        oss << "], dtype=" << dtypeToString(_dtype)
-            << ", device=" << (_device == DeviceType::kCPU ? "cpu" : "gpu") << ", AutoDiff=" << str << ")\n";
-
-        // 打印张量内容
-        if (numel() == 0) {
-            oss << "[]";
-        } else {
-            oss << "[";
-            try {
-                if (_dtype == DType::kFloat) {
-                    printRecursive<float>(oss, 0, std::vector<size_t>());
-                } else if (_dtype == DType::kDouble) {
-                    printRecursive<double>(oss, 0, std::vector<size_t>());
-                } else if (_dtype == DType::kInt) {
-                    printRecursive<int32_t>(oss, 0, std::vector<size_t>());
-                } else if (_dtype == DType::kLong) {
-                    printRecursive<int64_t>(oss, 0, std::vector<size_t>());
-                } else if (_dtype == DType::kBool) {
-                    printRecursive<bool>(oss, 0, std::vector<size_t>());
-                }
-            } catch (const std::exception& e) {
-                oss << "Error: " << e.what();
-            }
-            oss << "]";
-        }
-        return oss.str();
-    }
-
-    // 打印张量信息
-    void print() const {
-        std::cout << toString() << std::endl;
-    }
-
-    // 检查张量是否连续
-    bool is_contiguous() const {
-        size_t stride = 1;
-        for (int i = dim()-1; i >= 0; --i) {
-            if (_strides[i] != stride) return false;
-            stride *= _shape[i];
-        }
-        return true;
-    }
-
-
-    // 用指定值填充整个张量
-    void fill(float value) {
-        switch (_dtype) {
-        case DType::kFloat: {
-            float* ptr = data<float>();
-            std::fill(ptr, ptr + numel(), value);
-            break;
-        }
-        case DType::kDouble: {
-            double* ptr = data<double>();
-            std::fill(ptr, ptr + numel(), static_cast<double>(value));
-            break;
-        }
-        case DType::kInt: {
-            int32_t* ptr = data<int32_t>();
-            std::fill(ptr, ptr + numel(), static_cast<int32_t>(value));
-            break;
-        }
-        case DType::kLong: {
-            int64_t* ptr = data<int64_t>();
-            std::fill(ptr, ptr + numel(), static_cast<int64_t>(value));
-            break;
-        }
-        case DType::kBool: {
-            bool* ptr = data<bool>();
-            std::fill(ptr, ptr + numel(), value != 0.0f);
-            break;
-        }
-        default:
-            throw std::runtime_error("Unsupported dtype for fill()");
-        }
-    }
-
-    // 将张量所有元素设置为0
-    void zero() {
-        switch (_dtype) {
-        case DType::kFloat:   fill(0.0f); break;
-        case DType::kDouble:  fill(0.0); break;
-        case DType::kInt:     fill(0); break;
-        case DType::kLong:    fill(0L); break;
-        case DType::kBool:    fill(false); break;
-        default: throw std::runtime_error("Unsupported dtype for zero()");
-        }
-    }
-
-    // 将张量所有元素设置为1
-    void ones() {
-        switch (_dtype) {
-        case DType::kFloat:   fill(1.0f); break;
-        case DType::kDouble:  fill(1.0); break;
-        case DType::kInt:     fill(1); break;
-        case DType::kLong:    fill(1); break;
-        case DType::kBool:    fill(true); break;
-        default: throw std::runtime_error("Unsupported dtype for ones()");
-        }
-    }
-
-    // 是否设置自动微分
-    bool isAuto_diff(){
-        return _requires_grad;
-    }
-
-    void requires_grad(bool key){
-        _requires_grad = key;
-    }
-    void set_autograd_ctx(AutoDiff* ctx);
-
-    bool empty() const { return numel() == 0; }
-
-    Tensor &grad() const;
-
-    void setDtype(const DType dtype);
-
-    bool hasGrad() const;
-
-    void recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs);
-
-    void zeroGrad() const;
-
-    void setRetainGraph(bool retain) const;
-
-    bool isGradRequired() const;
-
-    void serialize(std::ofstream &os) const;
-
-    size_t storageOffset() const;
-
-    void clearCtx();
-
-    void registerHook(Hook _fn);
-
-    void removeHook(size_t idx);
-
-    void removeAllHooks();
-
-    std::vector<Hook> hooks() const;
-
-    Hook hook(size_t idx) const;
-
-   // 标量乘法成员函数
-   Tensor Tensor::operator*(double scalar) const {
-       Tensor result(ShapeTag{}, _shape, _dtype, _device);
-
-       switch (_dtype) {
-       case DType::kFloat: {
-           const float* src = data<float>();
-           float* dst = result.data<float>();
-           for (size_t i = 0; i < numel(); ++i) {
-               dst[i] = src[i] * scalar;
+ private:
+   bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
+   // 张量的维度大小
+   std::vector<size_t> _strides; // 每个维度的步幅
+   size_t _storage_offset;       // 存储中的起始偏移量
+   DeviceType _device;           // 张量所在的设备
+   DType _dtype;                 // 张量元素的数据类型
+   Storage _storage;             // 存储张量数据的对象
+   // ======================= 内部辅助函数 =======================
+
+   // 计算步幅 (基于行优先顺序)
+   void computeStrides() {
+       if (_shape.empty()) {
+           _strides.clear();
+           return;
+       }
+       _strides.resize(_shape.size());
+
+       // 行优先布局: 最后一个维度步幅为1
+       _strides[_shape.size() - 1] = 1;
+       for (int i = static_cast<int>(_shape.size()) - 2; i >= 0; --i) {
+           _strides[i] = _strides[i + 1] * _shape[i + 1];
+       }
+   }
+
+   // 计算存储中的索引
+   size_t computeStorageIndex(std::initializer_list<size_t> indices) const {
+       if (indices.size() != dim()) {
+           throw std::runtime_error("Indices count mismatch");
+       }
+
+       if (dim() == 0) {
+           return _storage_offset; // 标量情况
+       }
+
+       size_t index = _storage_offset;
+       size_t i = 0;
+       for (const auto& idx : indices) {
+           if (idx >= _shape[i]) {
+               throw std::out_of_range("Tensor index out of bounds");
            }
-           break;
+           index += idx * _strides[i];
+           ++i;
        }
-       case DType::kDouble: {
-           const double* src = data<double>();
-           double* dst = result.data<double>();
-           for (size_t i = 0; i < numel(); ++i) {
-               dst[i] = src[i] * static_cast<double>(scalar);
+       return index;
+   }
+
+   // 检查数据类型是否匹配
+   template <typename T>
+   void checkDType() const {
+       if ((std::is_same_v<T, float> && _dtype != DType::kFloat) ||
+           (std::is_same_v<T, double> && _dtype != DType::kDouble) ||
+           (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||
+           (std::is_same_v<T, int64_t> && _dtype != DType::kLong) ||
+           (std::is_same_v<T, bool> && _dtype != DType::kBool)) {
+           throw std::runtime_error("Tensor data type mismatch");
+       }
+   }
+
+   // 通用逐元素操作
+   template <typename T, typename Op>
+   void elementwiseOp(Tensor& result, const Tensor& a, const Tensor& b, Op op) const {
+       const size_t n = a.numel();
+       T* out = result.data<T>();
+       const T* a_data = a.data<T>();
+       const T* b_data = b.data<T>();
+
+       for (size_t i = 0; i < n; ++i) {
+           out[i] = op(a_data[i], b_data[i]);
+       }
+   }
+
+   // 支持广播的逐元素操作
+   template <typename T, typename Op>
+   void broadcast_elementwise_op(Tensor& result, const Tensor& a, const Tensor& b,
+                                 const BroadCastResult& bc, Op op) const {
+       const std::vector<size_t>& shape = bc.logicShape;
+       const std::vector<size_t>& stridesA = bc.logicStridesA;
+       const std::vector<size_t>& stridesB = bc.logicStridesB;
+
+       T* out = result.data<T>();
+       const T* a_data = a.data<T>();
+       const T* b_data = b.data<T>();
+
+       size_t total_elements = 1;
+       for (auto dim : shape) total_elements *= dim;
+
+       // 遍历广播后的每个元素
+       for (size_t flat_idx = 0; flat_idx < total_elements; ++flat_idx) {
+           size_t a_idx = 0;
+           size_t b_idx = 0;
+           size_t tmp_idx = flat_idx;
+
+           // 计算每个维度上的坐标
+           for (int i = shape.size() - 1; i >= 0; --i) {
+               size_t dim_size = shape[i];
+               size_t coord = tmp_idx % dim_size;
+               tmp_idx /= dim_size;
+
+               a_idx += coord * stridesA[i];
+               b_idx += coord * stridesB[i];
            }
-           break;
+
+           out[flat_idx] = op(a_data[a_idx], b_data[b_idx]);
        }
-       case DType::kInt: {
-           const int32_t* src = data<int32_t>();
-           int32_t* dst = result.data<int32_t>();
-           for (size_t i = 0; i < numel(); ++i) {
-               dst[i] = src[i] * static_cast<int32_t>(scalar);
+   }
+   // 递归打印张量内容（改进版）
+   template <typename T>
+   void printRecursive(std::ostream& os, size_t dim, std::vector<size_t> indices) const {
+       if (dim == this->dim()) {
+           // 到达最后一个维度，打印元素
+           size_t index = 0;
+           for (size_t i = 0; i < indices.size(); ++i) {
+               index += indices[i] * _strides[i];
            }
-           break;
-       }
-       case DType::kLong: {
-           const int64_t* src = data<int64_t>();
-           int64_t* dst = result.data<int64_t>();
-           for (size_t i = 0; i < numel(); ++i) {
-               dst[i] = src[i] * static_cast<int64_t>(scalar);
+           index += _storage_offset;
+
+           if constexpr (std::is_same_v<T, bool>) {
+               os << (_storage.data<T>()[index] ? "true" : "false");
+           } else if constexpr (std::is_floating_point_v<T>) {
+               os << std::fixed << std::setprecision(2) << _storage.data<T>()[index];
+           } else {
+               os << _storage.data<T>()[index];
            }
-           break;
-       }
-       case DType::kBool:
-           throw std::runtime_error("Boolean type is not supported for multiplication");
-       default:
-           throw std::runtime_error("Unsupported data type for multiplication");
+           return;
        }
 
-       // 自动微分记录
-       if (autograd_ctx) {
-           autograd_ctx->record_op(result, op::Mul, {const_cast<Tensor*>(this)});
+       // 添加换行和缩进
+       if (dim > 0) {
+           os << "\n";
+           for (size_t i = 0; i < dim; ++i) os << "  ";
+       }
+       os << "[";
+
+       const size_t max_display = 3; // 每维度最大显示元素数
+       const size_t display_count = std::min(_shape[dim], max_display);
+       const bool truncated = _shape[dim] > max_display;
+
+       for (size_t i = 0; i < display_count; ++i) {
+           indices.push_back(i);
+           printRecursive<T>(os, dim + 1, indices);
+           indices.pop_back();
+
+           if (i < display_count - 1) {
+               os << ", ";
+           }
        }
 
+       if (truncated) {
+           os << ", ..."; // 添加截断指示
+       }
+
+       os << "]";
+   }
+
+ protected:
+   std::vector<size_t> _shape;
+ public:
+   // ======================= 构造和析构 =======================
+
+   // 默认构造函数：创建空张量
+   Tensor() : _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+       computeStrides();
+       _storage = Storage(numel(), _dtype, _device);
+   }
+
+   // 标量构造函数
+   Tensor(float value) : _shape({}), _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+       computeStrides();
+       _storage = Storage(1, _dtype, _device);
+       *_storage.data<float>() = value;
+   }
+
+   // 构造函数：从初始值列表创建1D张量
+   Tensor(std::initializer_list<float> values): _shape({values.size()}), _storage_offset(0),_device(DeviceType::kCPU), _dtype(DType::kFloat) {
+       computeStrides();
+       _storage = Storage(values.begin(), values.size(), _dtype, _device);
+   }
+
+   // 添加布尔张量构造函数
+   Tensor(std::initializer_list<bool> values)
+       : _shape({values.size()}), _storage_offset(0),
+         _device(DeviceType::kCPU), _dtype(DType::kBool) {
+       computeStrides();
+       _storage = Storage(values.size(), _dtype, _device);
+       bool* data = _storage.data<bool>();
+       size_t i = 0;
+       for (bool val : values) {
+           data[i++] = val;
+       }
+   }
+
+   // 构造函数：指定形状和数据类型（使用 ShapeTag 避免歧义）
+   Tensor(ShapeTag, const std::vector<size_t>& shape, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU, bool zero_init = true): _shape(shape), _storage_offset(0), _device(device), _dtype(dtype) {
+       computeStrides();
+       _storage = Storage(numel(), _dtype, _device);
+       if(zero_init) zero();
+   }
+
+   // 拷贝构造函数：创建深拷贝
+   Tensor(const Tensor& other)
+       : _shape(other._shape), _strides(other._strides),
+         _storage_offset(other._storage_offset),
+         _device(other._device), _dtype(other._dtype),
+         _storage(other._storage.clone()) {}  // 深拷贝存储
+
+   // 移动构造函数
+   Tensor(Tensor&& other) noexcept
+       : _shape(std::move(other._shape)),
+         _strides(std::move(other._strides)),
+         _storage_offset(other._storage_offset),
+         _device(other._device), _dtype(other._dtype),
+         _storage(std::move(other._storage)) {
+       other._storage_offset = 0;
+       other._shape.clear();
+       other._strides.clear();
+   }
+
+   ~Tensor() = default;
+   std::vector<size_t> shape() const { return _shape; }
+   std::vector<size_t> strides() const { return _strides; }
+
+   // ======================= 基本属性 =======================
+
+   // 获取张量的维度数
+   size_t dim() const { return _shape.size(); }
+
+   // 获取张量的形状
+   const std::vector<size_t>& sizes() const { return _shape; }
+
+   // 获取张量中元素的总数
+   size_t numel() const {
+       if (_shape.empty()) return 1; // 标量有1个元素
+       return std::accumulate(_shape.begin(), _shape.end(), 1, std::multiplies<>());
+   }
+
+   // 获取张量的数据类型
+   DType dtype() const { return _dtype; }
+
+   // 获取张量所在的设备
+   DeviceType device() const { return _device; }
+
+   // ======================= 索引和访问 =======================
+
+   // 1D张量的索引访问
+   template <typename T = float>
+   T& operator[](size_t index) {
+       checkDType<T>();
+       if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
+       if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
+       return _storage.data<T>()[_storage_offset + index];
+   }
+
+   // 1D张量的常量索引访问
+   template <typename T = float>
+   const T& operator[](size_t index) const {
+       checkDType<T>();
+       if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
+       if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
+       return _storage.data<T>()[_storage_offset + index];
+   }
+
+   // 多维张量的索引访问
+   template <typename T = float>
+   T& operator()(std::initializer_list<size_t> indices) {
+       return _storage.data<T>()[computeStorageIndex(indices)];
+   }
+
+   // 多维张量的常量索引访问
+   template <typename T = float>
+   const T& operator()(std::initializer_list<size_t> indices) const {
+       return _storage.data<T>()[computeStorageIndex(indices)];
+   }
+
+   // 标量访问（0维张量）
+   template <typename T = float>
+   T& item() {
+       if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
+       return *_storage.data<T>();
+   }
+
+   // 常量标量访问
+   template <typename T = float>
+   const T& item() const {
+       if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
+       return *_storage.data<T>();
+   }
+
+   // 获取原始数据的类型化指针
+   template <typename T = float>
+   T* data() {
+       checkDType<T>();
+       if (_storage.empty()) return nullptr;
+       return _storage.data<T>() + _storage_offset;
+   }
+
+   // 获取常量原始数据的类型化指针
+   template <typename T = float>
+   const T* data() const {
+       checkDType<T>();
+       if (_storage.empty()) return nullptr;
+       return _storage.data<T>() + _storage_offset;
+   }
+
+   // ======================= 张量操作 =======================
+
+   // 创建张量的深拷贝
+   Tensor clone() const {
+       Tensor copy;
+       copy._shape = _shape;
+       copy._strides = _strides;
+       copy._storage_offset = 0;
+       copy._device = _device;
+       copy._dtype = _dtype;
+       copy._storage = _storage.clone(); // 深拷贝存储
+       copy._requires_grad = _requires_grad;
+       return copy;
+   }
+
+   // 改变张量的形状 (不改变内存布局)
+   Tensor view(const std::vector<size_t>& new_shape) const {
+       // 计算新形状的元素总数
+       size_t new_numel = 1;
+       for (auto dim : new_shape) {
+           if (dim == 0) throw std::runtime_error("Zero dimension in shape");
+           new_numel *= dim;
+       }
+
+       // 验证新形状的元素总数是否匹配
+       if (new_numel != numel()) {
+           throw std::runtime_error("Shape size mismatch in view()");
+       }
+
+       if (!is_contiguous()) {
+           throw std::runtime_error("Cannot view non-contiguous tensor. Call clone() first.");
+       }
+
+       Tensor result(ShapeTag{}, new_shape, _dtype, _device);
+       result._storage = _storage;  // 共享存储（使用shared_ptr实现共享所有权）
+       result._storage_offset = _storage_offset;
+       result.computeStrides();  // 根据新形状重新计算步幅
+       result._requires_grad= _requires_grad;
        return result;
    }
 
-   // 新增标量函数
-   Tensor operator*(float scalar) const;
+   Tensor sum(const std::vector<int>& dims, bool keepdim = false) const;
 
-   Tensor operator*(int scalar) const;
+   Tensor sum(int dim, bool keepdim = false) const {
+       return sum(std::vector<int>{dim}, keepdim);
+   }
 
-   Tensor operator*(long scalar) const;
+   Tensor sum() const {
+       return sum(std::vector<int>{}, false);
+   }
 
+   // 转置最后两个维度
+   Tensor transpose() const {
+       if (dim() < 2) {
+           throw std::runtime_error("transpose requires at least 2 dimensions");
+       }
+
+       // 创建新的形状和步幅
+       std::vector<size_t> new_shape = _shape;
+       std::vector<size_t> new_strides = _strides;
+
+       // 交换最后两个维度
+       std::swap(new_shape[dim()-1], new_shape[dim()-2]);
+       std::swap(new_strides[dim()-1], new_strides[dim()-2]);
+
+       Tensor result = *this;
+       result._shape = new_shape;
+       result._strides = new_strides;
+       return result;
+   }
+
+   // ======================= 运算符重载 =======================
+
+   Tensor transpose_last_two() const {
+       return this->transpose();
+   }
+
+   // 大于运算符，用于ad类
+   Tensor operator>(float scalar) const;
+
+   // 张量加法 (逐元素)
+   Tensor operator+(const Tensor& rhs) const;
+
+   // 逐元素减法
+   Tensor operator-(const Tensor& rhs) const;
+
+   Tensor operator*(const Tensor& rhs) const;
+
+   // 逐元素除法
+   Tensor operator/(const Tensor& rhs) const;
+   // 负号
+   Tensor operator-() const;
+
+   // 成员函数：Tensor - float
+   Tensor operator-(float scalar) const;
+
+   // 成员函数：float - Tensor（友元，需放在类外）
+   friend Tensor operator-(float scalar, const Tensor& tensor);
+
+   // 逐元素余弦
+   Tensor cos() const;
+
+   // 逐元素正弦
+   Tensor sin() const;
+
+   // ReLU激活函数
+   Tensor relu() const;
+
+   // Sigmoid激活函数
+   Tensor sigmoid() const;
+
+   // Tanh激活函数
+   Tensor tanh() const;
+
+   // Softmax激活函数
+   Tensor softmax(int dim = -1) const;
+
+   // 张量赋值运算符（深拷贝）
+   Tensor& operator=(const Tensor& other) {
+       if (this != &other) {
+           _shape = other._shape;
+           _strides = other._strides;
+           _storage_offset = other._storage_offset;
+           _device = other._device;
+           _dtype = other._dtype;
+           _storage = other._storage.clone(); // 深拷贝存储
+           _requires_grad = other._requires_grad;
+       }
+       return *this;
+   }
+
+   // 张量移动赋值运算符
+   Tensor& operator=(Tensor&& other) noexcept {
+       if (this != &other) {
+           _shape = std::move(other._shape);
+           _strides = std::move(other._strides);
+           _storage_offset = other._storage_offset;
+           _device = other._device;
+           _dtype = other._dtype;
+           _storage = std::move(other._storage);
+           _requires_grad = other._requires_grad;
+
+           other._storage_offset = 0;
+           other._shape.clear();
+           other._strides.clear();
+       }
+       return *this;
+   }
+
+   // 张量相等比较
+   bool operator==(const Tensor& other) const {
+       if (_shape != other._shape || _dtype != other._dtype) {
+           return false;
+       }
+
+       const size_t n = numel();
+       if (n == 0) return true; // 空张量相等
+
+       switch (_dtype) {
+       case DType::kFloat:
+           return std::equal(data<float>(), data<float>() + n, other.data<float>());
+       case DType::kDouble:
+           return std::equal(data<double>(), data<double>() + n, other.data<double>());
+       case DType::kInt:
+           return std::equal(data<int32_t>(), data<int32_t>() + n, other.data<int32_t>());
+       case DType::kLong:
+           return std::equal(data<int64_t>(), data<int64_t>() + n, other.data<int64_t>());
+       case DType::kBool:
+           return std::equal(data<bool>(), data<bool>() + n, other.data<bool>());
+       default:
+           return false;
+       }
+   }
+
+   // ======================= 输出和调试 =======================
+
+   // 将张量转换为字符串表示
+   std::string toString() const {
+       std::string str;
+       _requires_grad ? str = "True" : str = "False";
+       std::ostringstream oss;
+       oss << "Tensor(shape=[";
+       for (size_t i = 0; i < _shape.size(); ++i) {
+           oss << _shape[i];
+           if (i < _shape.size() - 1) oss << ", ";
+       }
+       oss << "], dtype=" << dtypeToString(_dtype)
+           << ", device=" << (_device == DeviceType::kCPU ? "cpu" : "gpu") << ", AutoDiff=" << str << ")\n";
+
+       // 打印张量内容
+       if (numel() == 0) {
+           oss << "[]";
+       } else {
+           oss << "[";
+           try {
+               if (_dtype == DType::kFloat) {
+                   printRecursive<float>(oss, 0, std::vector<size_t>());
+               } else if (_dtype == DType::kDouble) {
+                   printRecursive<double>(oss, 0, std::vector<size_t>());
+               } else if (_dtype == DType::kInt) {
+                   printRecursive<int32_t>(oss, 0, std::vector<size_t>());
+               } else if (_dtype == DType::kLong) {
+                   printRecursive<int64_t>(oss, 0, std::vector<size_t>());
+               } else if (_dtype == DType::kBool) {
+                   printRecursive<bool>(oss, 0, std::vector<size_t>());
+               }
+           } catch (const std::exception& e) {
+               oss << "Error: " << e.what();
+           }
+           oss << "]";
+       }
+       return oss.str();
+   }
+
+   // 打印张量信息
+   void print() const {
+       std::cout << toString() << std::endl;
+   }
+
+   // 检查张量是否连续
+   bool is_contiguous() const {
+       size_t stride = 1;
+       for (int i = dim()-1; i >= 0; --i) {
+           if (_strides[i] != stride) return false;
+           stride *= _shape[i];
+       }
+       return true;
+   }
+
+
+   // 用指定值填充整个张量
+   void fill(float value) {
+       switch (_dtype) {
+       case DType::kFloat: {
+           float* ptr = data<float>();
+           std::fill(ptr, ptr + numel(), value);
+           break;
+       }
+       case DType::kDouble: {
+           double* ptr = data<double>();
+           std::fill(ptr, ptr + numel(), static_cast<double>(value));
+           break;
+       }
+       case DType::kInt: {
+           int32_t* ptr = data<int32_t>();
+           std::fill(ptr, ptr + numel(), static_cast<int32_t>(value));
+           break;
+       }
+       case DType::kLong: {
+           int64_t* ptr = data<int64_t>();
+           std::fill(ptr, ptr + numel(), static_cast<int64_t>(value));
+           break;
+       }
+       case DType::kBool: {
+           bool* ptr = data<bool>();
+           std::fill(ptr, ptr + numel(), value != 0.0f);
+           break;
+       }
+       default:
+           throw std::runtime_error("Unsupported dtype for fill()");
+       }
+   }
+
+   // 将张量所有元素设置为0
+   void zero() {
+       switch (_dtype) {
+       case DType::kFloat:   fill(0.0f); break;
+       case DType::kDouble:  fill(0.0); break;
+       case DType::kInt:     fill(0); break;
+       case DType::kLong:    fill(0L); break;
+       case DType::kBool:    fill(false); break;
+       default: throw std::runtime_error("Unsupported dtype for zero()");
+       }
+   }
+
+   // 将张量所有元素设置为1
+   void ones() {
+       switch (_dtype) {
+       case DType::kFloat:   fill(1.0f); break;
+       case DType::kDouble:  fill(1.0); break;
+       case DType::kInt:     fill(1); break;
+       case DType::kLong:    fill(1); break;
+       case DType::kBool:    fill(true); break;
+       default: throw std::runtime_error("Unsupported dtype for ones()");
+       }
+   }
+
+   // 是否设置自动微分
+   bool isAuto_diff(){
+       return _requires_grad;
+   }
+
+   void requires_grad(bool key){
+       _requires_grad = key;
+   }
+   bool empty() const {
+       return numel() == 0;
+   }
+
+   Tensor grad() const;
+
+   void setDtype(const DType dtype);
+
+   bool hasGrad() const;
+   // 添加 const 版本的 requires_grad 访问器
+   bool requires_grad() const { return _requires_grad; }
+
+   // 保留设置方法
 };
 
-inline Tensor operator*(float factor, const Tensor& a) {
-    return a * factor;
-}
+Tensor matMul_(Tensor &a, Tensor &b);        // 矩阵乘前置声明（8.3 upt:这里为老版的声明，暂时保留）
+Tensor matMul(const Tensor &a, const Tensor &b);
+class AutoDiffContext {
+ public:
+   // 返回可修改的引用
+   static AutoDiff*& current() {
+       static thread_local AutoDiff* ctx = nullptr;
+       return ctx;
+   }
 
-inline Tensor operator*(const Tensor& a, float factor) {
-    return a * factor;
-}
-
-inline Tensor operator*(double factor, const Tensor& a) {
-    return a * factor; // 或实现double版本
-}
-
-inline bool Tensor::hasGrad() const {
-    if (autograd_ctx) return true;
-    else return false;
-}
-
-Tensor matMul(Tensor &a, Tensor &b);        // 矩阵乘前置声明
-
+   class Guard {
+     public:
+       Guard(AutoDiff* ctx) : prev_ctx(current()) {
+           current() = ctx;  // 现在可以正确赋值
+       }
+       ~Guard() { current() = prev_ctx; }
+     private:
+       AutoDiff* prev_ctx;
+   };
+};
 // ======================= 自动微分类 (AutoDiff) =======================
 class AutoDiff {
  private:
    // 计算图节点定义
    struct Node {
        Tensor tensor;                  // 存储的Tensor值
-       Tensor grad;                    // 传入梯度值
-       Tensor output_grad;             // 传出梯度值
+       Tensor grad;                    // 梯度值
        std::vector<Node*> inputs;      // 输入节点指针
        op operation;                   // 操作类型
        bool requires_grad;             // 是否需要梯度
        bool is_leaf;                   // 是否为叶子节点
        size_t retain_count = 0;        // 保留计数（用于高阶导数）
+       std::vector<Tensor> outputs;    // 多输出支持
 
        Node(Tensor t, bool req_grad, bool leaf = true)
            : tensor(std::move(t)), requires_grad(req_grad), is_leaf(leaf) {
@@ -1082,9 +919,13 @@ class AutoDiff {
    bool retain_graph = false;                          // 是否保留计算图
 
  public:
-    Tensor inputGrad();
-   Tensor &outputGrad();
-
+   Tensor get_grad(Tensor* t) {
+       auto it = tensor_to_node.find(t);
+       if (it != tensor_to_node.end() && it->second) {
+           return it->second->grad;
+       }
+       return Tensor(); // 返回空张量
+   }
    // 创建叶子节点
    void make_leaf(Tensor& t, bool requires_grad) {
        if (tensor_to_node.find(&t) != tensor_to_node.end()) {
@@ -1095,34 +936,28 @@ class AutoDiff {
        nodes.push_back(std::move(node));
    }
 
-   // 记录操作
-   void record_op(Tensor& result, op operation, std::initializer_list<Tensor*> inputs) {
-       // 确保结果张量已注册
-       if (tensor_to_node.find(&result) == tensor_to_node.end()) {
-           // 非叶子节点注册（requires_grad=false）
-           auto new_node = std::make_unique<Node>(result.clone(), false, false);
-           tensor_to_node[&result] = new_node.get();
-           nodes.push_back(std::move(new_node));
-       }
-
-       // 更新节点信息
-       Node* node = tensor_to_node[&result];
-       node->operation = operation;
-
-       // 收集输入节点
-       node->inputs.clear();
-       for (Tensor* input : inputs) {
-           if (tensor_to_node.find(input) == tensor_to_node.end()) {
-               make_leaf(*input, input->isAuto_diff());
+   void record_op(const std::vector<Tensor*>& outputs, op operation,
+                  const std::vector<Tensor*>& inputs) {
+       std::vector<Tensor*> inputs_copy = inputs;
+       // 为每个输出创建节点
+       for (Tensor* out : outputs) {
+           if (tensor_to_node.find(out) == tensor_to_node.end()) {
+               auto new_node = std::make_unique<Node>(out->clone(), false, false);
+               tensor_to_node[out] = new_node.get();
+               nodes.push_back(std::move(new_node));
            }
-           node->inputs.push_back(tensor_to_node[input]);
-       }
 
-       // 确定是否需要梯度
-       node->requires_grad = std::any_of(
-           node->inputs.begin(), node->inputs.end(),
-           [](Node* n) { return n->requires_grad; }
-       );
+           Node* node = tensor_to_node[out];
+           node->operation = operation;
+           node->inputs.clear();
+
+           for (Tensor* input : inputs_copy) {
+               if (tensor_to_node.find(input) == tensor_to_node.end()) {
+                   make_leaf(*input, input->requires_grad());
+               }
+               node->inputs.push_back(tensor_to_node[input]);
+           }
+       }
    }
 
    // 设置是否保留计算图
@@ -1162,8 +997,6 @@ class AutoDiff {
            }
            root_node->grad = grad_output;
        }
-
-       for (auto fn:root.hooks()) (*fn)(root.grad());
 
        // 拓扑排序（深度优先）
        std::vector<Node*> order;
@@ -1229,7 +1062,6 @@ class AutoDiff {
            default:
                throw std::runtime_error("Unsupported operation in backward");
            }
-           for (auto fn:node->tensor.hooks()) (*fn)(node->tensor.grad());
 
            // 如果不是保留计算图，释放中间梯度
            if (!retain_graph && !node->is_leaf) {
@@ -1250,7 +1082,7 @@ class AutoDiff {
    }
 
  private:
-
+   // ======================= 反向传播函数 =======================
 
    // 加法反向传播（已支持广播）
    void backward_add(Node* node) {
@@ -1261,7 +1093,6 @@ class AutoDiff {
            // 处理广播：将梯度reduce到输入形状
            Tensor grad_input = reduce_to_match(grad_out, input_node->tensor.sizes());
            input_node->grad = input_node->grad + grad_input;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1274,16 +1105,15 @@ class AutoDiff {
 
        Node* a = node->inputs[0];
        Node* b = node->inputs[1];
+
        if (a->requires_grad) {
            Tensor grad_a = reduce_to_match(grad_out, a->tensor.sizes());
            a->grad = a->grad + grad_a;
-           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            Tensor grad_b = reduce_to_match(grad_out, b->tensor.sizes());
            b->grad = b->grad - grad_b;
-           node->output_grad = b->grad;
        }
    }
 
@@ -1302,7 +1132,6 @@ class AutoDiff {
            // 处理广播梯度
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
-           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
@@ -1310,7 +1139,6 @@ class AutoDiff {
            // 处理广播梯度
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
-           node->output_grad = b->grad;
        }
    }
 
@@ -1328,14 +1156,12 @@ class AutoDiff {
            Tensor grad_a = grad_out / b->tensor;
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
-           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            Tensor grad_b = grad_out * (-a->tensor) / (b->tensor * b->tensor);
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
-           node->output_grad = b->grad;
        }
    }
 
@@ -1355,7 +1181,6 @@ class AutoDiff {
            Tensor grad_a = matMul(grad_out,b_t);
            grad_a = reduce_to_match(grad_a, a->tensor.sizes());
            a->grad = a->grad + grad_a;
-           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
@@ -1364,7 +1189,6 @@ class AutoDiff {
            Tensor grad_b = matMul(a_t,grad_out);
            grad_b = reduce_to_match(grad_b, b->tensor.sizes());
            b->grad = b->grad + grad_b;
-           node->output_grad = b->grad;
        }
    }
 
@@ -1382,14 +1206,12 @@ class AutoDiff {
            // dL/da = dL/dout * b
            Tensor grad_a = grad_out * b->tensor;
            a->grad = a->grad + grad_a;
-           node->output_grad = a->grad;
        }
 
        if (b->requires_grad) {
            // dL/db = dL/dout * a
            Tensor grad_b = grad_out * a->tensor;
            b->grad = b->grad + grad_b;
-           node->output_grad = b->grad;
        }
    }
 
@@ -1403,7 +1225,6 @@ class AutoDiff {
            Tensor sin_x = input_node->tensor.sin();
            Tensor grad = grad_out * (-sin_x);
            input_node->grad = input_node->grad + grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1417,7 +1238,6 @@ class AutoDiff {
            Tensor cos_x = input_node->tensor.cos();
            Tensor grad = grad_out * cos_x;
            input_node->grad = input_node->grad + grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1431,7 +1251,6 @@ class AutoDiff {
            Tensor mask = input_node->tensor > 0.0f;
            Tensor grad = grad_out * mask;
            input_node->grad = input_node->grad + grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1445,7 +1264,6 @@ class AutoDiff {
            Tensor sig_x = node->tensor;
            Tensor grad = grad_out * sig_x * (1.0f - sig_x);
            input_node->grad = input_node->grad + grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1459,7 +1277,6 @@ class AutoDiff {
            Tensor tanh_x = node->tensor;
            Tensor grad = grad_out * (1.0f - tanh_x * tanh_x);
            input_node->grad = input_node->grad + grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1480,7 +1297,6 @@ class AutoDiff {
            Tensor grad_input = s * (grad_out - sum_term);
 
            input_node->grad = input_node->grad + grad_input;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1535,7 +1351,6 @@ class AutoDiff {
            }
 
            input_node->grad = input_node->grad + expanded_grad;
-           node->output_grad = input_node->grad;
        }
    }
 
@@ -1598,83 +1413,7 @@ class AutoDiff {
        return grad;
    }
 
-public:
-    static void zero_grad(Node* root) {
-        std::stack<Node*> stack;
-        std::unordered_set<Node*> visited;
-        stack.push(root);
-
-        while (!stack.empty()) {
-            Node* current = stack.top();
-            stack.pop();
-            if (!visited.contains(current)) {
-                if (current->is_leaf || current->retain_count) {
-                    if (current->requires_grad) current->grad.zero();
-                }else current->grad = Tensor(ShapeTag{},current->grad.shape(),current->grad.dtype(),current->grad.device(),false);
-                visited.insert(current);
-                for (Node* input:current->inputs) {
-                    if (!visited.contains(input)) {
-                        stack.push(input);
-                    }
-                }
-            }
-        }
-    }
-
-    Node* rootPtr(){return nodes.back().get();}// 由于push_back是把最后的运算符推入到最后面的，所以取最后一个
-
-    Node* topPtr(){return nodes[0].get();}
-
-    void reset();
 };
-
-inline void Tensor::recordOp(Tensor &result, op operation, std::initializer_list<Tensor *> inputs) {
-    autograd_ctx->record_op(result,operation,inputs);
-}
-
-inline void AutoDiff::reset() {
-    tensor_to_node.clear();
-    nodes.clear();
-    retain_graph = false;
-    clear_graph();
-}
-
-inline void Tensor::zeroGrad() const { autograd_ctx->zero_grad(autograd_ctx->rootPtr());}
-
-inline void Tensor::setRetainGraph(bool retain) const { autograd_ctx->set_retain_graph(retain); }
-
-inline bool Tensor::isGradRequired() const { return _requires_grad; }
-
-inline void Tensor::serialize(std::ofstream &os) const { _storage.serialize(os); }
-
-inline size_t Tensor::storageOffset() const { return  _storage_offset; }
-
-inline void Tensor::deserialize(std::ifstream &is) { _storage.deserialize(is); }
-
-inline void Tensor::clearCtx() {
-    delete autograd_ctx;
-    autograd_ctx = nullptr;
-}
-
-void Tensor::registerHook(Hook _fn) {
-    _hooks.push_back(std::move(_fn));
-}
-
-inline void Tensor::removeHook(size_t idx) {
-    if (idx < _hooks.size()) {
-        _hooks.erase(_hooks.begin() + idx);
-    }else throw std::runtime_error("Tensor::removeHook: index out of range");
-}
-
-inline void Tensor::removeAllHooks() { _hooks.clear(); }
-
-using Hook = HOOK_RET(*)(Tensor& self);
-inline std::vector<Hook> Tensor::hooks() const{return _hooks;}
-
-inline Hook Tensor::hook(size_t idx) const {
-    if (idx<_hooks.size()) return _hooks[idx];
-    else throw std::runtime_error("Tensor::hook index out of range");
-}
 
 BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
    const std::vector<size_t>& shapeA = a.shape();
@@ -1718,8 +1457,7 @@ Tensor Tensor::operator+(const Tensor &rhs) const {
    if (_device != rhs._device) throw std::runtime_error("Device mismatch in addition");
    if (_shape == rhs._shape){
        // 创建结果张量时继承上下文
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, _shape, _dtype, _device);
+       Tensor result(ShapeTag{}, _shape, _dtype, _device);
        const size_t n = numel();
 
        // 根据数据类型分派加法操作
@@ -1739,12 +1477,11 @@ Tensor Tensor::operator+(const Tensor &rhs) const {
        default:
            throw std::runtime_error("Unsupported dtype for addition");
        }
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Add,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Add, inputs_vec);
        }
        return result;
    } else {
@@ -1752,8 +1489,7 @@ Tensor Tensor::operator+(const Tensor &rhs) const {
        BroadCastResult bc = broadCast(*this, rhs);
 
        // 创建结果张量（使用广播后的形状）
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, bc.logicShape, _dtype, _device);
+       Tensor result(ShapeTag{}, bc.logicShape, _dtype, _device);
 
        // 根据数据类型分派操作
        switch (_dtype) {
@@ -1783,16 +1519,14 @@ Tensor Tensor::operator+(const Tensor &rhs) const {
            break;
        default: throw std::runtime_error("Unsupported DType");
        }
-
-       // 记录自动微分操作
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
            ctx->record_op(
-               result,
-               op::Add,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
+               {&result},  // 输出张量列表
+               op::Add,    // 操作类型
+               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)} // 输入张量
            );
        }
-
        return result;
    }
 }
@@ -1803,8 +1537,7 @@ Tensor Tensor::operator/(const Tensor &rhs) const {
    if (_device != rhs._device) throw std::runtime_error("Device mismatch in addition");
    if (_shape == rhs._shape){
        // 创建结果张量时继承上下文
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, _shape, _dtype, _device);
+       Tensor result(ShapeTag{}, _shape, _dtype, _device);
        const size_t n = numel();
 
        // 根据数据类型分派加法操作
@@ -1836,12 +1569,11 @@ Tensor Tensor::operator/(const Tensor &rhs) const {
        default:
            throw std::runtime_error("Unsupported dtype for addition");
        }
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Div,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Div, inputs_vec);
        }
        return result;
    } else {
@@ -1849,8 +1581,7 @@ Tensor Tensor::operator/(const Tensor &rhs) const {
        BroadCastResult bc = broadCast(*this, rhs);
 
        // 创建结果张量（使用广播后的形状）
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, bc.logicShape, _dtype, _device);
+       Tensor result(ShapeTag{}, bc.logicShape, _dtype, _device);
 
        // 根据数据类型分派操作
        switch (_dtype) {
@@ -1889,15 +1620,12 @@ Tensor Tensor::operator/(const Tensor &rhs) const {
        default: throw std::runtime_error("Unsupported DType");
        }
 
-       // 记录自动微分操作
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Div,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Div, inputs_vec);
        }
-
        return result;
    }
 }
@@ -1908,8 +1636,7 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
    if (_device != rhs._device) throw std::runtime_error("Device mismatch in addition");
    if (_shape == rhs._shape){
        // 创建结果张量时继承上下文
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, _shape, _dtype, _device);
+       Tensor result(ShapeTag{}, _shape, _dtype, _device);
        const size_t n = numel();
 
        // 根据数据类型分派加法操作
@@ -1929,12 +1656,11 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
        default:
            throw std::runtime_error("Unsupported dtype for addition");
        }
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Sub,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Sub, inputs_vec);
        }
        return result;
    } else {
@@ -1942,8 +1668,8 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
        BroadCastResult bc = broadCast(*this, rhs);
 
        // 创建结果张量（使用广播后的形状）
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, bc.logicShape, _dtype, _device);
+
+       Tensor result(ShapeTag{}, bc.logicShape, _dtype, _device);
 
        // 根据数据类型分派操作
        switch (_dtype) {
@@ -1975,148 +1701,610 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
        }
 
        // 记录自动微分操作
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Sub,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Sub, inputs_vec);
        }
 
        return result;
    }
 }
+// 循环优化
+Tensor matMul_naive(Tensor &a, Tensor &b) {
+   // 检查维度
+   if (a.dim() < 2 || b.dim() < 2) {
+       throw std::runtime_error("Both tensors must be at least 2D for matrix multiplication");
+   }
 
-Tensor matMul(Tensor &a, Tensor &b) {
-    // 检查维度
-    if (a.dim() < 2 || b.dim() < 2) {
-        throw std::runtime_error("Both tensors must be at least 2D for matrix multiplication");
-    }
+   // 检查内层维度是否匹配
+   size_t a_cols = a.shape()[a.dim() - 1];
+   size_t b_rows = b.shape()[b.dim() - 2];
 
-    // 检查内层维度是否匹配
-    size_t a_cols = a.shape()[a.dim() - 1];
-    size_t b_rows = b.shape()[b.dim() - 2];
+   if (a_cols != b_rows) {
+       std::ostringstream oss;
+       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+       throw std::runtime_error(oss.str());
+   }
 
-    if (a_cols != b_rows) {
-        std::ostringstream oss;
-        oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
-        throw std::runtime_error(oss.str());
-    }
+   // 处理批量矩阵乘法
+   BroadCastResult logic = broadCast(a, b);
+   const std::vector<size_t>& batch_dims = logic.logicShape;
+   size_t batch_size = std::accumulate(batch_dims.begin(), batch_dims.end() - 2, 1, std::multiplies<size_t>());
+   size_t M = a.shape()[a.dim() - 2];
+   size_t K = a.shape()[a.dim() - 1];
+   size_t N = b.shape()[b.dim() - 1];
 
-    // 处理批量矩阵乘法
-    BroadCastResult logic                 = broadCast(a, b);
-    const std::vector<size_t> &batch_dims = logic.logicShape;
-    size_t batch_size =
-        std::accumulate(batch_dims.begin(), batch_dims.end() - 2, 1, std::multiplies<size_t>());
-    size_t M = a.shape()[a.dim() - 2];
-    size_t K = a.shape()[a.dim() - 1];
-    size_t N = b.shape()[b.dim() - 1];
+   // 创建结果张量
+   std::vector<size_t> result_shape = batch_dims;
+   result_shape[result_shape.size() - 2] = M;
+   result_shape[result_shape.size() - 1] = N;
 
-    // 创建结果张量
-    std::vector<size_t> result_shape      = batch_dims;
-    result_shape[result_shape.size() - 2] = M;
-    result_shape[result_shape.size() - 1] = N;
+   ShapeTag tag;
+   Tensor result(tag, result_shape, a.dtype(), a.device());
+   result.zero();
 
-    ShapeTag tag;
-    Tensor result(tag, result_shape, a.dtype(), a.device());
-    result.zero();
+   // 根据数据类型进行计算
+   switch (a.dtype()) {
+   case DType::kFloat: {
+       const float* a_data = a.data<float>();
+       const float* b_data = b.data<float>();
+       float* r_data = result.data<float>();
 
-    // 根据数据类型进行计算
-    switch (a.dtype()) {
-    case DType::kFloat: {
-        const float *a_data = a.data<float>();
-        const float *b_data = b.data<float>();
-        float *r_data       = result.data<float>();
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kDouble: {
+       const double * a_data = a.data<double>();
+       const double* b_data = b.data<double>();
+       double* r_data = result.data<double>();
 
-        // 批量矩阵乘法
-        for (size_t batch = 0; batch < batch_size; ++batch) {
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t k = 0; k < K; ++k) {
-                    float a_val = a_data[batch * M * K + i * K + k];
-                    for (size_t j = 0; j < N; ++j) {
-                        r_data[batch * M * N + i * N + j] +=
-                            a_val * b_data[batch * K * N + k * N + j];
-                    }
-                }
-            }
-        }
-        break;
-    }
-    case DType::kDouble: {
-        const double *a_data = a.data<double>();
-        const double *b_data = b.data<double>();
-        double *r_data       = result.data<double>();
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kInt: {
+       const int* a_data = a.data<int>();
+       const int* b_data = b.data<int>();
+       int* r_data = result.data<int>();
 
-        // 批量矩阵乘法
-        for (size_t batch = 0; batch < batch_size; ++batch) {
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t k = 0; k < K; ++k) {
-                    float a_val = a_data[batch * M * K + i * K + k];
-                    for (size_t j = 0; j < N; ++j) {
-                        r_data[batch * M * N + i * N + j] +=
-                            a_val * b_data[batch * K * N + k * N + j];
-                    }
-                }
-            }
-        }
-        break;
-    }
-    case DType::kInt: {
-        const int *a_data = a.data<int>();
-        const int *b_data = b.data<int>();
-        int *r_data       = result.data<int>();
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kLong: {
+       const long * a_data = a.data<long>();
+       const long * b_data = b.data<long>();
+       long* r_data = result.data<long>();
 
-        // 批量矩阵乘法
-        for (size_t batch = 0; batch < batch_size; ++batch) {
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t k = 0; k < K; ++k) {
-                    float a_val = a_data[batch * M * K + i * K + k];
-                    for (size_t j = 0; j < N; ++j) {
-                        r_data[batch * M * N + i * N + j] +=
-                            a_val * b_data[batch * K * N + k * N + j];
-                    }
-                }
-            }
-        }
-        break;
-    }
-    case DType::kLong: {
-        const long *a_data = a.data<long>();
-        const long *b_data = b.data<long>();
-        long *r_data       = result.data<long>();
+       // 批量矩阵乘法
+       for (size_t batch = 0; batch < batch_size; ++batch) {
+           for (size_t i = 0; i < M; ++i) {
+               for (size_t k = 0; k < K; ++k) {
+                   float a_val = a_data[batch * M * K + i * K + k];
+                   for (size_t j = 0; j < N; ++j) {
+                       r_data[batch * M * N + i * N + j] +=
+                           a_val * b_data[batch * K * N + k * N + j];
+                   }
+               }
+           }
+       }
+       break;
+   }
+   default:
+       throw std::runtime_error("Unsupported dtype for matMul");
+   }
 
-        // 批量矩阵乘法
-        for (size_t batch = 0; batch < batch_size; ++batch) {
-            for (size_t i = 0; i < M; ++i) {
-                for (size_t k = 0; k < K; ++k) {
-                    float a_val = a_data[batch * M * K + i * K + k];
-                    for (size_t j = 0; j < N; ++j) {
-                        r_data[batch * M * N + i * N + j] +=
-                            a_val * b_data[batch * K * N + k * N + j];
-                    }
-                }
-            }
-        }
-        break;
-    }
-    default:
-        throw std::runtime_error("Unsupported dtype for matMul");
-    }
+   return result;
+}
+// Update 2025.8.1 分块算法
+Tensor matMul_blocked(const Tensor &a, const Tensor &b) {
+   // 严格检查维度：必须是2D矩阵
+   if (a.dim() != 2 || b.dim() != 2) {
+       throw std::runtime_error("matMul requires both tensors to be 2D matrices");
+   }
 
-    return result;
+   // 检查内层维度是否匹配
+   size_t a_cols = a.shape()[1];
+   size_t b_rows = b.shape()[0];
+   if (a_cols != b_rows) {
+       std::ostringstream oss;
+       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+       throw std::runtime_error(oss.str());
+   }
+
+   // 创建结果张量 [M x N]
+   size_t M = a.shape()[0];
+   size_t N = b.shape()[1];
+   Tensor result(ShapeTag{}, {M, N}, a.dtype(), a.device());
+   result.zero(); // 初始化结果为零矩阵
+
+   // 根据数据类型进行计算
+   switch (a.dtype()) {
+   case DType::kFloat: {
+       const float* a_data = a.data<float>();
+       const float* b_data = b.data<float>();
+       float* r_data = result.data<float>();
+       const int BLOCK = 512;
+       // 三层分块循环
+       for (int i0 = 0; i0 < M; i0 += BLOCK) {
+           int i_end = minx(i0 + BLOCK, M);  // 计算行边界
+           for (int k0 = 0; k0 < a_cols; k0 += BLOCK) {
+               int k_end = minx(k0 + BLOCK, a_cols);  // 计算中间维度边界
+               for (int j0 = 0; j0 < N; j0 += BLOCK) {
+                   int j_end = minx(j0 + BLOCK, N);  // 计算列边界
+                   // 核心计算：只处理完整块内的元素
+                   for (int i = i0; i < i_end; i++) {
+                       for (int k = k0; k < k_end; k++) {
+                           float a_val = a_data[i*a_cols + k];  // 一次加载A元素
+                           // 内层循环：连续访问B和C
+                           for (int j = j0; j < j_end; j++) {
+                               r_data[i*N + j] += a_val * b_data[k*N + j];
+                           }
+                       }
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kDouble: {
+       const double* a_data = a.data<double>();
+       const double* b_data = b.data<double>();
+       double* r_data = result.data<double>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               double a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kInt: {
+       const int* a_data = a.data<int>();
+       const int* b_data = b.data<int>();
+       int* r_data = result.data<int>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               int a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kLong: {
+       const long* a_data = a.data<long>();
+       const long* b_data = b.data<long>();
+       long* r_data = result.data<long>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               long a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   default:
+       throw std::runtime_error("Unsupported dtype for matMul");
+   }
+
+   return result;
+}
+// ======================= 矩阵乘法函数（使用AMX优化） =======================
+Tensor matMul_AMX(const Tensor &a, const Tensor &b) {
+   // 严格检查维度：必须是2D矩阵
+   if (a.dim() != 2 || b.dim() != 2) {
+       throw std::runtime_error("matMul requires both tensors to be 2D matrices");
+   }
+
+   // 检查内层维度是否匹配
+   size_t a_cols = a.shape()[1];
+   size_t b_rows = b.shape()[0];
+   if (a_cols != b_rows) {
+       std::ostringstream oss;
+       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+       throw std::runtime_error(oss.str());
+   }
+
+   // 创建结果张量 [M x N]
+   size_t M = a.shape()[0];
+   size_t N = b.shape()[1];
+   size_t K = a_cols; // 公共维度
+   Tensor result(ShapeTag{}, {M, N}, a.dtype(), a.device());
+   result.zero(); // 初始化结果为零矩阵
+
+   // 根据数据类型进行计算
+   switch (a.dtype()) {
+   case DType::kFloat: {
+       const float* a_data = a.data<float>();
+       const float* b_data = b.data<float>();
+       float* r_data = result.data<float>();
+
+       // 使用Apple的AMX加速BLAS库
+       cblas_sgemm(CblasRowMajor,   // 行主序存储
+                   CblasNoTrans,   // 不转置A
+                   CblasNoTrans,   // 不转置B
+                   M,              // A的行数
+                   N,              // B的列数
+                   K,              // 公共维度
+                   1.0f,           // alpha系数
+                   a_data,         // A数据指针
+                   K,              // A的列步幅（lda）
+                   b_data,         // B数据指针
+                   N,              // B的列步幅（ldb）
+                   0.0f,           // beta系数
+                   r_data,         // 结果数据指针
+                   N);             // 结果的列步幅（ldc）
+       break;
+   }
+   case DType::kDouble: {
+       const double* a_data = a.data<double>();
+       const double* b_data = b.data<double>();
+       double* r_data = result.data<double>();
+
+       // 双精度使用标准实现
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < K; ++k) {
+               double a_val = a_data[i * K + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kInt: {
+       const int* a_data = a.data<int>();
+       const int* b_data = b.data<int>();
+       int* r_data = result.data<int>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < K; ++k) {
+               int a_val = a_data[i * K + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kLong: {
+       const long* a_data = a.data<long>();
+       const long* b_data = b.data<long>();
+       long* r_data = result.data<long>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < K; ++k) {
+               long a_val = a_data[i * K + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   default:
+       throw std::runtime_error("Unsupported dtype for matMul");
+   }
+
+   return result;
+}
+// 定义矩阵大小的阈值
+const size_t SMALL_SIZE = 64;
+const size_t MEDIUM_SIZE = 512;
+Tensor matMul_recursive(const Tensor &a, const Tensor &b);
+// 递归的Strassen矩阵乘法
+Tensor matMul_recursive(const Tensor &a, const Tensor &b) {
+   // 获取矩阵维度
+   size_t M = a.shape()[0];
+   size_t K = a.shape()[1];
+   size_t N = b.shape()[1];
+
+   // 基准情况：小矩阵使用分块优化
+   if (M <= SMALL_SIZE || N <= SMALL_SIZE || K <= SMALL_SIZE) {
+       return matMul_blocked(a, b);
+   }
+   // 中等矩阵使用AMX加速
+   else if (M <= MEDIUM_SIZE && N <= MEDIUM_SIZE && K <= MEDIUM_SIZE) {
+       return matMul_AMX(a, b);
+   }
+
+   // 大矩阵使用Strassen算法递归
+   // 计算填充后的新维度（偶数）
+   size_t new_M = (M % 2 == 0) ? M : M + 1;
+   size_t new_K = (K % 2 == 0) ? K : K + 1;
+   size_t new_N = (N % 2 == 0) ? N : N + 1;
+
+   // 创建填充后的矩阵并初始化为0
+   Tensor A_pad(ShapeTag{}, {new_M, new_K}, a.dtype(), a.device());
+   Tensor B_pad(ShapeTag{}, {new_K, new_N}, b.dtype(), b.device());
+   A_pad.zero();
+   B_pad.zero();
+
+   // 将原始数据复制到填充矩阵的左上角
+   for (size_t i = 0; i < M; i++) {
+       for (size_t j = 0; j < K; j++) {
+           A_pad({i, j}) = a({i, j});
+       }
+   }
+   for (size_t i = 0; i < K; i++) {
+       for (size_t j = 0; j < N; j++) {
+           B_pad({i, j}) = b({i, j});
+       }
+   }
+
+   // 计算子矩阵大小
+   size_t half_M = new_M / 2;
+   size_t half_K = new_K / 2;
+   size_t half_N = new_N / 2;
+
+   // 提取子矩阵（通过拷贝）
+   auto slice = [](const Tensor& t, size_t start_i, size_t end_i, size_t start_j, size_t end_j) {
+       Tensor result(ShapeTag{}, {end_i - start_i, end_j - start_j}, t.dtype(), t.device());
+       for (size_t i = start_i; i < end_i; i++) {
+           for (size_t j = start_j; j < end_j; j++) {
+               switch (t.dtype()) {
+               case DType::kFloat:
+                   result({i - start_i, j - start_j}) = t({i, j});
+                   break;
+               case DType::kDouble:
+                   result({i - start_i, j - start_j}) = t({i, j});
+                   break;
+               case DType::kInt:
+                   result({i - start_i, j - start_j}) = t({i, j});
+                   break;
+               case DType::kLong:
+                   result({i - start_i, j - start_j}) = t({i, j});
+                   break;
+               default: break;
+               }
+           }
+       }
+       return result;
+   };
+
+   // 划分矩阵
+   Tensor A11 = slice(A_pad, 0, half_M, 0, half_K);
+   Tensor A12 = slice(A_pad, 0, half_M, half_K, new_K);
+   Tensor A21 = slice(A_pad, half_M, new_M, 0, half_K);
+   Tensor A22 = slice(A_pad, half_M, new_M, half_K, new_K);
+
+   Tensor B11 = slice(B_pad, 0, half_K, 0, half_N);
+   Tensor B12 = slice(B_pad, 0, half_K, half_N, new_N);
+   Tensor B21 = slice(B_pad, half_K, new_K, 0, half_N);
+   Tensor B22 = slice(B_pad, half_K, new_K, half_N, new_N);
+
+   // 计算Strassen的7个乘法
+   Tensor M1 = matMul_recursive(A11 + A22, B11 + B22);
+   Tensor M2 = matMul_recursive(A21 + A22, B11);
+   Tensor M3 = matMul_recursive(A11, B12 - B22);
+   Tensor M4 = matMul_recursive(A22, B21 - B11);
+   Tensor M5 = matMul_recursive(A11 + A12, B22);
+   Tensor M6 = matMul_recursive(A21 - A11, B11 + B12);
+   Tensor M7 = matMul_recursive(A12 - A22, B21 + B22);
+
+   // 计算结果子矩阵
+   Tensor C11 = M1 + M4 - M5 + M7;
+   Tensor C12 = M3 + M5;
+   Tensor C21 = M2 + M4;
+   Tensor C22 = M1 - M2 + M3 + M6;
+
+   // 组合结果矩阵
+   Tensor C_pad(ShapeTag{}, {new_M, new_N}, a.dtype(), a.device());
+   auto assign_block = [](Tensor& dest, const Tensor& src, size_t start_i, size_t start_j) {
+       for (size_t i = 0; i < src.shape()[0]; i++) {
+           for (size_t j = 0; j < src.shape()[1]; j++) {
+               switch (src.dtype()) {
+               case DType::kFloat:
+                   dest({start_i + i, start_j + j}) = src({i, j});
+                   break;
+               case DType::kDouble:
+                   dest({start_i + i, start_j + j}) = src({i, j});
+                   break;
+               case DType::kInt:
+                   dest({start_i + i, start_j + j}) = src({i, j});
+                   break;
+               case DType::kLong:
+                   dest({start_i + i, start_j + j}) = src({i, j});
+                   break;
+               default: break;
+               }
+           }
+       }
+   };
+
+   assign_block(C_pad, C11, 0, 0);
+   assign_block(C_pad, C12, 0, half_N);
+   assign_block(C_pad, C21, half_M, 0);
+   assign_block(C_pad, C22, half_M, half_N);
+
+   // 裁剪回原始大小
+   Tensor C = slice(C_pad, 0, M, 0, N);
+   return C;
 }
 
-inline Tensor AutoDiff::inputGrad() { return rootPtr()->grad; }
-inline Tensor &AutoDiff::outputGrad() { return topPtr()->output_grad; }
+// 矩阵乘法主函数(8.3 upt 目前仅AMX支持)
+Tensor matMul_test(const Tensor &a, const Tensor &b) {
+   // 检查维度
+   if (a.dim() != 2 || b.dim() != 2) {
+       throw std::runtime_error("matMul requires both tensors to be 2D matrices");
+   }
 
+   // 检查内层维度
+   size_t a_cols = a.shape()[1];
+   size_t b_rows = b.shape()[0];
+   if (a_cols != b_rows) {
+       std::ostringstream oss;
+       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+       throw std::runtime_error(oss.str());
+   }
+
+   // 根据矩阵大小选择算法
+   size_t M = a.shape()[0];
+   size_t K = a.shape()[1];
+   size_t N = b.shape()[1];
+
+   if (M <= SMALL_SIZE && N <= SMALL_SIZE && K <= SMALL_SIZE) {
+       return matMul_blocked(a, b);  // 小矩阵使用分块优化
+   }
+   else if (M <= MEDIUM_SIZE && N <= MEDIUM_SIZE && K <= MEDIUM_SIZE) {
+       return matMul_AMX(a, b);     // 中等矩阵使用AMX加速
+   }
+   else {
+       return matMul_recursive(a, b); // 大矩阵使用Strassen递归
+   }
+}
+// 分块+多线程版本
+Tensor matMul(const Tensor &a, const Tensor &b) {
+   // 严格检查维度：必须是2D矩阵
+   if (a.dim() != 2 || b.dim() != 2) {
+       throw std::runtime_error("matMul requires both tensors to be 2D matrices");
+   }
+
+   // 检查内层维度是否匹配
+   size_t a_cols = a.shape()[1];
+   size_t b_rows = b.shape()[0];
+   if (a_cols != b_rows) {
+       std::ostringstream oss;
+       oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+       throw std::runtime_error(oss.str());
+   }
+
+   // 创建结果张量 [M x N]
+   size_t M = a.shape()[0];
+   size_t N = b.shape()[1];
+   Tensor result(ShapeTag{}, {M, N}, a.dtype(), a.device());
+   result.zero(); // 初始化结果为零矩阵
+
+   // 根据数据类型进行计算
+   switch (a.dtype()) {
+   case DType::kFloat: {
+       const float* a_data = a.data<float>();
+       const float* b_data = b.data<float>();
+       float* r_data = result.data<float>();
+       const int BLOCK = 512;
+// 三层分块循环
+#pragma omp parallel for
+       for (int i0 = 0; i0 < M; i0 += BLOCK) {
+           int i_end = minx(i0 + BLOCK, M);  // 计算行边界
+           for (int k0 = 0; k0 < a_cols; k0 += BLOCK) {
+               int k_end = minx(k0 + BLOCK, a_cols);  // 计算中间维度边界
+               for (int j0 = 0; j0 < N; j0 += BLOCK) {
+                   int j_end = minx(j0 + BLOCK, N);  // 计算列边界
+                   // 核心计算：只处理完整块内的元素
+                   for (int i = i0; i < i_end; i++) {
+                       for (int k = k0; k < k_end; k++) {
+                           float a_val = a_data[i*a_cols + k];  // 一次加载A元素
+                           // 内层循环：连续访问B和C
+                           for (int j = j0; j < j_end; j++) {
+                               r_data[i*N + j] += a_val * b_data[k*N + j];
+                           }
+                       }
+                   }
+               }
+           }
+       }
+       break;
+   }
+   case DType::kDouble: {
+       const double* a_data = a.data<double>();
+       const double* b_data = b.data<double>();
+       double* r_data = result.data<double>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               double a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kInt: {
+       const int* a_data = a.data<int>();
+       const int* b_data = b.data<int>();
+       int* r_data = result.data<int>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               int a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   case DType::kLong: {
+       const long* a_data = a.data<long>();
+       const long* b_data = b.data<long>();
+       long* r_data = result.data<long>();
+
+       for (size_t i = 0; i < M; ++i) {
+           for (size_t k = 0; k < a_cols; ++k) {
+               long a_val = a_data[i * a_cols + k];
+               for (size_t j = 0; j < N; ++j) {
+                   r_data[i * N + j] += a_val * b_data[k * N + j];
+               }
+           }
+       }
+       break;
+   }
+   default:
+       throw std::runtime_error("Unsupported dtype for matMul");
+   }
+
+   return result;
+}
 Tensor Tensor::operator*(const Tensor &rhs) const {
    // 验证形状和类型匹配
    if (_dtype != rhs._dtype) throw std::runtime_error("DType mismatch in addition");
    if (_device != rhs._device) throw std::runtime_error("Device mismatch in addition");
    if (_shape == rhs._shape){
        // 创建结果张量时继承上下文
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, _shape, _dtype, _device);
+       Tensor result(ShapeTag{}, _shape, _dtype, _device);
        const size_t n = numel();
 
        // 根据数据类型分派加法操作
@@ -2136,12 +2324,11 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
        default:
            throw std::runtime_error("Unsupported dtype for addition");
        }
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Mul,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Mul, inputs_vec);
        }
        return result;
    } else {
@@ -2149,8 +2336,7 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
        BroadCastResult bc = broadCast(*this, rhs);
 
        // 创建结果张量（使用广播后的形状）
-       AutoDiff* ctx = this->autograd_ctx ? this->autograd_ctx : rhs.autograd_ctx;
-       Tensor result = Tensor::create_with_ctx(ctx, bc.logicShape, _dtype, _device);
+       Tensor result(ShapeTag{}, bc.logicShape, _dtype, _device);
 
        // 根据数据类型分派操作
        switch (_dtype) {
@@ -2182,21 +2368,17 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
        }
 
        // 记录自动微分操作
+       AutoDiff* ctx = AutoDiffContext::current();
        if (ctx) {
-           ctx->record_op(
-               result,
-               op::Mul,
-               {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)}
-           );
+           std::vector<Tensor*> outputs_vec = {&result};
+           std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this), const_cast<Tensor*>(&rhs)};
+           ctx->record_op(outputs_vec, op::Mul, inputs_vec);
        }
 
        return result;
    }
 }
 
-void Tensor::set_autograd_ctx(AutoDiff *ctx) {
-   autograd_ctx = ctx;
-}
 
 Tensor Tensor::softmax(int dim) const {
    int actual_dim = dim;
@@ -2208,7 +2390,6 @@ Tensor Tensor::softmax(int dim) const {
        throw std::runtime_error("Invalid dimension for softmax");
    }
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2279,20 +2460,17 @@ Tensor Tensor::softmax(int dim) const {
    }
 
    // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
-           op::Softmax,
-           {const_cast<Tensor*>(this)}
-       );
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       std::vector<Tensor*> outputs_vec = {&result};
+       std::vector<Tensor*> inputs_vec = {const_cast<Tensor*>(this)};
+       ctx->record_op(outputs_vec, op::Softmax, inputs_vec);
    }
-
    return result;
 }
 
 Tensor Tensor::tanh() const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2317,20 +2495,19 @@ Tensor Tensor::tanh() const {
    }
 
    // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       ctx->record_op(
+           {&result},
            op::Tanh,
            {const_cast<Tensor*>(this)}
        );
    }
-
    return result;
 }
 
 Tensor Tensor::sigmoid() const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2353,20 +2530,19 @@ Tensor Tensor::sigmoid() const {
    }
 
    // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       ctx->record_op(
+           {&result},
            op::Sigmoid,
            {const_cast<Tensor*>(this)}
        );
    }
-
    return result;
 }
 
 Tensor Tensor::relu() const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2389,20 +2565,19 @@ Tensor Tensor::relu() const {
    }
 
    // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       ctx->record_op(
+           {&result},
            op::ReLU,
            {const_cast<Tensor*>(this)}
        );
    }
-
    return result;
 }
 
 Tensor Tensor::sin() const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2425,59 +2600,54 @@ Tensor Tensor::sin() const {
    }
 
    // 记录操作到自动微分计算图
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       ctx->record_op(
+           {&result},
            op::Sin,
            {const_cast<Tensor*>(this)}
        );
    }
-
    return result;
 }
 
 Tensor Tensor::cos() const {
-    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-    result.autograd_ctx = this->autograd_ctx; // 继承上下文
-    switch (_dtype) {
-    case DType::kFloat: {
-        const float *src = data<float>();
-        float *dst       = result.data<float>();
-        for (size_t i = 0; i < numel(); ++i) {
-            dst[i] = std::cos(src[i]);
-        }
-        break;
-    }
-    case DType::kDouble: {
-        const double *src = data<double>();
-        double *dst       = result.data<double>();
-        for (size_t i = 0; i < numel(); ++i) {
-            dst[i] = std::cos(src[i]);
-        }
-        break;
-    }
-    default:
-        throw std::runtime_error("Unsupported dtype for cos");
-    }
+   Tensor result(ShapeTag{}, _shape, _dtype, _device);
+   switch (_dtype) {
+   case DType::kFloat: {
+       const float* src = data<float>();
+       float* dst = result.data<float>();
+       for (size_t i = 0; i < numel(); ++i) {
+           dst[i] = std::cos(src[i]);
+       }
+       break;
+   }
+   case DType::kDouble: {
+       const double* src = data<double>();
+       double* dst = result.data<double>();
+       for (size_t i = 0; i < numel(); ++i) {
+           dst[i] = std::cos(src[i]);
+       }
+       break;
+   }
+   default:
+       throw std::runtime_error("Unsupported dtype for cos");
+   }
 
-    // 记录操作到自动微分计算图
-    if (autograd_ctx) {
-        autograd_ctx->record_op(result, op::Cos, {const_cast<Tensor *>(this)});
-    }
-
-    return result;
-}
-
-Tensor &Tensor::grad() const {
-   if (!autograd_ctx) throw std::runtime_error("No autograd context");
-   auto* node = autograd_ctx->get_node(const_cast<Tensor*>(this));
-   if (!node || node->grad.empty()) throw std::runtime_error("No gradient available");
-   return node->grad;
+   // 记录操作到自动微分计算图
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (ctx) {
+       ctx->record_op(
+           {&result},
+           op::Cos,
+           {const_cast<Tensor*>(this)}
+       );
+   }
+   return result;
 }
 
 Tensor Tensor::operator-() const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        float* ptr = result.data<float>();
@@ -2506,8 +2676,7 @@ Tensor Tensor::operator-() const {
 }
 
 Tensor Tensor::operator>(float scalar) const {
-   Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
+   Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2529,7 +2698,6 @@ Tensor Tensor::operator>(float scalar) const {
 
 Tensor Tensor::operator-(float scalar) const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
-   result.autograd_ctx = this->autograd_ctx;  // 继承上下文
    switch (_dtype) {
    case DType::kFloat: {
        const float* src = data<float>();
@@ -2560,9 +2728,6 @@ Tensor Tensor::operator-(float scalar) const {
    }
 
    // 自动微分记录（如启用）
-   if (autograd_ctx) {
-       autograd_ctx->record_op(result, op::Sub, {const_cast<Tensor*>(this)});
-   }
 
    return result;
 }
@@ -2599,11 +2764,6 @@ inline Tensor operator-(float scalar, const Tensor& tensor) {
    }
 
    // 自动微分记录（注意：此时 scalar 是常数，不参与反向传播）
-   if (tensor.autograd_ctx) {
-       // 这里可以记录为 sub_from_const 或手动处理
-       // 由于 scalar 是常数，反向传播只影响 tensor 的梯度
-       tensor.autograd_ctx->record_op(result, op::Sub, {const_cast<Tensor*>(&tensor)});
-   }
 
    return result;
 }
@@ -2613,7 +2773,6 @@ Tensor Tensor::sum(const std::vector<int>& dims, bool keepdim) const {
    if (dims.empty()) {
        Tensor result(ShapeTag{}, {}, _dtype, _device);
        result._storage = Storage(1, _dtype, _device);
-       result.autograd_ctx = this->autograd_ctx;  // 继承上下文
        switch (_dtype) {
        case DType::kFloat: {
            float* dst = result.data<float>();
@@ -2644,13 +2803,7 @@ Tensor Tensor::sum(const std::vector<int>& dims, bool keepdim) const {
        }
 
        // 记录自动微分操作
-       if (autograd_ctx) {
-           autograd_ctx->record_op(
-               result,
-               op::Sum,
-               {const_cast<Tensor*>(this)}
-           );
-       }
+
        return result;
    }
 
@@ -2809,15 +2962,23 @@ Tensor Tensor::sum(const std::vector<int>& dims, bool keepdim) const {
    }
 
    // 记录自动微分操作
-   if (autograd_ctx) {
-       autograd_ctx->record_op(
-           result,
-           op::Sum,
-           {const_cast<Tensor*>(this)}
-       );
-   }
+
 
    return result;
 }
+Tensor grad(const Tensor& t) {
+   AutoDiff* ctx = AutoDiffContext::current();
+   if (!ctx)
+       throw std::runtime_error("No active AD context");
 
+   // 使用公共接口获取梯度
+   return ctx->get_grad(const_cast<Tensor*>(&t));
+}
+
+void backward(Tensor& root, Tensor grad_output = Tensor()) {
+   if (!AutoDiffContext::current())
+       throw std::runtime_error("No active AD context");
+
+   AutoDiffContext::current()->backward(root, grad_output);
+}
 //TENSOR_CPPM
