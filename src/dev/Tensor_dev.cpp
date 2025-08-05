@@ -2365,3 +2365,58 @@ BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
 
     return {logicShape, logicStridesA, logicStridesB};
 }
+// 在Tensor类外部添加友元函数
+Tensor operator-(float scalar, const Tensor& tensor) {
+    Tensor result(ShapeTag{}, tensor.shape(), tensor.dtype(), tensor.device());
+
+    switch (tensor.dtype()) {
+    case DType::kFloat: {
+        const float* src = tensor.data<float>();
+        float* dst = result.data<float>();
+        for (size_t i = 0; i < tensor.numel(); ++i) {
+            dst[i] = scalar - src[i];
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double* src = tensor.data<double>();
+        double* dst = result.data<double>();
+        for (size_t i = 0; i < tensor.numel(); ++i) {
+            dst[i] = static_cast<double>(scalar) - src[i];
+        }
+        break;
+    }
+    case DType::kInt: {
+        const int32_t* src = tensor.data<int32_t>();
+        int32_t* dst = result.data<int32_t>();
+        int32_t s = static_cast<int32_t>(scalar);
+        for (size_t i = 0; i < tensor.numel(); ++i) {
+            dst[i] = s - src[i];
+        }
+        break;
+    }
+    case DType::kLong: {
+        const int64_t* src = tensor.data<int64_t>();
+        int64_t* dst = result.data<int64_t>();
+        int64_t s = static_cast<int64_t>(scalar);
+        for (size_t i = 0; i < tensor.numel(); ++i) {
+            dst[i] = s - src[i];
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported dtype for scalar - tensor");
+    }
+
+    // 自动微分记录
+    AutoDiff* ctx = AutoDiffContext::current();
+    if (ctx) {
+        ctx->record_op(
+            {&result},
+            op::Sub,
+            {const_cast<Tensor*>(&tensor)}
+        );
+    }
+
+    return result;
+}
