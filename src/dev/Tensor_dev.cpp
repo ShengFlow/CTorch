@@ -30,7 +30,7 @@ int minx(int a,int b){
 // Storage
 Storage::Storage() : _size(0), _dtype(DType::kFloat), _device(DeviceType::kCPU) {}
 
- Storage::Storage(size_t size, DType dtype, DeviceType device): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)]) : nullptr) {}
+Storage::Storage(size_t size, DType dtype, DeviceType device): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)]) : nullptr) {}
 
 size_t Storage::size() const { return _size; }
 
@@ -863,6 +863,61 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
 
        return result;
    }
+}
+// 在Tensor类中添加以下成员函数
+Tensor Tensor::operator-(float scalar) const {
+    Tensor result(ShapeTag{}, _shape, _dtype, _device);
+
+    switch (_dtype) {
+    case DType::kFloat: {
+        const float* src = data<float>();
+        float* dst = result.data<float>();
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = src[i] - scalar;
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double* src = data<double>();
+        double* dst = result.data<double>();
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = src[i] - static_cast<double>(scalar);
+        }
+        break;
+    }
+    case DType::kInt: {
+        const int32_t* src = data<int32_t>();
+        int32_t* dst = result.data<int32_t>();
+        int32_t s = static_cast<int32_t>(scalar);
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = src[i] - s;
+        }
+        break;
+    }
+    case DType::kLong: {
+        const int64_t* src = data<int64_t>();
+        int64_t* dst = result.data<int64_t>();
+        int64_t s = static_cast<int64_t>(scalar);
+        for (size_t i = 0; i < numel(); ++i) {
+            dst[i] = src[i] - s;
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported dtype for subtraction with scalar");
+    }
+
+    // 自动微分记录
+    AutoDiff* ctx = AutoDiffContext::current();
+    if (ctx) {
+        ctx->record_op(
+            {&result},
+            op::Sub,
+            {const_cast<Tensor*>(this)}
+        );
+    }
+
+    return result;
 }
 
 Tensor Tensor::operator*(const Tensor &rhs) const {
