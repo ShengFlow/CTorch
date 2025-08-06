@@ -1010,11 +1010,11 @@ public:
     // 获取节点
     Node* get_node(Tensor *t);
 
-    // // 获取计算图起始节点
-    // const Node* rootPtr();
-    //
-    // // 获取计算图终节点
-    // const Node* topPtr();
+    // 获取计算图起始节点
+    const Node* rootPtr();
+
+    // 获取计算图终节点
+    const Node* topPtr();
 
     // ======================= 操作 =======================
     // 创建叶子节点

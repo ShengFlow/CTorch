@@ -2189,6 +2189,12 @@ AutoGrad::Node *AutoGrad::get_node(Tensor *t) {
     return it != tensor_to_node.end() ? it->second : nullptr;
 }
 
+const AutoGrad::Node *AutoGrad::rootPtr() { return nodes[0].get(); }
+
+const AutoGrad::Node *AutoGrad::topPtr() { return nodes.back().get(); }
+
+
+
 void AutoGrad::make_leaf(Tensor &t, bool requires_grad) {
     if (tensor_to_node.find(&t) != tensor_to_node.end()) {
         return; // 已注册，跳过
