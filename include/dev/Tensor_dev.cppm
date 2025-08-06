@@ -106,10 +106,10 @@ export struct BroadCastResult {
 // ======================= 辅助函数 =======================
 
 // 将数据类型转换为字符串表示
-constexpr const char* dtypeToString(DType dtype);
+export constexpr const char* dtypeToString(DType dtype);
 
 // 获取数据类型的字节大小
-constexpr size_t dtypeSize(DType dtype);
+export constexpr size_t dtypeSize(DType dtype);
 
 // 将c++类型转换为dtype
 template <typename T>
@@ -169,7 +169,7 @@ export int minx(int a, int b);
 * Storage& operator=(const Storage&) = default;    // 拷贝赋值
 */
 
-class AutoGrad;// 前置声明，避免循环引用
+export class AutoGrad;// 前置声明，避免循环引用
 
 export class Storage {
 private:
@@ -859,7 +859,7 @@ export Tensor matMulTest(const Tensor &a, const Tensor &b); // 矩阵乘主函�
  *      成员变量：
  *      AutoGrad* ctx 公共上下文指针
  */
-class AutoGradContext {
+export class AutoGradContext {
 public:
     static AutoGrad*& current();
 
