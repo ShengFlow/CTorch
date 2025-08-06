@@ -756,8 +756,11 @@ public:
     // 负号
     Tensor operator-() const;
 
-    // // float型张量-标量减法
-    // Tensor operator-(float scalar) const;
+    // float型张量-标量减法
+    Tensor operator-(float scalar) const;
+
+    // float型标量-张量减法
+    friend  Tensor operator-(float scalar, const Tensor& tensor);
     //
     // // float - Tensor
     // Tensor operator-(float scalar, const Tensor& tensor);

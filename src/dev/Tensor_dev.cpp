@@ -864,7 +864,7 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
        return result;
    }
 }
-// 在Tensor类中添加以下成员函数
+
 Tensor Tensor::operator-(float scalar) const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
 
@@ -908,7 +908,7 @@ Tensor Tensor::operator-(float scalar) const {
     }
 
     // 自动微分记录
-    AutoDiff* ctx = AutoDiffContext::current();
+    AutoGrad* ctx = AutoGradContext::current();
     if (ctx) {
         ctx->record_op(
             {&result},
@@ -2365,7 +2365,7 @@ BroadCastResult broadCast(const Tensor& a, const Tensor& b) {
 
     return {logicShape, logicStridesA, logicStridesB};
 }
-// 在Tensor类外部添加友元函数
+
 Tensor operator-(float scalar, const Tensor& tensor) {
     Tensor result(ShapeTag{}, tensor.shape(), tensor.dtype(), tensor.device());
 
@@ -2409,7 +2409,7 @@ Tensor operator-(float scalar, const Tensor& tensor) {
     }
 
     // 自动微分记录
-    AutoDiff* ctx = AutoDiffContext::current();
+    AutoGrad* ctx = AutoGradContext::current();
     if (ctx) {
         ctx->record_op(
             {&result},
