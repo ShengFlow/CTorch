@@ -3,8 +3,7 @@
 //
 module;
 
-#include "../../src/dev/Tensor.h"
-#include <type_traits>
+import Tensor_dev;
 #include <functional>
 export module functional;
 
@@ -26,19 +25,19 @@ std::function<TargetSignature> make_function(Func f,T0&&... args) {
 }
 
 // 逐元素余弦
-Tensor cos(Tensor x);
+Tensor cos(Tensor x,AutoGrad& ctx);
 
 // 逐元素正弦
-Tensor sin(Tensor x);
+Tensor sin(Tensor x,AutoGrad& ctx);
 
 // ReLU激活函数
-Tensor relu(Tensor x);
+Tensor relu(Tensor x,AutoGrad& ctx);
 
 // Sigmoid激活函数
-Tensor sigmoid(Tensor x);
+Tensor sigmoid(Tensor x,AutoGrad& ctx);
 
 // Tanh激活函数
-Tensor tanh(Tensor x);
+Tensor tanh(Tensor x,AutoGrad& ctx);
 
 // Softmax激活函数
-Tensor softmax(Tensor x,int dim = -1);
+Tensor softmax(Tensor x,int dim = -1,AutoGrad& ctx);

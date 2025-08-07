@@ -4,11 +4,14 @@
 
 module;
 
-#include "../../src/dev/Tensor.h"
+import Tensor_dev;
+#include <cmath>
+#include <stdexcept>
+#include <vector>
 
 module functional;
 
-Tensor cos(Tensor x){
+Tensor cos(Tensor x,AutoGrad& ctx){
     Tensor result(ShapeTag{}, x.shape(), x.dtype(), x.device());
 
     switch (x.dtype()) {
@@ -33,14 +36,14 @@ Tensor cos(Tensor x){
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::Cos, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::Cos, {const_cast<Tensor *>(&x)});
     }
 
     return result;
 }
 
-Tensor sin(Tensor x) {
+Tensor sin(Tensor x,AutoGrad ctx) {
     Tensor result(ShapeTag{}, x.shape(), x.dtype(), x.device());
 
     switch (x.dtype()) {
@@ -65,14 +68,14 @@ Tensor sin(Tensor x) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::Sin, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::Sin, {const_cast<Tensor *>(&x)});
     }
 
     return result;
 }
 
-Tensor relu(Tensor x) {
+Tensor relu(Tensor x,AutoGrad ctx) {
     Tensor result(ShapeTag{}, x.shape(), x.dtype(), x.device());
 
     switch (x.dtype()) {
@@ -97,14 +100,14 @@ Tensor relu(Tensor x) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::ReLU, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::ReLU, {const_cast<Tensor *>(&x)});
     }
 
     return result;
 }
 
-Tensor sigmoid(Tensor x){
+Tensor sigmoid(Tensor x,AutoGrad ctx){
     Tensor result(ShapeTag{}, x.shape(), x.dtype(), x.device());
 
     switch (x.dtype()) {
@@ -129,14 +132,14 @@ Tensor sigmoid(Tensor x){
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::Sigmoid, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::Sigmoid, {const_cast<Tensor *>(&x)});
     }
 
     return result;
 }
 
-Tensor tanh(Tensor x) {
+Tensor tanh(Tensor x,AutoGrad ctx) {
     Tensor result(ShapeTag{}, x.shape(), x.dtype(), x.device());
 
     switch (x.dtype()) {
@@ -163,14 +166,14 @@ Tensor tanh(Tensor x) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::Tanh, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::Tanh, {const_cast<Tensor *>(&x)});
     }
 
     return result;
 }
 
-Tensor softmax(Tensor x,int dim) {
+Tensor softmax(Tensor x,int dim,AutoGrad ctx) {
     int actual_dim = dim;
     if (actual_dim < 0) {
         actual_dim = x.dim() + actual_dim; // 负值表示从后往前计数
@@ -252,8 +255,8 @@ Tensor softmax(Tensor x,int dim) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.hasGrad()) {
-        x.recordOp(result, op::Softmax, {const_cast<Tensor *>(&x)});
+    if (x.grad().data()) {
+        ctx.record_op(std::vector<Tensor*>({&result}), op::Softmax, {const_cast<Tensor *>(&x)});
     }
 
     return result;

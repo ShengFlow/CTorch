@@ -60,7 +60,7 @@ export enum class DType {
  };
 
 // 自动微分类操作符枚举
-enum class op{
+export enum class op{
 
     // 基本运算
     Add,        // 加
@@ -584,6 +584,12 @@ public:
 
     // 张量步长
     [[nodiscard]] const std::vector<size_t> strides() const;
+
+    // 设置形状
+    void setShape(const std::vector<size_t>& shape);
+
+    // 设置步长
+    void setStrides(const std::vector<size_t>& strides);
 
     // 获取张量的维度数
     [[nodiscard]] size_t dim() const;

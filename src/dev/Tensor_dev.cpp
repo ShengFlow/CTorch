@@ -21,6 +21,10 @@ module;
 
 module Tensor_dev;
 
+#ifndef HOOK_RET
+#define HOOK_RET std::optional<Tensor>
+#endif
+
 // 辅助函数
 int minx(int a,int b){
     int diff = b - a;
@@ -442,6 +446,10 @@ Tensor::Tensor(Tensor &&other) noexcept:
 const std::vector<size_t> &Tensor::shape() const { return _shape; }
 
 const std::vector<size_t> Tensor::strides() const { return _strides; }
+
+void Tensor::setShape(const std::vector<size_t> &shape) {_shape = shape;}
+
+void Tensor::setStrides(const std::vector<size_t> &strides) {_strides = strides;}
 
 size_t Tensor::dim() const { return _shape.size(); }
 
@@ -2229,7 +2237,7 @@ void AutoGrad::record_op(const std::vector<Tensor *> &outputs, op operation,
 }
 
 void AutoGrad::backward(Tensor &root, Tensor grad_output) {
-    if (tensor_to_node.find(&root) == tensor_to_node.end()) {
+        if (tensor_to_node.find(&root) == tensor_to_node.end()) {
            throw std::runtime_error("Tensor not in computation graph");
        }
 
@@ -2253,6 +2261,8 @@ void AutoGrad::backward(Tensor &root, Tensor grad_output) {
            }
            root_node->grad = grad_output;
        }
+        for (auto fn:root_node->tensor._hooks)
+           if (HOOK_RET val = fn(root_node->tensor); val.has_value()) root_node->grad = val.value();
 
        // 拓扑排序（深度优先）
        std::vector<Node*> order;
@@ -2318,6 +2328,9 @@ void AutoGrad::backward(Tensor &root, Tensor grad_output) {
            default:
                throw std::runtime_error("Unsupported operation in backward");
            }
+
+           for (auto fn:node->tensor._hooks)
+               if (HOOK_RET val = fn(node->tensor); val.has_value()) node->grad = val.value();
 
            // 如果不是保留计算图，释放中间梯度
            if (!retain_graph && !node->is_leaf) {
