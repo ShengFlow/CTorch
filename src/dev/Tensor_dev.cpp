@@ -18,6 +18,8 @@ module;
 #include <numeric>
 #include <iostream>
 #include <unordered_set>
+#include <optional>
+#include <functional>
 
 module Tensor_dev;
 
@@ -528,27 +530,27 @@ Tensor Tensor::sum(const std::vector<int> &dims, bool keepdim) const {
         result._storage = Storage(1, _dtype, _device);
         switch (_dtype) {
         case DType::kFloat: {
-            float* dst = result.data<float>();
-            const float* src = data<float>();
-            *dst = std::accumulate(src, src + numel(), 0.0f);
+            float *dst       = result.data<float>();
+            const float *src = data<float>();
+            *dst             = std::accumulate(src, src + numel(), 0.0f);
             break;
         }
         case DType::kDouble: {
-            double* dst = result.data<double>();
-            const double* src = data<double>();
-            *dst = std::accumulate(src, src + numel(), 0.0);
+            double *dst       = result.data<double>();
+            const double *src = data<double>();
+            *dst              = std::accumulate(src, src + numel(), 0.0);
             break;
         }
         case DType::kInt: {
-            int32_t* dst = result.data<int32_t>();
-            const int32_t* src = data<int32_t>();
-            *dst = std::accumulate(src, src + numel(), 0);
+            int32_t *dst       = result.data<int32_t>();
+            const int32_t *src = data<int32_t>();
+            *dst               = std::accumulate(src, src + numel(), 0);
             break;
         }
         case DType::kLong: {
-            int64_t* dst = result.data<int64_t>();
-            const int64_t* src = data<int64_t>();
-            *dst = std::accumulate(src, src + numel(), 0LL);
+            int64_t *dst       = result.data<int64_t>();
+            const int64_t *src = data<int64_t>();
+            *dst               = std::accumulate(src, src + numel(), 0LL);
             break;
         }
         default:
@@ -556,9 +558,9 @@ Tensor Tensor::sum(const std::vector<int> &dims, bool keepdim) const {
         }
 
         // 记录自动微分操作
-
         return result;
     }
+    throw std::runtime_error("Cannot sum a tensor whose dimensions are not empty");
 }
 
 Tensor Tensor::sum(int dim, bool keepdim) const { return sum(std::vector<int>{dim}, false); }
@@ -685,8 +687,6 @@ std::string Tensor::toString() const {
     }
     return oss.str();
 }
-
-void Tensor::print() const { std::cout << toString() << std::endl; }
 
 Tensor Tensor::transpose_last_two() const { return this->transpose(); }
 
@@ -1839,6 +1839,11 @@ Tensor matMulTest(const Tensor &a, const Tensor &b){
    else {
        return matMulRecursive(a, b); // 大矩阵使用Strassen递归
    }
+}
+
+std::ostream& operator<<(std::ostream& os, const Tensor& tensor) {
+    os<<tensor.toString();
+    return os;
 }
 
 // AutoGradContext

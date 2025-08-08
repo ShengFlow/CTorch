@@ -10,8 +10,7 @@
 * Log 1.7: 增加了标量运算
 * Unfix : matMul
 */
-
-export module Tensor_dev;
+module;
 
 #include <algorithm>
 #include <cstddef>
@@ -36,6 +35,8 @@ export module Tensor_dev;
 #include <optional>
 #include <limits>
 // #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
+
+export module Tensor_dev;
 
 #ifndef HOOK_RET
 #define HOOK_RET std::optional<Tensor>
@@ -735,11 +736,11 @@ public:
     // 逆序列化
     void deserialize(std::ifstream & is);
 
+    // 打印张量信息
+    friend std::ostream& operator<<(std::ostream& os, const Tensor& tensor);
+
     // 将张量转换为字符串表示
     [[nodiscard]] std::string toString() const;
-
-    // 打印张量信息
-    void print() const;
 
     // ======================= 运算符重载 =======================
     // 转置最后两个维度
