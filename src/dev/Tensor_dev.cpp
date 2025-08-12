@@ -20,6 +20,9 @@ module;
 #include <unordered_set>
 #include <optional>
 #include <functional>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 
 module Tensor_dev;
 

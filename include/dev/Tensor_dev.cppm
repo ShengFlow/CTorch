@@ -8,7 +8,7 @@
 * Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
 * Log 1.6: 修复了广播操作并对所有二元操作进行广播处理，优化了矩阵乘法
 * Log 1.7: 增加了标量运算
-* Unfix : matMul
+* Log 1.8: 修复并优化了matmul
 */
 module;
 
@@ -19,7 +19,6 @@ module;
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>  // 使用Apple的BLAS实现
 #endif
-#include <iostream>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
@@ -192,9 +191,11 @@ private:
             (std::is_same_v<T, int32_t> && _dtype != DType::kInt) ||
             (std::is_same_v<T, int64_t> && _dtype != DType::kLong) ||
             (std::is_same_v<T, bool> && _dtype != DType::kBool)) {
-            std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
-                      << ", dtype=" << dtypeToString(_dtype) << std::endl;
-            throw std::runtime_error("Storage data type mismatch");
+            std::string message = "Storage data type mismatch: T=";
+            message += typeid(T).name();
+            message += ", dtype=";
+            message += dtypeToString(_dtype);
+            throw std::runtime_error(message);
             }
     }
 public:
