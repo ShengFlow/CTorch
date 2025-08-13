@@ -173,7 +173,7 @@ Tensor tanh(Tensor x,AutoGrad ctx) {
     return result;
 }
 
-Tensor softmax(Tensor x,int dim,AutoGrad& ctx) {
+Tensor softmax(Tensor x,AutoGrad& ctx,int dim) {
     int actual_dim = dim;
     if (actual_dim < 0) {
         actual_dim = x.dim() + actual_dim; // 负值表示从后往前计数

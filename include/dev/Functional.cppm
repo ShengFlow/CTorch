@@ -18,9 +18,9 @@ export module functional;
 // 包装函数
 template <typename TargetSignature,typename Func,typename... T0> //这里这个TargetSignature填上面的宏
 std::function<TargetSignature> make_function(Func f,T0&&... args) {
-    return [f, args]() -> typename std::function<TargetSignature>::result_type {
+    return [f,...args = std::forward<T0>(args)]() -> typename std::function<TargetSignature>::result_type {
         // 使用完美转发调用原始函数
-        return f(std::forward<T0>(args)...);
+        return f(args...);
     };
 }
 
@@ -40,4 +40,4 @@ Tensor sigmoid(Tensor x,AutoGrad& ctx);
 Tensor tanh(Tensor x,AutoGrad& ctx);
 
 // Softmax激活函数
-Tensor softmax(Tensor x,int dim = -1,AutoGrad& ctx);
+Tensor softmax(Tensor x,AutoGrad& ctx,int dim = -1);

@@ -36,6 +36,30 @@ int minx(int a,int b){
     return a + (diff & (diff >> 31));
 }
 
+// 将数据类型转换为字符串表示
+constexpr const char* dtypeToString(DType dtype) {
+    switch (dtype) {
+    case DType::kFloat:  return "float32";
+    case DType::kDouble: return "float64";
+    case DType::kInt:    return "int32";
+    case DType::kLong:   return "int64";
+    case DType::kBool:   return "bool";
+    default:             return "unknown";
+    }
+}
+
+// 获取数据类型的字节大小
+constexpr size_t dtypeSize(DType dtype) {
+    switch (dtype) {
+    case DType::kFloat:  return sizeof(float);
+    case DType::kDouble: return sizeof(double);
+    case DType::kInt:    return sizeof(int32_t);
+    case DType::kLong:   return sizeof(int64_t);
+    case DType::kBool:   return sizeof(bool);
+    default: throw std::runtime_error("Unsupported dtype");
+    }
+}
+
 // Storage
 Storage::Storage() : _size(0), _dtype(DType::kFloat), _device(DeviceType::kCPU) {}
 
@@ -664,7 +688,7 @@ std::string Tensor::toString() const {
         if (i < _shape.size() - 1) oss << ", ";
     }
     oss << "], dtype=" << dtypeToString(_dtype)
-        << ", device=" << (_device == DeviceType::kCPU ? "cpu" : "gpu") << ", AutoDiff=" << str << ")\n";
+        << ", device=" << (_device == DeviceType::kCPU ? "cpu" : "gpu") << ", AutoGrad=" << str << ")\n";
 
     // 打印张量内容
     if (numel() == 0) {

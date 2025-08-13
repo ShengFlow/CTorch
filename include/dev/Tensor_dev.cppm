@@ -111,31 +111,45 @@ export constexpr const char* dtypeToString(DType dtype);
 // 获取数据类型的字节大小
 export constexpr size_t dtypeSize(DType dtype);
 
-// 将c++类型转换为dtype
-template <typename T>
-    constexpr DType cpp2DType() noexcept {
-    if constexpr (std::is_same_v<T, float>) {
-        return DType::kFloat;
-    } else if constexpr (std::is_same_v<T, double>) {
-        return DType::kDouble;
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return DType::kInt;
-    } else if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, long>) {
-        return DType::kLong;
-    } else if constexpr (std::is_same_v<T, bool>) {
-        return DType::kBool;
-    } else if constexpr (std::is_same_v<T, int>) {
-        // 处理int类型，根据系统架构选择
-        if constexpr (sizeof(int) == sizeof(int32_t)) {
-            return DType::kInt;
-        } else {
-            return DType::kLong;
-        }
-    } else {
-        // 不支持的类型（运行时错误）
-        throw std::runtime_error("Unsupported type for DType conversion");
+export template <typename T>
+struct TensorINIT{
+    std::initializer_list<T> data;
+    std::initializer_list<size_t> shape;
+    DType dtype;
+
+    TensorINIT(std::initializer_list<T> _data,std::initializer_list<size_t> _shape) {
+        data = _data;
+        shape = _shape;
+        dtype = cpp2DType<T>();
     }
-}
+
+    // 将c++类型转换为dtype
+private:
+    template <typename type>
+        constexpr DType cpp2DType() noexcept {
+        if constexpr (std::is_same_v<type, float>) {
+            return DType::kFloat;
+        } else if constexpr (std::is_same_v<type, double>) {
+            return DType::kDouble;
+        } else if constexpr (std::is_same_v<type, int32_t>) {
+            return DType::kInt;
+        } else if constexpr (std::is_same_v<type, int64_t> || std::is_same_v<type, long>) {
+            return DType::kLong;
+        } else if constexpr (std::is_same_v<type, bool>) {
+            return DType::kBool;
+        } else if constexpr (std::is_same_v<type, int>) {
+            // 处理int类型，根据系统架构选择
+            if constexpr (sizeof(int) == sizeof(int32_t)) {
+                return DType::kInt;
+            } else {
+                return DType::kLong;
+            }
+        } else {
+            // 不支持的类型（运行时错误）
+            throw std::runtime_error("Unsupported type for DType conversion");
+        }
+    }
+};
 
 export int minx(int a, int b);
 
@@ -563,12 +577,13 @@ public:
 
     // 初始化构造
     template <typename T>
-    Tensor(std::initializer_list<T> data, std::initializer_list<size_t> shape):
-    _storage(Storage(data,data.size(),cpp2DType<T>(),DeviceType::kCPU)),
-    _shape(std::move(shape)),
+    Tensor(TensorINIT<T> param):
+    _storage(Storage(&param.data,param.data.size(),param.dtype,DeviceType::kCPU)),
+    _shape(std::vector<size_t>(param.shape)),
     _storage_offset(0),
     _device(DeviceType::kCPU),
-    _dtype(cpp2DType<T>()){computeStrides();}
+    _dtype(param.dtype)
+    {computeStrides();}
 
     // 拷贝构造函数：创建深拷贝
     Tensor(const Tensor& other);
