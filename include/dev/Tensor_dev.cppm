@@ -2,7 +2,7 @@
 * Tensor.cppm
 * Created by Beapoe & GhostFace on 2025.7
 * Main Classes: Storage & Tensor & Auto_diff
-* Version : v1.7 (fixed on 2025.7.29 15:59)
+* Version : v1.8 (fixed on 2025.8.5 15:59)
 * Log 1.3: 增加了注释及代码易读性
 * Log 1.4: 增加了AutoGrad自动微分类
 * Log 1.5: 增加了连续性检查，修复了变量命名，增加了对自动微分状态的输出，修复了移动时不移动自动微分状态的bug
@@ -30,9 +30,7 @@ module;
 #include <iomanip>
 #include <string>
 #include <unordered_map>
-#include <stack>
 #include <optional>
-#include <limits>
 // #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 
 export module Tensor_dev;
@@ -40,7 +38,6 @@ export module Tensor_dev;
 #ifndef HOOK_RET
 #define HOOK_RET std::optional<Tensor>
 #endif
-
 // ======================= 类型定义和枚举 =======================
 
 // 设备类型 - 定义张量存储的位置
@@ -254,7 +251,8 @@ public:
     const T* data() const {
         if (_size == 0 || !_data) return nullptr;
         checkDType<T>();
-        return reinterpret_cast<const T*>(_data.get());
+        const T* ret = reinterpret_cast<T*>(_data.get());
+        return ret;
     }
 
     // 获取存储中的元素数量
@@ -515,7 +513,7 @@ private:
         }
         os << "[";
 
-        constexpr size_t max_display = 3; // 每维度最大显示元素数
+        const size_t max_display = 3; // 每维度最大显示元素数
         const size_t display_count = std::min(_shape[dim], max_display);
         const bool truncated = _shape[dim] > max_display;
 
@@ -578,12 +576,15 @@ public:
     // 初始化构造
     template <typename T>
     Tensor(TensorINIT<T> param):
-    _storage(Storage(&param.data,param.data.size(),param.dtype,DeviceType::kCPU)),
     _shape(std::vector<size_t>(param.shape)),
     _storage_offset(0),
     _device(DeviceType::kCPU),
-    _dtype(param.dtype)
-    {computeStrides();}
+    _dtype(param.dtype) {
+        computeStrides();
+        auto dat = std::make_unique<T[]>(param.shape.size() * sizeof(T));
+        std::copy(param.data.begin(), param.data.end(), dat.get());
+        _storage = Storage(dat.get(),param.data.size(),param.dtype,DeviceType::kCPU);
+    }
 
     // 拷贝构造函数：创建深拷贝
     Tensor(const Tensor& other);
@@ -847,6 +848,31 @@ public:
     // 获取指定索引处钩子
     [[nodiscard]] Hook hook(size_t idx) const;
 };
+
+// ======================= 全局运算 =======================
+// float-张量型乘法
+export Tensor operator*(float scalar, Tensor tensor);
+
+// double-张量型乘法
+export Tensor operator*(double scalar, Tensor tensor);
+
+// int-张量型乘法
+export Tensor operator*(int scalar, Tensor tensor);
+
+// long-张量型乘法
+export Tensor operator*(long scalar, Tensor tensor);
+
+// float-张量型除法
+export Tensor operator/(float scalar, Tensor tensor);
+
+// double-张量型除法
+export Tensor operator/(double scalar, Tensor tensor);
+
+// int-张量型除法
+export Tensor operator/(int scalar, Tensor tensor);
+
+// long-张量型除法
+export Tensor operator/(long scalar, Tensor tensor);
 
 // ======================= 矩阵乘(MatMul) =======================
 // Tensor matMul(const Tensor &a, const Tensor &b);        // 矩阵乘前置声明（8.3 upt:这里为老版的声明，暂时保留）

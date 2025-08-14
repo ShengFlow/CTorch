@@ -23,12 +23,9 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include "../../include/dev/basics.h"
 
 module Tensor_dev;
-
-#ifndef HOOK_RET
-#define HOOK_RET std::optional<Tensor>
-#endif
 
 // 辅助函数
 int minx(int a,int b){
@@ -1212,6 +1209,55 @@ Tensor Tensor::operator/(long scalar) const {
     return result;
 }
 
+// 全局计算
+Tensor operator*(float scalar, Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<float>()[i] = tensor.data<float>()[i]*scalar;
+    return result;
+}
+
+Tensor operator*(double scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<double>()[i] = tensor.data<double>()[i]*scalar;
+    return result;
+}
+
+Tensor operator*(int scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<int>()[i] = tensor.data<int>()[i]*scalar;
+    return result;
+}
+
+Tensor operator*(long scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<long>()[i] = tensor.data<long>()[i]*scalar;
+    return result;
+}
+
+Tensor operator/(float scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<float>()[i] = tensor.data<float>()[i]*(1/scalar);
+    return result;
+}
+
+Tensor operator/(double scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<double>()[i] = tensor.data<double>()[i]*(1/scalar);
+    return result;
+}
+
+Tensor operator/(int scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<int>()[i] = tensor.data<int>()[i]*(1/scalar);
+    return result;
+}
+
+Tensor operator/(long scalar,  Tensor tensor)  {
+    Tensor result = tensor;
+    for (size_t i{0};i<tensor.numel();i++) result.data<long>()[i] = tensor.data<long>()[i]*(1/scalar);
+    return result;
+}
+
 Tensor &Tensor::operator=(const Tensor &other) {
     if (this != &other) {
         _shape = other._shape;
@@ -1282,6 +1328,7 @@ void Tensor::removeAllHooks() { _hooks.clear(); }
 std::vector<Tensor::Hook> Tensor::hooks() const { return _hooks; }
 
 Tensor::Hook Tensor::hook(size_t idx) const { return _hooks.at(idx); }
+
 
 // MatMul
 Tensor matMul(const Tensor &a, const Tensor &b) {

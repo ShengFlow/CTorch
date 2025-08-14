@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.31)
 project(CTorch)
 
 set(CMAKE_CXX_STANDARD 20)
-add_library(CTorch STATIC)
+add_library(CTorch STATIC
+        include/dev/basics.h)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 

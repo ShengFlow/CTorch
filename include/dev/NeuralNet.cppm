@@ -90,7 +90,7 @@ export class Buffer : public Tensor {
 };
 
 // ======================= Module =======================
-class ModuleBase {};
+export class ModuleBase {};
 
 export template <typename Derived> class Module : public ModuleBase {
   private:
@@ -332,6 +332,10 @@ export template <typename Derived> class Module : public ModuleBase {
         }
     }
 
+    template <typename... Args> auto forward(Args &&...args) {
+        return static_cast<Derived *>(this)->forward(std::forward<Args>(args)...);
+    }
+
   public:
     // ======================= 析构 =======================
     virtual ~Module() = default;
@@ -346,10 +350,6 @@ export template <typename Derived> class Module : public ModuleBase {
     void zero_grad() {
         Tensor root = _ctx.rootPtr()->tensor;
         _ctx.zeroGrad(&root);
-    }
-
-    template <typename... Args> auto forward(Args &&...args) {
-        return static_cast<Derived *>(this)->forward(std::forward<Args>(args)...);
     }
 
     void backward() {
