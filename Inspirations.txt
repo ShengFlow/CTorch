@@ -1,0 +1,1 @@
+1. 可以考虑使用模板参数的initializer_list加上decltype(初始化数据第一项)代替TensorINIT所产生的类型适应功能，由此完成Tensor构造函数对于不定基础类型的适配。该想法未实验
