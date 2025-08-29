@@ -24,6 +24,3 @@ target_sources(CTorch
         src/dev/Functional.cpp
         src/dev/Tensor_dev.cpp
 )
-
-add_executable(test src/dev/test/test.cpp)
-target_link_libraries(test PRIVATE CTorch)

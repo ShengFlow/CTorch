@@ -24,31 +24,6 @@ export module nn;
 #define BACKWARD_HOOK_RET std::optional<std::vector<std::optional<Tensor>>>
 #endif
 
-// ======================= 辅助函数 =======================
-template <typename T> constexpr DType cpp2DType() noexcept {
-    if constexpr (std::is_same_v<T, float>) {
-        return DType::kFloat;
-    } else if constexpr (std::is_same_v<T, double>) {
-        return DType::kDouble;
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return DType::kInt;
-    } else if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, long>) {
-        return DType::kLong;
-    } else if constexpr (std::is_same_v<T, bool>) {
-        return DType::kBool;
-    } else if constexpr (std::is_same_v<T, int>) {
-        // 处理int类型，根据系统架构选择
-        if constexpr (sizeof(int) == sizeof(int32_t)) {
-            return DType::kInt;
-        } else {
-            return DType::kLong;
-        }
-    } else {
-        // 不支持的类型（运行时错误）
-        throw std::runtime_error("Unsupported type for DType conversion");
-    }
-}
-
 // ======================= Parameter =======================
 export class Parameter : public Tensor {
   private:
@@ -332,11 +307,26 @@ export template <typename Derived> class Module : public ModuleBase {
         }
     }
 
-    template <typename... Args> auto forward(Args &&...args) {
+    template <typename... Args,typename ret> ret forward(Args &&...args) {
         return static_cast<Derived *>(this)->forward(std::forward<Args>(args)...);
     }
 
   public:
+    // ======================= 构造 =======================
+    Module<Derived>() {
+        _argsGrad = std::vector<std::optional<Tensor>>();
+        _buffers = std::unordered_map<std::string, std::unique_ptr<Buffer>>();
+        _parameters = std::unordered_map<std::string, std::unique_ptr<Parameter>>();
+        _children = std::unordered_map<std::string,std::unique_ptr<ModuleBase>>();
+        _ctx = *AutoGradContext::current();
+        _forwardPreHooks = std::vector<ForwardPreHook>();
+        _forwardHooks = std::vector<ForwardHook>();
+        _fullModuleBackwardHooks = std::vector<FullModuleBackwardHook>();
+        _outputsGrad = std::vector<std::optional<Tensor>>();
+        _parent = nullptr;
+        _train = true;
+    }
+
     // ======================= 析构 =======================
     virtual ~Module() = default;
 

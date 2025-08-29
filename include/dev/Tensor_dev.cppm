@@ -108,45 +108,30 @@ export constexpr const char* dtypeToString(DType dtype);
 // 获取数据类型的字节大小
 export constexpr size_t dtypeSize(DType dtype);
 
-export template <typename T>
-struct TensorINIT{
-    std::initializer_list<T> data;
-    std::initializer_list<size_t> shape;
-    DType dtype;
-
-    TensorINIT(std::initializer_list<T> _data,std::initializer_list<size_t> _shape) {
-        data = _data;
-        shape = _shape;
-        dtype = cpp2DType<T>();
-    }
-
-    // 将c++类型转换为dtype
-private:
-    template <typename type>
-        constexpr DType cpp2DType() noexcept {
-        if constexpr (std::is_same_v<type, float>) {
-            return DType::kFloat;
-        } else if constexpr (std::is_same_v<type, double>) {
-            return DType::kDouble;
-        } else if constexpr (std::is_same_v<type, int32_t>) {
+template <typename type>
+constexpr DType cpp2DType() noexcept {
+    if constexpr (std::is_same_v<type, float>) {
+        return DType::kFloat;
+    } else if constexpr (std::is_same_v<type, double>) {
+        return DType::kDouble;
+    } else if constexpr (std::is_same_v<type, int32_t>) {
+        return DType::kInt;
+    } else if constexpr (std::is_same_v<type, int64_t> || std::is_same_v<type, long>) {
+        return DType::kLong;
+    } else if constexpr (std::is_same_v<type, bool>) {
+        return DType::kBool;
+    } else if constexpr (std::is_same_v<type, int>) {
+        // 处理int类型，根据系统架构选择
+        if constexpr (sizeof(int) == sizeof(int32_t)) {
             return DType::kInt;
-        } else if constexpr (std::is_same_v<type, int64_t> || std::is_same_v<type, long>) {
-            return DType::kLong;
-        } else if constexpr (std::is_same_v<type, bool>) {
-            return DType::kBool;
-        } else if constexpr (std::is_same_v<type, int>) {
-            // 处理int类型，根据系统架构选择
-            if constexpr (sizeof(int) == sizeof(int32_t)) {
-                return DType::kInt;
-            } else {
-                return DType::kLong;
-            }
         } else {
-            // 不支持的类型（运行时错误）
-            throw std::runtime_error("Unsupported type for DType conversion");
+            return DType::kLong;
         }
+    } else {
+        // 不支持的类型（运行时错误）
+        throw std::runtime_error("Unsupported type for DType conversion");
     }
-};
+}
 
 export int minx(int a, int b);
 
@@ -573,17 +558,18 @@ public:
     // 构造函数：指定形状和数据类型（使用 ShapeTag 避免歧义）
     Tensor(ShapeTag, const std::vector<size_t>& shape, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU, bool zero_init = true);
 
-    // 初始化构造
+    // Inspirations.md#1(初始化构造)
     template <typename T>
-    Tensor(TensorINIT<T> param):
-    _shape(std::vector<size_t>(param.shape)),
+    Tensor(std::initializer_list<T> data,std::initializer_list<size_t> shape):
+    _shape(std::vector<size_t>(shape)),
     _storage_offset(0),
-    _device(DeviceType::kCPU),
-    _dtype(param.dtype) {
+    _device(DeviceType::kCPU){
+        auto t = begin(data);
+        using type = decltype(t);
+        DType dtype = cpp2DType<std::remove_const_t<std::remove_pointer_t<type>>>();
+        _storage = Storage(data.begin(),data.size(),dtype,DeviceType::kCPU);
         computeStrides();
-        auto dat = std::make_unique<T[]>(param.shape.size() * sizeof(T));
-        std::copy(param.data.begin(), param.data.end(), dat.get());
-        _storage = Storage(dat.get(),param.data.size(),param.dtype,DeviceType::kCPU);
+        _dtype = dtype;
     }
 
     // 拷贝构造函数：创建深拷贝
