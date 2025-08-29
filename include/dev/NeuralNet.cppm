@@ -19,10 +19,17 @@ import functional;
 
 export module nn;
 
-#ifndef HOOK_RET
-#define HOOK_RET std::optional<Tensor>
-#define BACKWARD_HOOK_RET std::optional<std::vector<std::optional<Tensor>>>
-#endif
+export class Module;
+export using HOOK_RET = std::optional<Tensor>;
+export using BACKWARD_HOOK_RET = std::optional<std::vector<std::optional<Tensor>>>;
+export using ForwardPreHook         = HOOK_RET (*)(const Module *self,
+                                        const std::vector<std::optional<Tensor>> input);
+export using ForwardHook            = HOOK_RET (*)(const Module *self,
+                                 const std::vector<std::optional<Tensor>> grad_input,
+                                 std::vector<std::optional<Tensor>> grad_output);
+export using FullModuleBackwardHook = BACKWARD_HOOK_RET (*)(
+    const Module &self, const std::vector<std::optional<Tensor>> grad_input,
+    std::vector<std::optional<Tensor>> grad_output);
 
 // ======================= Parameter =======================
 export class Parameter : public Tensor {
@@ -67,7 +74,7 @@ export class Buffer : public Tensor {
 // ======================= Module =======================
 export class ModuleBase {};
 
-export template <typename Derived> class Module : public ModuleBase {
+template <typename Derived> class Module : public ModuleBase {
   private:
     bool _train{true};
     Module *_parent{nullptr};
@@ -77,15 +84,6 @@ export template <typename Derived> class Module : public ModuleBase {
     AutoGrad _ctx;
     std::vector<std::optional<Tensor>> _argsGrad;
     std::vector<std::optional<Tensor>> _outputsGrad;
-
-    using ForwardPreHook         = HOOK_RET (*)(const Module *self,
-                                        const std::vector<std::optional<Tensor>> input);
-    using ForwardHook            = HOOK_RET (*)(const Module *self,
-                                     const std::vector<std::optional<Tensor>> grad_input,
-                                     std::vector<std::optional<Tensor>> grad_output);
-    using FullModuleBackwardHook = BACKWARD_HOOK_RET (*)(
-        const Module &self, const std::vector<std::optional<Tensor>> grad_input,
-        std::vector<std::optional<Tensor>> grad_output);
     std::vector<ForwardPreHook> _forwardPreHooks;
     std::vector<ForwardHook> _forwardHooks;
     std::vector<FullModuleBackwardHook> _fullModuleBackwardHooks;

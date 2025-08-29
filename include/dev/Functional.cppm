@@ -7,13 +7,13 @@ import Tensor_dev;
 #include <functional>
 export module functional;
 
-// 函数指针宏
-#define COS Tensor(Tensor)
-#define SIN Tensor(Tensor)
-#define RELU Tensor(Tensor)
-#define SIGMOID Tensor(Tensor)
-#define TANH Tensor(Tensor)
-#define SOFTMAX Tensor(Tensor,int)
+// 函数指针别名
+export using COS = Tensor(Tensor);
+export using SIN = Tensor(Tensor);
+export using RELU = Tensor(Tensor);
+export using SIGMOID = Tensor(Tensor);
+export using TANH = Tensor(Tensor);
+export using SOFTMAX = Tensor(Tensor,int);
 
 // 包装函数
 template <typename TargetSignature,typename Func,typename... T0> //这里这个TargetSignature填上面的宏

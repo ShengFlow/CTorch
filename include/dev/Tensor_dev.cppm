@@ -35,9 +35,9 @@ module;
 
 export module Tensor_dev;
 
-#ifndef HOOK_RET
-#define HOOK_RET std::optional<Tensor>
-#endif
+export class Tensor;
+export using HOOK_RET = std::optional<Tensor>;
+export using Hook = HOOK_RET(*)(Tensor& self);
 // ======================= 类型定义和枚举 =======================
 
 // 设备类型 - 定义张量存储的位置
@@ -108,7 +108,7 @@ export constexpr const char* dtypeToString(DType dtype);
 // 获取数据类型的字节大小
 export constexpr size_t dtypeSize(DType dtype);
 
-template <typename type>
+export template <typename type>
 constexpr DType cpp2DType() noexcept {
     if constexpr (std::is_same_v<type, float>) {
         return DType::kFloat;
@@ -388,7 +388,7 @@ public:
 */
 export struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
-export class Tensor {
+class Tensor {
 private:
     bool _requires_grad = false;   // 是否参与自动微分计算，默认不参与
     std::vector<size_t> _strides; // 每个维度的步幅
@@ -398,8 +398,6 @@ private:
     Storage _storage;             // 存储张量数据的对象
     // AutoGrad* autograd_ctx = nullptr; // 自动微分上下文指针
     friend class AutoGrad;        // 允许自动微分类访问私有
-
-    using Hook = HOOK_RET(*)(Tensor& self);
     std::vector<Hook> _hooks; // 钩子
 
     // ======================= 内部辅助函数 =======================
@@ -564,9 +562,7 @@ public:
     _shape(std::vector<size_t>(shape)),
     _storage_offset(0),
     _device(DeviceType::kCPU){
-        auto t = begin(data);
-        using type = decltype(t);
-        DType dtype = cpp2DType<std::remove_const_t<std::remove_pointer_t<type>>>();
+        DType dtype = cpp2DType<std::remove_const_t<std::remove_pointer_t<decltype(begin(data))>>>();
         _storage = Storage(data.begin(),data.size(),dtype,DeviceType::kCPU);
         computeStrides();
         _dtype = dtype;
