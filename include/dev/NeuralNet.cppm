@@ -29,7 +29,7 @@ export using ForwardHook            = HOOK_RET (*)(const ModuleBase *self,
                                  const std::vector<std::optional<Tensor>> grad_input,
                                  std::vector<std::optional<Tensor>> grad_output);
 export using FullModuleBackwardHook = BACKWARD_HOOK_RET (*)(
-    const ModuleBase &self, const std::vector<std::optional<Tensor>> grad_input,
+    const ModuleBase *self, const std::vector<std::optional<Tensor>> grad_input,
     std::vector<std::optional<Tensor>> grad_output);
 
 // ======================= Parameter =======================
