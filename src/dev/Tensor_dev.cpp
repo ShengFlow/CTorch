@@ -23,7 +23,6 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include "../../include/dev/basics.h"
 
 module Tensor_dev;
 
@@ -1325,9 +1324,9 @@ void Tensor::removeHook(size_t idx) { _hooks.erase(_hooks.begin() + idx); }
 
 void Tensor::removeAllHooks() { _hooks.clear(); }
 
-std::vector<Tensor::Hook> Tensor::hooks() const { return _hooks; }
+std::vector<Hook> Tensor::hooks() const { return _hooks; }
 
-Tensor::Hook Tensor::hook(size_t idx) const { return _hooks.at(idx); }
+Hook Tensor::hook(size_t idx) const { return _hooks.at(idx); }
 
 
 // MatMul

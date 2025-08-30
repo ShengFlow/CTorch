@@ -88,7 +88,7 @@ make
 
 ### 运行测试
 ```bash
-./build/test/ctorch_test
+./build/tests/ctorch_test
 ```
 
 ## 项目结构

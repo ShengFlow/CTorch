@@ -19,16 +19,17 @@ import functional;
 
 export module nn;
 
-export class Module;
+export class ModuleBase {};
+template <typename Derived> class Module;
 export using HOOK_RET = std::optional<Tensor>;
 export using BACKWARD_HOOK_RET = std::optional<std::vector<std::optional<Tensor>>>;
-export using ForwardPreHook         = HOOK_RET (*)(const Module *self,
+export using ForwardPreHook         = HOOK_RET (*)(const ModuleBase *self,
                                         const std::vector<std::optional<Tensor>> input);
-export using ForwardHook            = HOOK_RET (*)(const Module *self,
+export using ForwardHook            = HOOK_RET (*)(const ModuleBase *self,
                                  const std::vector<std::optional<Tensor>> grad_input,
                                  std::vector<std::optional<Tensor>> grad_output);
 export using FullModuleBackwardHook = BACKWARD_HOOK_RET (*)(
-    const Module &self, const std::vector<std::optional<Tensor>> grad_input,
+    const ModuleBase &self, const std::vector<std::optional<Tensor>> grad_input,
     std::vector<std::optional<Tensor>> grad_output);
 
 // ======================= Parameter =======================
@@ -72,8 +73,6 @@ export class Buffer : public Tensor {
 };
 
 // ======================= Module =======================
-export class ModuleBase {};
-
 template <typename Derived> class Module : public ModuleBase {
   private:
     bool _train{true};
