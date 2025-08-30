@@ -133,6 +133,8 @@ constexpr DType cpp2DType() noexcept {
     }
 }
 
+export constexpr auto Dtype2cpp(DType type);
+
 export int minx(int a, int b);
 
 // ======================= 存储类 (Storage) =======================
@@ -604,7 +606,7 @@ public:
     [[nodiscard]] DeviceType device() const;
 
     // 获取原始数据的类型化指针
-    template <typename T = float>
+    template <typename T>
     T* data() {
         checkDType<T>();
         if (_storage.empty()) return nullptr;
@@ -612,7 +614,7 @@ public:
     }
 
     // 获取常量原始数据的类型化指针
-    template <typename T = float>
+    template <typename T>
     const T* data() const {
         checkDType<T>();
         if (_storage.empty()) return nullptr;
@@ -693,7 +695,7 @@ public:
     [[nodiscard]] Tensor clone() const;
 
     // 改变张量的形状 (不改变内存布局)
-    [[nodiscard]] Tensor view(const std::vector<size_t>& new_shape) const;
+    [[nodiscard]] Tensor view(const std::initializer_list<size_t> &shape) const;
 
     // 降维
     [[nodiscard]] Tensor sum(const std::vector<int>& dims, bool keepdim = false) const;

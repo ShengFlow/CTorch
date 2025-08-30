@@ -27,6 +27,30 @@ module;
 module Tensor_dev;
 
 // 辅助函数
+constexpr auto Dtype2cpp(DType type){
+    switch (type) {
+    case DType::kInt:
+        return 1;
+        break;
+    case DType::kFloat:
+        return static_cast<float>(1);
+        break;
+    case DType::kDouble:
+        return static_cast<double>(1);
+        break;
+    case DType::kLong:
+        return static_cast<long>(1);
+        break;
+    case DType::kBool:
+        return true;
+        break;
+    default:
+        throw std::runtime_error("Unknown dtype");
+        break;
+    }
+    return NULL;
+}
+
 int minx(int a,int b){
     int diff = b - a;
     return a + (diff & (diff >> 31));
@@ -525,7 +549,8 @@ Tensor Tensor::clone() const {
     return copy;
 }
 
-Tensor Tensor::view(const std::vector<size_t> &new_shape) const {
+Tensor Tensor::view(const std::initializer_list<size_t> &shape) const {
+    std::vector<size_t> new_shape(shape);
     // 计算新形状的元素总数
     size_t new_numel = 1;
     for (auto dim : new_shape) {
