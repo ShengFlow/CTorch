@@ -488,8 +488,12 @@ DType Tensor::dtype() const { return _dtype; }
 DeviceType Tensor::device() const { return _device; }
 
 bool Tensor::is_contiguous() const {
-    if (_shape.empty()) return 1; // 标量有1个元素
-    return std::accumulate(_shape.begin(), _shape.end(), 1, std::multiplies<>());
+    size_t stride = 1;
+        for (int i = dim()-1; i >= 0; --i) {
+            if (_strides[i] != stride) return false;
+            stride *= _shape[i];
+        }
+        return true;
 }
 
 bool Tensor::isGradRequired() const { return _requires_grad; }

@@ -960,10 +960,10 @@ class AutoGrad {
 private:
     // 计算图节点定义
     struct Node {
-        Tensor tensor;                   // 存储的Tensor值
-        Tensor grad;                     // 传出梯度值
-        std::vector<Tensor> output_grads;// 传入梯度值
-        std::vector<Node*> inputs;       // 输入节点指针
+        Tensor tensor{};                   // 存储的Tensor值
+        Tensor grad{};                     // 传出梯度值
+        std::vector<Tensor> output_grads{};// 传入梯度值
+        std::vector<Node*> inputs{};       // 输入节点指针
         op operation;                    // 操作类型
         bool requires_grad;              // 是否需要梯度
         bool is_leaf;                    // 是否为叶子节点
@@ -972,8 +972,8 @@ private:
         Node(Tensor t, bool req_grad, bool leaf = true);
     };
 
-    std::unordered_map<Tensor*, Node*> tensor_to_node;  // Tensor到节点的映射
-    std::vector<std::unique_ptr<Node>> nodes;           // 节点存储
+    std::unordered_map<Tensor*, Node*> tensor_to_node{};  // Tensor到节点的映射
+    std::vector<std::unique_ptr<Node>> nodes{};           // 节点存储
     bool retain_graph = false;                          // 是否保留计算图
 
     // ======================= 反向传播算子 =======================
