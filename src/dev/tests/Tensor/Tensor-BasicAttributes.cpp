@@ -27,7 +27,7 @@ int main() {
     assert(a.device() == DeviceType::kCPU);
 
     // 获取data
-    assert(*(a.data()) == 1.0f);
+    assert(a.data() == 1.0f);
 
     // 获取连续性
     assert(a.is_contiguous() == true);

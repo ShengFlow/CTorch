@@ -26,31 +26,6 @@ module;
 
 module Tensor_dev;
 
-// 辅助函数
-constexpr auto Dtype2cpp(DType type){
-    switch (type) {
-    case DType::kInt:
-        return 1;
-        break;
-    case DType::kFloat:
-        return static_cast<float>(1);
-        break;
-    case DType::kDouble:
-        return static_cast<double>(1);
-        break;
-    case DType::kLong:
-        return static_cast<long>(1);
-        break;
-    case DType::kBool:
-        return true;
-        break;
-    default:
-        throw std::runtime_error("Unknown dtype");
-        break;
-    }
-    return NULL;
-}
-
 int minx(int a,int b){
     int diff = b - a;
     return a + (diff & (diff >> 31));
@@ -73,8 +48,8 @@ constexpr size_t dtypeSize(DType dtype) {
     switch (dtype) {
     case DType::kFloat:  return sizeof(float);
     case DType::kDouble: return sizeof(double);
-    case DType::kInt:    return sizeof(int32_t);
-    case DType::kLong:   return sizeof(int64_t);
+    case DType::kInt:    return sizeof(int);
+    case DType::kLong:   return sizeof(long);
     case DType::kBool:   return sizeof(bool);
     default: throw std::runtime_error("Unsupported dtype");
     }
@@ -183,16 +158,16 @@ Tensor Tensor::cos() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const auto* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = std::cos(src[i]);
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = std::cos(src[i]);
         }
@@ -218,16 +193,16 @@ Tensor Tensor::sin() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = std::sin(src[i]);
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = std::sin(src[i]);
         }
@@ -253,16 +228,16 @@ Tensor Tensor::relu() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] > 0.0f ? src[i] : 0.0f;
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] > 0.0 ? src[i] : 0.0;
         }
@@ -288,16 +263,16 @@ Tensor Tensor::sigmoid() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = 1.0f / (1.0f + std::exp(-src[i]));
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = 1.0 / (1.0 + std::exp(-src[i]));
         }
@@ -323,8 +298,8 @@ Tensor Tensor::tanh() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             float exp_2x = std::exp(2 * src[i]);
             dst[i] = (exp_2x - 1) / (exp_2x + 1);
@@ -332,8 +307,8 @@ Tensor Tensor::tanh() const {
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             double exp_2x = std::exp(2 * src[i]);
             dst[i] = (exp_2x - 1) / (exp_2x + 1);
@@ -368,8 +343,8 @@ Tensor Tensor::softmax(int dim) const {
    Tensor result(ShapeTag{}, _shape, _dtype, _device);
    switch (_dtype) {
    case DType::kFloat: {
-       const float* src = data<float>();
-       float* dst = result.data<float>();
+       const float* src = data();
+       float* dst = result.data();
 
        // 计算每个切片的softmax
        size_t slice_size = _shape[dim];
@@ -400,8 +375,8 @@ Tensor Tensor::softmax(int dim) const {
        break;
    }
    case DType::kDouble: {
-       const double* src = data<double>();
-       double* dst = result.data<double>();
+       const double* src = data();
+       double* dst = result.data();
 
        // 计算每个切片的softmax
        size_t slice_size = _shape[dim];
@@ -446,12 +421,6 @@ Tensor Tensor::softmax(int dim) const {
 }
 
  Tensor::Tensor() : _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat){}
-
-Tensor::Tensor(float value): _shape({}), _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
-    computeStrides();
-    _storage = Storage(1, _dtype, _device);
-    *_storage.data<float>() = value;
-}
 
 Tensor::Tensor(std::initializer_list<float> values): _shape({values.size()}), _storage_offset(0),_device(DeviceType::kCPU), _dtype(DType::kFloat) {
     computeStrides();
@@ -582,26 +551,26 @@ Tensor Tensor::sum(const std::vector<int> &dims, bool keepdim) const {
         result._storage = Storage(1, _dtype, _device);
         switch (_dtype) {
         case DType::kFloat: {
-            float *dst       = result.data<float>();
-            const float *src = data<float>();
+            float *dst       = result.data();
+            const float *src = data();
             *dst             = std::accumulate(src, src + numel(), 0.0f);
             break;
         }
         case DType::kDouble: {
-            double *dst       = result.data<double>();
-            const double *src = data<double>();
+            double *dst       = result.data();
+            const double *src = data();
             *dst              = std::accumulate(src, src + numel(), 0.0);
             break;
         }
         case DType::kInt: {
-            int32_t *dst       = result.data<int32_t>();
-            const int32_t *src = data<int32_t>();
+            int *dst       = result.data();
+            const int *src = data();
             *dst               = std::accumulate(src, src + numel(), 0);
             break;
         }
         case DType::kLong: {
-            int64_t *dst       = result.data<int64_t>();
-            const int64_t *src = data<int64_t>();
+            long *dst       = result.data();
+            const long *src = data();
             *dst               = std::accumulate(src, src + numel(), 0LL);
             break;
         }
@@ -641,27 +610,27 @@ Tensor Tensor::transpose() const {
 void Tensor::fill(float value) {
     switch (_dtype) {
     case DType::kFloat: {
-        float* ptr = data<float>();
+        float* ptr = data();
         std::fill(ptr, ptr + numel(), value);
         break;
     }
     case DType::kDouble: {
-        double* ptr = data<double>();
+        double* ptr = data();
         std::fill(ptr, ptr + numel(), static_cast<double>(value));
         break;
     }
     case DType::kInt: {
-        int32_t* ptr = data<int32_t>();
-        std::fill(ptr, ptr + numel(), static_cast<int32_t>(value));
+        int* ptr = data();
+        std::fill(ptr, ptr + numel(), static_cast<int>(value));
         break;
     }
     case DType::kLong: {
-        int64_t* ptr = data<int64_t>();
-        std::fill(ptr, ptr + numel(), static_cast<int64_t>(value));
+        long* ptr = data();
+        std::fill(ptr, ptr + numel(), static_cast<long>(value));
         break;
     }
     case DType::kBool: {
-        bool* ptr = data<bool>();
+        bool* ptr = data();
         std::fill(ptr, ptr + numel(), value != 0.0f);
         break;
     }
@@ -726,9 +695,9 @@ std::string Tensor::toString() const {
             } else if (_dtype == DType::kDouble) {
                 printRecursive<double>(oss, 0, std::vector<size_t>());
             } else if (_dtype == DType::kInt) {
-                printRecursive<int32_t>(oss, 0, std::vector<size_t>());
+                printRecursive<int>(oss, 0, std::vector<size_t>());
             } else if (_dtype == DType::kLong) {
-                printRecursive<int64_t>(oss, 0, std::vector<size_t>());
+                printRecursive<long>(oss, 0, std::vector<size_t>());
             } else if (_dtype == DType::kBool) {
                 printRecursive<bool>(oss, 0, std::vector<size_t>());
             }
@@ -746,14 +715,14 @@ Tensor Tensor::operator>(float scalar) const {
     Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        bool* dst = result.data<bool>();
+        const float* src = data();
+        bool* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) dst[i] = src[i] > scalar;
         break;
     }
     case DType::kDouble: {
-        const double * src = data<double>();
-        bool* dst = result.data<bool>();
+        const double * src = data();
+        bool* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) dst[i] = src[i] > scalar;
         break;
     }
@@ -781,10 +750,10 @@ Tensor Tensor::operator+(const Tensor &rhs) const {
            elementwiseOp<double>(result, *this, rhs, [](double a, double b) { return a + b; });
            break;
        case DType::kInt:
-           elementwiseOp<int32_t>(result, *this, rhs, [](int32_t a, int32_t b) { return a + b; });
+           elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a + b; });
            break;
        case DType::kLong:
-           elementwiseOp<int64_t>(result, *this, rhs, [](int64_t a, int64_t b) { return a + b; });
+           elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a + b; });
            break;
        default:
            throw std::runtime_error("Unsupported dtype for addition");
@@ -861,10 +830,10 @@ Tensor Tensor::operator-(const Tensor &rhs) const {
            elementwiseOp<double>(result, *this, rhs, [](double a, double b) { return a - b; });
            break;
        case DType::kInt:
-           elementwiseOp<int32_t>(result, *this, rhs, [](int32_t a, int32_t b) { return a - b; });
+           elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a - b; });
            break;
        case DType::kLong:
-           elementwiseOp<int64_t>(result, *this, rhs, [](int64_t a, int64_t b) { return a - b; });
+           elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a - b; });
            break;
        default:
            throw std::runtime_error("Unsupported dtype for addition");
@@ -930,34 +899,34 @@ Tensor Tensor::operator-(float scalar) const {
 
     switch (_dtype) {
     case DType::kFloat: {
-        const float* src = data<float>();
-        float* dst = result.data<float>();
+        const float* src = data();
+        float* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] - scalar;
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = data<double>();
-        double* dst = result.data<double>();
+        const double* src = data();
+        double* dst = result.data();
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] - static_cast<double>(scalar);
         }
         break;
     }
     case DType::kInt: {
-        const int32_t* src = data<int32_t>();
-        int32_t* dst = result.data<int32_t>();
-        int32_t s = static_cast<int32_t>(scalar);
+        const int* src = data();
+        int* dst = result.data();
+        int s = static_cast<int>(scalar);
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] - s;
         }
         break;
     }
     case DType::kLong: {
-        const int64_t* src = data<int64_t>();
-        int64_t* dst = result.data<int64_t>();
-        int64_t s = static_cast<int64_t>(scalar);
+        const long* src = data();
+        long* dst = result.data();
+        long s = static_cast<long>(scalar);
         for (size_t i = 0; i < numel(); ++i) {
             dst[i] = src[i] - s;
         }
@@ -998,10 +967,10 @@ Tensor Tensor::operator*(const Tensor &rhs) const {
            elementwiseOp<double>(result, *this, rhs, [](double a, double b) { return a * b; });
            break;
        case DType::kInt:
-           elementwiseOp<int32_t>(result, *this, rhs, [](int32_t a, int32_t b) { return a * b; });
+           elementwiseOp<int>(result, *this, rhs, [](int a, int b) { return a * b; });
            break;
        case DType::kLong:
-           elementwiseOp<int64_t>(result, *this, rhs, [](int64_t a, int64_t b) { return a * b; });
+           elementwiseOp<long>(result, *this, rhs, [](long a, long b) { return a * b; });
            break;
        default:
            throw std::runtime_error("Unsupported dtype for addition");
@@ -1085,13 +1054,13 @@ Tensor Tensor::operator/(const Tensor &rhs) const {
            });
            break;
        case DType::kInt:
-           elementwiseOp<int32_t>(result, *this, rhs, [](int32_t a, int32_t b) {
+           elementwiseOp<int>(result, *this, rhs, [](int a, int b) {
                if (b == 0) throw std::runtime_error("Division by zero");
                return a / b;
            });
            break;
        case DType::kLong:
-           elementwiseOp<int64_t>(result, *this, rhs, [](int64_t a, int64_t b) {
+           elementwiseOp<long>(result, *this, rhs, [](long a, long b) {
                if (b == 0) throw std::runtime_error("Division by zero");
                return a / b;
            });
@@ -1164,22 +1133,22 @@ Tensor Tensor::operator-() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
     case DType::kFloat: {
-        float* ptr = result.data<float>();
+        float* ptr = result.data();
         for (size_t i = 0; i < numel(); ++i) ptr[i] = -ptr[i];
         break;
     }
     case DType::kDouble: {
-        double * ptr = result.data<double>();
+        double * ptr = result.data();
         for (size_t i = 0; i < numel(); ++i) ptr[i] = -ptr[i];
         break;
     }
     case DType::kLong: {
-        long* ptr = result.data<long>();
+        long* ptr = result.data();
         for (size_t i = 0; i < numel(); ++i) ptr[i] = -ptr[i];
         break;
     }
     case DType::kInt: {
-        int* ptr = result.data<int>();
+        int* ptr = result.data();
         for (size_t i = 0; i < numel(); ++i) ptr[i] = -ptr[i];
         break;
     }
@@ -1191,98 +1160,98 @@ Tensor Tensor::operator-() const {
 
 Tensor Tensor::operator*(double scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<double>()[i] = _storage.data<double>()[i]*scalar;
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<double>()[i]*scalar;
     return result;
 }
 
 Tensor Tensor::operator*(float scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<float>()[i] = _storage.data<float>()[i]*scalar;
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<float>()[i]*scalar;
     return result;
 }
 
 Tensor Tensor::operator*(int scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<int>()[i] = _storage.data<int>()[i]*scalar;
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<int>()[i]*scalar;
     return result;
 }
 
 Tensor Tensor::operator*(long scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<long>()[i] = _storage.data<long>()[i]*scalar;
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<long>()[i]*scalar;
     return result;
 }
 
 Tensor Tensor::operator/(double scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<double>()[i] = _storage.data<double>()[i]*(1/scalar);
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<double>()[i]*(1/scalar);
     return result;
 }
 
 Tensor Tensor::operator/(float scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<float>()[i] = _storage.data<float>()[i]*(1/scalar);
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<float>()[i]*(1/scalar);
     return result;
 }
 
 Tensor Tensor::operator/(int scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<int>()[i] = _storage.data<int>()[i]*(1/scalar);
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<int>()[i]*(1/scalar);
     return result;
 }
 
 Tensor Tensor::operator/(long scalar) const {
     Tensor result = *this;
-    for (size_t i{0};i<_storage.size();i++) result.data<long>()[i] = _storage.data<long>()[i]*(1/scalar);
+    for (size_t i{0};i<_storage.size();i++) result.data()[i] = _storage.data<long>()[i]*(1/scalar);
     return result;
 }
 
 // 全局计算
 Tensor operator*(float scalar, Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<float>()[i] = tensor.data<float>()[i]*scalar;
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*scalar;
     return result;
 }
 
 Tensor operator*(double scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<double>()[i] = tensor.data<double>()[i]*scalar;
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*scalar;
     return result;
 }
 
 Tensor operator*(int scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<int>()[i] = tensor.data<int>()[i]*scalar;
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*scalar;
     return result;
 }
 
 Tensor operator*(long scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<long>()[i] = tensor.data<long>()[i]*scalar;
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*scalar;
     return result;
 }
 
 Tensor operator/(float scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<float>()[i] = tensor.data<float>()[i]*(1/scalar);
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*(1/scalar);
     return result;
 }
 
 Tensor operator/(double scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<double>()[i] = tensor.data<double>()[i]*(1/scalar);
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*(1/scalar);
     return result;
 }
 
 Tensor operator/(int scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<int>()[i] = tensor.data<int>()[i]*(1/scalar);
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*(1/scalar);
     return result;
 }
 
 Tensor operator/(long scalar,  Tensor tensor)  {
     Tensor result = tensor;
-    for (size_t i{0};i<tensor.numel();i++) result.data<long>()[i] = tensor.data<long>()[i]*(1/scalar);
+    for (size_t i{0};i<tensor.numel();i++) result.data()[i] = tensor.data()[i]*(1/scalar);
     return result;
 }
 
@@ -1324,20 +1293,7 @@ bool Tensor::operator==(const Tensor &other) const {
     const size_t n = numel();
     if (n == 0) return true; // 空张量相等
 
-    switch (_dtype) {
-    case DType::kFloat:
-        return std::equal(data<float>(), data<float>() + n, other.data<float>());
-    case DType::kDouble:
-        return std::equal(data<double>(), data<double>() + n, other.data<double>());
-    case DType::kInt:
-        return std::equal(data<int32_t>(), data<int32_t>() + n, other.data<int32_t>());
-    case DType::kLong:
-        return std::equal(data<int64_t>(), data<int64_t>() + n, other.data<int64_t>());
-    case DType::kBool:
-        return std::equal(data<bool>(), data<bool>() + n, other.data<bool>());
-    default:
-        return false;
-    }
+    return data() == other.data();
 }
 
 void Tensor::backward(Tensor &root, Tensor grad_output) {
@@ -1383,9 +1339,9 @@ Tensor matMul(const Tensor &a, const Tensor &b) {
     // 根据数据类型进行计算
     switch (a.dtype()) {
     case DType::kFloat: {
-        const float* a_data = a.data<float>();
-        const float* b_data = b.data<float>();
-        float* r_data = result.data<float>();
+        const float* a_data = a.data();
+        const float* b_data = b.data();
+        float* r_data = result.data();
         const int BLOCK = 512;
         // 三层分块循环
 #pragma omp parallel for
@@ -1411,9 +1367,9 @@ Tensor matMul(const Tensor &a, const Tensor &b) {
         break;
     }
     case DType::kDouble: {
-        const double* a_data = a.data<double>();
-        const double* b_data = b.data<double>();
-        double* r_data = result.data<double>();
+        const double* a_data = a.data();
+        const double* b_data = b.data();
+        double* r_data = result.data();
 
         for (size_t i = 0; i < M; ++i) {
             for (size_t k = 0; k < a_cols; ++k) {
@@ -1426,9 +1382,9 @@ Tensor matMul(const Tensor &a, const Tensor &b) {
         break;
     }
     case DType::kInt: {
-        const int* a_data = a.data<int>();
-        const int* b_data = b.data<int>();
-        int* r_data = result.data<int>();
+        const int* a_data = a.data();
+        const int* b_data = b.data();
+        int* r_data = result.data();
 
         for (size_t i = 0; i < M; ++i) {
             for (size_t k = 0; k < a_cols; ++k) {
@@ -1441,9 +1397,9 @@ Tensor matMul(const Tensor &a, const Tensor &b) {
         break;
     }
     case DType::kLong: {
-        const long* a_data = a.data<long>();
-        const long* b_data = b.data<long>();
-        long* r_data = result.data<long>();
+        const long* a_data = a.data();
+        const long* b_data = b.data();
+        long* r_data = result.data();
 
         for (size_t i = 0; i < M; ++i) {
             for (size_t k = 0; k < a_cols; ++k) {
@@ -1498,9 +1454,9 @@ Tensor matMulNative(const Tensor &a,const Tensor &b){
    // 根据数据类型进行计算
    switch (a.dtype()) {
    case DType::kFloat: {
-       const float* a_data = a.data<float>();
-       const float* b_data = b.data<float>();
-       float* r_data = result.data<float>();
+       const float* a_data = a.data();
+       const float* b_data = b.data();
+       float* r_data = result.data();
 
        // 批量矩阵乘法
        for (size_t batch = 0; batch < batch_size; ++batch) {
@@ -1517,9 +1473,9 @@ Tensor matMulNative(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kDouble: {
-       const double * a_data = a.data<double>();
-       const double* b_data = b.data<double>();
-       double* r_data = result.data<double>();
+       const double * a_data = a.data();
+       const double* b_data = b.data();
+       double* r_data = result.data();
 
        // 批量矩阵乘法
        for (size_t batch = 0; batch < batch_size; ++batch) {
@@ -1536,9 +1492,9 @@ Tensor matMulNative(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kInt: {
-       const int* a_data = a.data<int>();
-       const int* b_data = b.data<int>();
-       int* r_data = result.data<int>();
+       const int* a_data = a.data();
+       const int* b_data = b.data();
+       int* r_data = result.data();
 
        // 批量矩阵乘法
        for (size_t batch = 0; batch < batch_size; ++batch) {
@@ -1555,9 +1511,9 @@ Tensor matMulNative(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kLong: {
-       const long * a_data = a.data<long>();
-       const long * b_data = b.data<long>();
-       long* r_data = result.data<long>();
+       const long * a_data = a.data();
+       const long * b_data = b.data();
+       long* r_data = result.data();
 
        // 批量矩阵乘法
        for (size_t batch = 0; batch < batch_size; ++batch) {
@@ -1604,9 +1560,9 @@ Tensor matMulBlocked(const Tensor &a,const Tensor &b){
    // 根据数据类型进行计算
    switch (a.dtype()) {
    case DType::kFloat: {
-       const float* a_data = a.data<float>();
-       const float* b_data = b.data<float>();
-       float* r_data = result.data<float>();
+       const float* a_data = a.data();
+       const float* b_data = b.data();
+       float* r_data = result.data();
        const int BLOCK = 512;
        // 三层分块循环
        for (int i0 = 0; i0 < M; i0 += BLOCK) {
@@ -1631,9 +1587,9 @@ Tensor matMulBlocked(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kDouble: {
-       const double* a_data = a.data<double>();
-       const double* b_data = b.data<double>();
-       double* r_data = result.data<double>();
+       const double* a_data = a.data();
+       const double* b_data = b.data();
+       double* r_data = result.data();
 
        for (size_t i = 0; i < M; ++i) {
            for (size_t k = 0; k < a_cols; ++k) {
@@ -1646,9 +1602,9 @@ Tensor matMulBlocked(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kInt: {
-       const int* a_data = a.data<int>();
-       const int* b_data = b.data<int>();
-       int* r_data = result.data<int>();
+       const int* a_data = a.data();
+       const int* b_data = b.data();
+       int* r_data = result.data();
 
        for (size_t i = 0; i < M; ++i) {
            for (size_t k = 0; k < a_cols; ++k) {
@@ -1661,9 +1617,9 @@ Tensor matMulBlocked(const Tensor &a,const Tensor &b){
        break;
    }
    case DType::kLong: {
-       const long* a_data = a.data<long>();
-       const long* b_data = b.data<long>();
-       long* r_data = result.data<long>();
+       const long* a_data = a.data();
+       const long* b_data = b.data();
+       long* r_data = result.data();
 
        for (size_t i = 0; i < M; ++i) {
            for (size_t k = 0; k < a_cols; ++k) {
@@ -1707,9 +1663,9 @@ Tensor matMulAMX(const Tensor &a, const Tensor &b){
    // 根据数据类型进行计算
    switch (a.dtype()) {
    case DType::kFloat: {
-       const float* a_data = a.data<float>();
-       const float* b_data = b.data<float>();
-       float* r_data = result.data<float>();
+       const float* a_data = a.data();
+       const float* b_data = b.data();
+       float* r_data = result.data();
 
 #ifdef __APPLE__
        // 使用Apple的AMX加速BLAS库
@@ -1731,9 +1687,9 @@ Tensor matMulAMX(const Tensor &a, const Tensor &b){
        break;
    }
    case DType::kDouble: {
-       const double* a_data = a.data<double>();
-       const double* b_data = b.data<double>();
-       double* r_data = result.data<double>();
+       const double* a_data = a.data();
+       const double* b_data = b.data();
+       double* r_data = result.data();
 
        // 双精度使用标准实现
        for (size_t i = 0; i < M; ++i) {
@@ -1747,9 +1703,9 @@ Tensor matMulAMX(const Tensor &a, const Tensor &b){
        break;
    }
    case DType::kInt: {
-       const int* a_data = a.data<int>();
-       const int* b_data = b.data<int>();
-       int* r_data = result.data<int>();
+       const int* a_data = a.data();
+       const int* b_data = b.data();
+       int* r_data = result.data();
 
        for (size_t i = 0; i < M; ++i) {
            for (size_t k = 0; k < K; ++k) {
@@ -1762,9 +1718,9 @@ Tensor matMulAMX(const Tensor &a, const Tensor &b){
        break;
    }
    case DType::kLong: {
-       const long* a_data = a.data<long>();
-       const long* b_data = b.data<long>();
-       long* r_data = result.data<long>();
+       const long* a_data = a.data();
+       const long* b_data = b.data();
+       long* r_data = result.data();
 
        for (size_t i = 0; i < M; ++i) {
            for (size_t k = 0; k < K; ++k) {
@@ -2198,22 +2154,22 @@ void AutoGrad::backward_sum(Node *node) {
             // 用梯度值填充整个张量
             switch (grad_out.dtype()) {
             case DType::kFloat: {
-                float value = grad_out.item<float>();
+                float value = grad_out.item();
                 expanded_grad.fill(value);
                 break;
             }
             case DType::kDouble: {
-                double value = grad_out.item<double>();
+                double value = grad_out.item();
                 expanded_grad.fill(value);
                 break;
             }
             case DType::kInt: {
-                int32_t value = grad_out.item<int32_t>();
+                int value = grad_out.item();
                 expanded_grad.fill(static_cast<float>(value));
                 break;
             }
             case DType::kLong: {
-                int64_t value = grad_out.item<int64_t>();
+                long value = grad_out.item();
                 expanded_grad.fill(static_cast<float>(value));
                 break;
             }
@@ -2497,34 +2453,34 @@ Tensor operator-(float scalar, const Tensor& tensor) {
 
     switch (tensor.dtype()) {
     case DType::kFloat: {
-        const float* src = tensor.data<float>();
-        float* dst = result.data<float>();
+        const float* src = tensor.data();
+        float* dst = result.data();
         for (size_t i = 0; i < tensor.numel(); ++i) {
             dst[i] = scalar - src[i];
         }
         break;
     }
     case DType::kDouble: {
-        const double* src = tensor.data<double>();
-        double* dst = result.data<double>();
+        const double* src = tensor.data();
+        double* dst = result.data();
         for (size_t i = 0; i < tensor.numel(); ++i) {
             dst[i] = static_cast<double>(scalar) - src[i];
         }
         break;
     }
     case DType::kInt: {
-        const int32_t* src = tensor.data<int32_t>();
-        int32_t* dst = result.data<int32_t>();
-        int32_t s = static_cast<int32_t>(scalar);
+        const int* src = tensor.data();
+        int* dst = result.data();
+        int s = static_cast<int>(scalar);
         for (size_t i = 0; i < tensor.numel(); ++i) {
             dst[i] = s - src[i];
         }
         break;
     }
     case DType::kLong: {
-        const int64_t* src = tensor.data<int64_t>();
-        int64_t* dst = result.data<int64_t>();
-        int64_t s = static_cast<int64_t>(scalar);
+        const long* src = tensor.data();
+        long* dst = result.data();
+        long s = static_cast<long>(scalar);
         for (size_t i = 0; i < tensor.numel(); ++i) {
             dst[i] = s - src[i];
         }

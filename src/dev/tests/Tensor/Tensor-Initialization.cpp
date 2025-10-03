@@ -17,7 +17,7 @@ int main() {
 
     auto tag = ShapeTag();
     Tensor d(tag,{2,2});
-    assert(d.shape() == std::vector<size_t>({2,2}) && *d.data() == 0);
+    assert(d.shape() == std::vector<size_t>({2,2}) && d.data() == 0);
 
     Tensor e({2.0f,3.0f},{2,1});
     assert(e.numel() == 2 && e.dtype() == DType::kFloat);

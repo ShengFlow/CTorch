@@ -18,9 +18,7 @@ int main() {
 
     // 降维
     Tensor d = c.sum();
-    int result{0};
-    for (int* ptr = d.data<int>();ptr != nullptr;ptr++)
-        result += *ptr;
+    int result = d.data();
     assert(d.item() == result);
     return 0;
 }

@@ -12,10 +12,10 @@ int main() {
 
     // 多维张量索引访问
     Tensor b({1,2,3,4},{2,2});
-    assert(b({2,2}) == 4);
+    assert(b({1,1}) == 4);
 
     // 标量访问
-    Tensor c({1},{1});
+    Tensor c(1);
     assert(c.item() == 1);
     return 0;
 }
