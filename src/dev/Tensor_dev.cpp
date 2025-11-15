@@ -25,32 +25,6 @@ module;
 #include <cstring>
 
 module Tensor_dev;
-
-// 辅助函数
-constexpr auto Dtype2cpp(DType type){
-    switch (type) {
-    case DType::kInt:
-        return 1;
-        break;
-    case DType::kFloat:
-        return static_cast<float>(1);
-        break;
-    case DType::kDouble:
-        return static_cast<double>(1);
-        break;
-    case DType::kLong:
-        return static_cast<long>(1);
-        break;
-    case DType::kBool:
-        return true;
-        break;
-    default:
-        throw std::runtime_error("Unknown dtype");
-        break;
-    }
-    return NULL;
-}
-
 int minx(int a,int b){
     int diff = b - a;
     return a + (diff & (diff >> 31));
@@ -179,6 +153,7 @@ size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices) const 
     }
     return index;
 }
+
 Tensor Tensor::cos() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     switch (_dtype) {
@@ -1810,17 +1785,53 @@ Tensor matMulRecursive(const Tensor &a, const Tensor &b){
    A_pad.zero();
    B_pad.zero();
 
-   // 将原始数据复制到填充矩阵的左上角
-   for (size_t i = 0; i < M; i++) {
-       for (size_t j = 0; j < K; j++) {
-           A_pad({i, j}) = a({i, j});
-       }
-   }
-   for (size_t i = 0; i < K; i++) {
-       for (size_t j = 0; j < N; j++) {
-           B_pad({i, j}) = b({i, j});
-       }
-   }
+    // 将原始数据复制到填充矩阵的左上角
+    switch (A_pad.dtype()) {
+    case DType::kInt:
+        for (size_t i = 0; i < M; i++) {
+            for (size_t j = 0; j < K; j++) {
+                A_pad.get<int>({i,j}) = a.get<int>({i,j});
+            }
+        }
+        for (size_t i = 0; i < K; i++) {
+            for (size_t j = 0; j < N; j++) {
+                B_pad.get<int>({i,j}) = b.get<int>({i,j});
+            }
+        }
+    case DType::kFloat:
+        for (size_t i = 0; i < M; i++) {
+            for (size_t j = 0; j < K; j++) {
+                A_pad.get<float>({i,j}) = a.get<float>({i,j});
+            }
+        }
+        for (size_t i = 0; i < K; i++) {
+            for (size_t j = 0; j < N; j++) {
+                B_pad.get<float>({i,j}) = b.get<float>({i,j});
+            }
+        }
+    case DType::kLong:
+        for (size_t i = 0; i < M; i++) {
+            for (size_t j = 0; j < K; j++) {
+                A_pad.get<long>({i,j}) = a.get<long>({i,j});
+            }
+        }
+        for (size_t i = 0; i < K; i++) {
+            for (size_t j = 0; j < N; j++) {
+                B_pad.get<long>({i,j}) = b.get<long>({i,j});
+            }
+        }
+    case DType::kDouble:
+        for (size_t i = 0; i < M; i++) {
+            for (size_t j = 0; j < K; j++) {
+                A_pad.get<double>({i,j}) = a.get<double>({i,j});
+            }
+        }
+        for (size_t i = 0; i < K; i++) {
+            for (size_t j = 0; j < N; j++) {
+                B_pad.get<double>({i,j}) = b.get<double>({i,j});
+            }
+        }
+    }
 
    // 计算子矩阵大小
    size_t half_M = new_M / 2;
@@ -1834,16 +1845,16 @@ Tensor matMulRecursive(const Tensor &a, const Tensor &b){
            for (size_t j = start_j; j < end_j; j++) {
                switch (t.dtype()) {
                case DType::kFloat:
-                   result({i - start_i, j - start_j}) = t({i, j});
+                   result.get<float>({i - start_i, j - start_j}) = t.get<float>({i, j});
                    break;
                case DType::kDouble:
-                   result({i - start_i, j - start_j}) = t({i, j});
+                   result.get<double>({i - start_i, j - start_j}) = t.get<double>({i, j});
                    break;
                case DType::kInt:
-                   result({i - start_i, j - start_j}) = t({i, j});
+                   result.get<int>({i - start_i, j - start_j}) = t.get<int>({i, j});
                    break;
                case DType::kLong:
-                   result({i - start_i, j - start_j}) = t({i, j});
+                   result.get<long>({i - start_i, j - start_j}) = t.get<long>({i, j});
                    break;
                default: break;
                }
@@ -1885,16 +1896,16 @@ Tensor matMulRecursive(const Tensor &a, const Tensor &b){
            for (size_t j = 0; j < src.shape()[1]; j++) {
                switch (src.dtype()) {
                case DType::kFloat:
-                   dest({start_i + i, start_j + j}) = src({i, j});
+                   dest.get<float>({start_i + i, start_j + j}) = src.get<float>({i, j});
                    break;
                case DType::kDouble:
-                   dest({start_i + i, start_j + j}) = src({i, j});
+                   dest.get<double>({start_i + i, start_j + j}) = src.get<double>({i, j});
                    break;
                case DType::kInt:
-                   dest({start_i + i, start_j + j}) = src({i, j});
+                   dest.get<int>({start_i + i, start_j + j}) = src.get<int>({i, j});
                    break;
                case DType::kLong:
-                   dest({start_i + i, start_j + j}) = src({i, j});
+                   dest.get<long>({start_i + i, start_j + j}) = src.get<long>({i, j});
                    break;
                default: break;
                }
@@ -2198,22 +2209,22 @@ void AutoGrad::backward_sum(Node *node) {
             // 用梯度值填充整个张量
             switch (grad_out.dtype()) {
             case DType::kFloat: {
-                float value = grad_out.item<float>();
+                float value = grad_out.get<float>({});
                 expanded_grad.fill(value);
                 break;
             }
             case DType::kDouble: {
-                double value = grad_out.item<double>();
+                double value = grad_out.get<double>({});
                 expanded_grad.fill(value);
                 break;
             }
             case DType::kInt: {
-                int32_t value = grad_out.item<int32_t>();
+                int32_t value = grad_out.get<int>({});
                 expanded_grad.fill(static_cast<float>(value));
                 break;
             }
             case DType::kLong: {
-                int64_t value = grad_out.item<int64_t>();
+                int64_t value = grad_out.get<long>({});
                 expanded_grad.fill(static_cast<float>(value));
                 break;
             }

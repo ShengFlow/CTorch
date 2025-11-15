@@ -133,8 +133,6 @@ constexpr DType cpp2DType() noexcept {
     }
 }
 
-export constexpr auto Dtype2cpp(DType type);
-
 export int minx(int a, int b);
 
 // ======================= 存储类 (Storage) =======================
@@ -229,6 +227,7 @@ public:
     template <typename T>
     T* data() {
         if (_size == 0 || !_data) return nullptr;
+         T test;
         checkDType<T>();
         return reinterpret_cast<T*>(_data.get());
     }
@@ -646,49 +645,59 @@ public:
     [[nodiscard]] size_t storageOffset() const;
 
     // ======================= 索引和访问 =======================
+    template <typename T>
+    T& get(std::initializer_list<size_t> idx) {
+        return _storage.data<T>()[computeStorageIndex(idx)];
+    }
+
+    template <typename T>
+    const T& get(std::initializer_list<size_t> idx) const {
+        return _storage.data<T>()[computeStorageIndex(idx)];
+    }
+
     // 1D张量的索引访问
-    template <typename T = float>
-    T& operator[](size_t index) {
-        checkDType<T>();
-        if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
-        if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
-        return _storage.data<T>()[_storage_offset + index];
-    }
-
-    // 1D张量的常量索引访问
-    template <typename T = float>
-    const T& operator[](size_t index) const {
-        checkDType<T>();
-        if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
-        if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
-        return _storage.data<T>()[_storage_offset + index];
-    }
-
-    // 多维张量的索引访问
-    template <typename T = float>
-    T& operator()(std::initializer_list<size_t> indices) {
-        return _storage.data<T>()[computeStorageIndex(indices)];
-    }
-
-    // 多维张量的常量索引访问
-    template <typename T = float>
-    const T& operator()(std::initializer_list<size_t> indices) const {
-        return _storage.data<T>()[computeStorageIndex(indices)];
-    }
-
-    // 标量访问（0维张量）
-    template <typename T = float>
-    T& item() {
-        if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
-        return *_storage.data<T>();
-    }
-
-    // 常量标量访问
-    template <typename T = float>
-    const T& item() const {
-        if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
-        return *_storage.data<T>();
-    }
+    // template <typename T>
+    // T& operator[](size_t index) {
+    //     checkDType<T>();
+    //     if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
+    //     if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
+    //     return _storage.data<T>()[_storage_offset + index];
+    // }
+    //
+    // // 1D张量的常量索引访问
+    // template <typename T>
+    // const T& operator[](size_t index) const {
+    //     checkDType<T>();
+    //     if (dim() != 1) throw std::runtime_error("Requires 1D tensor");
+    //     if (index >= _shape[0]) throw std::out_of_range("Tensor index out of bounds");
+    //     return _storage.data<T>()[_storage_offset + index];
+    // }
+    //
+    // // 多维张量的索引访问
+    // template <typename T = float>
+    // T& operator()(std::initializer_list<size_t> indices) {
+    //     return _storage.data<T>()[computeStorageIndex(indices)];
+    // }
+    //
+    // // 多维张量的常量索引访问
+    // template <typename T = float>
+    // const T& operator()(std::initializer_list<size_t> indices) const {
+    //     return _storage.data<T>()[computeStorageIndex(indices)];
+    // }
+    //
+    // // 标量访问（0维张量）
+    // template <typename T = float>
+    // T& item() {
+    //     if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
+    //     return *_storage.data<T>();
+    // }
+    //
+    // // 常量标量访问
+    // template <typename T = float>
+    // const T& item() const {
+    //     if (dim() != 0) throw std::runtime_error("item() only works on 0-dimensional tensors");
+    //     return *_storage.data<T>();
+    // }
 
     // ======================= 张量操作 =======================
     // 创建张量的深拷贝

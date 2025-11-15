@@ -299,7 +299,7 @@ template <typename Derived> class Module : public ModuleBase {
         tensor.deserialize(is);
 
         // 重置自动微分上下文
-        if (tensor.grad().data()) {
+        if (!tensor.grad().empty()) {
             tensor.zeroGrad();
         }
     }

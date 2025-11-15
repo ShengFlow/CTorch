@@ -36,7 +36,7 @@ Tensor cos(Tensor x,AutoGrad& ctx){
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::Cos, {const_cast<Tensor *>(&x)});
     }
 
@@ -68,7 +68,7 @@ Tensor sin(Tensor x,AutoGrad ctx) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::Sin, {const_cast<Tensor *>(&x)});
     }
 
@@ -100,7 +100,7 @@ Tensor relu(Tensor x,AutoGrad ctx) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::ReLU, {const_cast<Tensor *>(&x)});
     }
 
@@ -132,7 +132,7 @@ Tensor sigmoid(Tensor x,AutoGrad ctx){
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::Sigmoid, {const_cast<Tensor *>(&x)});
     }
 
@@ -166,7 +166,7 @@ Tensor tanh(Tensor x,AutoGrad ctx) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::Tanh, {const_cast<Tensor *>(&x)});
     }
 
@@ -255,7 +255,7 @@ Tensor softmax(Tensor x,AutoGrad& ctx,int dim) {
     }
 
     // 记录操作到自动微分计算图
-    if (x.grad().data<decltype(Dtype2cpp(x.dtype()))>()) {
+    if (!x.grad().empty()) {
         ctx.record_op(std::vector<Tensor*>({&result}), op::Softmax, {const_cast<Tensor *>(&x)});
     }
 
