@@ -16,16 +16,16 @@ Tensor cos(Tensor x,AutoGrad& ctx){
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = std::cos(src[i]);
         }
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = std::cos(src[i]);
         }
@@ -48,16 +48,16 @@ Tensor sin(Tensor x,AutoGrad ctx) {
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = std::sin(src[i]);
         }
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = std::sin(src[i]);
         }
@@ -80,16 +80,16 @@ Tensor relu(Tensor x,AutoGrad ctx) {
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = src[i] > 0.0f ? src[i] : 0.0f;
         }
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = src[i] > 0.0 ? src[i] : 0.0;
         }
@@ -112,16 +112,16 @@ Tensor sigmoid(Tensor x,AutoGrad ctx){
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = 1.0f / (1.0f + std::exp(-src[i]));
         }
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             dst[i] = 1.0 / (1.0 + std::exp(-src[i]));
         }
@@ -144,8 +144,8 @@ Tensor tanh(Tensor x,AutoGrad ctx) {
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             float exp_2x = std::exp(2 * src[i]);
             dst[i]       = (exp_2x - 1) / (exp_2x + 1);
@@ -153,8 +153,8 @@ Tensor tanh(Tensor x,AutoGrad ctx) {
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
         for (size_t i = 0; i < x.numel(); ++i) {
             double exp_2x = std::exp(2 * src[i]);
             dst[i]        = (exp_2x - 1) / (exp_2x + 1);
@@ -187,8 +187,8 @@ Tensor softmax(Tensor x,AutoGrad& ctx,int dim) {
 
     switch (x.dtype()) {
     case DType::kFloat: {
-        const float *src = x.data<float>();
-        float *dst       = result.data<float>();
+        const float *src = x.data();
+        float *dst       = result.data();
 
         // 计算每个切片的softmax
         size_t slice_size = x.shape()[dim];
@@ -219,8 +219,8 @@ Tensor softmax(Tensor x,AutoGrad& ctx,int dim) {
         break;
     }
     case DType::kDouble: {
-        const double *src = x.data<double>();
-        double *dst       = result.data<double>();
+        const double *src = x.data();
+        double *dst       = result.data();
 
         // 计算每个切片的softmax
         size_t slice_size = x.shape()[dim];
