@@ -51,3 +51,6 @@ git push origin feat/your-feature-name
 - **所有的宏、常量均全大写**
 - **中间变量均小写，过长在中间加下划线**
 - **在类中的所有成员变量在前面加下划线**
+- **所有的kernel放入对应平台的文件夹(CUDA/MPS/CPU)**
+- **每个kernel的命名规范为「kernel-name_CUDA/MPS/CPU_kernel.cu/.cpp」，e.g.矩阵乘法的CUDA-kernel文件名为「MatMul_CUDA_kernel.cu」**
+
