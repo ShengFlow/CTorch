@@ -30,6 +30,7 @@ enum class ErrorPlatform {
     kMPS = 2,
     kAMX = 3,
     kUNKNOWN = 4,
+    kGENERAL = 5,
 };
 
 // 错误类型
@@ -64,6 +65,7 @@ class Ctorch_Error {
             case ErrorPlatform::kCUDA: return "CUDA";
             case ErrorPlatform::kMPS: return "MPS";
             case ErrorPlatform::kAMX: return "AMX";
+            case ErrorPlatform::kGENERAL: return "GENERAL";
             default: return "UNKNOWN";
         }
     }
