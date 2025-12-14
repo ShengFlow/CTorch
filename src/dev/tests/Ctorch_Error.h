@@ -131,7 +131,7 @@ class Ctorch_Error {
     }
 public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,std::string msg) {
         uint32_t error_code = computeCode(level,platform,type);
-        printf("[%s][%s %" PRIu64 "] ERROR_CODE:0x%" PRIX32 " PLATFORM:%s MSG:%s",
+        printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [MSG:%s]",
             getLevelName(level).c_str(),
             getFormattedTimeMs().c_str(),
             getTimestampMs(),
