@@ -4,7 +4,6 @@
 
 #ifndef CTORCH_ERROR_H
 #define CTORCH_ERROR_H
-#include <ctime>
 #include <cstring>
 #include <chrono>   // 核心时间库（C++11+）
 #include <cstdint>  // uint64_t（固定宽度整数，存储时间戳）
@@ -65,6 +64,19 @@ class Ctorch_Error {
             case ErrorPlatform::kCUDA: return "CUDA";
             case ErrorPlatform::kMPS: return "MPS";
             case ErrorPlatform::kAMX: return "AMX";
+            default: return "UNKNOWN";
+        }
+    }
+    static std::string getTypeName(ErrorType type) {
+        switch (type) {
+            case ErrorType::UNKNOWN:      return "UNKNOWN";
+            case ErrorType::MEMORY:       return "MEMORY";
+            case ErrorType::DIMENSION:    return "DIMENSION";
+            case ErrorType::DEVICE_COMPAT:return "DEVICE_COMPAT";
+            case ErrorType::DATATYPE:     return "DATATYPE";
+            case ErrorType::KERNEL_LAUNCH:return "KERNEL_LAUNCH";
+            case ErrorType::TENSOR_STATE: return "TENSOR_STATE";
+            case ErrorType::PLATFORM_API: return "PLATFORM_API";
             default: return "UNKNOWN";
         }
     }
@@ -131,13 +143,21 @@ class Ctorch_Error {
     }
 public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,std::string msg) {
         uint32_t error_code = computeCode(level,platform,type);
-        printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [MSG:%s]",
+        printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [TYPE:%s] %s\n",
             getLevelName(level).c_str(),
             getFormattedTimeMs().c_str(),
             getTimestampMs(),
             error_code,
             getPlatformName(platform).c_str(),
+            getTypeName(type).c_str(),
             msg.c_str());
+    }
+    static void info(ErrorPlatform platform,std::string msg) {
+    printf("[INFO][%s %" PRIu64 "] [PLATFORM:%s] %s\n",
+        getFormattedTimeMs().c_str(),
+        getTimestampMs(),
+        getPlatformName(platform).c_str(),
+        msg.c_str());
     }
 };
 #endif //CTORCH_ERROR_H
