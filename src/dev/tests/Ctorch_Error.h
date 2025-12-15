@@ -59,12 +59,24 @@ private:
     uint64_t fatal_count = 0;
 
     // TODO: 加入对设备的统计数据
-
+    bool if_first = true;
     std::mutex mutex_;
-
+    static void welCome(){
+        printf("============================================================\n");
+        printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
+        printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
+        printf("$$ /  \\__|   $$ |   $$ /  $$ |$$ |  $$ |$$ /  \\__|$$ |  $$ |\n");
+        printf("$$ |         $$ |   $$ |  $$ |$$$$$$$  |$$ |      $$$$$$$$ |\n");
+        printf("$$ |         $$ |   $$ |  $$ |$$  __$$< $$ |      $$  __$$ |\n");
+        printf("$$ |  $$\\    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$\\ $$ |  $$ |\n");
+        printf("\\$$$$$$  |   $$ |    $$$$$$  |$$ |  $$ |\\$$$$$$  |$$ |  $$ |\n");
+        printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");
+        printf("============================================================\n");
+    }
 public:
     static Ctorch_Stats& getInstance() {
         static Ctorch_Stats instance_;  // 这里利用了一个巧妙的C++特性，保证全局只会实例化一个instance_
+        if (instance_.if_first) instance_.welCome(),instance_.if_first = false;
         return instance_;
     }
     static void incrError() {
@@ -97,7 +109,7 @@ public:
         std::lock_guard<std::mutex> lock(inst.mutex_);
         return inst.fatal_count;
     }
-    
+
 };
 
 class Ctorch_Error {
@@ -212,11 +224,11 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
             Ctorch_Stats& inst = Ctorch_Stats::getInstance();
             inst.incrError();
         }
-        eles if(level == ErrorLevel::WARN) {
+        else if(level == ErrorLevel::WARN) {
             Ctorch_Stats& inst = Ctorch_Stats::getInstance();
             inst.incrWarn();
         }
-        else if(level = ErrorLevel::FATAL) {
+        else if(level == ErrorLevel::FATAL) {
             Ctorch_Stats& inst = Ctorch_Stats::getInstance();
             inst.incrFatal();
         }
@@ -232,17 +244,6 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
     }
-    static void welCome(){
-        printf("============================================================\n");
-        printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
-        printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
-        printf("$$ /  \\__|   $$ |   $$ /  $$ |$$ |  $$ |$$ /  \\__|$$ |  $$ |\n");
-        printf("$$ |         $$ |   $$ |  $$ |$$$$$$$  |$$ |      $$$$$$$$ |\n");
-        printf("$$ |         $$ |   $$ |  $$ |$$  __$$< $$ |      $$  __$$ |\n");
-        printf("$$ |  $$\\    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$\\ $$ |  $$ |\n");
-        printf("\\$$$$$$  |   $$ |    $$$$$$  |$$ |  $$ |\\$$$$$$  |$$ |  $$ |\n");
-        printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");          
-        printf("============================================================\n");        
-    }
+
 };
 #endif //CTORCH_ERROR_H
