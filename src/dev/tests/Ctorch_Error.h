@@ -55,6 +55,11 @@ private:
     // 禁止赋值重载：防止通过“赋值”创建新对象
     Ctorch_Stats& operator=(const Ctorch_Stats&) = delete;
     uint64_t error_count = 0;
+    uint64_t warn_count = 0;
+    uint64_t fatal_count = 0;
+
+    // TODO: 加入对设备的统计数据
+
     std::mutex mutex_;
 
 public:
@@ -72,6 +77,27 @@ public:
         std::lock_guard<std::mutex> lock(inst.mutex_);
         return inst.error_count;
     }
+     static void incrWarn() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        inst.warn_count++;
+    }
+    static uint64_t getTotalWarn() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        return inst.warn_count;
+    }
+     static void incrFatal() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        inst.fatal_count++;
+    }
+    static uint64_t getTotalFatal() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        return inst.fatal_count;
+    }
+    
 };
 
 class Ctorch_Error {
@@ -186,6 +212,14 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
             Ctorch_Stats& inst = Ctorch_Stats::getInstance();
             inst.incrError();
         }
+        eles if(level == ErrorLevel::WARN) {
+            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+            inst.incrWarn();
+        }
+        else if(level = ErrorLevel::FATAL) {
+            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+            inst.incrFatal();
+        }
     }
     static void info(ErrorPlatform platform,std::string msg) {
     printf("[INFO][%s %" PRIu64 "] [PLATFORM:%s] %s\n",
@@ -197,6 +231,18 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
     static void stats() {
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
+    }
+    static void welCome(){
+        printf("============================================================\n");
+        printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
+        printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
+        printf("$$ /  \\__|   $$ |   $$ /  $$ |$$ |  $$ |$$ /  \\__|$$ |  $$ |\n");
+        printf("$$ |         $$ |   $$ |  $$ |$$$$$$$  |$$ |      $$$$$$$$ |\n");
+        printf("$$ |         $$ |   $$ |  $$ |$$  __$$< $$ |      $$  __$$ |\n");
+        printf("$$ |  $$\\    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$\\ $$ |  $$ |\n");
+        printf("\\$$$$$$  |   $$ |    $$$$$$  |$$ |  $$ |\\$$$$$$  |$$ |  $$ |\n");
+        printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");          
+        printf("============================================================\n");        
     }
 };
 #endif //CTORCH_ERROR_H
