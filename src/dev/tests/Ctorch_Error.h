@@ -13,6 +13,7 @@
 #include <iomanip>  // std::put_time、std::setw（格式化工具）
 #include <stdint.h>  // uint32_t 类型定义
 #include <inttypes.h>// PRIu32 等格式化宏
+#include <mutex>
 
 enum class ErrorLevel {
     TRACE = 0,   // 细粒度调试（如kernel启动参数）
@@ -43,6 +44,34 @@ enum class ErrorType {
     KERNEL_LAUNCH = 5,    // 内核调用（CUDA/MPS/AMX内核启动失败/执行超时）
     TENSOR_STATE = 6,     // Tensor状态（未初始化/只读/已释放）
     PLATFORM_API = 7      // 平台API调用失败（如cudaGetDevice/MPSGraph创建失败）
+};
+
+// 该类为单例模式，不允许将构造函数公开
+class Ctorch_Stats {
+private:
+    Ctorch_Stats() = default;
+    // 禁止拷贝构造：防止通过“实例拷贝”创建新对象
+    Ctorch_Stats(const Ctorch_Stats&);
+    // 禁止赋值重载：防止通过“赋值”创建新对象
+    Ctorch_Stats& operator=(const Ctorch_Stats&) = delete;
+    uint64_t error_count = 0;
+    std::mutex mutex_;
+
+public:
+    static Ctorch_Stats& getInstance() {
+        static Ctorch_Stats instance_;  // 这里利用了一个巧妙的C++特性，保证全局只会实例化一个instance_
+        return instance_;
+    }
+    static void incrError() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        inst.error_count++;
+    }
+    static uint64_t getTotalError() {
+        Ctorch_Stats& inst = getInstance();
+        std::lock_guard<std::mutex> lock(inst.mutex_);
+        return inst.error_count;
+    }
 };
 
 class Ctorch_Error {
@@ -153,6 +182,10 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
             getPlatformName(platform).c_str(),
             getTypeName(type).c_str(),
             msg.c_str());
+        if (level == ErrorLevel::ERROR) {
+            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+            inst.incrError();
+        }
     }
     static void info(ErrorPlatform platform,std::string msg) {
     printf("[INFO][%s %" PRIu64 "] [PLATFORM:%s] %s\n",
@@ -160,6 +193,10 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
         getTimestampMs(),
         getPlatformName(platform).c_str(),
         msg.c_str());
+    }
+    static void stats() {
+        Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+        printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
     }
 };
 #endif //CTORCH_ERROR_H
