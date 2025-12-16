@@ -46,6 +46,13 @@ enum class ErrorType {
     PLATFORM_API = 7      // 平台API调用失败（如cudaGetDevice/MPSGraph创建失败）
 };
 
+// 输出详细级别
+enum class PrintLevel {
+    MINIUM = 0,
+    MEDUINM = 1,
+    FULL = 2,
+};
+
 // 该类为单例模式，不允许将构造函数公开
 class Ctorch_Stats {
 private:
@@ -58,6 +65,8 @@ private:
     uint64_t warn_count = 0;
     uint64_t fatal_count = 0;
 
+    // 调试级别
+    PrintLevel level = PrintLevel::FULL;
     // TODO: 加入对设备的统计数据
     bool if_first = true;
     std::mutex mutex_;
@@ -146,6 +155,14 @@ class Ctorch_Error {
             case ErrorType::KERNEL_LAUNCH:return "KERNEL_LAUNCH";
             case ErrorType::TENSOR_STATE: return "TENSOR_STATE";
             case ErrorType::PLATFORM_API: return "PLATFORM_API";
+            default: return "UNKNOWN";
+        }
+    }
+     static std::string getPrintLevelName(PrintLevel level) {
+        switch (level) {
+            case PrintLevel::MINIUM:      return "MINIUM";
+            case PrintLevel::MEDUINM:     return "MEDUINM";
+            case PrintLevel::FULL:        return "FULL";
             default: return "UNKNOWN";
         }
     }
@@ -244,6 +261,10 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
     }
-
+    static void setPrintLevel(PrintLevel level){
+        Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+        inst.level = level;
+        printf("[INFO] [%s %" PRIu64 "] Set Print Level = %s\n",getFormattedTimeMs().c_str(),getTimestampMs(),getPrintLevelName(level).c_str());
+    }
 };
 #endif //CTORCH_ERROR_H
