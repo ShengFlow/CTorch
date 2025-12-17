@@ -15,6 +15,16 @@
 #include <inttypes.h>// PRIu32 等格式化宏
 #include <mutex>
 
+// 颜色宏
+#define ESC_START       "\033["         // 标准开头
+#define ESC_END         "\033[0m"       // 标准结束
+#define COLOR_DEBUG     "36;1m"         // DEBUG
+#define COLOR_INFO      "32;4m"         // INFO
+#define COLOR_WARN      "33;1m"         // WARN
+#define COLOR_ERR       "31;1m"         // ERROR
+#define COLOR_ALERT     "37;1m"
+#define COLOR_EMERG     "31;5m"
+
 enum class ErrorLevel {
     TRACE = 0,   // 细粒度调试（如kernel启动参数）
     DEBUG = 1,   // 开发调试（如数据拷贝状态）
@@ -49,7 +59,7 @@ enum class ErrorType {
 // 输出详细级别
 enum class PrintLevel {
     MINIUM = 0,
-    MEDUINM = 1,
+    MEDIUM = 1,
     FULL = 2,
 };
 
@@ -64,13 +74,13 @@ private:
     uint64_t error_count = 0;
     uint64_t warn_count = 0;
     uint64_t fatal_count = 0;
-
     // 调试级别
     PrintLevel level = PrintLevel::FULL;
     // TODO: 加入对设备的统计数据
     bool if_first = true;
     std::mutex mutex_;
     static void welCome(){
+        printf(ESC_START COLOR_ALERT);
         printf("============================================================\n");
         printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
         printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
@@ -81,6 +91,8 @@ private:
         printf("\\$$$$$$  |   $$ |    $$$$$$  |$$ |  $$ |\\$$$$$$  |$$ |  $$ |\n");
         printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");
         printf("============================================================\n");
+        printf("Version RC Public 1.0\n");
+        printf(ESC_END);
     }
 public:
     static Ctorch_Stats& getInstance() {
@@ -161,7 +173,7 @@ class Ctorch_Error {
      static std::string getPrintLevelName(PrintLevel level) {
         switch (level) {
             case PrintLevel::MINIUM:      return "MINIUM";
-            case PrintLevel::MEDUINM:     return "MEDUINM";
+            case PrintLevel::MEDIUM:     return "MEDIUM";
             case PrintLevel::FULL:        return "FULL";
             default: return "UNKNOWN";
         }
@@ -229,6 +241,27 @@ class Ctorch_Error {
     }
 public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,std::string msg) {
         uint32_t error_code = computeCode(level,platform,type);
+        switch(level){
+            case ErrorLevel::INFO:   {
+                printf(ESC_START COLOR_INFO);
+                break;
+            }
+            case ErrorLevel::DEBUG:   {
+                printf(ESC_START COLOR_DEBUG);
+                break;
+            }
+            case ErrorLevel::Warn:   {
+                printf(ESC_START COLOR_WARN);
+                break;
+            }
+            case ErrorLevel::ERROR:   {
+                printf(ESC_START COLOR_ERR);
+                break;
+            }
+            case ErrorLevel::FATAL:   {
+                printf(ESC_START COLOR_CRIT);
+            }
+        }
         printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [TYPE:%s] %s\n",
             getLevelName(level).c_str(),
             getFormattedTimeMs().c_str(),
@@ -237,6 +270,7 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
             getPlatformName(platform).c_str(),
             getTypeName(type).c_str(),
             msg.c_str());
+        printf(ESC_END);
         if (level == ErrorLevel::ERROR) {
             Ctorch_Stats& inst = Ctorch_Stats::getInstance();
             inst.incrError();
