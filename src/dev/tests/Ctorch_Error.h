@@ -74,8 +74,7 @@ private:
     uint64_t error_count = 0;
     uint64_t warn_count = 0;
     uint64_t fatal_count = 0;
-    // 调试级别
-    PrintLevel level = PrintLevel::FULL;
+
     // TODO: 加入对设备的统计数据
     bool if_first = true;
     std::mutex mutex_;
@@ -95,6 +94,8 @@ private:
         printf(ESC_END);
     }
 public:
+    // 调试级别
+    PrintLevel level = PrintLevel::FULL;
     static Ctorch_Stats& getInstance() {
         static Ctorch_Stats instance_;  // 这里利用了一个巧妙的C++特性，保证全局只会实例化一个instance_
         if (instance_.if_first) instance_.welCome(),instance_.if_first = false;
@@ -250,7 +251,7 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
                 printf(ESC_START COLOR_DEBUG);
                 break;
             }
-            case ErrorLevel::Warn:   {
+            case ErrorLevel::WARN:   {
                 printf(ESC_START COLOR_WARN);
                 break;
             }
@@ -259,7 +260,7 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
                 break;
             }
             case ErrorLevel::FATAL:   {
-                printf(ESC_START COLOR_CRIT);
+                printf(ESC_START COLOR_ALERT);
             }
         }
         printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [TYPE:%s] %s\n",
@@ -285,12 +286,15 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
         }
     }
     static void info(ErrorPlatform platform,std::string msg) {
+    printf(ESC_START COLOR_INFO);
     printf("[INFO][%s %" PRIu64 "] [PLATFORM:%s] %s\n",
         getFormattedTimeMs().c_str(),
         getTimestampMs(),
         getPlatformName(platform).c_str(),
         msg.c_str());
+    printf(ESC_END);
     }
+
     static void stats() {
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
