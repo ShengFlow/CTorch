@@ -16,14 +16,16 @@
 #include <mutex>
 
 // 颜色宏
+// 颜色宏（行业规范版，易维护+视觉层级清晰）
 #define ESC_START       "\033["         // 标准开头
 #define ESC_END         "\033[0m"       // 标准结束
-#define COLOR_DEBUG     "36;1m"         // DEBUG
-#define COLOR_INFO      "32;4m"         // INFO
-#define COLOR_WARN      "33;1m"         // WARN
-#define COLOR_ERR       "31;1m"         // ERROR
-#define COLOR_ALERT     "37;1m"
-#define COLOR_EMERG     "31;5m"
+#define COLOR_TRACE     "38;5;246m"     // TRACE：灰色（低优先级）
+#define COLOR_DEBUG     "36;1m"         // DEBUG：青蓝色加粗（开发调试）
+#define COLOR_INFO      "32;1m"         // INFO：绿色加粗（正常信息，去掉下划线）
+#define COLOR_WARN      "33;1m"         // WARN：黄色加粗（警告）
+#define COLOR_ERR       "31;1m"         // ERROR：红色加粗（错误）
+#define COLOR_FATAL     "31;5;1m"       // FATAL：亮红+闪烁+加粗（致命错误）
+#define COLOR_ALERT     "37;1m"         // 保留：欢迎信息用（白色加粗）
 
 enum class ErrorLevel {
     TRACE = 0,   // 细粒度调试（如kernel启动参数）
@@ -79,7 +81,7 @@ private:
     bool if_first = true;
     std::mutex mutex_;
     static void welCome(){
-        printf(ESC_START COLOR_ALERT);
+        // printf(ESC_START COLOR_ALERT);
         printf("============================================================\n");
         printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
         printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
@@ -91,7 +93,15 @@ private:
         printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");
         printf("============================================================\n");
         printf("Version RC Public 1.0\n");
-        printf(ESC_END);
+        // printf(ESC_END);
+#ifdef __CUDACC__
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, 0);
+        printf("| CUDA:     %s (Compute Capability: %d.%d)                   |\n", prop.name, prop.major, prop.minor);
+#else
+        printf("| CUDA:     Not Found (仅支持CPU/MPS/AMX)                    |\n");
+#endif
+        printf("| C++:      C++%d                                            |\n", __cplusplus / 100 - 1997); // 输出C++标准
     }
 public:
     // 调试级别
@@ -240,69 +250,82 @@ class Ctorch_Error {
             system_clock::now().time_since_epoch()
         ).count();
     }
+
 public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,std::string msg) {
-        uint32_t error_code = computeCode(level,platform,type);
-        switch(level){
-            case ErrorLevel::INFO:   {
+        uint32_t error_code = computeCode(level, platform, type);
+        // 原 log 函数的 switch(level) 补充 TRACE 分支
+        switch (level) {
+            case ErrorLevel::TRACE: {
+                printf(ESC_START COLOR_TRACE);
+                break;
+            }
+            case ErrorLevel::INFO: {
                 printf(ESC_START COLOR_INFO);
                 break;
             }
-            case ErrorLevel::DEBUG:   {
+            case ErrorLevel::DEBUG: {
                 printf(ESC_START COLOR_DEBUG);
                 break;
             }
-            case ErrorLevel::WARN:   {
+            case ErrorLevel::WARN: {
                 printf(ESC_START COLOR_WARN);
                 break;
             }
-            case ErrorLevel::ERROR:   {
+            case ErrorLevel::ERROR: {
                 printf(ESC_START COLOR_ERR);
                 break;
             }
-            case ErrorLevel::FATAL:   {
-                printf(ESC_START COLOR_ALERT);
+            case ErrorLevel::FATAL: {
+                printf(ESC_START COLOR_FATAL);
+                break;
+            }
+            default: {
+                // 未知级别用默认色
+                printf(ESC_START);
+                break;
             }
         }
-        printf("[%s][%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [TYPE:%s] %s\n",
-            getLevelName(level).c_str(),
-            getFormattedTimeMs().c_str(),
-            getTimestampMs(),
-            error_code,
-            getPlatformName(platform).c_str(),
-            getTypeName(type).c_str(),
-            msg.c_str());
+        printf("[%s] [%s %" PRIu64 "] [ERROR_CODE:0x%" PRIX32 "] [PLATFORM:%s] [TYPE:%s] %s\n",
+               getLevelName(level).c_str(),
+               getFormattedTimeMs().c_str(),
+               getTimestampMs(),
+               error_code,
+               getPlatformName(platform).c_str(),
+               getTypeName(type).c_str(),
+               msg.c_str());
         printf(ESC_END);
         if (level == ErrorLevel::ERROR) {
-            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrError();
-        }
-        else if(level == ErrorLevel::WARN) {
-            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+        } else if (level == ErrorLevel::WARN) {
+            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrWarn();
-        }
-        else if(level == ErrorLevel::FATAL) {
-            Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+        } else if (level == ErrorLevel::FATAL) {
+            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrFatal();
         }
     }
+
     static void info(ErrorPlatform platform,std::string msg) {
-    printf(ESC_START COLOR_INFO);
-    printf("[INFO][%s %" PRIu64 "] [PLATFORM:%s] %s\n",
-        getFormattedTimeMs().c_str(),
-        getTimestampMs(),
-        getPlatformName(platform).c_str(),
-        msg.c_str());
-    printf(ESC_END);
+        printf(ESC_START COLOR_INFO);
+        printf("[INFO]" ESC_END "  [%s %" PRIu64 "] [PLATFORM:%s] %s\n",
+               getFormattedTimeMs().c_str(),
+               getTimestampMs(),
+               getPlatformName(platform).c_str(),
+               msg.c_str());
+        printf(ESC_END);
     }
 
     static void stats() {
-        Ctorch_Stats& inst = Ctorch_Stats::getInstance();
-        printf("[INFO] Total Error: %" PRIu64 "\n",inst.getTotalError());
+        Ctorch_Stats &inst = Ctorch_Stats::getInstance();
+        printf("[INFO]  Total Error: %" PRIu64 "\n", inst.getTotalError());
     }
-    static void setPrintLevel(PrintLevel level){
-        Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+
+    static void setPrintLevel(PrintLevel level) {
+        Ctorch_Stats &inst = Ctorch_Stats::getInstance();
         inst.level = level;
-        printf("[INFO] [%s %" PRIu64 "] Set Print Level = %s\n",getFormattedTimeMs().c_str(),getTimestampMs(),getPrintLevelName(level).c_str());
+        printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Set Print Level = %s\n", getFormattedTimeMs().c_str(), getTimestampMs(),
+               getPrintLevelName(level).c_str());
     }
 };
 #endif //CTORCH_ERROR_H
