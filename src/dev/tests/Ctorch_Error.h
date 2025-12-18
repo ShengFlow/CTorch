@@ -97,11 +97,13 @@ private:
 #ifdef __CUDACC__
         cudaDeviceProp prop;
         cudaGetDeviceProperties(&prop, 0);
-        printf("| CUDA:     %s (Compute Capability: %d.%d)                   |\n", prop.name, prop.major, prop.minor);
+        printf("| CUDA:     %-48s |\n",
+               (std::string(prop.name) + " (Compute Capability: " +
+                std::to_string(prop.major) + "." + std::to_string(prop.minor) + ")").c_str());
 #else
-        printf("| CUDA:     Not Found (仅支持CPU/MPS/AMX)                    |\n");
+        printf("| CUDA:     %-48s |\n", "Not Found (仅支持CPU/MPS/AMX)");
 #endif
-        printf("| C++:      C++%d                                            |\n", __cplusplus / 100 - 1997); // 输出C++标准
+        printf("| C++:      C++%-42d |\n", __cplusplus / 100 - 1997); // 输出C++标准
     }
 public:
     // 调试级别
@@ -318,7 +320,7 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
 
     static void stats() {
         Ctorch_Stats &inst = Ctorch_Stats::getInstance();
-        printf("[INFO]  Total Error: %" PRIu64 "\n", inst.getTotalError());
+        printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "Total Error: %" PRIu64 "\n", inst.getTotalError());
     }
 
     static void setPrintLevel(PrintLevel level) {
