@@ -4,8 +4,8 @@
 * Tensor.h
 * Created by Beapoe & GhostFace on 2025.7
 * Main Classes: Storage & Tensor & Auto_diff
-* Version : v2.1 (fixed on 2025.9.27)
-* Log : Fixed AD
+* Version : v3.1 (fixed on 2025.12.19)
+* Log : Update Ctorch_Error System
 */
 
 // includes
@@ -68,9 +68,12 @@ struct MatMulConfig {
 };
 // 设备类型 - 定义张量存储的位置
 enum class DeviceType {
-   kCPU,    //< 主存储器 (RAM)
-   kCUDA,   //< NVIDIA GPU (暂未实现)
-   kMPS,    //< Apple Silicon (暂未实现)
+    kCPU = 0,
+     kCUDA = 1,
+     kMPS = 2,
+     kAMX = 3,
+     kUNKNOWN = 4,
+     kGENERAL = 5,
 };
 
 // 数据类型 - 定义张量元素的类型
@@ -129,6 +132,16 @@ struct BroadCastResult {
 
 // ======================= 辅助函数 =======================
 
+constexpr static inline DeviceType platform(ErrorPlatform platforms) {
+    switch (platforms) {
+        case ErrorPlatform::kAMX: return DeviceType::kAMX;
+        case ErrorPlatform::kMPS: return DeviceType::kMPS;
+        case ErrorPlatform::kCPU: return DeviceType::kCPU;
+        case ErrorPlatform::kCUDA: return DeviceType::kCUDA;
+        case ErrorPlatform::kGENERAL: return DeviceType::kGENERAL;
+        case ErrorPlatform::kUNKNOWN: return DeviceType::kUNKNOWN;
+    }
+}
 // 将数据类型转换为字符串表示
 constexpr const char* dtypeToString(DType dtype) {
    switch (dtype) {
@@ -382,6 +395,9 @@ public:
     void commit_pending_record();
    // ======================= 构造和析构 =======================
 
+    bool has_pending_record() {
+        return record_committed_;
+    }
 // 修复所有构造函数
     // 添加构造和析构的调试
     Tensor();
@@ -397,7 +413,7 @@ public:
             std::ostringstream oss;
             oss << ">>> 标量Tensor设置完成, 存储值: " << *_storage.data<float>();
             std::string msg = oss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+            Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
         } else {
             Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::MEMORY,"!!! 错误: 无法分配存储");
         }
@@ -433,7 +449,7 @@ public:
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
     }
 
     Tensor& operator=(const Tensor& other) {
@@ -453,7 +469,7 @@ public:
             std::ostringstream oss;
             oss << ">>> Tensor拷贝赋值, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
             std::string msg = oss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+            Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
         }
         return *this;
     }
@@ -480,12 +496,13 @@ public:
     // 在 Tensor 析构函数中避免无限递归
     ~Tensor() {
         // 只在有效ID时提交记录
-        if (tensor_id_ != 0 && !record_committed_) {
+        if (!has_pending_record() && tensor_id_ != 0 && !record_committed_) {
             std::ostringstream oss;
             oss << ">>> Tensor析构, ID: " << tensor_id_;
             std::string msg = oss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+            Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
             commit_pending_record();
+            record_committed_ = true;
         }
     }
 
@@ -718,7 +735,7 @@ public:
         oss << "], record_committed: " << (record_committed_ ? "true" : "false");
 
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU, msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
     }
 
    // ======================= 运算符重载 =======================
@@ -958,7 +975,7 @@ void Tensor::elementwiseOp(Tensor &result, const Tensor &a, const Tensor &b, Op 
 template<typename T, typename Op>
 void Tensor::broadcast_elementwise_op(Tensor &result, const Tensor &a, const Tensor &b, const BroadCastResult &bc,
     Op op) const {
-    Ctorch_Error::info(ErrorPlatform::kCPU,">>> 进入 broadcast_elementwise_op");
+    Ctorch_Error::trace(ErrorPlatform::kCPU,">>> 进入 broadcast_elementwise_op");
     const std::vector<size_t>& shape = bc.logicShape;
     const std::vector<size_t>& stridesA = bc.logicStridesA;
     const std::vector<size_t>& stridesB = bc.logicStridesB;
@@ -973,7 +990,7 @@ void Tensor::broadcast_elementwise_op(Tensor &result, const Tensor &a, const Ten
     std::ostringstream oss;
     oss << ">>> 总元素数:  " << total_elements;
     std::string msg = oss.str();
-    Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+    Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
 
     // 遍历广播后的每个元素
     for (size_t flat_idx = 0; flat_idx < total_elements; ++flat_idx) {
@@ -981,7 +998,7 @@ void Tensor::broadcast_elementwise_op(Tensor &result, const Tensor &a, const Ten
             std::ostringstream osss;
             osss << ">>> 处理元素: " << flat_idx << "/" << total_elements;
             std::string msgs = osss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU,msgs);
+            Ctorch_Error::trace(ErrorPlatform::kCPU,msgs);
         }
 
         size_t a_idx = 0;
@@ -1001,7 +1018,7 @@ void Tensor::broadcast_elementwise_op(Tensor &result, const Tensor &a, const Ten
         out[flat_idx] = op(a_data[a_idx], b_data[b_idx]);
     }
 
-    Ctorch_Error::info(ErrorPlatform::kCPU,"<<< 离开 broadcast_elementwise_op");
+    Ctorch_Error::trace(ErrorPlatform::kCPU,"<<< 离开 broadcast_elementwise_op");
 
 }
 
@@ -1086,11 +1103,11 @@ private:
             std::ostringstream oss;
             oss << ">>> Node::clear_grad_safely - 开始, 节点ID: " << tensor_id;
             std::string msg = oss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+            Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
             if (!grad.empty()) {
                 grad.clear_storage();
             }
-            Ctorch_Error::info(ErrorPlatform::kCPU,"<<< Node::clear_grad_safely - 完成");
+            Ctorch_Error::trace(ErrorPlatform::kCPU,"<<< Node::clear_grad_safely - 完成");
         }
     };
 
@@ -1128,19 +1145,19 @@ public:
         oss << std::endl;
         oss << "=================================" << std::endl;
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU,msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU,msg);
     }
     // 修复get_grad函数
 Tensor get_grad(const Tensor* t) {
         if (!t || t->id() == 0) {
-            Ctorch_Error::info(ErrorPlatform::kCPU, ">>> get_grad: 无效输入");
+            Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> get_grad: 无效输入");
             return Tensor();
         }
 
         std::ostringstream oss;
         oss << ">>> get_grad - 开始, 目标ID: " << t->id();
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU, msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
 
         // 第一步：在锁内获取必要信息（不创建新Tensor）
         bool has_grad = false;
@@ -1170,13 +1187,13 @@ Tensor get_grad(const Tensor* t) {
                 for (auto s: grad_shape) osss << s << " ";
                 osss << "], 值: " << grad_value;
                 std::string msgs = osss.str();
-                Ctorch_Error::info(ErrorPlatform::kCPU, msgs);
+                Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
             }
         } // 释放锁
 
         // 第二步：在锁外创建结果Tensor
         if (has_grad) {
-            Ctorch_Error::info(ErrorPlatform::kCPU, ">>> 创建梯度副本");
+            Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> 创建梯度副本");
             Tensor result(ShapeTag{}, grad_shape, grad_dtype, grad_device);
 
             // 第三步：重新加锁复制数据
@@ -1184,7 +1201,7 @@ Tensor get_grad(const Tensor* t) {
                 std::lock_guard<std::mutex> lock(records_mutex);
                 auto it = id_to_node.find(t->id());
                 if (it != id_to_node.end() && it->second && !it->second->grad.empty()) {
-                    Ctorch_Error::info(ErrorPlatform::kCPU, ">>> 复制梯度数据");
+                    Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> 复制梯度数据");
                     // 直接复制数据，避免调用clone()
                     switch (grad_dtype) {
                         case DType::kFloat: {
@@ -1197,7 +1214,7 @@ Tensor get_grad(const Tensor* t) {
                             std::ostringstream osss;
                             osss << ">>> 复制了 " << count << " 个float值，第一个值: " << dst[0];
                             std::string msgs = osss.str();
-                            Ctorch_Error::info(ErrorPlatform::kCPU, msgs);
+                            Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
                             break;
                         }
                         case DType::kDouble: {
@@ -1234,10 +1251,10 @@ Tensor get_grad(const Tensor* t) {
             osss << "<<< get_grad - 完成" << std::endl;
 
             std::string msgs = osss.str();
-            Ctorch_Error::info(ErrorPlatform::kCPU, msgs);
+            Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
             return result;
         }
-        Ctorch_Error::info(ErrorPlatform::kCPU, "<<< get_grad - 未找到梯度");
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "<<< get_grad - 未找到梯度");
         return Tensor();
     }
 
@@ -1247,7 +1264,7 @@ Tensor get_grad(const Tensor* t) {
     void make_leaf(Tensor& t, bool requires_grad) {
         size_t id = t.id();
         if (id == 0) {
-            Ctorch_Error::info(ErrorPlatform::kCPU, "!!! 错误: 尝试注册ID为0的张量");
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 错误: 尝试注册ID为0的张量");
             return;
         }
 
@@ -1255,7 +1272,7 @@ Tensor get_grad(const Tensor* t) {
         osss << ">>> AutoDiff::make_leaf - 开始, ID: " << id << std::endl;
 
         std::string msgs = osss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU, msgs);
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
         debug_print_state("make_leaf开始前");
         {
             std::lock_guard<std::mutex> lock(records_mutex);
@@ -1263,7 +1280,7 @@ Tensor get_grad(const Tensor* t) {
                 std::ostringstream oss;
                 oss << ">>> 节点 " << id << " 已存在，跳过创建" << std::endl;
                 std::string msg = oss.str();
-                Ctorch_Error::info(ErrorPlatform::kCPU, msg);
+                Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
                 return;
             }
         }
@@ -1280,12 +1297,12 @@ Tensor get_grad(const Tensor* t) {
         std::ostringstream oss;
         oss << "<<< AutoDiff::make_leaf - 完成, ID: " << id << std::endl;
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU, msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
         debug_print_state("make_leaf完成后");
     }
     // 在 AutoDiff 类中添加
     ~AutoDiff() {
-        Ctorch_Error::info(ErrorPlatform::kCPU, ">>> AutoDiff 析构");
+        Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> AutoDiff 析构");
         // 避免在析构时进行复杂操作
         // 直接清空，不持有锁
         id_to_node.clear();
@@ -1297,7 +1314,7 @@ Tensor get_grad(const Tensor* t) {
         std::ostringstream oss;
         oss << ">>> 进入 defer_record, output_id: " << output_id << std::endl;
         std::string msg = oss.str();
-        Ctorch_Error::info(ErrorPlatform::kCPU, msg);
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
         if (output_id == 0) {
             Ctorch_Error::log(ErrorLevel::WARN,ErrorPlatform::kCPU,ErrorType::TENSOR_STATE,"警告: output_id 为0");
             return;
@@ -1318,7 +1335,7 @@ Tensor get_grad(const Tensor* t) {
                 std::ostringstream osss;
                 osss << ">>> 处理输入: " << input->id() << std::endl;
                 std::string msgs = osss.str();
-                Ctorch_Error::info(ErrorPlatform::kCPU, msgs);
+                Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
 
                 // 检查是否已注册，避免不必要的锁
                 bool needs_registration = false;
@@ -1331,7 +1348,7 @@ Tensor get_grad(const Tensor* t) {
                     std::ostringstream ost;
                     ost << ">>> 注册叶子节点: " << input->id() << std::endl;
                     std::string msgt = ost.str();
-                    Ctorch_Error::info(ErrorPlatform::kCPU, msgt);
+                    Ctorch_Error::trace(ErrorPlatform::kCPU, msgt);
 
                     make_leaf(*input, input->requires_grad());
                 }
@@ -1346,7 +1363,7 @@ Tensor get_grad(const Tensor* t) {
             pending_records[output_id] = record;
         }
 
-        Ctorch_Error::info(ErrorPlatform::kCPU, "<<< 离开 defer_record");
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "<<< 离开 defer_record");
     }
     // 新增：提交延迟记录
     // 1. 在 AutoDiff 里把“需要提交”的信息先捞出来，锁外再构造 Node
@@ -1372,6 +1389,8 @@ Tensor get_grad(const Tensor* t) {
         auto it = pending_records.find(output_id);
         if (it == pending_records.end()) {
             std::cout << "!!! 警告: 找不到待处理记录 " << output_id << std::endl;
+            //Ctorch_Error::log(ErrorLevel::ERROR)
+            // TODO: fix
             return;
         }
 
@@ -4046,7 +4065,7 @@ public:
 
 // 静态成员定义
 std::map<std::string, std::vector<double>> MatMulProfiler::performance_data_;
-bool MatMulProfiler::profiling_enabled_ = MatMulConfig::ENABLE_PROFILING;
+bool MatMulProfiler::profiling_enabled_ = MatMulConfig::ENABLE_CACHE_OPTIMIZATION;
 
 //TENSOR_CPPM
 //TENSOR_CPPM

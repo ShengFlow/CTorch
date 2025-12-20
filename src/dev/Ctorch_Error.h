@@ -14,9 +14,21 @@
 #include <stdint.h>  // uint32_t 类型定义
 #include <inttypes.h>// PRIu32 等格式化宏
 #include <mutex>
+#include <thread>
+#ifdef __CUDACC__
+    #include <cuda_runtime.h>
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
+    #include <sys/utsname.h>
+#endif
+
+#ifdef __linux__
+    #include <fstream>
+#endif
+
 
 // 颜色宏
-// 颜色宏（行业规范版，易维护+视觉层级清晰）
 #define ESC_START       "\033["         // 标准开头
 #define ESC_END         "\033[0m"       // 标准结束
 #define COLOR_TRACE     "38;5;246m"     // TRACE：灰色（低优先级）
@@ -60,10 +72,72 @@ enum class ErrorType {
 
 // 输出详细级别
 enum class PrintLevel {
-    MINIUM = 0,
-    MEDIUM = 1,
-    FULL = 2,
+    MINIUM = 0,  // 仅大于等于INFO级别
+    MEDIUM = 1,  // 仅大于等于DEBUG级别
+    FULL = 2,    // 全部级别输出
 };
+
+// 辅助函数
+
+static uint32_t computeCode(ErrorLevel level,ErrorPlatform platform,ErrorType type) {
+    uint32_t code = 0;
+    code |= (static_cast<uint32_t>(platform) << 24); // 平台：高8位
+    code |= (static_cast<uint32_t>(type) << 16);    // 类型：次8位
+    code |= (static_cast<uint32_t>(level) << 8);    // 级别：次8位
+    // 最后8位保留（可用于扩展具体场景码）
+    return code;
+}
+/**
+* @brief 返回人类可读的当前时间，精确到毫秒（跨平台、线程安全）
+* @return 格式化字符串，示例："2026-02-17 00:00:00.123"
+*/
+static std::string getFormattedTimeMs() {
+    using namespace std::chrono;
+
+    // 获取当前时间（精度：ms）
+    const auto now = system_clock::now();
+    const auto now_ms = time_point_cast<milliseconds>(now);
+    const uint64_t ms = now_ms.time_since_epoch().count() % 1000; // 提取毫秒位（0-999）
+
+    // 转换为秒级time_t，用于格式化日期时间
+    const std::time_t now_t = system_clock::to_time_t(now);
+
+    // 线程安全的时间解析（避免localtime线程不安全问题）
+    std::tm tm_buf{};
+#ifdef _WIN32
+    localtime_s(&tm_buf, &now_t); // Windows线程安全版本
+#else
+    localtime_r(&now_t, &tm_buf); // Linux/macOS线程安全版本
+#endif
+
+    // 4. 格式化字符串（补零到3位毫秒）
+    std::ostringstream oss;
+    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
+        << "." << std::setw(3) << std::setfill('0') << ms;
+
+    return oss.str();
+}
+/**
+* @brief 返回当前时间的毫秒级时间戳（跨平台）
+* @return uint64_t类型的时间戳，示例：1749984000123
+*/
+static uint64_t getTimestampMs() {
+    using namespace std::chrono;
+    // system_clock：系统墙钟时间（适配日志/统计场景）
+    // steady_clock：单调时钟（适合耗时统计，替换此处即可）
+    return duration_cast<milliseconds>(
+        system_clock::now().time_since_epoch()
+    ).count();
+}
+
+
+/**
+ * @param ms 以毫秒为单位的时间
+ * @brief 暂停 ms 毫秒的程序执行
+ */
+inline void ctorch_sleep(uint64_t ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
 
 // 该类为单例模式，不允许将构造函数公开
 class Ctorch_Stats {
@@ -77,7 +151,6 @@ private:
     uint64_t warn_count = 0;
     uint64_t fatal_count = 0;
 
-    // TODO: 加入对设备的统计数据
     bool if_first = true;
     std::mutex mutex_;
     static void welCome(){
@@ -93,24 +166,100 @@ private:
         printf(" \\______/    \\__|    \\______/ \\__|  \\__| \\______/ \\__|  \\__|\n");
         printf("============================================================\n");
         printf("Version RC Public 1.0\n");
+        ctorch_sleep(500);
         // printf(ESC_END);
 #ifdef __CUDACC__
-        cudaDeviceProp prop;
-        cudaGetDeviceProperties(&prop, 0);
-        printf("| CUDA:     %-48s |\n",
-               (std::string(prop.name) + " (Compute Capability: " +
-                std::to_string(prop.major) + "." + std::to_string(prop.minor) + ")").c_str());
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    std::string cudaInfo = std::string(prop.name) + " (Compute Capability: " +
+                           std::to_string(prop.major) + "." + std::to_string(prop.minor) + ")";
+    printf("| %-10s %-48s \n", "CUDA:", cudaInfo.c_str());
 #else
-        printf("| CUDA:     %-48s |\n", "Not Found (仅支持CPU/MPS/AMX)");
+    printf("| %-10s %-50s \n", "CUDA:", "Not Found (仅支持CPU/MPS/AMX)");
 #endif
-        printf("| C++:      C++%-42d |\n", __cplusplus / 100 - 1997); // 输出C++标准
+
+    // C++标准（修复宽度不一致问题）
+    printf("| %-10s C++%-45d\n", "C++:", __cplusplus / 100 - 1997);
+
+    // 编译器信息（动态获取）
+    std::string compilerInfo;
+#ifdef __GNUC__
+    compilerInfo = "GCC " + std::to_string(__GNUC__) + "." +
+                   std::to_string(__GNUC_MINOR__) + "." +
+                   std::to_string(__GNUC_PATCHLEVEL__);
+#elif defined(__clang__)
+    compilerInfo = "Clang " + std::to_string(__clang_major__) + "." +
+                   std::to_string(__clang_minor__) + "." +
+                   std::to_string(__clang_patchlevel__);
+#elif defined(_MSC_VER)
+    compilerInfo = "MSVC " + std::to_string(_MSC_VER);
+#else
+    compilerInfo = "Unknown Compiler";
+#endif
+    printf("| %-10s %-48s \n", "Compiler:", compilerInfo.c_str());
+
+    // 构建时间
+    std::string buildTime = std::string(__DATE__) + " " + __TIME__;
+    printf("| %-10s %-48s \n", "Build:", buildTime.c_str());
+
+    // 系统信息（动态获取，不再写死）
+    std::string systemInfo;
+#ifdef __APPLE__
+    struct utsname un;
+    if (uname(&un) == 0) {
+        systemInfo = std::string("macOS (Kernel ") + un.release + ")";
+    } else {
+        systemInfo = "macOS (Unknown version)";
+    }
+#elif defined(__linux__)
+    // 优先读取/etc/os-release获取发行版名称
+    std::ifstream osRelease("/etc/os-release");
+    if (osRelease.is_open()) {
+        std::string line;
+        while (std::getline(osRelease, line)) {
+            if (line.find("PRETTY_NAME=") == 0) {
+                systemInfo = line.substr(12);
+                // 移除可能存在的引号
+                if (!systemInfo.empty() && systemInfo.front() == '"')
+                    systemInfo.erase(0, 1);
+                if (!systemInfo.empty() && systemInfo.back() == '"')
+                    systemInfo.pop_back();
+                break;
+            }
+        }
+        osRelease.close();
+    }
+
+    // 如果无法从os-release获取，则使用uname
+    if (systemInfo.empty()) {
+        struct utsname un;
+        if (uname(&un) == 0) {
+            systemInfo = std::string(un.sysname) + " " + un.release;
+        } else {
+            systemInfo = "Linux (Unknown version)";
+        }
+    }
+#elif defined(_WIN32)
+    systemInfo = "Windows";
+    // 如需更详细的Windows版本，可使用GetVersionExW或RtlGetVersion
+#else
+    systemInfo = "Unknown System";
+#endif
+    printf("| %-10s %-48s \n", "System:", systemInfo.c_str());
     }
 public:
     // 调试级别
     PrintLevel level = PrintLevel::FULL;
+    // 开始时间
+    uint64_t start = 0;
+
     static Ctorch_Stats& getInstance() {
         static Ctorch_Stats instance_;  // 这里利用了一个巧妙的C++特性，保证全局只会实例化一个instance_
-        if (instance_.if_first) instance_.welCome(),instance_.if_first = false;
+        if (instance_.if_first) {
+            instance_.welCome();
+            instance_.if_first = false;
+            instance_.start = getTimestampMs();
+        }
         return instance_;
     }
     static void incrError() {
@@ -202,60 +351,11 @@ class Ctorch_Error {
         return static_cast<uint8_t>(type);
     }
 
-    static uint32_t computeCode(ErrorLevel level,ErrorPlatform platform,ErrorType type) {
-        uint32_t code = 0;
-        code |= (static_cast<uint32_t>(platform) << 24); // 平台：高8位
-        code |= (static_cast<uint32_t>(type) << 16);    // 类型：次8位
-        code |= (static_cast<uint32_t>(level) << 8);    // 级别：次8位
-        // 最后8位保留（可用于扩展具体场景码）
-        return code;
-    }
-    /**
- * @brief 返回人类可读的当前时间，精确到毫秒（跨平台、线程安全）
- * @return 格式化字符串，示例："2026-02-17 00:00:00.123"
- */
-    static std::string getFormattedTimeMs() {
-        using namespace std::chrono;
-
-        // 获取当前时间（精度：ms）
-        const auto now = system_clock::now();
-        const auto now_ms = time_point_cast<milliseconds>(now);
-        const uint64_t ms = now_ms.time_since_epoch().count() % 1000; // 提取毫秒位（0-999）
-
-        // 转换为秒级time_t，用于格式化日期时间
-        const std::time_t now_t = system_clock::to_time_t(now);
-
-        // 线程安全的时间解析（避免localtime线程不安全问题）
-        std::tm tm_buf{};
-    #ifdef _WIN32
-        localtime_s(&tm_buf, &now_t); // Windows线程安全版本
-    #else
-        localtime_r(&now_t, &tm_buf); // Linux/macOS线程安全版本
-    #endif
-
-        // 4. 格式化字符串（补零到3位毫秒）
-        std::ostringstream oss;
-        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
-            << "." << std::setw(3) << std::setfill('0') << ms;
-
-        return oss.str();
-    }
-    /**
- * @brief 返回当前时间的毫秒级时间戳（跨平台）
- * @return uint64_t类型的时间戳，示例：1749984000123
- */
-    static uint64_t getTimestampMs() {
-        using namespace std::chrono;
-        // system_clock：系统墙钟时间（适配日志/统计场景）
-        // steady_clock：单调时钟（适合耗时统计，替换此处即可）
-        return duration_cast<milliseconds>(
-            system_clock::now().time_since_epoch()
-        ).count();
-    }
-
-public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,std::string msg) {
+public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,const std::string msg) {
+    Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+    if (inst.level==PrintLevel::MEDIUM&&level==ErrorLevel::TRACE) return;
+    if (inst.level==PrintLevel::MINIUM&&(level==ErrorLevel::DEBUG||level==ErrorLevel::TRACE)) return ;
         uint32_t error_code = computeCode(level, platform, type);
-        // 原 log 函数的 switch(level) 补充 TRACE 分支
         switch (level) {
             case ErrorLevel::TRACE: {
                 printf(ESC_START COLOR_TRACE);
@@ -297,13 +397,10 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
                msg.c_str());
         printf(ESC_END);
         if (level == ErrorLevel::ERROR) {
-            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrError();
         } else if (level == ErrorLevel::WARN) {
-            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrWarn();
         } else if (level == ErrorLevel::FATAL) {
-            Ctorch_Stats &inst = Ctorch_Stats::getInstance();
             inst.incrFatal();
         }
     }
@@ -321,6 +418,9 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
     static void stats() {
         Ctorch_Stats &inst = Ctorch_Stats::getInstance();
         printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "Total Error: %" PRIu64 "\n", inst.getTotalError());
+        printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "Total WARN: %" PRIu64 "\n", inst.getTotalWarn());
+        printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "Total FATAL: %" PRIu64 "\n", inst.getTotalFatal());
+        printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "Total Time: %" PRIu64 "ms\n", getTimestampMs()-inst.start);
     }
 
     static void setPrintLevel(PrintLevel level) {
@@ -329,5 +429,19 @@ public: static void log(ErrorLevel level,ErrorPlatform platform,ErrorType type,s
         printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Set Print Level = %s\n", getFormattedTimeMs().c_str(), getTimestampMs(),
                getPrintLevelName(level).c_str());
     }
+
+    static void trace(ErrorPlatform platform,std::string msg) {
+        Ctorch_Stats& inst = Ctorch_Stats::getInstance();
+        if (inst.level==PrintLevel::MINIUM||inst.level==PrintLevel::MEDIUM) return ;
+        printf(ESC_START COLOR_DEBUG);
+        printf("[TRACE]" ESC_END "  [%s %" PRIu64 "] [PLATFORM:%s] %s\n",
+               getFormattedTimeMs().c_str(),
+               getTimestampMs(),
+               getPlatformName(platform).c_str(),
+               msg.c_str());
+        printf(ESC_END);
+    }
 };
+// TODO: 优化Tensor.cpp
+// TODO: 编写API文档
 #endif //CTORCH_ERROR_H
