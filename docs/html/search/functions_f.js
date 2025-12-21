@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['t_0',['t',['../class_tensor.html#aa58c0e1208f1a3159891318ffa96555c',1,'Tensor']]],
+  ['tan_1',['tan',['../class_tensor.html#a16d175320dbbecab5a3a086edbd9db40',1,'Tensor']]],
+  ['tanh_2',['tanh',['../class_tensor.html#a6da79b44500a18ae014b599614be7fbf',1,'Tensor']]],
+  ['tensor_3',['Tensor',['../class_tensor.html#a4420e3cacf3811f54a0363db56d9379d',1,'Tensor::Tensor()'],['../class_tensor.html#affbecbec4d679629791adacb71620c12',1,'Tensor::Tensor(float value)'],['../class_tensor.html#a8cb0588ba1d0fa7bcf4cb98852ae5880',1,'Tensor::Tensor(std::initializer_list&lt; float &gt; values)'],['../class_tensor.html#a086a439c8344a27821acae57c7ebda46',1,'Tensor::Tensor(ShapeTag tag, const std::vector&lt; size_t &gt; &amp;shape, DType dtype=DType::kFloat, DeviceType device=DeviceType::kCPU, bool zero_init=true)'],['../class_tensor.html#a8744cf79d09168378cf32e2a7c642fe7',1,'Tensor::Tensor(size_t size, DType dtype=DType::kFloat, DeviceType device=DeviceType::kCPU, bool zero_init=true)'],['../class_tensor.html#a7057f4442c67fb7a0b5624f6e6c97135',1,'Tensor::Tensor(const Tensor &amp;other)'],['../class_tensor.html#a58e60ee7037e654c5889d4b3523bd686',1,'Tensor::Tensor(Tensor &amp;&amp;other) noexcept']]],
+  ['test_5f20_5fnodes_5fautodiff_4',['test_20_nodes_autodiff',['../large__scale__test_8cpp.html#a0f890865de2463565c501ea774700a5d',1,'large_scale_test.cpp']]],
+  ['test_5fadd_5fperformance_5',['test_add_performance',['../performance__test_8cpp.html#adc7b69a7e7547d9271ec9d07e8932354',1,'performance_test.cpp']]],
+  ['test_5fadd_5fperformance_5fby_5fsize_6',['test_add_performance_by_size',['../performance__test_8cpp.html#aef7d287a606e3517699ab1f791988051',1,'performance_test.cpp']]],
+  ['test_5faddition_7',['test_addition',['../main_8cpp.html#a492b249aa4562f83253280c05ed41885',1,'main.cpp']]],
+  ['test_5fcomplex_5fgraph_8',['test_complex_graph',['../main_8cpp.html#a0ea3ba92d697ecd0c71b7d09bc7e5091',1,'main.cpp']]],
+  ['test_5fdivision_9',['test_division',['../main_8cpp.html#a6b88ce5069bc7f2abddfdeceb51c2f54',1,'main.cpp']]],
+  ['test_5flarge_5fscale_5faddition_10',['test_large_scale_addition',['../large__scale__test_8cpp.html#a5971e549edb0e4ee8e0d618a5c4dae51',1,'large_scale_test.cpp']]],
+  ['test_5flarge_5ftensor_11',['test_large_tensor',['../main_8cpp.html#abde20a31eeab6805c7289b5e42c77bd6',1,'main.cpp']]],
+  ['test_5fmultiplication_12',['test_multiplication',['../main_8cpp.html#ad4bb5366950d58a04a9f9b7a2a89198f',1,'main.cpp']]],
+  ['test_5fnegation_13',['test_negation',['../main_8cpp.html#ac5c81dede2f37af433a740b2b1c4b5a5',1,'main.cpp']]],
+  ['test_5frelu_14',['test_relu',['../main_8cpp.html#a338dfba66d8040d66d723b8e7f436fe6',1,'main.cpp']]],
+  ['test_5fscheduler_5ffunctionality_15',['test_scheduler_functionality',['../performance__test_8cpp.html#a7788c2c187b24b6e24c4f7aec61eee60',1,'performance_test.cpp']]],
+  ['test_5fsubtraction_16',['test_subtraction',['../main_8cpp.html#a73e523e33ee0d1d63820a8c2af7ae378',1,'main.cpp']]],
+  ['throwexception_17',['throwException',['../class_ctorch___error.html#ad21308b712af0daeb257141d65101594',1,'Ctorch_Error']]],
+  ['throwfatalexception_18',['throwFatalException',['../class_ctorch___error.html#ae97b88af46bf281a908a97f26544ce5d',1,'Ctorch_Error']]],
+  ['to_19',['to',['../class_tensor.html#ac3cef73c83c04a75db79b525340de409',1,'Tensor']]],
+  ['trace_20',['trace',['../class_ctorch___error.html#a03e4a731ec3834a3a597869785532703',1,'Ctorch_Error']]],
+  ['transpose_21',['transpose',['../class_tensor.html#a96d332a186e3813038b7d2d5d4c1b6ad',1,'Tensor']]]
+];

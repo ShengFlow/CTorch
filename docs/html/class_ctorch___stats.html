@@ -1,0 +1,403 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: Ctorch_Stats类 参考</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+<link href="custom.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('class_ctorch___stats.html','','class_ctorch___stats-members'); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">Ctorch_Stats类 参考</div></div>
+</div><!--header-->
+<div class="contents">
+
+<p>Ctorch统计信息类，采用单例模式设计  
+ <a href="#details">更多...</a></p>
+
+<p><code>#include &lt;<a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a>&gt;</code></p>
+<div class="dynheader">
+Ctorch_Stats 的协作图:</div>
+<div class="dyncontent">
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="class_ctorch___stats__coll__graph.svg" width="119" height="220"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+</div>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-static-methods" class="groupheader"><a id="pub-static-methods" name="pub-static-methods"></a>
+静态 Public 成员函数</h2></td></tr>
+<tr class="memitem:a52c4812aafb55e9a3f17650d8cd70682" id="r_a52c4812aafb55e9a3f17650d8cd70682"><td class="memItemLeft" align="right" valign="top">static <a class="el" href="class_ctorch___stats.html">Ctorch_Stats</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a52c4812aafb55e9a3f17650d8cd70682">getInstance</a> ()</td></tr>
+<tr class="memdesc:a52c4812aafb55e9a3f17650d8cd70682"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取单例实例  <br /></td></tr>
+<tr class="memitem:a0d7253a7f76f98fc62c7dbcb68e906aa" id="r_a0d7253a7f76f98fc62c7dbcb68e906aa"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0d7253a7f76f98fc62c7dbcb68e906aa">incrError</a> ()</td></tr>
+<tr class="memdesc:a0d7253a7f76f98fc62c7dbcb68e906aa"><td class="mdescLeft">&#160;</td><td class="mdescRight">增加错误计数  <br /></td></tr>
+<tr class="memitem:afd3d6ea6df59c5a921fbcac6e04bc78d" id="r_afd3d6ea6df59c5a921fbcac6e04bc78d"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#afd3d6ea6df59c5a921fbcac6e04bc78d">getTotalError</a> ()</td></tr>
+<tr class="memdesc:afd3d6ea6df59c5a921fbcac6e04bc78d"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取总错误数  <br /></td></tr>
+<tr class="memitem:a22be206b7ea79cdb3afa745fd6d7904a" id="r_a22be206b7ea79cdb3afa745fd6d7904a"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a22be206b7ea79cdb3afa745fd6d7904a">incrWarn</a> ()</td></tr>
+<tr class="memdesc:a22be206b7ea79cdb3afa745fd6d7904a"><td class="mdescLeft">&#160;</td><td class="mdescRight">增加警告计数  <br /></td></tr>
+<tr class="memitem:a748b023dc6f0c30cdc0851eaa033b850" id="r_a748b023dc6f0c30cdc0851eaa033b850"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a748b023dc6f0c30cdc0851eaa033b850">getTotalWarn</a> ()</td></tr>
+<tr class="memdesc:a748b023dc6f0c30cdc0851eaa033b850"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取总警告数  <br /></td></tr>
+<tr class="memitem:a0029e5153ad60ff917a8b3aa3256e66f" id="r_a0029e5153ad60ff917a8b3aa3256e66f"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0029e5153ad60ff917a8b3aa3256e66f">incrFatal</a> ()</td></tr>
+<tr class="memdesc:a0029e5153ad60ff917a8b3aa3256e66f"><td class="mdescLeft">&#160;</td><td class="mdescRight">增加致命错误计数  <br /></td></tr>
+<tr class="memitem:aeb4e97b4376e771c14b6ede106f95dd9" id="r_aeb4e97b4376e771c14b6ede106f95dd9"><td class="memItemLeft" align="right" valign="top">static uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aeb4e97b4376e771c14b6ede106f95dd9">getTotalFatal</a> ()</td></tr>
+<tr class="memdesc:aeb4e97b4376e771c14b6ede106f95dd9"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取总致命错误数  <br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-attribs" class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
+Public 属性</h2></td></tr>
+<tr class="memitem:af2cc1f9e94b83ee8cdcc2dcc9ce37720" id="r_af2cc1f9e94b83ee8cdcc2dcc9ce37720"><td class="memItemLeft" align="right" valign="top"><a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af2cc1f9e94b83ee8cdcc2dcc9ce37720">level</a> = <a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1">PrintLevel::FULL</a></td></tr>
+<tr class="memdesc:af2cc1f9e94b83ee8cdcc2dcc9ce37720"><td class="mdescLeft">&#160;</td><td class="mdescRight">打印级别  <br /></td></tr>
+<tr class="memitem:af9a81cea8f35a8c51e701bd3fffc04d0" id="r_af9a81cea8f35a8c51e701bd3fffc04d0"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af9a81cea8f35a8c51e701bd3fffc04d0">start</a> = 0</td></tr>
+<tr class="memdesc:af9a81cea8f35a8c51e701bd3fffc04d0"><td class="mdescLeft">&#160;</td><td class="mdescRight">程序开始时间戳  <br /></td></tr>
+</table>
+<a name="details" id="details"></a><h2 id="header-details" class="groupheader">详细描述</h2>
+<div class="textblock"><p>Ctorch统计信息类，采用单例模式设计 </p>
+<p>用于统计错误、警告和致命错误的数量，并提供程序运行时间统计 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00039">39</a> 行定义.</p>
+</div><a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">成员函数说明</h2>
+<a id="a52c4812aafb55e9a3f17650d8cd70682" name="a52c4812aafb55e9a3f17650d8cd70682"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a52c4812aafb55e9a3f17650d8cd70682">&#9670;&#160;</a></span>getInstance()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="class_ctorch___stats.html">Ctorch_Stats</a> &amp; Ctorch_Stats::getInstance </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>获取单例实例 </p>
+<dl class="section return"><dt>返回</dt><dd>Ctorch_Stats的引用 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00186">186</a> 行定义.</p>
+
+</div>
+</div>
+<a id="afd3d6ea6df59c5a921fbcac6e04bc78d" name="afd3d6ea6df59c5a921fbcac6e04bc78d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afd3d6ea6df59c5a921fbcac6e04bc78d">&#9670;&#160;</a></span>getTotalError()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t Ctorch_Stats::getTotalError </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>获取总错误数 </p>
+<dl class="section return"><dt>返回</dt><dd>错误总数 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00207">207</a> 行定义.</p>
+
+</div>
+</div>
+<a id="aeb4e97b4376e771c14b6ede106f95dd9" name="aeb4e97b4376e771c14b6ede106f95dd9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aeb4e97b4376e771c14b6ede106f95dd9">&#9670;&#160;</a></span>getTotalFatal()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t Ctorch_Stats::getTotalFatal </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>获取总致命错误数 </p>
+<dl class="section return"><dt>返回</dt><dd>致命错误总数 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00241">241</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a748b023dc6f0c30cdc0851eaa033b850" name="a748b023dc6f0c30cdc0851eaa033b850"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a748b023dc6f0c30cdc0851eaa033b850">&#9670;&#160;</a></span>getTotalWarn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t Ctorch_Stats::getTotalWarn </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>获取总警告数 </p>
+<dl class="section return"><dt>返回</dt><dd>警告总数 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00224">224</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a0d7253a7f76f98fc62c7dbcb68e906aa" name="a0d7253a7f76f98fc62c7dbcb68e906aa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0d7253a7f76f98fc62c7dbcb68e906aa">&#9670;&#160;</a></span>incrError()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Stats::incrError </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>增加错误计数 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00198">198</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a0029e5153ad60ff917a8b3aa3256e66f" name="a0029e5153ad60ff917a8b3aa3256e66f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0029e5153ad60ff917a8b3aa3256e66f">&#9670;&#160;</a></span>incrFatal()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Stats::incrFatal </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>增加致命错误计数 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00232">232</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a22be206b7ea79cdb3afa745fd6d7904a" name="a22be206b7ea79cdb3afa745fd6d7904a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a22be206b7ea79cdb3afa745fd6d7904a">&#9670;&#160;</a></span>incrWarn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Stats::incrWarn </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>增加警告计数 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00215">215</a> 行定义.</p>
+
+</div>
+</div>
+<a name="doc-variable-members" id="doc-variable-members"></a><h2 id="header-doc-variable-members" class="groupheader">类成员变量说明</h2>
+<a id="af2cc1f9e94b83ee8cdcc2dcc9ce37720" name="af2cc1f9e94b83ee8cdcc2dcc9ce37720"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af2cc1f9e94b83ee8cdcc2dcc9ce37720">&#9670;&#160;</a></span>level</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a> Ctorch_Stats::level = <a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1">PrintLevel::FULL</a></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>打印级别 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00176">176</a> 行定义.</p>
+
+</div>
+</div>
+<a id="af9a81cea8f35a8c51e701bd3fffc04d0" name="af9a81cea8f35a8c51e701bd3fffc04d0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af9a81cea8f35a8c51e701bd3fffc04d0">&#9670;&#160;</a></span>start</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t Ctorch_Stats::start = 0</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>程序开始时间戳 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00180">180</a> 行定义.</p>
+
+</div>
+</div>
+<hr/>该类的文档由以下文件生成:<ul>
+<li><a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a></li>
+</ul>
+</div><!-- contents -->
+</div><!-- doc-content -->
+<div id="page-nav" class="page-nav-panel">
+<div id="page-nav-resize-handle"></div>
+<div id="page-nav-tree">
+<div id="page-nav-contents">
+</div><!-- page-nav-contents -->
+</div><!-- page-nav-tree -->
+</div><!-- page-nav -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="class_ctorch___stats.html">Ctorch_Stats</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>

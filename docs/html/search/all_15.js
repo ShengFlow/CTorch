@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['mae_0',['MAE',['../_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0ad7bfc720460d75c28ce69ce26d239f9f',1,'Ctools.h']]],
+  ['mae_5floss_1',['mae_loss',['../class_tensor.html#a3fc8a280c3953f6a4ff6875ab3c5ed8c',1,'Tensor']]],
+  ['main_2',['main',['../large__scale__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4',1,'main():&#160;large_scale_test.cpp'],['../main_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4',1,'main():&#160;main.cpp'],['../performance__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4',1,'main():&#160;performance_test.cpp'],['../test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4',1,'main():&#160;test.cpp']]],
+  ['main_2ecpp_3',['main.cpp',['../main_8cpp.html',1,'']]],
+  ['mainpage_2emd_4',['MainPage.md',['../_main_page_8md.html',1,'']]],
+  ['make_5fleaf_5',['make_leaf',['../class_auto_diff.html#a70833ad502f02ce164b8e9e9fb09f99a',1,'AutoDiff']]],
+  ['matmul_6',['MatMul',['../_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a5debeabaece967a6732b4182ba0269ae',1,'Ctools.h']]],
+  ['matmul_7',['matMul',['../_tensor_8cpp.html#a42ed3dc5a3d6c5e648765bdd6889c491',1,'matMul(const Tensor &amp;a, const Tensor &amp;b):&#160;Tensor.cpp'],['../_tensor_8h.html#a42ed3dc5a3d6c5e648765bdd6889c491',1,'matMul(const Tensor &amp;a, const Tensor &amp;b):&#160;Tensor.cpp']]],
+  ['matmul_8',['matmul',['../class_tensor.html#aca18e415d9d13e1f0bdccafc6b5cdfab',1,'Tensor']]],
+  ['matmul_5funified_9',['matmul_unified',['../class_tensor.html#a26bb78fab0aa3bb61e6d28bd72269a04',1,'Tensor']]],
+  ['matmulconfig_10',['MatMulConfig',['../struct_mat_mul_config.html',1,'']]],
+  ['matmulstrategy_11',['MatMulStrategy',['../_ctools_8h.html#a0c7562e1971f3847677f00ee3248a9f1',1,'Ctools.h']]],
+  ['max_12',['max',['../class_tensor.html#a41c1eb2cea3ec22901af5b1d2753c6bc',1,'Tensor::max(const std::vector&lt; int &gt; &amp;dims, bool keepdim=false) const'],['../class_tensor.html#aac60b9bbc012a5017c023f170409fa74',1,'Tensor::max(int dim, bool keepdim=false) const'],['../class_tensor.html#acdf489ff11c1e9b056333883b07f4f9d',1,'Tensor::max() const']]],
+  ['mean_13',['mean',['../class_tensor.html#ac542928aee3139a117912cb3130846a6',1,'Tensor::mean(const std::vector&lt; int &gt; &amp;dims, bool keepdim=false) const'],['../class_tensor.html#a45bf413b4c320d27f2c5b0f2e36307d7',1,'Tensor::mean(int dim, bool keepdim=false) const'],['../class_tensor.html#aedd9fa921b2b3dc6815048df240b015e',1,'Tensor::mean() const']]],
+  ['medium_14',['MEDIUM',['../_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5ac87f3be66ffc3c0d4249f1c2cc5f3cce',1,'Ctools.h']]],
+  ['memory_15',['MEMORY',['../_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa7014705458ee3cf0192f6aa52cfddea5',1,'Ctools.h']]],
+  ['min_16',['min',['../class_tensor.html#a28b1d3e520e4bfebbc123c69c9a22186',1,'Tensor::min(const std::vector&lt; int &gt; &amp;dims, bool keepdim=false) const'],['../class_tensor.html#a94f3ddd33b2ff1307189b3c4447df774',1,'Tensor::min(int dim, bool keepdim=false) const'],['../class_tensor.html#a540fe2f2fa36a28ec066251f79d5d6bf',1,'Tensor::min() const']]],
+  ['minium_17',['MINIUM',['../_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5a84ceb1f84e00c71dddadf486b62e938a',1,'Ctools.h']]],
+  ['minx_18',['minx',['../_ctools_8h.html#ad3a0e9b1fc265ed01feb6cd420797b2e',1,'Ctools.h']]],
+  ['mse_19',['MSE',['../_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0aa9fc1a03386ae38b64e06c8172994963',1,'Ctools.h']]],
+  ['mse_5floss_20',['mse_loss',['../class_tensor.html#acf55468dcd2b420dc3e840bb35297dd9',1,'Tensor']]],
+  ['mul_21',['Mul',['../_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2',1,'Ctools.h']]]
+];

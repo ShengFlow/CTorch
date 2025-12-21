@@ -1,0 +1,681 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: Ctorch_Error类 参考</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+<link href="custom.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('class_ctorch___error.html','','class_ctorch___error-members'); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">Ctorch_Error类 参考</div></div>
+</div><!--header-->
+<div class="contents">
+
+<p>Ctorch错误处理类  
+ <a href="#details">更多...</a></p>
+
+<p><code>#include &lt;<a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a>&gt;</code></p>
+<div class="dynheader">
+Ctorch_Error 的协作图:</div>
+<div class="dyncontent">
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="class_ctorch___error__coll__graph.svg" width="162" height="302"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+</div>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-static-methods" class="groupheader"><a id="pub-static-methods" name="pub-static-methods"></a>
+静态 Public 成员函数</h2></td></tr>
+<tr class="memitem:a4850c089416b2a55a8eed47bd212b91f" id="r_a4850c089416b2a55a8eed47bd212b91f"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4850c089416b2a55a8eed47bd212b91f">log</a> (<a class="el" href="_ctools_8h.html#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a> level, <a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string msg)</td></tr>
+<tr class="memdesc:a4850c089416b2a55a8eed47bd212b91f"><td class="mdescLeft">&#160;</td><td class="mdescRight">记录日志信息  <br /></td></tr>
+<tr class="memitem:af2d1f41ffc6179ffdd460154054dd8e5" id="r_af2d1f41ffc6179ffdd460154054dd8e5"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af2d1f41ffc6179ffdd460154054dd8e5">info</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, std::string msg)</td></tr>
+<tr class="memdesc:af2d1f41ffc6179ffdd460154054dd8e5"><td class="mdescLeft">&#160;</td><td class="mdescRight">记录INFO级别信息  <br /></td></tr>
+<tr class="memitem:ad71c0c8d96b3e3665261ee3537034770" id="r_ad71c0c8d96b3e3665261ee3537034770"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad71c0c8d96b3e3665261ee3537034770">stats</a> ()</td></tr>
+<tr class="memdesc:ad71c0c8d96b3e3665261ee3537034770"><td class="mdescLeft">&#160;</td><td class="mdescRight">打印统计信息  <br /></td></tr>
+<tr class="memitem:afb536e46fd5ebc767924046de3164929" id="r_afb536e46fd5ebc767924046de3164929"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#afb536e46fd5ebc767924046de3164929">setPrintLevel</a> (<a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a> level)</td></tr>
+<tr class="memdesc:afb536e46fd5ebc767924046de3164929"><td class="mdescLeft">&#160;</td><td class="mdescRight">设置打印级别  <br /></td></tr>
+<tr class="memitem:a03e4a731ec3834a3a597869785532703" id="r_a03e4a731ec3834a3a597869785532703"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a03e4a731ec3834a3a597869785532703">trace</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, std::string msg)</td></tr>
+<tr class="memdesc:a03e4a731ec3834a3a597869785532703"><td class="mdescLeft">&#160;</td><td class="mdescRight">记录TRACE级别信息  <br /></td></tr>
+<tr class="memitem:abb25a7f2db24f1ad3cd1a7f8fd74fe1e" id="r_abb25a7f2db24f1ad3cd1a7f8fd74fe1e"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abb25a7f2db24f1ad3cd1a7f8fd74fe1e">error</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:abb25a7f2db24f1ad3cd1a7f8fd74fe1e"><td class="mdescLeft">&#160;</td><td class="mdescRight">便捷方法：快速记录ERROR级别错误  <br /></td></tr>
+<tr class="memitem:af27b22085edd12c18ec7e6f14bc024d6" id="r_af27b22085edd12c18ec7e6f14bc024d6"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af27b22085edd12c18ec7e6f14bc024d6">warn</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:af27b22085edd12c18ec7e6f14bc024d6"><td class="mdescLeft">&#160;</td><td class="mdescRight">便捷方法：快速记录WARN级别错误  <br /></td></tr>
+<tr class="memitem:a2cf024e2aec12ee508af62be11ffa1cc" id="r_a2cf024e2aec12ee508af62be11ffa1cc"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2cf024e2aec12ee508af62be11ffa1cc">fatal</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a2cf024e2aec12ee508af62be11ffa1cc"><td class="mdescLeft">&#160;</td><td class="mdescRight">便捷方法：快速记录FATAL级别错误  <br /></td></tr>
+<tr class="memitem:a367445d1cc2517f44440881ee6562202" id="r_a367445d1cc2517f44440881ee6562202"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a367445d1cc2517f44440881ee6562202">info</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a367445d1cc2517f44440881ee6562202"><td class="mdescLeft">&#160;</td><td class="mdescRight">便捷方法：快速记录INFO级别信息  <br /></td></tr>
+<tr class="memitem:a729dc52d77c9b120c4c0c977d3d1c934" id="r_a729dc52d77c9b120c4c0c977d3d1c934"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a729dc52d77c9b120c4c0c977d3d1c934">debug</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a729dc52d77c9b120c4c0c977d3d1c934"><td class="mdescLeft">&#160;</td><td class="mdescRight">便捷方法：快速记录DEBUG级别信息  <br /></td></tr>
+<tr class="memitem:ad21308b712af0daeb257141d65101594" id="r_ad21308b712af0daeb257141d65101594"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad21308b712af0daeb257141d65101594">throwException</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:ad21308b712af0daeb257141d65101594"><td class="mdescLeft">&#160;</td><td class="mdescRight">抛出异常方法：记录错误并抛出异常  <br /></td></tr>
+<tr class="memitem:ae97b88af46bf281a908a97f26544ce5d" id="r_ae97b88af46bf281a908a97f26544ce5d"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae97b88af46bf281a908a97f26544ce5d">throwFatalException</a> (<a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type, const std::string &amp;msg)</td></tr>
+<tr class="memdesc:ae97b88af46bf281a908a97f26544ce5d"><td class="mdescLeft">&#160;</td><td class="mdescRight">抛出致命异常方法：记录致命错误并抛出异常  <br /></td></tr>
+</table>
+<a name="details" id="details"></a><h2 id="header-details" class="groupheader">详细描述</h2>
+<div class="textblock"><p>Ctorch错误处理类 </p>
+<p>用于记录和管理CTorch中的各种错误信息，包括日志记录、错误统计和异常抛出 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00254">254</a> 行定义.</p>
+</div><a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">成员函数说明</h2>
+<a id="a729dc52d77c9b120c4c0c977d3d1c934" name="a729dc52d77c9b120c4c0c977d3d1c934"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a729dc52d77c9b120c4c0c977d3d1c934">&#9670;&#160;</a></span>debug()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::debug </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>便捷方法：快速记录DEBUG级别信息 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">msg</td><td>信息内容 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00505">505</a> 行定义.</p>
+
+</div>
+</div>
+<a id="abb25a7f2db24f1ad3cd1a7f8fd74fe1e" name="abb25a7f2db24f1ad3cd1a7f8fd74fe1e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abb25a7f2db24f1ad3cd1a7f8fd74fe1e">&#9670;&#160;</a></span>error()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::error </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>便捷方法：快速记录ERROR级别错误 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00467">467</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a2cf024e2aec12ee508af62be11ffa1cc" name="a2cf024e2aec12ee508af62be11ffa1cc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2cf024e2aec12ee508af62be11ffa1cc">&#9670;&#160;</a></span>fatal()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::fatal </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>便捷方法：快速记录FATAL级别错误 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00487">487</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a367445d1cc2517f44440881ee6562202" name="a367445d1cc2517f44440881ee6562202"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a367445d1cc2517f44440881ee6562202">&#9670;&#160;</a></span>info() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::info </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>便捷方法：快速记录INFO级别信息 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">msg</td><td>信息内容 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00496">496</a> 行定义.</p>
+
+</div>
+</div>
+<a id="af2d1f41ffc6179ffdd460154054dd8e5" name="af2d1f41ffc6179ffdd460154054dd8e5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af2d1f41ffc6179ffdd460154054dd8e5">&#9670;&#160;</a></span>info() <span class="overload">[2/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::info </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">std::string</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>记录INFO级别信息 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">msg</td><td>信息内容 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00411">411</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a4850c089416b2a55a8eed47bd212b91f" name="a4850c089416b2a55a8eed47bd212b91f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4850c089416b2a55a8eed47bd212b91f">&#9670;&#160;</a></span>log()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::log </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a></td>          <td class="paramname"><span class="paramname"><em>level</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>记录日志信息 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">level</td><td>错误级别 </td></tr>
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00352">352</a> 行定义.</p>
+
+</div>
+</div>
+<a id="afb536e46fd5ebc767924046de3164929" name="afb536e46fd5ebc767924046de3164929"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afb536e46fd5ebc767924046de3164929">&#9670;&#160;</a></span>setPrintLevel()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::setPrintLevel </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a></td>          <td class="paramname"><span class="paramname"><em>level</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>设置打印级别 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">level</td><td>打印级别 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00437">437</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad71c0c8d96b3e3665261ee3537034770" name="ad71c0c8d96b3e3665261ee3537034770"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad71c0c8d96b3e3665261ee3537034770">&#9670;&#160;</a></span>stats()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::stats </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>打印统计信息 </p>
+<p>打印总错误数、总警告数、总致命错误数和总运行时间 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00425">425</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad21308b712af0daeb257141d65101594" name="ad21308b712af0daeb257141d65101594"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad21308b712af0daeb257141d65101594">&#9670;&#160;</a></span>throwException()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::throwException </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>抛出异常方法：记录错误并抛出异常 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="exception"><dt>异常</dt><dd>
+  <table class="exception">
+    <tr><td class="paramname">std::runtime_error</td><td>抛出运行时异常 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00516">516</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ae97b88af46bf281a908a97f26544ce5d" name="ae97b88af46bf281a908a97f26544ce5d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae97b88af46bf281a908a97f26544ce5d">&#9670;&#160;</a></span>throwFatalException()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::throwFatalException </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>抛出致命异常方法：记录致命错误并抛出异常 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="exception"><dt>异常</dt><dd>
+  <table class="exception">
+    <tr><td class="paramname">std::runtime_error</td><td>抛出运行时异常 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00530">530</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a03e4a731ec3834a3a597869785532703" name="a03e4a731ec3834a3a597869785532703"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a03e4a731ec3834a3a597869785532703">&#9670;&#160;</a></span>trace()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::trace </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">std::string</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>记录TRACE级别信息 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">msg</td><td>信息内容 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00449">449</a> 行定义.</p>
+
+</div>
+</div>
+<a id="af27b22085edd12c18ec7e6f14bc024d6" name="af27b22085edd12c18ec7e6f14bc024d6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af27b22085edd12c18ec7e6f14bc024d6">&#9670;&#160;</a></span>warn()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void Ctorch_Error::warn </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>msg</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span><span class="mlabel static">static</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>便捷方法：快速记录WARN级别错误 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+    <tr><td class="paramname">msg</td><td>错误信息 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a> 第 <a class="el" href="_ctorch___error_8h_source.html#l00477">477</a> 行定义.</p>
+
+</div>
+</div>
+<hr/>该类的文档由以下文件生成:<ul>
+<li><a class="el" href="_ctorch___error_8h_source.html">Ctorch_Error.h</a></li>
+</ul>
+</div><!-- contents -->
+</div><!-- doc-content -->
+<div id="page-nav" class="page-nav-panel">
+<div id="page-nav-resize-handle"></div>
+<div id="page-nav-tree">
+<div id="page-nav-contents">
+</div><!-- page-nav-contents -->
+</div><!-- page-nav-tree -->
+</div><!-- page-nav -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="class_ctorch___error.html">Ctorch_Error</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>

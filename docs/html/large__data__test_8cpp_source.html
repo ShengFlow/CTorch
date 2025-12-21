@@ -1,0 +1,204 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: large_data_test.cpp 源文件</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('large__data__test_8cpp_source.html','',''); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">large_data_test.cpp</div></div>
+</div><!--header-->
+<div class="contents">
+<a href="large__data__test_8cpp.html">浏览该文件的文档.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span><span class="preprocessor">#include &quot;<a class="code" href="_tensor_8h.html">Tensor.h</a>&quot;</span></div>
+<div class="line"><a id="l00002" name="l00002"></a><span class="lineno">    2</span><span class="preprocessor">#include &lt;iostream&gt;</span></div>
+<div class="line"><a id="l00003" name="l00003"></a><span class="lineno">    3</span><span class="preprocessor">#include &lt;chrono&gt;</span></div>
+<div class="line"><a id="l00004" name="l00004"></a><span class="lineno">    4</span> </div>
+<div class="foldopen" id="foldopen00005" data-start="{" data-end="}">
+<div class="line"><a id="l00005" name="l00005"></a><span class="lineno"><a class="line" href="large__data__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4">    5</a></span><span class="keywordtype">int</span> <a class="code hl_function" href="large__data__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4">main</a>() {</div>
+<div class="line"><a id="l00006" name="l00006"></a><span class="lineno">    6</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;=== Large Data Tests ===\n&quot;</span>;</div>
+<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span>    </div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span>    <span class="comment">// 测试1：大尺寸张量加法</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span>    <span class="keywordflow">try</span> {</div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;Testing large size tensors addition...\n&quot;</span>;</div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span>        <span class="keyword">auto</span> start = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span>        </div>
+<div class="line"><a id="l00013" name="l00013"></a><span class="lineno">   13</span>        <span class="comment">// 创建1000x1000的大尺寸张量</span></div>
+<div class="line"><a id="l00014" name="l00014"></a><span class="lineno">   14</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> a(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, {1000, 1000});</div>
+<div class="line"><a id="l00015" name="l00015"></a><span class="lineno">   15</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> b(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, {1000, 1000});</div>
+<div class="line"><a id="l00016" name="l00016"></a><span class="lineno">   16</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> c = a + b;</div>
+<div class="line"><a id="l00017" name="l00017"></a><span class="lineno">   17</span>        </div>
+<div class="line"><a id="l00018" name="l00018"></a><span class="lineno">   18</span>        <span class="keyword">auto</span> end = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00019" name="l00019"></a><span class="lineno">   19</span>        <span class="keyword">auto</span> duration = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(end - start).count();</div>
+<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span>        </div>
+<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✓ Large size tensors addition works in &quot;</span> &lt;&lt; duration &lt;&lt; <span class="stringliteral">&quot; ms\n&quot;</span>;</div>
+<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span>    } <span class="keywordflow">catch</span> (<span class="keyword">const</span> std::exception&amp; e) {</div>
+<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✗ Large size tensors addition failed: &quot;</span> &lt;&lt; e.what() &lt;&lt; <span class="stringliteral">&quot;\n&quot;</span>;</div>
+<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span>    }</div>
+<div class="line"><a id="l00025" name="l00025"></a><span class="lineno">   25</span>    </div>
+<div class="line"><a id="l00026" name="l00026"></a><span class="lineno">   26</span>    <span class="comment">// 测试2：多个大尺寸张量的连续加法</span></div>
+<div class="line"><a id="l00027" name="l00027"></a><span class="lineno">   27</span>    <span class="keywordflow">try</span> {</div>
+<div class="line"><a id="l00028" name="l00028"></a><span class="lineno">   28</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;Testing multiple large size tensors continuous addition...\n&quot;</span>;</div>
+<div class="line"><a id="l00029" name="l00029"></a><span class="lineno">   29</span>        <span class="keyword">auto</span> start = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00030" name="l00030"></a><span class="lineno">   30</span>        </div>
+<div class="line"><a id="l00031" name="l00031"></a><span class="lineno">   31</span>        <span class="comment">// 创建10个100x100的张量</span></div>
+<div class="line"><a id="l00032" name="l00032"></a><span class="lineno">   32</span>        std::vector&lt;Tensor&gt; tensors;</div>
+<div class="line"><a id="l00033" name="l00033"></a><span class="lineno">   33</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> i = 0; i &lt; 10; ++i) {</div>
+<div class="line"><a id="l00034" name="l00034"></a><span class="lineno">   34</span>            tensors.push_back(<a class="code hl_class" href="class_tensor.html">Tensor</a>(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, {100, 100}));</div>
+<div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span>        }</div>
+<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span>        </div>
+<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span>        <span class="comment">// 连续相加</span></div>
+<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> result = tensors[0];</div>
+<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 1; i &lt; tensors.size(); ++i) {</div>
+<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span>            result = result + tensors[i];</div>
+<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span>        }</div>
+<div class="line"><a id="l00042" name="l00042"></a><span class="lineno">   42</span>        </div>
+<div class="line"><a id="l00043" name="l00043"></a><span class="lineno">   43</span>        <span class="keyword">auto</span> end = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00044" name="l00044"></a><span class="lineno">   44</span>        <span class="keyword">auto</span> duration = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(end - start).count();</div>
+<div class="line"><a id="l00045" name="l00045"></a><span class="lineno">   45</span>        </div>
+<div class="line"><a id="l00046" name="l00046"></a><span class="lineno">   46</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✓ Multiple large size tensors continuous addition works in &quot;</span> &lt;&lt; duration &lt;&lt; <span class="stringliteral">&quot; ms\n&quot;</span>;</div>
+<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>    } <span class="keywordflow">catch</span> (<span class="keyword">const</span> std::exception&amp; e) {</div>
+<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✗ Multiple large size tensors continuous addition failed: &quot;</span> &lt;&lt; e.what() &lt;&lt; <span class="stringliteral">&quot;\n&quot;</span>;</div>
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>    }</div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>    </div>
+<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span>    <span class="comment">// 测试3：大尺寸张量的自动微分</span></div>
+<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span>    <span class="keywordflow">try</span> {</div>
+<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;Testing large size tensors automatic differentiation...\n&quot;</span>;</div>
+<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>        <span class="keyword">auto</span> start = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>        </div>
+<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span>        <a class="code hl_class" href="class_auto_diff.html">AutoDiff</a> ctx;</div>
+<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span>        <a class="code hl_class" href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a> guard(&amp;ctx);</div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span>        </div>
+<div class="line"><a id="l00059" name="l00059"></a><span class="lineno">   59</span>        <span class="comment">// 创建500x500的大尺寸张量</span></div>
+<div class="line"><a id="l00060" name="l00060"></a><span class="lineno">   60</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> a(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, {500, 500});</div>
+<div class="line"><a id="l00061" name="l00061"></a><span class="lineno">   61</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> b(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, {500, 500});</div>
+<div class="line"><a id="l00062" name="l00062"></a><span class="lineno">   62</span>        </div>
+<div class="line"><a id="l00063" name="l00063"></a><span class="lineno">   63</span>        <span class="comment">// 设置requires_grad</span></div>
+<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span>        a.<a class="code hl_function" href="class_tensor.html#a9a0480862ab2365a9a9237b5af0112bc">requires_grad</a>(<span class="keyword">true</span>);</div>
+<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span>        b.requires_grad(<span class="keyword">true</span>);</div>
+<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>        </div>
+<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>        <span class="comment">// 执行加法操作</span></div>
+<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> c = a + b;</div>
+<div class="line"><a id="l00069" name="l00069"></a><span class="lineno">   69</span>        </div>
+<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span>        <span class="comment">// 执行反向传播</span></div>
+<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span>        <a class="code hl_function" href="_tensor_8cpp.html#a238cfb33005ea4db90368204b8309f9b">backward</a>(c);</div>
+<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span>        </div>
+<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span>        <span class="comment">// 获取梯度</span></div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_a = <a class="code hl_function" href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a>(a);</div>
+<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_b = <a class="code hl_function" href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a>(b);</div>
+<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span>        </div>
+<div class="line"><a id="l00077" name="l00077"></a><span class="lineno">   77</span>        <span class="keyword">auto</span> end = std::chrono::high_resolution_clock::now();</div>
+<div class="line"><a id="l00078" name="l00078"></a><span class="lineno">   78</span>        <span class="keyword">auto</span> duration = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(end - start).count();</div>
+<div class="line"><a id="l00079" name="l00079"></a><span class="lineno">   79</span>        </div>
+<div class="line"><a id="l00080" name="l00080"></a><span class="lineno">   80</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✓ Large size tensors automatic differentiation works in &quot;</span> &lt;&lt; duration &lt;&lt; <span class="stringliteral">&quot; ms\n&quot;</span>;</div>
+<div class="line"><a id="l00081" name="l00081"></a><span class="lineno">   81</span>    } <span class="keywordflow">catch</span> (<span class="keyword">const</span> std::exception&amp; e) {</div>
+<div class="line"><a id="l00082" name="l00082"></a><span class="lineno">   82</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;✗ Large size tensors automatic differentiation failed: &quot;</span> &lt;&lt; e.what() &lt;&lt; <span class="stringliteral">&quot;\n&quot;</span>;</div>
+<div class="line"><a id="l00083" name="l00083"></a><span class="lineno">   83</span>    }</div>
+<div class="line"><a id="l00084" name="l00084"></a><span class="lineno">   84</span>    </div>
+<div class="line"><a id="l00085" name="l00085"></a><span class="lineno">   85</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;=== All large data tests completed! ===\n&quot;</span>;</div>
+<div class="line"><a id="l00086" name="l00086"></a><span class="lineno">   86</span>    <span class="keywordflow">return</span> 0;</div>
+<div class="line"><a id="l00087" name="l00087"></a><span class="lineno">   87</span>}</div>
+</div>
+<div class="ttc" id="a_tensor_8cpp_html_a238cfb33005ea4db90368204b8309f9b"><div class="ttname"><a href="_tensor_8cpp.html#a238cfb33005ea4db90368204b8309f9b">backward</a></div><div class="ttdeci">void backward(Tensor &amp;root)</div><div class="ttdoc">全局的backward函数，用于启动反向传播</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00633">Tensor.cpp:633</a></div></div>
+<div class="ttc" id="a_tensor_8cpp_html_af5f5ad16e026fcd4f7c70201c57fd118"><div class="ttname"><a href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a></div><div class="ttdeci">Tensor grad(const Tensor &amp;t)</div><div class="ttdoc">全局的grad函数，用于获取张量的梯度</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00647">Tensor.cpp:647</a></div></div>
+<div class="ttc" id="a_tensor_8h_html"><div class="ttname"><a href="_tensor_8h.html">Tensor.h</a></div><div class="ttdoc">张量类和相关操作的定义</div></div>
+<div class="ttc" id="aclass_auto_diff_context_1_1_guard_html"><div class="ttname"><a href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a></div><div class="ttdoc">自动微分上下文的保护类，用于管理自动微分对象的生命周期</div><div class="ttdef"><b>定义</b> <a href="_auto_diff_8h_source.html#l00043">AutoDiff.h:43</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html"><div class="ttname"><a href="class_auto_diff.html">AutoDiff</a></div><div class="ttdoc">自动微分类，用于管理计算图和执行反向传播</div><div class="ttdef"><b>定义</b> <a href="_auto_diff_8h_source.html#l00072">AutoDiff.h:72</a></div></div>
+<div class="ttc" id="aclass_tensor_html"><div class="ttname"><a href="class_tensor.html">Tensor</a></div><div class="ttdoc">张量类，用于表示和操作多维数组</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00069">Tensor.h:69</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a9a0480862ab2365a9a9237b5af0112bc"><div class="ttname"><a href="class_tensor.html#a9a0480862ab2365a9a9237b5af0112bc">Tensor::requires_grad</a></div><div class="ttdeci">void requires_grad(bool key)</div><div class="ttdoc">设置梯度需求</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00025">Tensor.cpp:25</a></div></div>
+<div class="ttc" id="alarge__data__test_8cpp_html_ae66f6b31b5ad750f1fe042a706a4e3d4"><div class="ttname"><a href="large__data__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4">main</a></div><div class="ttdeci">int main()</div><div class="ttdef"><b>定义</b> <a href="#l00005">large_data_test.cpp:5</a></div></div>
+<div class="ttc" id="astruct_shape_tag_html"><div class="ttname"><a href="struct_shape_tag.html">ShapeTag</a></div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00051">Tensor.h:51</a></div></div>
+</div><!-- fragment --></div><!-- contents -->
+</div><!-- doc-content -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="large__data__test_8cpp.html">large_data_test.cpp</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>

@@ -1,0 +1,6 @@
+var searchData=
+[
+  ['backward_0',['backward',['../class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8',1,'AutoDiff::backward(Tensor &amp;root)'],['../class_auto_diff.html#ad4b0748277a25d269c2009c9b7848223',1,'AutoDiff::backward(Tensor &amp;root, Tensor grad_output)'],['../class_tensor.html#aa2e961897f7a4e1fc82b9149e86aeec2',1,'Tensor::backward() const'],['../class_tensor.html#af1752d9aac610a99e3cf4411e58bef2d',1,'Tensor::backward(const Tensor &amp;grad_output) const'],['../_tensor_8cpp.html#a238cfb33005ea4db90368204b8309f9b',1,'backward(Tensor &amp;root):&#160;Tensor.cpp'],['../_tensor_8cpp.html#ab73c081000a5f418a0ce64d7e26dce49',1,'backward(Tensor &amp;root, Tensor grad_output):&#160;Tensor.cpp'],['../_tensor_8h.html#a238cfb33005ea4db90368204b8309f9b',1,'backward(Tensor &amp;root):&#160;Tensor.cpp'],['../_tensor_8h.html#ab73c081000a5f418a0ce64d7e26dce49',1,'backward(Tensor &amp;root, Tensor grad_output):&#160;Tensor.cpp']]],
+  ['broadcast_1',['broadCast',['../_tensor_8cpp.html#a44f295b2fd525fb6198b089cb17e6402',1,'broadCast(const Tensor &amp;a, const Tensor &amp;tensor2):&#160;Tensor.cpp'],['../_tensor_8h.html#a44f295b2fd525fb6198b089cb17e6402',1,'broadCast(const Tensor &amp;a, const Tensor &amp;tensor2):&#160;Tensor.cpp']]],
+  ['broadcast_5fto_2',['broadcast_to',['../class_tensor.html#a2a7d3d768f029c08e258f8f660c76e68',1,'Tensor']]]
+];

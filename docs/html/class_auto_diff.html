@@ -1,0 +1,451 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: AutoDiff类 参考</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+<link href="custom.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('class_auto_diff.html','','class_auto_diff-members'); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">AutoDiff类 参考</div></div>
+</div><!--header-->
+<div class="contents">
+
+<p>自动微分类，用于管理计算图和执行反向传播  
+ <a href="#details">更多...</a></p>
+
+<p><code>#include &lt;<a class="el" href="_auto_diff_8h_source.html">AutoDiff.h</a>&gt;</code></p>
+<div class="dynheader">
+AutoDiff 的协作图:</div>
+<div class="dyncontent">
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="class_auto_diff__coll__graph.svg" width="167" height="260"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+</div>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-pub-methods" class="groupheader"><a id="pub-methods" name="pub-methods"></a>
+Public 成员函数</h2></td></tr>
+<tr class="memitem:abfa1b02dd3279254a9be08f8061fd0ca" id="r_abfa1b02dd3279254a9be08f8061fd0ca"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abfa1b02dd3279254a9be08f8061fd0ca">debug_print_state</a> (const std::string &amp;context)</td></tr>
+<tr class="memdesc:abfa1b02dd3279254a9be08f8061fd0ca"><td class="mdescLeft">&#160;</td><td class="mdescRight">添加详细的调试方法  <br /></td></tr>
+<tr class="memitem:abd92891a5fa6d81ae5a18c4a4ae18fde" id="r_abd92891a5fa6d81ae5a18c4a4ae18fde"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abd92891a5fa6d81ae5a18c4a4ae18fde">get_grad</a> (const <a class="el" href="class_tensor.html">Tensor</a> *t)</td></tr>
+<tr class="memdesc:abd92891a5fa6d81ae5a18c4a4ae18fde"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取张量的梯度  <br /></td></tr>
+<tr class="memitem:a70833ad502f02ce164b8e9e9fb09f99a" id="r_a70833ad502f02ce164b8e9e9fb09f99a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a70833ad502f02ce164b8e9e9fb09f99a">make_leaf</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;t, bool requires_grad)</td></tr>
+<tr class="memdesc:a70833ad502f02ce164b8e9e9fb09f99a"><td class="mdescLeft">&#160;</td><td class="mdescRight">将张量设为叶子节点  <br /></td></tr>
+<tr class="memitem:abba90ea69c886cd2bcbe9c21f4abd39d" id="r_abba90ea69c886cd2bcbe9c21f4abd39d"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abba90ea69c886cd2bcbe9c21f4abd39d">~AutoDiff</a> ()</td></tr>
+<tr class="memdesc:abba90ea69c886cd2bcbe9c21f4abd39d"><td class="mdescLeft">&#160;</td><td class="mdescRight">析构函数  <br /></td></tr>
+<tr class="memitem:a1889c09406cf332776024cbabe99f1ac" id="r_a1889c09406cf332776024cbabe99f1ac"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1889c09406cf332776024cbabe99f1ac">defer_record</a> (size_t output_id, <a class="el" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a> operation, const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;inputs)</td></tr>
+<tr class="memdesc:a1889c09406cf332776024cbabe99f1ac"><td class="mdescLeft">&#160;</td><td class="mdescRight">延迟记录操作  <br /></td></tr>
+<tr class="memitem:a7d004fe2ed8fedca5cef3f4a4d42f55e" id="r_a7d004fe2ed8fedca5cef3f4a4d42f55e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7d004fe2ed8fedca5cef3f4a4d42f55e">commit_record</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;output)</td></tr>
+<tr class="memdesc:a7d004fe2ed8fedca5cef3f4a4d42f55e"><td class="mdescLeft">&#160;</td><td class="mdescRight">提交延迟记录  <br /></td></tr>
+<tr class="memitem:a3e2ee312526b9024a0f966c2627284ae" id="r_a3e2ee312526b9024a0f966c2627284ae"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3e2ee312526b9024a0f966c2627284ae">update_requires_grad</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;t, bool requires_grad)</td></tr>
+<tr class="memdesc:a3e2ee312526b9024a0f966c2627284ae"><td class="mdescLeft">&#160;</td><td class="mdescRight">更新梯度需求  <br /></td></tr>
+<tr class="memitem:a4fc62a838bd4f63cb7ca50866a8aed69" id="r_a4fc62a838bd4f63cb7ca50866a8aed69"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4fc62a838bd4f63cb7ca50866a8aed69">set_retain_graph</a> (bool retain)</td></tr>
+<tr class="memdesc:a4fc62a838bd4f63cb7ca50866a8aed69"><td class="mdescLeft">&#160;</td><td class="mdescRight">设置是否保留计算图  <br /></td></tr>
+<tr class="memitem:a7f35000c9f9ed60dacbb92e131177da8" id="r_a7f35000c9f9ed60dacbb92e131177da8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7f35000c9f9ed60dacbb92e131177da8">backward</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;root)</td></tr>
+<tr class="memdesc:a7f35000c9f9ed60dacbb92e131177da8"><td class="mdescLeft">&#160;</td><td class="mdescRight">反向传播（版本1：用户不提供grad_output，使用默认的1.0）  <br /></td></tr>
+<tr class="memitem:ad4b0748277a25d269c2009c9b7848223" id="r_ad4b0748277a25d269c2009c9b7848223"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad4b0748277a25d269c2009c9b7848223">backward</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;root, <a class="el" href="class_tensor.html">Tensor</a> grad_output)</td></tr>
+<tr class="memdesc:ad4b0748277a25d269c2009c9b7848223"><td class="mdescLeft">&#160;</td><td class="mdescRight">反向传播（版本2：用户提供grad_output）  <br /></td></tr>
+</table>
+<a name="details" id="details"></a><h2 id="header-details" class="groupheader">详细描述</h2>
+<div class="textblock"><p>自动微分类，用于管理计算图和执行反向传播 </p>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8h_source.html">AutoDiff.h</a> 第 <a class="el" href="_auto_diff_8h_source.html#l00072">72</a> 行定义.</p>
+</div><a name="doc-constructors" id="doc-constructors"></a><h2 id="header-doc-constructors" class="groupheader">构造及析构函数说明</h2>
+<a id="abba90ea69c886cd2bcbe9c21f4abd39d" name="abba90ea69c886cd2bcbe9c21f4abd39d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abba90ea69c886cd2bcbe9c21f4abd39d">&#9670;&#160;</a></span>~AutoDiff()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">AutoDiff::~AutoDiff </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>析构函数 </p>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00282">282</a> 行定义.</p>
+
+</div>
+</div>
+<a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">成员函数说明</h2>
+<a id="a7f35000c9f9ed60dacbb92e131177da8" name="a7f35000c9f9ed60dacbb92e131177da8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7f35000c9f9ed60dacbb92e131177da8">&#9670;&#160;</a></span>backward() <span class="overload">[1/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::backward </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>root</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>反向传播（版本1：用户不提供grad_output，使用默认的1.0） </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">root</td><td>根张量 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00491">491</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad4b0748277a25d269c2009c9b7848223" name="ad4b0748277a25d269c2009c9b7848223"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad4b0748277a25d269c2009c9b7848223">&#9670;&#160;</a></span>backward() <span class="overload">[2/2]</span></h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::backward </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>root</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a></td>          <td class="paramname"><span class="paramname"><em>grad_output</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>反向传播（版本2：用户提供grad_output） </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">root</td><td>根张量 </td></tr>
+    <tr><td class="paramname">grad_output</td><td>输出梯度 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00499">499</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a7d004fe2ed8fedca5cef3f4a4d42f55e" name="a7d004fe2ed8fedca5cef3f4a4d42f55e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7d004fe2ed8fedca5cef3f4a4d42f55e">&#9670;&#160;</a></span>commit_record()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::commit_record </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>output</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>提交延迟记录 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">output</td><td>输出张量 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00348">348</a> 行定义.</p>
+
+</div>
+</div>
+<a id="abfa1b02dd3279254a9be08f8061fd0ca" name="abfa1b02dd3279254a9be08f8061fd0ca"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abfa1b02dd3279254a9be08f8061fd0ca">&#9670;&#160;</a></span>debug_print_state()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::debug_print_state </td>
+          <td>(</td>
+          <td class="paramtype">const std::string &amp;</td>          <td class="paramname"><span class="paramname"><em>context</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>添加详细的调试方法 </p>
+<p>打印自动微分系统的当前状态</p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">context</td><td>调试上下文 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00063">63</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a1889c09406cf332776024cbabe99f1ac" name="a1889c09406cf332776024cbabe99f1ac"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1889c09406cf332776024cbabe99f1ac">&#9670;&#160;</a></span>defer_record()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::defer_record </td>
+          <td>(</td>
+          <td class="paramtype">size_t</td>          <td class="paramname"><span class="paramname"><em>output_id</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a></td>          <td class="paramname"><span class="paramname"><em>operation</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>inputs</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>延迟记录操作 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">output_id</td><td>输出张量ID </td></tr>
+    <tr><td class="paramname">operation</td><td>操作类型 </td></tr>
+    <tr><td class="paramname">inputs</td><td>输入张量列表 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00291">291</a> 行定义.</p>
+
+</div>
+</div>
+<a id="abd92891a5fa6d81ae5a18c4a4ae18fde" name="abd92891a5fa6d81ae5a18c4a4ae18fde"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abd92891a5fa6d81ae5a18c4a4ae18fde">&#9670;&#160;</a></span>get_grad()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="class_tensor.html">Tensor</a> AutoDiff::get_grad </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="class_tensor.html">Tensor</a> *</td>          <td class="paramname"><span class="paramname"><em>t</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>获取张量的梯度 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">t</td><td>张量指针 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>梯度张量 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00085">85</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a70833ad502f02ce164b8e9e9fb09f99a" name="a70833ad502f02ce164b8e9e9fb09f99a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a70833ad502f02ce164b8e9e9fb09f99a">&#9670;&#160;</a></span>make_leaf()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::make_leaf </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>t</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>requires_grad</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>将张量设为叶子节点 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">t</td><td>张量引用 </td></tr>
+    <tr><td class="paramname">requires_grad</td><td>是否需要梯度 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00241">241</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a4fc62a838bd4f63cb7ca50866a8aed69" name="a4fc62a838bd4f63cb7ca50866a8aed69"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4fc62a838bd4f63cb7ca50866a8aed69">&#9670;&#160;</a></span>set_retain_graph()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::set_retain_graph </td>
+          <td>(</td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>retain</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>设置是否保留计算图 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">retain</td><td>是否保留计算图 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00486">486</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a3e2ee312526b9024a0f966c2627284ae" name="a3e2ee312526b9024a0f966c2627284ae"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3e2ee312526b9024a0f966c2627284ae">&#9670;&#160;</a></span>update_requires_grad()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::update_requires_grad </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>t</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>requires_grad</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>更新梯度需求 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">t</td><td>张量引用 </td></tr>
+    <tr><td class="paramname">requires_grad</td><td>是否需要梯度 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00458">458</a> 行定义.</p>
+
+</div>
+</div>
+<hr/>该类的文档由以下文件生成:<ul>
+<li><a class="el" href="_auto_diff_8h_source.html">AutoDiff.h</a></li>
+<li><a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a></li>
+</ul>
+</div><!-- contents -->
+</div><!-- doc-content -->
+<div id="page-nav" class="page-nav-panel">
+<div id="page-nav-resize-handle"></div>
+<div id="page-nav-tree">
+<div id="page-nav-contents">
+</div><!-- page-nav-contents -->
+</div><!-- page-nav-tree -->
+</div><!-- page-nav -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="class_auto_diff.html">AutoDiff</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>

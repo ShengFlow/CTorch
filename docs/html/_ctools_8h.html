@@ -1,0 +1,1090 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: Ctools.h 文件参考</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+<link href="custom.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('_ctools_8h.html','',''); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">Ctools.h 文件参考</div></div>
+</div><!--header-->
+<div class="contents">
+
+<p>Ctorch 通用工具类，包含通用枚举类型和辅助函数  
+<a href="#details">更多...</a></p>
+<div class="textblock"><code>#include &lt;cstring&gt;</code><br />
+<code>#include &lt;chrono&gt;</code><br />
+<code>#include &lt;cstdint&gt;</code><br />
+<code>#include &lt;ctime&gt;</code><br />
+<code>#include &lt;string&gt;</code><br />
+<code>#include &lt;sstream&gt;</code><br />
+<code>#include &lt;iomanip&gt;</code><br />
+<code>#include &lt;stdint.h&gt;</code><br />
+<code>#include &lt;inttypes.h&gt;</code><br />
+<code>#include &lt;mutex&gt;</code><br />
+<code>#include &lt;thread&gt;</code><br />
+<code>#include &lt;vector&gt;</code><br />
+<code>#include &lt;memory&gt;</code><br />
+<code>#include &lt;iostream&gt;</code><br />
+</div><div class="textblock"><div class="dynheader">
+Ctools.h 的引用(Include)关系图:</div>
+<div class="dyncontent">
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="_ctools_8h__incl.svg" width="1200" height="111"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+</div>
+</div><div class="textblock"><div class="dynheader">
+此图展示该文件被哪些文件直接或间接地引用了:</div>
+<div class="dyncontent">
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="_ctools_8h__dep__incl.svg" width="650" height="406"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+</div>
+</div>
+<p><a href="_ctools_8h_source.html">浏览该文件的源代码.</a></p>
+<table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-nested-classes" class="groupheader"><a id="nested-classes" name="nested-classes"></a>
+类</h2></td></tr>
+<tr class="memitem:MatMulConfig" id="r_MatMulConfig"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_mat_mul_config.html">MatMulConfig</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">矩阵乘法性能配置结构体  <a href="struct_mat_mul_config.html#details">更多...</a><br /></td></tr>
+<tr class="memitem:BroadCastResult" id="r_BroadCastResult"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="struct_broad_cast_result.html">BroadCastResult</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">广播结果结构体，用于存储张量广播后的信息  <a href="struct_broad_cast_result.html#details">更多...</a><br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-define-members" class="groupheader"><a id="define-members" name="define-members"></a>
+宏定义</h2></td></tr>
+<tr class="memitem:a70a072458111ff2bf36c5abcd35d830e" id="r_a70a072458111ff2bf36c5abcd35d830e"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a70a072458111ff2bf36c5abcd35d830e">ESC_START</a>&#160;&#160;&#160;&quot;\033[&quot;</td></tr>
+<tr class="memdesc:a70a072458111ff2bf36c5abcd35d830e"><td class="mdescLeft">&#160;</td><td class="mdescRight">终端颜色转义序列的标准开头  <br /></td></tr>
+<tr class="memitem:a6fc9b44a3b864f9b898250b8a3385c5a" id="r_a6fc9b44a3b864f9b898250b8a3385c5a"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6fc9b44a3b864f9b898250b8a3385c5a">ESC_END</a>&#160;&#160;&#160;&quot;\033[0m&quot;</td></tr>
+<tr class="memdesc:a6fc9b44a3b864f9b898250b8a3385c5a"><td class="mdescLeft">&#160;</td><td class="mdescRight">终端颜色转义序列的标准结束  <br /></td></tr>
+<tr class="memitem:aa5da25e7f19f38a9e1ebee4e8afbe644" id="r_aa5da25e7f19f38a9e1ebee4e8afbe644"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa5da25e7f19f38a9e1ebee4e8afbe644">COLOR_TRACE</a>&#160;&#160;&#160;&quot;38;5;246m&quot;</td></tr>
+<tr class="memdesc:aa5da25e7f19f38a9e1ebee4e8afbe644"><td class="mdescLeft">&#160;</td><td class="mdescRight">TRACE级别的终端颜色：灰色（低优先级）  <br /></td></tr>
+<tr class="memitem:a2799f0e4fea941044c782585431e22cb" id="r_a2799f0e4fea941044c782585431e22cb"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2799f0e4fea941044c782585431e22cb">COLOR_DEBUG</a>&#160;&#160;&#160;&quot;36;1m&quot;</td></tr>
+<tr class="memdesc:a2799f0e4fea941044c782585431e22cb"><td class="mdescLeft">&#160;</td><td class="mdescRight">DEBUG级别的终端颜色：青蓝色加粗（开发调试）  <br /></td></tr>
+<tr class="memitem:a0d4d3a685f9501631d1feed1f4ba7577" id="r_a0d4d3a685f9501631d1feed1f4ba7577"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0d4d3a685f9501631d1feed1f4ba7577">COLOR_INFO</a>&#160;&#160;&#160;&quot;32;1m&quot;</td></tr>
+<tr class="memdesc:a0d4d3a685f9501631d1feed1f4ba7577"><td class="mdescLeft">&#160;</td><td class="mdescRight">INFO级别的终端颜色：绿色加粗（正常信息）  <br /></td></tr>
+<tr class="memitem:a9a3ec041ae9dfe612f4702a85ecc738a" id="r_a9a3ec041ae9dfe612f4702a85ecc738a"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a9a3ec041ae9dfe612f4702a85ecc738a">COLOR_WARN</a>&#160;&#160;&#160;&quot;33;1m&quot;</td></tr>
+<tr class="memdesc:a9a3ec041ae9dfe612f4702a85ecc738a"><td class="mdescLeft">&#160;</td><td class="mdescRight">WARN级别的终端颜色：黄色加粗（警告）  <br /></td></tr>
+<tr class="memitem:a5be13cc2368ea568d034a22569846b78" id="r_a5be13cc2368ea568d034a22569846b78"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5be13cc2368ea568d034a22569846b78">COLOR_ERR</a>&#160;&#160;&#160;&quot;31;1m&quot;</td></tr>
+<tr class="memdesc:a5be13cc2368ea568d034a22569846b78"><td class="mdescLeft">&#160;</td><td class="mdescRight">ERROR级别的终端颜色：红色加粗（错误）  <br /></td></tr>
+<tr class="memitem:ad064a90684be43b1446ac1a6e4a35997" id="r_ad064a90684be43b1446ac1a6e4a35997"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad064a90684be43b1446ac1a6e4a35997">COLOR_FATAL</a>&#160;&#160;&#160;&quot;31;5;1m&quot;</td></tr>
+<tr class="memdesc:ad064a90684be43b1446ac1a6e4a35997"><td class="mdescLeft">&#160;</td><td class="mdescRight">FATAL级别的终端颜色：亮红+闪烁+加粗（致命错误）  <br /></td></tr>
+<tr class="memitem:a12c771bdf8044e809181cdfc07ddd601" id="r_a12c771bdf8044e809181cdfc07ddd601"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a12c771bdf8044e809181cdfc07ddd601">COLOR_ALERT</a>&#160;&#160;&#160;&quot;37;1m&quot;</td></tr>
+<tr class="memdesc:a12c771bdf8044e809181cdfc07ddd601"><td class="mdescLeft">&#160;</td><td class="mdescRight">保留：欢迎信息用的终端颜色（白色加粗）  <br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-enum-members" class="groupheader"><a id="enum-members" name="enum-members"></a>
+枚举</h2></td></tr>
+<tr class="memitem:a88f6d947bf467e369055535af5907aa1" id="r_a88f6d947bf467e369055535af5907aa1"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a> { <br />
+&#160;&#160;<a class="el" href="#a88f6d947bf467e369055535af5907aa1a2d3e4144aa384b18849ab9a8abad74d6">TRACE</a> = 0
+, <a class="el" href="#a88f6d947bf467e369055535af5907aa1adc30ec20708ef7b0f641ef78b7880a15">DEBUG</a> = 1
+, <a class="el" href="#a88f6d947bf467e369055535af5907aa1a551b723eafd6a31d444fcb2f5920fbd3">INFO</a> = 2
+, <a class="el" href="#a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277">WARN</a> = 3
+, <br />
+&#160;&#160;<a class="el" href="#a88f6d947bf467e369055535af5907aa1abb1ca97ec761fc37101737ba0aa2e7c5">ERROR</a> = 4
+, <a class="el" href="#a88f6d947bf467e369055535af5907aa1a19da7170bea36556dde582519795f3fc">FATAL</a> = 5
+<br />
+ }</td></tr>
+<tr class="memdesc:a88f6d947bf467e369055535af5907aa1"><td class="mdescLeft">&#160;</td><td class="mdescRight">错误级别枚举，用于表示不同严重程度的错误  <a href="#a88f6d947bf467e369055535af5907aa1">更多...</a><br /></td></tr>
+<tr class="memitem:ac325c5970308dcd6b065d1de90a0711b" id="r_ac325c5970308dcd6b065d1de90a0711b"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> { <br />
+&#160;&#160;<a class="el" href="#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">kCPU</a> = 0
+, <a class="el" href="#ac325c5970308dcd6b065d1de90a0711ba15cfe9387f9c286cd8244d15c8cfa6c7">kCUDA</a> = 1
+, <a class="el" href="#ac325c5970308dcd6b065d1de90a0711bacff3881470cff8a3d6510571dea453bb">kMPS</a> = 2
+, <a class="el" href="#ac325c5970308dcd6b065d1de90a0711ba19a2bdb651921902edb0204c0af3942d">kAMX</a> = 3
+, <br />
+&#160;&#160;<a class="el" href="#ac325c5970308dcd6b065d1de90a0711ba16bb40b9102367393ecf8213078d1c6e">kUNKNOWN</a> = 4
+, <a class="el" href="#ac325c5970308dcd6b065d1de90a0711ba63cf1c5a8190ef348344ddcec79a8034">kGENERAL</a> = 5
+<br />
+ }</td></tr>
+<tr class="memdesc:ac325c5970308dcd6b065d1de90a0711b"><td class="mdescLeft">&#160;</td><td class="mdescRight">错误发生的设备枚举  <a href="#ac325c5970308dcd6b065d1de90a0711b">更多...</a><br /></td></tr>
+<tr class="memitem:ab0df38968e4f03a3f1f6d6df0f31f45a" id="r_ab0df38968e4f03a3f1f6d6df0f31f45a"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> { <br />
+&#160;&#160;<a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa696b031073e74bf2cb98e5ef201d4aa3">UNKNOWN</a> = 0
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa7014705458ee3cf0192f6aa52cfddea5">MEMORY</a> = 1
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa760c2ca065489089b533fccf2a6d9ba7">DIMENSION</a> = 2
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa51b93e30aace63662228ad4095cbbb63">DEVICE_COMPAT</a> = 3
+, <br />
+&#160;&#160;<a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea">DATATYPE</a> = 4
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aaa4be5641110878291aa148e58cde242c">KERNEL_LAUNCH</a> = 5
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7">TENSOR_STATE</a> = 6
+, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45aa33dfe7f98f923cef3791bc21fdafd937">PLATFORM_API</a> = 7
+<br />
+ }</td></tr>
+<tr class="memdesc:ab0df38968e4f03a3f1f6d6df0f31f45a"><td class="mdescLeft">&#160;</td><td class="mdescRight">错误类型枚举，用于分类不同类型的错误  <a href="#ab0df38968e4f03a3f1f6d6df0f31f45a">更多...</a><br /></td></tr>
+<tr class="memitem:a83ff212f474e3669d8fac2d727f65de5" id="r_a83ff212f474e3669d8fac2d727f65de5"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a> { <a class="el" href="#a83ff212f474e3669d8fac2d727f65de5a84ceb1f84e00c71dddadf486b62e938a">MINIUM</a> = 0
+, <a class="el" href="#a83ff212f474e3669d8fac2d727f65de5ac87f3be66ffc3c0d4249f1c2cc5f3cce">MEDIUM</a> = 1
+, <a class="el" href="#a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1">FULL</a> = 2
+ }</td></tr>
+<tr class="memdesc:a83ff212f474e3669d8fac2d727f65de5"><td class="mdescLeft">&#160;</td><td class="mdescRight">输出详细级别枚举  <a href="#a83ff212f474e3669d8fac2d727f65de5">更多...</a><br /></td></tr>
+<tr class="memitem:a0c7562e1971f3847677f00ee3248a9f1" id="r_a0c7562e1971f3847677f00ee3248a9f1"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1">MatMulStrategy</a> { <br />
+&#160;&#160;<a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1ae1f2d5134ed2543d38a0de9751cf75d9">AUTO</a>
+, <a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1a33e8270128b994b16da5c9e367bb94cf">NAIVE</a>
+, <a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1aeecba0068950a2df17c47e851e1eef14">BLOCKED</a>
+, <a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1a34360b0c59b740c2bc32b5f59785ba18">STRASSEN</a>
+, <br />
+&#160;&#160;<a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1a90190a007b4cd58a842970e987761079">OPTIMIZED</a>
+<br />
+ }</td></tr>
+<tr class="memdesc:a0c7562e1971f3847677f00ee3248a9f1"><td class="mdescLeft">&#160;</td><td class="mdescRight">矩阵乘法算法选择策略枚举  <a href="#a0c7562e1971f3847677f00ee3248a9f1">更多...</a><br /></td></tr>
+<tr class="memitem:ad258d4c51629346fceac4679b3209ad9" id="r_ad258d4c51629346fceac4679b3209ad9"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad258d4c51629346fceac4679b3209ad9">DeviceType</a> { <br />
+&#160;&#160;<a class="el" href="#ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903">kCPU</a> = 0
+, <a class="el" href="#ad258d4c51629346fceac4679b3209ad9a15cfe9387f9c286cd8244d15c8cfa6c7">kCUDA</a> = 1
+, <a class="el" href="#ad258d4c51629346fceac4679b3209ad9acff3881470cff8a3d6510571dea453bb">kMPS</a> = 2
+, <a class="el" href="#ad258d4c51629346fceac4679b3209ad9a19a2bdb651921902edb0204c0af3942d">kAMX</a> = 3
+, <br />
+&#160;&#160;<a class="el" href="#ad258d4c51629346fceac4679b3209ad9a16bb40b9102367393ecf8213078d1c6e">kUNKNOWN</a> = 4
+, <a class="el" href="#ad258d4c51629346fceac4679b3209ad9a63cf1c5a8190ef348344ddcec79a8034">kGENERAL</a> = 5
+<br />
+ }</td></tr>
+<tr class="memdesc:ad258d4c51629346fceac4679b3209ad9"><td class="mdescLeft">&#160;</td><td class="mdescRight">设备类型枚举，定义张量存储的位置  <a href="#ad258d4c51629346fceac4679b3209ad9">更多...</a><br /></td></tr>
+<tr class="memitem:a96f6c2a9728066fa81235ada8a5dbc30" id="r_a96f6c2a9728066fa81235ada8a5dbc30"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a> { <br />
+&#160;&#160;<a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">kFloat</a>
+, <a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28">kDouble</a>
+, <a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0">kInt</a>
+, <a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e">kLong</a>
+, <br />
+&#160;&#160;<a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30a18268c9f691ba5a5f650049d9d0da8dc">kBool</a>
+<br />
+ }</td></tr>
+<tr class="memdesc:a96f6c2a9728066fa81235ada8a5dbc30"><td class="mdescLeft">&#160;</td><td class="mdescRight">数据类型枚举，定义张量元素的类型  <a href="#a96f6c2a9728066fa81235ada8a5dbc30">更多...</a><br /></td></tr>
+<tr class="memitem:a99a30df0f2488360cdd46b4b88e5f5f0" id="r_a99a30df0f2488360cdd46b4b88e5f5f0"><td class="memItemLeft" align="right" valign="top">enum class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0">op</a> { <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9">Add</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2">Sub</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd">Neg</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2">Mul</a>
+, <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a">Div</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a5debeabaece967a6732b4182ba0269ae">MatMul</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0aaf6c6cf7a454b4ef4a850ac4d960a2cc">Dot</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0affca562be079b9e4e41ea9d6a86c582b">Cos</a>
+, <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a0986d137604183312e6d3599578bc6cd">Sin</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0acc31a669f6d086f816852dda3290a3ef">Conv</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0adef36b726efed529b13ba240dd331a12">Pool</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378">ReLU</a>
+, <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0acc132a41cab5676334f353a22a0aa5c5">Tanh</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a21eebb164e4b8b9bcf64fdb4d8d5dff4">Sigmoid</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a31d953b9d49a6b4378f45097047976d0">Softmax</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a601049e29a4481e658f6745a54aa3ad9">LReLU</a>
+, <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a474e0c94ac3a455d2b98a72feba8fba4">PReLU</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0aa9fc1a03386ae38b64e06c8172994963">MSE</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0ad7bfc720460d75c28ce69ce26d239f9f">MAE</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a7a86131338bf955e0a56311f264aa6aa">CE</a>
+, <br />
+&#160;&#160;<a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0a42451d370b188bc4ed2a312be0bd3c49">BCE</a>
+, <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0aa0ec87054b5e5b7847d0d8780a01a3d5">Sum</a>
+<br />
+ }</td></tr>
+<tr class="memdesc:a99a30df0f2488360cdd46b4b88e5f5f0"><td class="mdescLeft">&#160;</td><td class="mdescRight">自动微分操作符枚举  <a href="#a99a30df0f2488360cdd46b4b88e5f5f0">更多...</a><br /></td></tr>
+</table><table class="memberdecls">
+<tr class="heading"><td colspan="2"><h2 id="header-func-members" class="groupheader"><a id="func-members" name="func-members"></a>
+函数</h2></td></tr>
+<tr class="memitem:ad4e5129f6eb286b3a09a1a7f2758bf31" id="r_ad4e5129f6eb286b3a09a1a7f2758bf31"><td class="memItemLeft" align="right" valign="top"><a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad4e5129f6eb286b3a09a1a7f2758bf31">DeviceTypeToErrorPlatform</a> (const <a class="el" href="#ad258d4c51629346fceac4679b3209ad9">DeviceType</a> device_type)</td></tr>
+<tr class="memdesc:ad4e5129f6eb286b3a09a1a7f2758bf31"><td class="mdescLeft">&#160;</td><td class="mdescRight">将 <a class="el" href="#ad258d4c51629346fceac4679b3209ad9" title="设备类型枚举，定义张量存储的位置">DeviceType</a> 枚举转换为对应的 <a class="el" href="#ac325c5970308dcd6b065d1de90a0711b" title="错误发生的设备枚举">ErrorPlatform</a> 枚举  <br /></td></tr>
+<tr class="memitem:a9714aa0bb82443781681f9512357a873" id="r_a9714aa0bb82443781681f9512357a873"><td class="memItemLeft" align="right" valign="top">constexpr const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a9714aa0bb82443781681f9512357a873">dtypeToString</a> (<a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a> dtype)</td></tr>
+<tr class="memdesc:a9714aa0bb82443781681f9512357a873"><td class="mdescLeft">&#160;</td><td class="mdescRight">将数据类型转换为字符串表示  <br /></td></tr>
+<tr class="memitem:a5990bac822ce4d7accccc75041602fe5" id="r_a5990bac822ce4d7accccc75041602fe5"><td class="memItemLeft" align="right" valign="top">constexpr size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5990bac822ce4d7accccc75041602fe5">dtypeSize</a> (<a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a> dtype)</td></tr>
+<tr class="memdesc:a5990bac822ce4d7accccc75041602fe5"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取数据类型的字节大小  <br /></td></tr>
+<tr class="memitem:ad3a0e9b1fc265ed01feb6cd420797b2e" id="r_ad3a0e9b1fc265ed01feb6cd420797b2e"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad3a0e9b1fc265ed01feb6cd420797b2e">minx</a> (int a, int b)</td></tr>
+<tr class="memdesc:ad3a0e9b1fc265ed01feb6cd420797b2e"><td class="mdescLeft">&#160;</td><td class="mdescRight">快速计算两个整数的最小值  <br /></td></tr>
+<tr class="memitem:a47e932d72b9fc84f6afd42a2aee5ea6b" id="r_a47e932d72b9fc84f6afd42a2aee5ea6b"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a47e932d72b9fc84f6afd42a2aee5ea6b">computeCode</a> (<a class="el" href="#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a> level, <a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> platform, <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a> type)</td></tr>
+<tr class="memdesc:a47e932d72b9fc84f6afd42a2aee5ea6b"><td class="mdescLeft">&#160;</td><td class="mdescRight">计算错误码  <br /></td></tr>
+<tr class="memitem:ad45600046f638226d6464704d0d93114" id="r_ad45600046f638226d6464704d0d93114"><td class="memItemLeft" align="right" valign="top">std::string&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad45600046f638226d6464704d0d93114">getFormattedTimeMs</a> ()</td></tr>
+<tr class="memdesc:ad45600046f638226d6464704d0d93114"><td class="mdescLeft">&#160;</td><td class="mdescRight">返回人类可读的当前时间，精确到毫秒（跨平台、线程安全）  <br /></td></tr>
+<tr class="memitem:a261589113cd11ca23e3ffe9bf61f08de" id="r_a261589113cd11ca23e3ffe9bf61f08de"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a261589113cd11ca23e3ffe9bf61f08de">getTimestampMs</a> ()</td></tr>
+<tr class="memdesc:a261589113cd11ca23e3ffe9bf61f08de"><td class="mdescLeft">&#160;</td><td class="mdescRight">返回当前时间的毫秒级时间戳（跨平台）  <br /></td></tr>
+<tr class="memitem:af2fdd5c948f79d093e43dc207008eece" id="r_af2fdd5c948f79d093e43dc207008eece"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af2fdd5c948f79d093e43dc207008eece">ctorch_sleep</a> (uint64_t ms)</td></tr>
+<tr class="memdesc:af2fdd5c948f79d093e43dc207008eece"><td class="mdescLeft">&#160;</td><td class="mdescRight">暂停 ms 毫秒的程序执行  <br /></td></tr>
+</table>
+<a name="details" id="details"></a><h2 id="header-details" class="groupheader">详细描述</h2>
+<div class="textblock"><p>Ctorch 通用工具类，包含通用枚举类型和辅助函数 </p>
+<dl class="section author"><dt>作者</dt><dd>GhostFace </dd></dl>
+<dl class="section date"><dt>日期</dt><dd>2025/12/21 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 中定义.</p>
+</div><a name="doc-define-members" id="doc-define-members"></a><h2 id="header-doc-define-members" class="groupheader">宏定义说明</h2>
+<a id="a12c771bdf8044e809181cdfc07ddd601" name="a12c771bdf8044e809181cdfc07ddd601"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a12c771bdf8044e809181cdfc07ddd601">&#9670;&#160;</a></span>COLOR_ALERT</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_ALERT&#160;&#160;&#160;&quot;37;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>保留：欢迎信息用的终端颜色（白色加粗） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00078">78</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a2799f0e4fea941044c782585431e22cb" name="a2799f0e4fea941044c782585431e22cb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2799f0e4fea941044c782585431e22cb">&#9670;&#160;</a></span>COLOR_DEBUG</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_DEBUG&#160;&#160;&#160;&quot;36;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>DEBUG级别的终端颜色：青蓝色加粗（开发调试） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00048">48</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a5be13cc2368ea568d034a22569846b78" name="a5be13cc2368ea568d034a22569846b78"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5be13cc2368ea568d034a22569846b78">&#9670;&#160;</a></span>COLOR_ERR</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_ERR&#160;&#160;&#160;&quot;31;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>ERROR级别的终端颜色：红色加粗（错误） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00066">66</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad064a90684be43b1446ac1a6e4a35997" name="ad064a90684be43b1446ac1a6e4a35997"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad064a90684be43b1446ac1a6e4a35997">&#9670;&#160;</a></span>COLOR_FATAL</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_FATAL&#160;&#160;&#160;&quot;31;5;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>FATAL级别的终端颜色：亮红+闪烁+加粗（致命错误） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00072">72</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a0d4d3a685f9501631d1feed1f4ba7577" name="a0d4d3a685f9501631d1feed1f4ba7577"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0d4d3a685f9501631d1feed1f4ba7577">&#9670;&#160;</a></span>COLOR_INFO</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_INFO&#160;&#160;&#160;&quot;32;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>INFO级别的终端颜色：绿色加粗（正常信息） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00054">54</a> 行定义.</p>
+
+</div>
+</div>
+<a id="aa5da25e7f19f38a9e1ebee4e8afbe644" name="aa5da25e7f19f38a9e1ebee4e8afbe644"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa5da25e7f19f38a9e1ebee4e8afbe644">&#9670;&#160;</a></span>COLOR_TRACE</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_TRACE&#160;&#160;&#160;&quot;38;5;246m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>TRACE级别的终端颜色：灰色（低优先级） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00042">42</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a9a3ec041ae9dfe612f4702a85ecc738a" name="a9a3ec041ae9dfe612f4702a85ecc738a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9a3ec041ae9dfe612f4702a85ecc738a">&#9670;&#160;</a></span>COLOR_WARN</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define COLOR_WARN&#160;&#160;&#160;&quot;33;1m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>WARN级别的终端颜色：黄色加粗（警告） </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00060">60</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a6fc9b44a3b864f9b898250b8a3385c5a" name="a6fc9b44a3b864f9b898250b8a3385c5a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6fc9b44a3b864f9b898250b8a3385c5a">&#9670;&#160;</a></span>ESC_END</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define ESC_END&#160;&#160;&#160;&quot;\033[0m&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>终端颜色转义序列的标准结束 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00036">36</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a70a072458111ff2bf36c5abcd35d830e" name="a70a072458111ff2bf36c5abcd35d830e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a70a072458111ff2bf36c5abcd35d830e">&#9670;&#160;</a></span>ESC_START</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">#define ESC_START&#160;&#160;&#160;&quot;\033[&quot;</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>终端颜色转义序列的标准开头 </p>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00030">30</a> 行定义.</p>
+
+</div>
+</div>
+<a name="doc-enum-members" id="doc-enum-members"></a><h2 id="header-doc-enum-members" class="groupheader">枚举类型说明</h2>
+<a id="ad258d4c51629346fceac4679b3209ad9" name="ad258d4c51629346fceac4679b3209ad9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad258d4c51629346fceac4679b3209ad9">&#9670;&#160;</a></span>DeviceType</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#ad258d4c51629346fceac4679b3209ad9">DeviceType</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>设备类型枚举，定义张量存储的位置 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903" name="ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903"></a>kCPU&#160;</td><td class="fielddoc"><p>CPU设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9a15cfe9387f9c286cd8244d15c8cfa6c7" name="ad258d4c51629346fceac4679b3209ad9a15cfe9387f9c286cd8244d15c8cfa6c7"></a>kCUDA&#160;</td><td class="fielddoc"><p>CUDA设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9acff3881470cff8a3d6510571dea453bb" name="ad258d4c51629346fceac4679b3209ad9acff3881470cff8a3d6510571dea453bb"></a>kMPS&#160;</td><td class="fielddoc"><p>MPS设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9a19a2bdb651921902edb0204c0af3942d" name="ad258d4c51629346fceac4679b3209ad9a19a2bdb651921902edb0204c0af3942d"></a>kAMX&#160;</td><td class="fielddoc"><p>AMX设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9a16bb40b9102367393ecf8213078d1c6e" name="ad258d4c51629346fceac4679b3209ad9a16bb40b9102367393ecf8213078d1c6e"></a>kUNKNOWN&#160;</td><td class="fielddoc"><p>未知设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ad258d4c51629346fceac4679b3209ad9a63cf1c5a8190ef348344ddcec79a8034" name="ad258d4c51629346fceac4679b3209ad9a63cf1c5a8190ef348344ddcec79a8034"></a>kGENERAL&#160;</td><td class="fielddoc"><p>通用设备 </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00149">149</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a96f6c2a9728066fa81235ada8a5dbc30" name="a96f6c2a9728066fa81235ada8a5dbc30"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a96f6c2a9728066fa81235ada8a5dbc30">&#9670;&#160;</a></span>DType</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>数据类型枚举，定义张量元素的类型 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e" name="a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e"></a>kFloat&#160;</td><td class="fielddoc"><p>32位浮点数 (torch.float32) </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28" name="a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28"></a>kDouble&#160;</td><td class="fielddoc"><p>64位浮点数 (torch.float64) </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0" name="a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0"></a>kInt&#160;</td><td class="fielddoc"><p>32位整数 (torch.int32) </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e" name="a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e"></a>kLong&#160;</td><td class="fielddoc"><p>64位整数 (torch.int64) </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a96f6c2a9728066fa81235ada8a5dbc30a18268c9f691ba5a5f650049d9d0da8dc" name="a96f6c2a9728066fa81235ada8a5dbc30a18268c9f691ba5a5f650049d9d0da8dc"></a>kBool&#160;</td><td class="fielddoc"><p>布尔值 (torch.bool) </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00162">162</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a88f6d947bf467e369055535af5907aa1" name="a88f6d947bf467e369055535af5907aa1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a88f6d947bf467e369055535af5907aa1">&#9670;&#160;</a></span>ErrorLevel</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>错误级别枚举，用于表示不同严重程度的错误 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1a2d3e4144aa384b18849ab9a8abad74d6" name="a88f6d947bf467e369055535af5907aa1a2d3e4144aa384b18849ab9a8abad74d6"></a>TRACE&#160;</td><td class="fielddoc"><p>细粒度调试（如kernel启动参数） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1adc30ec20708ef7b0f641ef78b7880a15" name="a88f6d947bf467e369055535af5907aa1adc30ec20708ef7b0f641ef78b7880a15"></a>DEBUG&#160;</td><td class="fielddoc"><p>开发调试（如数据拷贝状态） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1a551b723eafd6a31d444fcb2f5920fbd3" name="a88f6d947bf467e369055535af5907aa1a551b723eafd6a31d444fcb2f5920fbd3"></a>INFO&#160;</td><td class="fielddoc"><p>运行信息（如平台检测结果） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277" name="a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277"></a>WARN&#160;</td><td class="fielddoc"><p>非致命问题（如CUDA版本兼容提示） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1abb1ca97ec761fc37101737ba0aa2e7c5" name="a88f6d947bf467e369055535af5907aa1abb1ca97ec761fc37101737ba0aa2e7c5"></a>ERROR&#160;</td><td class="fielddoc"><p>功能异常（如kernel执行失败） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a88f6d947bf467e369055535af5907aa1a19da7170bea36556dde582519795f3fc" name="a88f6d947bf467e369055535af5907aa1a19da7170bea36556dde582519795f3fc"></a>FATAL&#160;</td><td class="fielddoc"><p>崩溃级错误（如内存分配失败） </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00084">84</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ac325c5970308dcd6b065d1de90a0711b" name="ac325c5970308dcd6b065d1de90a0711b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac325c5970308dcd6b065d1de90a0711b">&#9670;&#160;</a></span>ErrorPlatform</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>错误发生的设备枚举 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903" name="ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903"></a>kCPU&#160;</td><td class="fielddoc"><p>CPU设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711ba15cfe9387f9c286cd8244d15c8cfa6c7" name="ac325c5970308dcd6b065d1de90a0711ba15cfe9387f9c286cd8244d15c8cfa6c7"></a>kCUDA&#160;</td><td class="fielddoc"><p>CUDA设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711bacff3881470cff8a3d6510571dea453bb" name="ac325c5970308dcd6b065d1de90a0711bacff3881470cff8a3d6510571dea453bb"></a>kMPS&#160;</td><td class="fielddoc"><p>MPS设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711ba19a2bdb651921902edb0204c0af3942d" name="ac325c5970308dcd6b065d1de90a0711ba19a2bdb651921902edb0204c0af3942d"></a>kAMX&#160;</td><td class="fielddoc"><p>AMX设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711ba16bb40b9102367393ecf8213078d1c6e" name="ac325c5970308dcd6b065d1de90a0711ba16bb40b9102367393ecf8213078d1c6e"></a>kUNKNOWN&#160;</td><td class="fielddoc"><p>未知设备 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ac325c5970308dcd6b065d1de90a0711ba63cf1c5a8190ef348344ddcec79a8034" name="ac325c5970308dcd6b065d1de90a0711ba63cf1c5a8190ef348344ddcec79a8034"></a>kGENERAL&#160;</td><td class="fielddoc"><p>通用设备 </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00097">97</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ab0df38968e4f03a3f1f6d6df0f31f45a" name="ab0df38968e4f03a3f1f6d6df0f31f45a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab0df38968e4f03a3f1f6d6df0f31f45a">&#9670;&#160;</a></span>ErrorType</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>错误类型枚举，用于分类不同类型的错误 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa696b031073e74bf2cb98e5ef201d4aa3" name="ab0df38968e4f03a3f1f6d6df0f31f45aa696b031073e74bf2cb98e5ef201d4aa3"></a>UNKNOWN&#160;</td><td class="fielddoc"><p>未知错误 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa7014705458ee3cf0192f6aa52cfddea5" name="ab0df38968e4f03a3f1f6d6df0f31f45aa7014705458ee3cf0192f6aa52cfddea5"></a>MEMORY&#160;</td><td class="fielddoc"><p>内存相关（分配/释放/拷贝失败） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa760c2ca065489089b533fccf2a6d9ba7" name="ab0df38968e4f03a3f1f6d6df0f31f45aa760c2ca065489089b533fccf2a6d9ba7"></a>DIMENSION&#160;</td><td class="fielddoc"><p>维度相关（不匹配/越界/空维度） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa51b93e30aace63662228ad4095cbbb63" name="ab0df38968e4f03a3f1f6d6df0f31f45aa51b93e30aace63662228ad4095cbbb63"></a>DEVICE_COMPAT&#160;</td><td class="fielddoc"><p>设备兼容（跨设备运算/设备不支持/设备初始化失败） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea" name="ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea"></a>DATATYPE&#160;</td><td class="fielddoc"><p>数据类型（不匹配/转换失败/不支持的类型） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aaa4be5641110878291aa148e58cde242c" name="ab0df38968e4f03a3f1f6d6df0f31f45aaa4be5641110878291aa148e58cde242c"></a>KERNEL_LAUNCH&#160;</td><td class="fielddoc"><p>内核调用（CUDA/MPS/AMX内核启动失败/执行超时） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7" name="ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7"></a>TENSOR_STATE&#160;</td><td class="fielddoc"><p>Tensor状态（未初始化/只读/已释放） </p>
+</td></tr>
+<tr><td class="fieldname"><a id="ab0df38968e4f03a3f1f6d6df0f31f45aa33dfe7f98f923cef3791bc21fdafd937" name="ab0df38968e4f03a3f1f6d6df0f31f45aa33dfe7f98f923cef3791bc21fdafd937"></a>PLATFORM_API&#160;</td><td class="fielddoc"><p>平台API调用失败（如cudaGetDevice/MPSGraph创建失败） </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00110">110</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a0c7562e1971f3847677f00ee3248a9f1" name="a0c7562e1971f3847677f00ee3248a9f1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0c7562e1971f3847677f00ee3248a9f1">&#9670;&#160;</a></span>MatMulStrategy</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a0c7562e1971f3847677f00ee3248a9f1">MatMulStrategy</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>矩阵乘法算法选择策略枚举 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="a0c7562e1971f3847677f00ee3248a9f1ae1f2d5134ed2543d38a0de9751cf75d9" name="a0c7562e1971f3847677f00ee3248a9f1ae1f2d5134ed2543d38a0de9751cf75d9"></a>AUTO&#160;</td><td class="fielddoc"><p>自动选择 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a0c7562e1971f3847677f00ee3248a9f1a33e8270128b994b16da5c9e367bb94cf" name="a0c7562e1971f3847677f00ee3248a9f1a33e8270128b994b16da5c9e367bb94cf"></a>NAIVE&#160;</td><td class="fielddoc"><p>朴素算法 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a0c7562e1971f3847677f00ee3248a9f1aeecba0068950a2df17c47e851e1eef14" name="a0c7562e1971f3847677f00ee3248a9f1aeecba0068950a2df17c47e851e1eef14"></a>BLOCKED&#160;</td><td class="fielddoc"><p>分块优化 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a0c7562e1971f3847677f00ee3248a9f1a34360b0c59b740c2bc32b5f59785ba18" name="a0c7562e1971f3847677f00ee3248a9f1a34360b0c59b740c2bc32b5f59785ba18"></a>STRASSEN&#160;</td><td class="fielddoc"><p>Strassen递归算法 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a0c7562e1971f3847677f00ee3248a9f1a90190a007b4cd58a842970e987761079" name="a0c7562e1971f3847677f00ee3248a9f1a90190a007b4cd58a842970e987761079"></a>OPTIMIZED&#160;</td><td class="fielddoc"><p>最优算法组合 </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00137">137</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a99a30df0f2488360cdd46b4b88e5f5f0" name="a99a30df0f2488360cdd46b4b88e5f5f0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a99a30df0f2488360cdd46b4b88e5f5f0">&#9670;&#160;</a></span>op</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a99a30df0f2488360cdd46b4b88e5f5f0">op</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>自动微分操作符枚举 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9" name="a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9"></a>Add&#160;</td><td class="fielddoc"><p>加 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2" name="a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2"></a>Sub&#160;</td><td class="fielddoc"><p>减 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd" name="a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd"></a>Neg&#160;</td><td class="fielddoc"><p>负号 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2" name="a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2"></a>Mul&#160;</td><td class="fielddoc"><p>乘 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a" name="a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a"></a>Div&#160;</td><td class="fielddoc"><p>除 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a5debeabaece967a6732b4182ba0269ae" name="a99a30df0f2488360cdd46b4b88e5f5f0a5debeabaece967a6732b4182ba0269ae"></a>MatMul&#160;</td><td class="fielddoc"><p>矩阵乘法 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0aaf6c6cf7a454b4ef4a850ac4d960a2cc" name="a99a30df0f2488360cdd46b4b88e5f5f0aaf6c6cf7a454b4ef4a850ac4d960a2cc"></a>Dot&#160;</td><td class="fielddoc"><p>点乘 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0affca562be079b9e4e41ea9d6a86c582b" name="a99a30df0f2488360cdd46b4b88e5f5f0affca562be079b9e4e41ea9d6a86c582b"></a>Cos&#160;</td><td class="fielddoc"><p>余弦 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a0986d137604183312e6d3599578bc6cd" name="a99a30df0f2488360cdd46b4b88e5f5f0a0986d137604183312e6d3599578bc6cd"></a>Sin&#160;</td><td class="fielddoc"><p>正弦 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0acc31a669f6d086f816852dda3290a3ef" name="a99a30df0f2488360cdd46b4b88e5f5f0acc31a669f6d086f816852dda3290a3ef"></a>Conv&#160;</td><td class="fielddoc"><p>卷积 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0adef36b726efed529b13ba240dd331a12" name="a99a30df0f2488360cdd46b4b88e5f5f0adef36b726efed529b13ba240dd331a12"></a>Pool&#160;</td><td class="fielddoc"><p>池化 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378" name="a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378"></a>ReLU&#160;</td><td class="fielddoc"><p>线性整流函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0acc132a41cab5676334f353a22a0aa5c5" name="a99a30df0f2488360cdd46b4b88e5f5f0acc132a41cab5676334f353a22a0aa5c5"></a>Tanh&#160;</td><td class="fielddoc"><p>双曲正切函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a21eebb164e4b8b9bcf64fdb4d8d5dff4" name="a99a30df0f2488360cdd46b4b88e5f5f0a21eebb164e4b8b9bcf64fdb4d8d5dff4"></a>Sigmoid&#160;</td><td class="fielddoc"><p>Sigmoid函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a31d953b9d49a6b4378f45097047976d0" name="a99a30df0f2488360cdd46b4b88e5f5f0a31d953b9d49a6b4378f45097047976d0"></a>Softmax&#160;</td><td class="fielddoc"><p>Softmax函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a601049e29a4481e658f6745a54aa3ad9" name="a99a30df0f2488360cdd46b4b88e5f5f0a601049e29a4481e658f6745a54aa3ad9"></a>LReLU&#160;</td><td class="fielddoc"><p>渗漏线性整流函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a474e0c94ac3a455d2b98a72feba8fba4" name="a99a30df0f2488360cdd46b4b88e5f5f0a474e0c94ac3a455d2b98a72feba8fba4"></a>PReLU&#160;</td><td class="fielddoc"><p>参数化线性整流函数 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0aa9fc1a03386ae38b64e06c8172994963" name="a99a30df0f2488360cdd46b4b88e5f5f0aa9fc1a03386ae38b64e06c8172994963"></a>MSE&#160;</td><td class="fielddoc"><p>均方误差 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0ad7bfc720460d75c28ce69ce26d239f9f" name="a99a30df0f2488360cdd46b4b88e5f5f0ad7bfc720460d75c28ce69ce26d239f9f"></a>MAE&#160;</td><td class="fielddoc"><p>平均绝对误差 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a7a86131338bf955e0a56311f264aa6aa" name="a99a30df0f2488360cdd46b4b88e5f5f0a7a86131338bf955e0a56311f264aa6aa"></a>CE&#160;</td><td class="fielddoc"><p>交叉熵损失 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0a42451d370b188bc4ed2a312be0bd3c49" name="a99a30df0f2488360cdd46b4b88e5f5f0a42451d370b188bc4ed2a312be0bd3c49"></a>BCE&#160;</td><td class="fielddoc"><p>二元交叉熵损失 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a99a30df0f2488360cdd46b4b88e5f5f0aa0ec87054b5e5b7847d0d8780a01a3d5" name="a99a30df0f2488360cdd46b4b88e5f5f0aa0ec87054b5e5b7847d0d8780a01a3d5"></a>Sum&#160;</td><td class="fielddoc"><p>求和 </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00174">174</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a83ff212f474e3669d8fac2d727f65de5" name="a83ff212f474e3669d8fac2d727f65de5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a83ff212f474e3669d8fac2d727f65de5">&#9670;&#160;</a></span>PrintLevel</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">enum class <a class="el" href="#a83ff212f474e3669d8fac2d727f65de5">PrintLevel</a></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel strong">strong</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>输出详细级别枚举 </p>
+<table class="fieldtable">
+<tr><th colspan="2">枚举值</th></tr><tr><td class="fieldname"><a id="a83ff212f474e3669d8fac2d727f65de5a84ceb1f84e00c71dddadf486b62e938a" name="a83ff212f474e3669d8fac2d727f65de5a84ceb1f84e00c71dddadf486b62e938a"></a>MINIUM&#160;</td><td class="fielddoc"><p>仅大于等于INFO级别 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a83ff212f474e3669d8fac2d727f65de5ac87f3be66ffc3c0d4249f1c2cc5f3cce" name="a83ff212f474e3669d8fac2d727f65de5ac87f3be66ffc3c0d4249f1c2cc5f3cce"></a>MEDIUM&#160;</td><td class="fielddoc"><p>仅大于等于DEBUG级别 </p>
+</td></tr>
+<tr><td class="fieldname"><a id="a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1" name="a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1"></a>FULL&#160;</td><td class="fielddoc"><p>全部级别输出 </p>
+</td></tr>
+</table>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00125">125</a> 行定义.</p>
+
+</div>
+</div>
+<a name="doc-func-members" id="doc-func-members"></a><h2 id="header-doc-func-members" class="groupheader">函数说明</h2>
+<a id="a47e932d72b9fc84f6afd42a2aee5ea6b" name="a47e932d72b9fc84f6afd42a2aee5ea6b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a47e932d72b9fc84f6afd42a2aee5ea6b">&#9670;&#160;</a></span>computeCode()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint32_t computeCode </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="#a88f6d947bf467e369055535af5907aa1">ErrorLevel</a></td>          <td class="paramname"><span class="paramname"><em>level</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a></td>          <td class="paramname"><span class="paramname"><em>platform</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype"><a class="el" href="#ab0df38968e4f03a3f1f6d6df0f31f45a">ErrorType</a></td>          <td class="paramname"><span class="paramname"><em>type</em></span>&#160;)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>计算错误码 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">level</td><td>错误级别 </td></tr>
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>32位错误码</dd></dl>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">level</td><td>错误级别 </td></tr>
+    <tr><td class="paramname">platform</td><td>错误平台 </td></tr>
+    <tr><td class="paramname">type</td><td>错误类型 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>计算得到的32位错误码 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8cpp_source.html">Ctools.cpp</a> 第 <a class="el" href="_ctools_8cpp_source.html#l00028">28</a> 行定义.</p>
+
+</div>
+</div>
+<a id="af2fdd5c948f79d093e43dc207008eece" name="af2fdd5c948f79d093e43dc207008eece"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af2fdd5c948f79d093e43dc207008eece">&#9670;&#160;</a></span>ctorch_sleep()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void ctorch_sleep </td>
+          <td>(</td>
+          <td class="paramtype">uint64_t</td>          <td class="paramname"><span class="paramname"><em>ms</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>暂停 ms 毫秒的程序执行 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">ms</td><td>以毫秒为单位的时间 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00322">322</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad4e5129f6eb286b3a09a1a7f2758bf31" name="ad4e5129f6eb286b3a09a1a7f2758bf31"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad4e5129f6eb286b3a09a1a7f2758bf31">&#9670;&#160;</a></span>DeviceTypeToErrorPlatform()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="#ac325c5970308dcd6b065d1de90a0711b">ErrorPlatform</a> DeviceTypeToErrorPlatform </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="#ad258d4c51629346fceac4679b3209ad9">DeviceType</a></td>          <td class="paramname"><span class="paramname"><em>device_type</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>将 <a class="el" href="#ad258d4c51629346fceac4679b3209ad9" title="设备类型枚举，定义张量存储的位置">DeviceType</a> 枚举转换为对应的 <a class="el" href="#ac325c5970308dcd6b065d1de90a0711b" title="错误发生的设备枚举">ErrorPlatform</a> 枚举 </p>
+<p>基于两个枚举成员名称、取值完全一致的特性，直接进行静态类型转换， 转换效率为 O(1)，无额外性能开销，适用于当前枚举完全匹配的场景。 </p><dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">device_type</td><td>输入的设备类型枚举（DeviceType） </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd><a class="el" href="#ac325c5970308dcd6b065d1de90a0711b" title="错误发生的设备枚举">ErrorPlatform</a> 对应的错误平台枚举，与输入 <a class="el" href="#ad258d4c51629346fceac4679b3209ad9" title="设备类型枚举，定义张量存储的位置">DeviceType</a> 一一映射</dd></dl>
+<p>将 <a class="el" href="#ad258d4c51629346fceac4679b3209ad9" title="设备类型枚举，定义张量存储的位置">DeviceType</a> 枚举转换为对应的 <a class="el" href="#ac325c5970308dcd6b065d1de90a0711b" title="错误发生的设备枚举">ErrorPlatform</a> 枚举</p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">device_type</td><td>设备类型枚举值 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>对应的ErrorPlatform枚举值 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8cpp_source.html">Ctools.cpp</a> 第 <a class="el" href="_ctools_8cpp_source.html#l00017">17</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a5990bac822ce4d7accccc75041602fe5" name="a5990bac822ce4d7accccc75041602fe5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5990bac822ce4d7accccc75041602fe5">&#9670;&#160;</a></span>dtypeSize()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">size_t dtypeSize </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a></td>          <td class="paramname"><span class="paramname"><em>dtype</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>获取数据类型的字节大小 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">dtype</td><td>数据类型枚举 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>数据类型的字节大小 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00273">273</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a9714aa0bb82443781681f9512357a873" name="a9714aa0bb82443781681f9512357a873"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9714aa0bb82443781681f9512357a873">&#9670;&#160;</a></span>dtypeToString()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">const char * dtypeToString </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="#a96f6c2a9728066fa81235ada8a5dbc30">DType</a></td>          <td class="paramname"><span class="paramname"><em>dtype</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel constexpr">constexpr</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>将数据类型转换为字符串表示 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">dtype</td><td>数据类型枚举 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>数据类型的字符串表示 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00257">257</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad45600046f638226d6464704d0d93114" name="ad45600046f638226d6464704d0d93114"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad45600046f638226d6464704d0d93114">&#9670;&#160;</a></span>getFormattedTimeMs()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::string getFormattedTimeMs </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>返回人类可读的当前时间，精确到毫秒（跨平台、线程安全） </p>
+<dl class="section return"><dt>返回</dt><dd>格式化字符串，示例："2026-02-17 00:00:00.123" </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8cpp_source.html">Ctools.cpp</a> 第 <a class="el" href="_ctools_8cpp_source.html#l00041">41</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a261589113cd11ca23e3ffe9bf61f08de" name="a261589113cd11ca23e3ffe9bf61f08de"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a261589113cd11ca23e3ffe9bf61f08de">&#9670;&#160;</a></span>getTimestampMs()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t getTimestampMs </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"><em></em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>返回当前时间的毫秒级时间戳（跨平台） </p>
+<dl class="section return"><dt>返回</dt><dd>uint64_t类型的时间戳，示例：1749984000123 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8cpp_source.html">Ctools.cpp</a> 第 <a class="el" href="_ctools_8cpp_source.html#l00072">72</a> 行定义.</p>
+
+</div>
+</div>
+<a id="ad3a0e9b1fc265ed01feb6cd420797b2e" name="ad3a0e9b1fc265ed01feb6cd420797b2e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad3a0e9b1fc265ed01feb6cd420797b2e">&#9670;&#160;</a></span>minx()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">int minx </td>
+          <td>(</td>
+          <td class="paramtype">int</td>          <td class="paramname"><span class="paramname"><em>a</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int</td>          <td class="paramname"><span class="paramname"><em>b</em></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel inline">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>快速计算两个整数的最小值 </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">a</td><td>第一个整数 </td></tr>
+    <tr><td class="paramname">b</td><td>第二个整数 </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>返回</dt><dd>两个整数中的最小值 </dd></dl>
+
+<p class="definition">在文件 <a class="el" href="_ctools_8h_source.html">Ctools.h</a> 第 <a class="el" href="_ctools_8h_source.html#l00292">292</a> 行定义.</p>
+
+</div>
+</div>
+</div><!-- contents -->
+</div><!-- doc-content -->
+<div id="page-nav" class="page-nav-panel">
+<div id="page-nav-resize-handle"></div>
+<div id="page-nav-tree">
+<div id="page-nav-contents">
+</div><!-- page-nav-contents -->
+</div><!-- page-nav-tree -->
+</div><!-- page-nav -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="_ctools_8h.html">Ctools.h</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>

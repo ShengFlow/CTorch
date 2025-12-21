@@ -1,0 +1,803 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "https://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh">
+<head>
+<meta http-equiv="Content-Type" content="text/xhtml;charset=UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=11"/>
+<meta name="generator" content="Doxygen 1.15.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ctorch: AutoDiff.cpp 源文件</title>
+<link href="tabs.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="dynsections.js"></script>
+<script type="text/javascript" src="clipboard.js"></script>
+<link href="navtree.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="navtreedata.js"></script>
+<script type="text/javascript" src="navtree.js"></script>
+<script type="text/javascript" src="cookie.js"></script>
+<link href="search/search.css" rel="stylesheet" type="text/css"/>
+<script type="text/javascript" src="search/searchdata.js"></script>
+<script type="text/javascript" src="search/search.js"></script>
+<link href="doxygen.css" rel="stylesheet" type="text/css" />
+<link href="custom.css" rel="stylesheet" type="text/css"/>
+</head>
+<body>
+<div id="top"><!-- do not remove this div, it is closed by doxygen! -->
+<div id="titlearea">
+<table cellspacing="0" cellpadding="0">
+ <tbody>
+ <tr id="projectrow">
+  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
+  <td id="projectalign">
+   <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
+   </div>
+   <div id="projectbrief">一个高性能C++ ML库</div>
+  </td>
+ </tr>
+ </tbody>
+</table>
+</div>
+<!-- end header part -->
+<!-- 制作者 Doxygen 1.15.0 -->
+<script type="text/javascript">
+var searchBox = new SearchBox("searchBox", "search/",'.html');
+</script>
+<script type="text/javascript">
+$(function() { codefold.init(); });
+</script>
+<script type="text/javascript" src="menudata.js"></script>
+<script type="text/javascript" src="menu.js"></script>
+<script type="text/javascript">
+$(function() {
+  initMenu('',true,false,'search.php','搜索',true);
+  $(function() { init_search(); });
+});
+</script>
+<div id="main-nav"></div>
+</div><!-- top -->
+<div id="side-nav" class="ui-resizable side-nav-resizable">
+  <div id="nav-tree">
+    <div id="nav-tree-contents">
+      <div id="nav-sync" class="sync"></div>
+    </div>
+  </div>
+  <div id="splitbar" style="-moz-user-select:none;" 
+       class="ui-resizable-handle">
+  </div>
+</div>
+<script type="text/javascript">
+$(function(){initNavTree('_auto_diff_8cpp_source.html','',''); });
+</script>
+<div id="container">
+<div id="doc-content">
+<!-- window showing the filter options -->
+<div id="MSearchSelectWindow"
+     onmouseover="return searchBox.OnSearchSelectShow()"
+     onmouseout="return searchBox.OnSearchSelectHide()"
+     onkeydown="return searchBox.OnSearchSelectKey(event)">
+</div>
+
+<!-- iframe showing the search results (closed by default) -->
+<div id="MSearchResultsWindow">
+<div id="MSearchResults">
+<div class="SRPage">
+<div id="SRIndex">
+<div id="SRResults"></div>
+<div class="SRStatus" id="Loading">载入中...</div>
+<div class="SRStatus" id="Searching">搜索中...</div>
+<div class="SRStatus" id="NoMatches">未找到</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="header">
+  <div class="headertitle"><div class="title">AutoDiff.cpp</div></div>
+</div><!--header-->
+<div class="contents">
+<a href="_auto_diff_8cpp.html">浏览该文件的文档.</a><div class="fragment"><div class="line"><a id="l00001" name="l00001"></a><span class="lineno">    1</span></div>
+<div class="line"><a id="l00007" name="l00007"></a><span class="lineno">    7</span> </div>
+<div class="line"><a id="l00008" name="l00008"></a><span class="lineno">    8</span><span class="preprocessor">#include &quot;<a class="code" href="_auto_diff_8h.html">AutoDiff.h</a>&quot;</span></div>
+<div class="line"><a id="l00009" name="l00009"></a><span class="lineno">    9</span><span class="preprocessor">#include &quot;<a class="code" href="_tensor_8h.html">Tensor.h</a>&quot;</span></div>
+<div class="line"><a id="l00010" name="l00010"></a><span class="lineno">   10</span> </div>
+<div class="line"><a id="l00011" name="l00011"></a><span class="lineno">   11</span><span class="comment">// ======================= 计算图节点实现 =======================</span></div>
+<div class="line"><a id="l00012" name="l00012"></a><span class="lineno">   12</span></div>
+<div class="line"><a id="l00020" name="l00020"></a><span class="lineno">   20</span>AutoDiff::Node::Node(<span class="keywordtype">size_t</span> <span class="keywordtype">id</span>, std::unique_ptr&lt;Tensor&gt; t, <span class="keywordtype">bool</span> req_grad, <span class="keywordtype">bool</span> leaf)</div>
+<div class="line"><a id="l00021" name="l00021"></a><span class="lineno">   21</span>    : tensor_id(id), tensor(std::move(t)), requires_grad(req_grad), is_leaf(leaf) {</div>
+<div class="line"><a id="l00022" name="l00022"></a><span class="lineno">   22</span>    operation = <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9">op::Add</a>; <span class="comment">// 默认值</span></div>
+<div class="line"><a id="l00023" name="l00023"></a><span class="lineno">   23</span>}</div>
+<div class="line"><a id="l00024" name="l00024"></a><span class="lineno">   24</span></div>
+<div class="line"><a id="l00029" name="l00029"></a><span class="lineno">   29</span><span class="keywordtype">void</span> AutoDiff::Node::clear_grad_safely() {</div>
+<div class="line"><a id="l00030" name="l00030"></a><span class="lineno">   30</span>    std::ostringstream oss;</div>
+<div class="line"><a id="l00031" name="l00031"></a><span class="lineno">   31</span>    oss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; Node::clear_grad_safely - 开始, 节点ID: &quot;</span> &lt;&lt; tensor_id;</div>
+<div class="line"><a id="l00032" name="l00032"></a><span class="lineno">   32</span>    std::string msg = oss.str();</div>
+<div class="line"><a id="l00033" name="l00033"></a><span class="lineno">   33</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00034" name="l00034"></a><span class="lineno">   34</span>    <span class="keywordflow">if</span> (grad) {</div>
+<div class="line"><a id="l00035" name="l00035"></a><span class="lineno">   35</span>        grad-&gt;clear_storage();</div>
+<div class="line"><a id="l00036" name="l00036"></a><span class="lineno">   36</span>    }</div>
+<div class="line"><a id="l00037" name="l00037"></a><span class="lineno">   37</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&lt;&lt;&lt; Node::clear_grad_safely - 完成&quot;</span>);</div>
+<div class="line"><a id="l00038" name="l00038"></a><span class="lineno">   38</span>}</div>
+<div class="line"><a id="l00039" name="l00039"></a><span class="lineno">   39</span> </div>
+<div class="line"><a id="l00040" name="l00040"></a><span class="lineno">   40</span><span class="comment">// ======================= 辅助方法 =======================</span></div>
+<div class="line"><a id="l00041" name="l00041"></a><span class="lineno">   41</span></div>
+<div class="line"><a id="l00047" name="l00047"></a><span class="lineno">   47</span>AutoDiff::Node* AutoDiff::get_node_by_id(<span class="keywordtype">size_t</span> <span class="keywordtype">id</span>) {</div>
+<div class="line"><a id="l00048" name="l00048"></a><span class="lineno">   48</span>    std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00049" name="l00049"></a><span class="lineno">   49</span>    <span class="keyword">auto</span> it = id_to_node.find(<span class="keywordtype">id</span>);</div>
+<div class="line"><a id="l00050" name="l00050"></a><span class="lineno">   50</span>    <span class="keywordflow">if</span> (it != id_to_node.end()) {</div>
+<div class="line"><a id="l00051" name="l00051"></a><span class="lineno">   51</span>        <span class="keywordflow">return</span> it-&gt;second.get();</div>
+<div class="line"><a id="l00052" name="l00052"></a><span class="lineno">   52</span>    }</div>
+<div class="line"><a id="l00053" name="l00053"></a><span class="lineno">   53</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 警告: 找不到节点 &quot;</span> &lt;&lt; <span class="keywordtype">id</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00054" name="l00054"></a><span class="lineno">   54</span>    <span class="keywordflow">return</span> <span class="keyword">nullptr</span>;</div>
+<div class="line"><a id="l00055" name="l00055"></a><span class="lineno">   55</span>}</div>
+<div class="line"><a id="l00056" name="l00056"></a><span class="lineno">   56</span> </div>
+<div class="line"><a id="l00057" name="l00057"></a><span class="lineno">   57</span><span class="comment">// ======================= 调试方法 =======================</span></div>
+<div class="line"><a id="l00058" name="l00058"></a><span class="lineno">   58</span></div>
+<div class="foldopen" id="foldopen00063" data-start="{" data-end="}">
+<div class="line"><a id="l00063" name="l00063"></a><span class="lineno"><a class="line" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">   63</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">AutoDiff::debug_print_state</a>(<span class="keyword">const</span> std::string&amp; context) {</div>
+<div class="line"><a id="l00064" name="l00064"></a><span class="lineno">   64</span>    std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00065" name="l00065"></a><span class="lineno">   65</span>    std::ostringstream oss;</div>
+<div class="line"><a id="l00066" name="l00066"></a><span class="lineno">   66</span>    oss &lt;&lt; <span class="stringliteral">&quot;=== AutoDiff状态 [&quot;</span> &lt;&lt; context &lt;&lt; <span class="stringliteral">&quot;] ===&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00067" name="l00067"></a><span class="lineno">   67</span>    oss &lt;&lt; <span class="stringliteral">&quot;计算图节点 (&quot;</span> &lt;&lt; id_to_node.size() &lt;&lt; <span class="stringliteral">&quot;): &quot;</span>;</div>
+<div class="line"><a id="l00068" name="l00068"></a><span class="lineno">   68</span>    <span class="keywordflow">for</span> (<span class="keyword">const</span> <span class="keyword">auto</span>&amp; pair : id_to_node) {</div>
+<div class="line"><a id="l00069" name="l00069"></a><span class="lineno">   69</span>        <span class="keywordflow">if</span> (pair.second) {</div>
+<div class="line"><a id="l00070" name="l00070"></a><span class="lineno">   70</span>            oss &lt;&lt; pair.first &lt;&lt; <span class="stringliteral">&quot; &quot;</span>;</div>
+<div class="line"><a id="l00071" name="l00071"></a><span class="lineno">   71</span>        }</div>
+<div class="line"><a id="l00072" name="l00072"></a><span class="lineno">   72</span>    }</div>
+<div class="line"><a id="l00073" name="l00073"></a><span class="lineno">   73</span>    oss &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00074" name="l00074"></a><span class="lineno">   74</span>    oss &lt;&lt; <span class="stringliteral">&quot;待处理记录 (&quot;</span> &lt;&lt; pending_records.size() &lt;&lt; <span class="stringliteral">&quot;): &quot;</span>;</div>
+<div class="line"><a id="l00075" name="l00075"></a><span class="lineno">   75</span>    <span class="keywordflow">for</span> (<span class="keyword">const</span> <span class="keyword">auto</span>&amp; pair : pending_records) {</div>
+<div class="line"><a id="l00076" name="l00076"></a><span class="lineno">   76</span>        oss &lt;&lt; pair.first &lt;&lt; <span class="stringliteral">&quot;(committed=&quot;</span> &lt;&lt; pair.second.committed &lt;&lt; <span class="stringliteral">&quot;) &quot;</span>;</div>
+<div class="line"><a id="l00077" name="l00077"></a><span class="lineno">   77</span>    }</div>
+<div class="line"><a id="l00078" name="l00078"></a><span class="lineno">   78</span>    oss &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00079" name="l00079"></a><span class="lineno">   79</span>    oss &lt;&lt; <span class="stringliteral">&quot;=================================&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00080" name="l00080"></a><span class="lineno">   80</span>    std::string msg = oss.str();</div>
+<div class="line"><a id="l00081" name="l00081"></a><span class="lineno">   81</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00082" name="l00082"></a><span class="lineno">   82</span>}</div>
+</div>
+<div class="line"><a id="l00083" name="l00083"></a><span class="lineno">   83</span> </div>
+<div class="line"><a id="l00084" name="l00084"></a><span class="lineno">   84</span><span class="comment">// ======================= get_grad函数 =======================</span></div>
+<div class="foldopen" id="foldopen00085" data-start="{" data-end="}">
+<div class="line"><a id="l00085" name="l00085"></a><span class="lineno"><a class="line" href="class_auto_diff.html#abd92891a5fa6d81ae5a18c4a4ae18fde">   85</a></span><a class="code hl_class" href="class_tensor.html">Tensor</a> <a class="code hl_function" href="class_auto_diff.html#abd92891a5fa6d81ae5a18c4a4ae18fde">AutoDiff::get_grad</a>(<span class="keyword">const</span> <a class="code hl_class" href="class_tensor.html">Tensor</a>* t) {</div>
+<div class="line"><a id="l00086" name="l00086"></a><span class="lineno">   86</span>    <span class="keywordflow">if</span> (!t || t-&gt;<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>() == 0) {</div>
+<div class="line"><a id="l00087" name="l00087"></a><span class="lineno">   87</span>        <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&gt;&gt;&gt; get_grad: 无效输入&quot;</span>);</div>
+<div class="line"><a id="l00088" name="l00088"></a><span class="lineno">   88</span>        <span class="keywordflow">return</span> <a class="code hl_class" href="class_tensor.html">Tensor</a>();</div>
+<div class="line"><a id="l00089" name="l00089"></a><span class="lineno">   89</span>    }</div>
+<div class="line"><a id="l00090" name="l00090"></a><span class="lineno">   90</span> </div>
+<div class="line"><a id="l00091" name="l00091"></a><span class="lineno">   91</span>    std::ostringstream oss;</div>
+<div class="line"><a id="l00092" name="l00092"></a><span class="lineno">   92</span>    oss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; get_grad - 开始, 目标ID: &quot;</span> &lt;&lt; t-&gt;<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>();</div>
+<div class="line"><a id="l00093" name="l00093"></a><span class="lineno">   93</span>    std::string msg = oss.str();</div>
+<div class="line"><a id="l00094" name="l00094"></a><span class="lineno">   94</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00095" name="l00095"></a><span class="lineno">   95</span> </div>
+<div class="line"><a id="l00096" name="l00096"></a><span class="lineno">   96</span>    <span class="comment">// 保存输入张量的信息，用于创建默认零张量</span></div>
+<div class="line"><a id="l00097" name="l00097"></a><span class="lineno">   97</span>    std::vector&lt;size_t&gt; input_shape = t-&gt;<a class="code hl_function" href="class_tensor.html#a3b990b33ed4539c0eb0568a59ed902ab">shape</a>();</div>
+<div class="line"><a id="l00098" name="l00098"></a><span class="lineno">   98</span>    <a class="code hl_enumeration" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30">DType</a> input_dtype = t-&gt;<a class="code hl_function" href="class_tensor.html#ab22ae7947bd71b2fb9b880171f3d356e">dtype</a>();</div>
+<div class="line"><a id="l00099" name="l00099"></a><span class="lineno">   99</span>    <a class="code hl_enumeration" href="_ctools_8h.html#ad258d4c51629346fceac4679b3209ad9">DeviceType</a> input_device = t-&gt;<a class="code hl_function" href="class_tensor.html#aaa2a3a00912a4685de301b4adeb23d4c">device</a>();</div>
+<div class="line"><a id="l00100" name="l00100"></a><span class="lineno">  100</span> </div>
+<div class="line"><a id="l00101" name="l00101"></a><span class="lineno">  101</span>    <span class="comment">// 第一步：在锁内获取必要信息（不创建新Tensor）</span></div>
+<div class="line"><a id="l00102" name="l00102"></a><span class="lineno">  102</span>    <span class="keywordtype">bool</span> has_grad = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00103" name="l00103"></a><span class="lineno">  103</span>    std::vector&lt;size_t&gt; grad_shape;</div>
+<div class="line"><a id="l00104" name="l00104"></a><span class="lineno">  104</span>    <a class="code hl_enumeration" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30">DType</a> grad_dtype;</div>
+<div class="line"><a id="l00105" name="l00105"></a><span class="lineno">  105</span>    <a class="code hl_enumeration" href="_ctools_8h.html#ad258d4c51629346fceac4679b3209ad9">DeviceType</a> grad_device;</div>
+<div class="line"><a id="l00106" name="l00106"></a><span class="lineno">  106</span>    <span class="keywordtype">float</span> grad_value = 0.0f; <span class="comment">// 存储梯度值用于调试</span></div>
+<div class="line"><a id="l00107" name="l00107"></a><span class="lineno">  107</span> </div>
+<div class="line"><a id="l00108" name="l00108"></a><span class="lineno">  108</span>    {</div>
+<div class="line"><a id="l00109" name="l00109"></a><span class="lineno">  109</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00110" name="l00110"></a><span class="lineno">  110</span>        <span class="keyword">auto</span> it = id_to_node.find(t-&gt;<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>());</div>
+<div class="line"><a id="l00111" name="l00111"></a><span class="lineno">  111</span>        <span class="keywordflow">if</span> (it != id_to_node.end() &amp;&amp; it-&gt;second &amp;&amp; it-&gt;second-&gt;requires_grad &amp;&amp; it-&gt;second-&gt;grad) {</div>
+<div class="line"><a id="l00112" name="l00112"></a><span class="lineno">  112</span>            has_grad = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00113" name="l00113"></a><span class="lineno">  113</span>            grad_shape = it-&gt;second-&gt;grad-&gt;sizes();</div>
+<div class="line"><a id="l00114" name="l00114"></a><span class="lineno">  114</span>            grad_dtype = it-&gt;second-&gt;grad-&gt;dtype();</div>
+<div class="line"><a id="l00115" name="l00115"></a><span class="lineno">  115</span>            grad_device = it-&gt;second-&gt;grad-&gt;device();</div>
+<div class="line"><a id="l00116" name="l00116"></a><span class="lineno">  116</span> </div>
+<div class="line"><a id="l00117" name="l00117"></a><span class="lineno">  117</span>            <span class="comment">// 获取梯度值用于调试</span></div>
+<div class="line"><a id="l00118" name="l00118"></a><span class="lineno">  118</span>            <span class="keywordflow">if</span> (grad_dtype == <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">DType::kFloat</a> &amp;&amp; !grad_shape.empty()) {</div>
+<div class="line"><a id="l00119" name="l00119"></a><span class="lineno">  119</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> *grad_data = it-&gt;second-&gt;grad-&gt;data&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00120" name="l00120"></a><span class="lineno">  120</span>                <span class="keywordflow">if</span> (grad_data) {</div>
+<div class="line"><a id="l00121" name="l00121"></a><span class="lineno">  121</span>                    grad_value = grad_data[0]; <span class="comment">// 对于标量，取第一个元素</span></div>
+<div class="line"><a id="l00122" name="l00122"></a><span class="lineno">  122</span>                }</div>
+<div class="line"><a id="l00123" name="l00123"></a><span class="lineno">  123</span>            }</div>
+<div class="line"><a id="l00124" name="l00124"></a><span class="lineno">  124</span>            std::ostringstream osss;</div>
+<div class="line"><a id="l00125" name="l00125"></a><span class="lineno">  125</span>            osss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 找到梯度，形状: [&quot;</span>;</div>
+<div class="line"><a id="l00126" name="l00126"></a><span class="lineno">  126</span>            <span class="keywordflow">for</span> (<span class="keyword">auto</span> s: grad_shape) osss &lt;&lt; s &lt;&lt; <span class="stringliteral">&quot; &quot;</span>;</div>
+<div class="line"><a id="l00127" name="l00127"></a><span class="lineno">  127</span>            osss &lt;&lt; <span class="stringliteral">&quot;], 值: &quot;</span> &lt;&lt; grad_value;</div>
+<div class="line"><a id="l00128" name="l00128"></a><span class="lineno">  128</span>            std::string msgs = osss.str();</div>
+<div class="line"><a id="l00129" name="l00129"></a><span class="lineno">  129</span>            <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgs);</div>
+<div class="line"><a id="l00130" name="l00130"></a><span class="lineno">  130</span>        }</div>
+<div class="line"><a id="l00131" name="l00131"></a><span class="lineno">  131</span>    } <span class="comment">// 释放锁</span></div>
+<div class="line"><a id="l00132" name="l00132"></a><span class="lineno">  132</span> </div>
+<div class="line"><a id="l00133" name="l00133"></a><span class="lineno">  133</span>    <span class="comment">// 第二步：在锁外创建结果Tensor</span></div>
+<div class="line"><a id="l00134" name="l00134"></a><span class="lineno">  134</span>    <span class="keywordflow">if</span> (has_grad) {</div>
+<div class="line"><a id="l00135" name="l00135"></a><span class="lineno">  135</span>        <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&gt;&gt;&gt; 创建梯度副本&quot;</span>);</div>
+<div class="line"><a id="l00136" name="l00136"></a><span class="lineno">  136</span>        <a class="code hl_class" href="class_tensor.html">Tensor</a> result(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, grad_shape, grad_dtype, grad_device);</div>
+<div class="line"><a id="l00137" name="l00137"></a><span class="lineno">  137</span> </div>
+<div class="line"><a id="l00138" name="l00138"></a><span class="lineno">  138</span>        <span class="comment">// 第三步：重新加锁复制数据</span></div>
+<div class="line"><a id="l00139" name="l00139"></a><span class="lineno">  139</span>        {</div>
+<div class="line"><a id="l00140" name="l00140"></a><span class="lineno">  140</span>            std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00141" name="l00141"></a><span class="lineno">  141</span>            <span class="keyword">auto</span> it = id_to_node.find(t-&gt;<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>());</div>
+<div class="line"><a id="l00142" name="l00142"></a><span class="lineno">  142</span>            <span class="keywordflow">if</span> (it != id_to_node.end() &amp;&amp; it-&gt;second &amp;&amp; it-&gt;second-&gt;grad) {</div>
+<div class="line"><a id="l00143" name="l00143"></a><span class="lineno">  143</span>                <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&gt;&gt;&gt; 复制梯度数据&quot;</span>);</div>
+<div class="line"><a id="l00144" name="l00144"></a><span class="lineno">  144</span>                <span class="comment">// 直接复制数据，避免调用clone()</span></div>
+<div class="line"><a id="l00145" name="l00145"></a><span class="lineno">  145</span>                <span class="keywordflow">switch</span> (grad_dtype) {</div>
+<div class="line"><a id="l00146" name="l00146"></a><span class="lineno">  146</span>                    <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">DType::kFloat</a>: {</div>
+<div class="line"><a id="l00147" name="l00147"></a><span class="lineno">  147</span>                        <span class="keyword">const</span> <span class="keywordtype">float</span> *src = it-&gt;second-&gt;grad-&gt;data&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00148" name="l00148"></a><span class="lineno">  148</span>                        <span class="keywordtype">float</span> *dst = result.<a class="code hl_function" href="class_tensor.html#a3c00cc931f7df000ae220a13572888ba">data</a>&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00149" name="l00149"></a><span class="lineno">  149</span>                        <span class="keywordtype">size_t</span> count = result.<a class="code hl_function" href="class_tensor.html#ae16abae53b9c97f24e7d7f4a320f52a9">numel</a>();</div>
+<div class="line"><a id="l00150" name="l00150"></a><span class="lineno">  150</span>                        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00151" name="l00151"></a><span class="lineno">  151</span>                            dst[i] = src[i];</div>
+<div class="line"><a id="l00152" name="l00152"></a><span class="lineno">  152</span>                        }</div>
+<div class="line"><a id="l00153" name="l00153"></a><span class="lineno">  153</span>                        std::ostringstream osss;</div>
+<div class="line"><a id="l00154" name="l00154"></a><span class="lineno">  154</span>                        osss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 复制了 &quot;</span> &lt;&lt; count &lt;&lt; <span class="stringliteral">&quot; 个float值，第一个值: &quot;</span> &lt;&lt; dst[0];</div>
+<div class="line"><a id="l00155" name="l00155"></a><span class="lineno">  155</span>                        std::string msgs = osss.str();</div>
+<div class="line"><a id="l00156" name="l00156"></a><span class="lineno">  156</span>                        <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgs);</div>
+<div class="line"><a id="l00157" name="l00157"></a><span class="lineno">  157</span>                        <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00158" name="l00158"></a><span class="lineno">  158</span>                    }</div>
+<div class="line"><a id="l00159" name="l00159"></a><span class="lineno">  159</span>                    <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28">DType::kDouble</a>: {</div>
+<div class="line"><a id="l00160" name="l00160"></a><span class="lineno">  160</span>                        <span class="keyword">const</span> <span class="keywordtype">double</span> *src = it-&gt;second-&gt;grad-&gt;data&lt;<span class="keywordtype">double</span>&gt;();</div>
+<div class="line"><a id="l00161" name="l00161"></a><span class="lineno">  161</span>                        <span class="keywordtype">double</span> *dst = result.<a class="code hl_function" href="class_tensor.html#a3c00cc931f7df000ae220a13572888ba">data</a>&lt;<span class="keywordtype">double</span>&gt;();</div>
+<div class="line"><a id="l00162" name="l00162"></a><span class="lineno">  162</span>                        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; result.<a class="code hl_function" href="class_tensor.html#ae16abae53b9c97f24e7d7f4a320f52a9">numel</a>(); ++i) {</div>
+<div class="line"><a id="l00163" name="l00163"></a><span class="lineno">  163</span>                            dst[i] = src[i];</div>
+<div class="line"><a id="l00164" name="l00164"></a><span class="lineno">  164</span>                        }</div>
+<div class="line"><a id="l00165" name="l00165"></a><span class="lineno">  165</span>                        <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00166" name="l00166"></a><span class="lineno">  166</span>                    }</div>
+<div class="line"><a id="l00167" name="l00167"></a><span class="lineno">  167</span>                    <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0">DType::kInt</a>: {</div>
+<div class="line"><a id="l00168" name="l00168"></a><span class="lineno">  168</span>                        <span class="keyword">const</span> int32_t *src = it-&gt;second-&gt;grad-&gt;data&lt;int32_t&gt;();</div>
+<div class="line"><a id="l00169" name="l00169"></a><span class="lineno">  169</span>                        int32_t *dst = result.<a class="code hl_function" href="class_tensor.html#a3c00cc931f7df000ae220a13572888ba">data</a>&lt;int32_t&gt;();</div>
+<div class="line"><a id="l00170" name="l00170"></a><span class="lineno">  170</span>                        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; result.<a class="code hl_function" href="class_tensor.html#ae16abae53b9c97f24e7d7f4a320f52a9">numel</a>(); ++i) {</div>
+<div class="line"><a id="l00171" name="l00171"></a><span class="lineno">  171</span>                            dst[i] = src[i];</div>
+<div class="line"><a id="l00172" name="l00172"></a><span class="lineno">  172</span>                        }</div>
+<div class="line"><a id="l00173" name="l00173"></a><span class="lineno">  173</span>                        <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00174" name="l00174"></a><span class="lineno">  174</span>                    }</div>
+<div class="line"><a id="l00175" name="l00175"></a><span class="lineno">  175</span>                    <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e">DType::kLong</a>: {</div>
+<div class="line"><a id="l00176" name="l00176"></a><span class="lineno">  176</span>                        <span class="keyword">const</span> int64_t *src = it-&gt;second-&gt;grad-&gt;data&lt;int64_t&gt;();</div>
+<div class="line"><a id="l00177" name="l00177"></a><span class="lineno">  177</span>                        int64_t *dst = result.<a class="code hl_function" href="class_tensor.html#a3c00cc931f7df000ae220a13572888ba">data</a>&lt;int64_t&gt;();</div>
+<div class="line"><a id="l00178" name="l00178"></a><span class="lineno">  178</span>                        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; result.<a class="code hl_function" href="class_tensor.html#ae16abae53b9c97f24e7d7f4a320f52a9">numel</a>(); ++i) {</div>
+<div class="line"><a id="l00179" name="l00179"></a><span class="lineno">  179</span>                            dst[i] = src[i];</div>
+<div class="line"><a id="l00180" name="l00180"></a><span class="lineno">  180</span>                        }</div>
+<div class="line"><a id="l00181" name="l00181"></a><span class="lineno">  181</span>                        <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00182" name="l00182"></a><span class="lineno">  182</span>                    }</div>
+<div class="line"><a id="l00183" name="l00183"></a><span class="lineno">  183</span>                    <span class="keywordflow">default</span>:</div>
+<div class="line"><a id="l00184" name="l00184"></a><span class="lineno">  184</span>                        <a class="code hl_function" href="class_ctorch___error.html#ad21308b712af0daeb257141d65101594">Ctorch_Error::throwException</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea">ErrorType::DATATYPE</a>, <span class="stringliteral">&quot;get_grad中不支持的dtype&quot;</span>);</div>
+<div class="line"><a id="l00185" name="l00185"></a><span class="lineno">  185</span>                }</div>
+<div class="line"><a id="l00186" name="l00186"></a><span class="lineno">  186</span>            }</div>
+<div class="line"><a id="l00187" name="l00187"></a><span class="lineno">  187</span>        }</div>
+<div class="line"><a id="l00188" name="l00188"></a><span class="lineno">  188</span>        std::ostringstream osss;</div>
+<div class="line"><a id="l00189" name="l00189"></a><span class="lineno">  189</span>        osss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 最终梯度副本值: &quot;</span> &lt;&lt; result.<a class="code hl_function" href="class_tensor.html#a480ed061597629c91760708913941333">item</a>&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00190" name="l00190"></a><span class="lineno">  190</span>        osss &lt;&lt; <span class="stringliteral">&quot;&lt;&lt;&lt; get_grad - 完成&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00191" name="l00191"></a><span class="lineno">  191</span> </div>
+<div class="line"><a id="l00192" name="l00192"></a><span class="lineno">  192</span>        std::string msgs = osss.str();</div>
+<div class="line"><a id="l00193" name="l00193"></a><span class="lineno">  193</span>        <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgs);</div>
+<div class="line"><a id="l00194" name="l00194"></a><span class="lineno">  194</span>        <span class="keywordflow">return</span> result;</div>
+<div class="line"><a id="l00195" name="l00195"></a><span class="lineno">  195</span>    }</div>
+<div class="line"><a id="l00196" name="l00196"></a><span class="lineno">  196</span>    <span class="comment">// 未找到梯度时，输出Error级别提示并返回零张量</span></div>
+<div class="line"><a id="l00197" name="l00197"></a><span class="lineno">  197</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;[ERROR] [2025-12-21 18:05:10.882 1766311510882] [ERROR_CODE:0x5060400] [PLATFORM:GENERAL] [TYPE:TENSOR_STATE] Tensor梯度未找到，返回零张量&quot;</span>);</div>
+<div class="line"><a id="l00198" name="l00198"></a><span class="lineno">  198</span>    <span class="comment">// 创建与输入张量相同形状、数据类型和设备的零张量</span></div>
+<div class="line"><a id="l00199" name="l00199"></a><span class="lineno">  199</span>    <a class="code hl_class" href="class_tensor.html">Tensor</a> result(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, input_shape, input_dtype, input_device);</div>
+<div class="line"><a id="l00200" name="l00200"></a><span class="lineno">  200</span>    <span class="comment">// 初始化所有元素为0</span></div>
+<div class="line"><a id="l00201" name="l00201"></a><span class="lineno">  201</span>    <span class="keywordflow">switch</span> (input_dtype) {</div>
+<div class="line"><a id="l00202" name="l00202"></a><span class="lineno">  202</span>        <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">DType::kFloat</a>: {</div>
+<div class="line"><a id="l00203" name="l00203"></a><span class="lineno">  203</span>            <span class="keywordtype">float</span> *dst = result.data&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00204" name="l00204"></a><span class="lineno">  204</span>            <span class="keywordtype">size_t</span> count = result.numel();</div>
+<div class="line"><a id="l00205" name="l00205"></a><span class="lineno">  205</span>            <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00206" name="l00206"></a><span class="lineno">  206</span>                dst[i] = 0.0f;</div>
+<div class="line"><a id="l00207" name="l00207"></a><span class="lineno">  207</span>            }</div>
+<div class="line"><a id="l00208" name="l00208"></a><span class="lineno">  208</span>            <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00209" name="l00209"></a><span class="lineno">  209</span>        }</div>
+<div class="line"><a id="l00210" name="l00210"></a><span class="lineno">  210</span>        <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28">DType::kDouble</a>: {</div>
+<div class="line"><a id="l00211" name="l00211"></a><span class="lineno">  211</span>            <span class="keywordtype">double</span> *dst = result.data&lt;<span class="keywordtype">double</span>&gt;();</div>
+<div class="line"><a id="l00212" name="l00212"></a><span class="lineno">  212</span>            <span class="keywordtype">size_t</span> count = result.numel();</div>
+<div class="line"><a id="l00213" name="l00213"></a><span class="lineno">  213</span>            <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00214" name="l00214"></a><span class="lineno">  214</span>                dst[i] = 0.0;</div>
+<div class="line"><a id="l00215" name="l00215"></a><span class="lineno">  215</span>            }</div>
+<div class="line"><a id="l00216" name="l00216"></a><span class="lineno">  216</span>            <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00217" name="l00217"></a><span class="lineno">  217</span>        }</div>
+<div class="line"><a id="l00218" name="l00218"></a><span class="lineno">  218</span>        <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0">DType::kInt</a>: {</div>
+<div class="line"><a id="l00219" name="l00219"></a><span class="lineno">  219</span>            int32_t *dst = result.data&lt;int32_t&gt;();</div>
+<div class="line"><a id="l00220" name="l00220"></a><span class="lineno">  220</span>            <span class="keywordtype">size_t</span> count = result.numel();</div>
+<div class="line"><a id="l00221" name="l00221"></a><span class="lineno">  221</span>            <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00222" name="l00222"></a><span class="lineno">  222</span>                dst[i] = 0;</div>
+<div class="line"><a id="l00223" name="l00223"></a><span class="lineno">  223</span>            }</div>
+<div class="line"><a id="l00224" name="l00224"></a><span class="lineno">  224</span>            <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00225" name="l00225"></a><span class="lineno">  225</span>        }</div>
+<div class="line"><a id="l00226" name="l00226"></a><span class="lineno">  226</span>        <span class="keywordflow">case</span> <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e">DType::kLong</a>: {</div>
+<div class="line"><a id="l00227" name="l00227"></a><span class="lineno">  227</span>            int64_t *dst = result.data&lt;int64_t&gt;();</div>
+<div class="line"><a id="l00228" name="l00228"></a><span class="lineno">  228</span>            <span class="keywordtype">size_t</span> count = result.numel();</div>
+<div class="line"><a id="l00229" name="l00229"></a><span class="lineno">  229</span>            <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> i = 0; i &lt; count; ++i) {</div>
+<div class="line"><a id="l00230" name="l00230"></a><span class="lineno">  230</span>                dst[i] = 0;</div>
+<div class="line"><a id="l00231" name="l00231"></a><span class="lineno">  231</span>            }</div>
+<div class="line"><a id="l00232" name="l00232"></a><span class="lineno">  232</span>            <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00233" name="l00233"></a><span class="lineno">  233</span>        }</div>
+<div class="line"><a id="l00234" name="l00234"></a><span class="lineno">  234</span>        <span class="keywordflow">default</span>:</div>
+<div class="line"><a id="l00235" name="l00235"></a><span class="lineno">  235</span>            <a class="code hl_function" href="class_ctorch___error.html#ad21308b712af0daeb257141d65101594">Ctorch_Error::throwException</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea">ErrorType::DATATYPE</a>, <span class="stringliteral">&quot;get_grad中不支持的dtype&quot;</span>);</div>
+<div class="line"><a id="l00236" name="l00236"></a><span class="lineno">  236</span>    }</div>
+<div class="line"><a id="l00237" name="l00237"></a><span class="lineno">  237</span>    <span class="keywordflow">return</span> result;</div>
+<div class="line"><a id="l00238" name="l00238"></a><span class="lineno">  238</span>}</div>
+</div>
+<div class="line"><a id="l00239" name="l00239"></a><span class="lineno">  239</span> </div>
+<div class="line"><a id="l00240" name="l00240"></a><span class="lineno">  240</span><span class="comment">// ======================= make_leaf函数 =======================</span></div>
+<div class="foldopen" id="foldopen00241" data-start="{" data-end="}">
+<div class="line"><a id="l00241" name="l00241"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a70833ad502f02ce164b8e9e9fb09f99a">  241</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a70833ad502f02ce164b8e9e9fb09f99a">AutoDiff::make_leaf</a>(<a class="code hl_class" href="class_tensor.html">Tensor</a>&amp; t, <span class="keywordtype">bool</span> requires_grad) {</div>
+<div class="line"><a id="l00242" name="l00242"></a><span class="lineno">  242</span>    <span class="keywordtype">size_t</span> <span class="keywordtype">id</span> = t.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>();</div>
+<div class="line"><a id="l00243" name="l00243"></a><span class="lineno">  243</span>    <span class="keywordflow">if</span> (<span class="keywordtype">id</span> == 0) {</div>
+<div class="line"><a id="l00244" name="l00244"></a><span class="lineno">  244</span>        <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;!!! 错误: 尝试注册ID为0的张量&quot;</span>);</div>
+<div class="line"><a id="l00245" name="l00245"></a><span class="lineno">  245</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00246" name="l00246"></a><span class="lineno">  246</span>    }</div>
+<div class="line"><a id="l00247" name="l00247"></a><span class="lineno">  247</span> </div>
+<div class="line"><a id="l00248" name="l00248"></a><span class="lineno">  248</span>    std::ostringstream osss;</div>
+<div class="line"><a id="l00249" name="l00249"></a><span class="lineno">  249</span>    osss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; AutoDiff::make_leaf - 开始, ID: &quot;</span> &lt;&lt; id;</div>
+<div class="line"><a id="l00250" name="l00250"></a><span class="lineno">  250</span> </div>
+<div class="line"><a id="l00251" name="l00251"></a><span class="lineno">  251</span>    std::string msgs = osss.str();</div>
+<div class="line"><a id="l00252" name="l00252"></a><span class="lineno">  252</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgs);</div>
+<div class="line"><a id="l00253" name="l00253"></a><span class="lineno">  253</span>    <a class="code hl_function" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">debug_print_state</a>(<span class="stringliteral">&quot;make_leaf开始前&quot;</span>);</div>
+<div class="line"><a id="l00254" name="l00254"></a><span class="lineno">  254</span>    {</div>
+<div class="line"><a id="l00255" name="l00255"></a><span class="lineno">  255</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00256" name="l00256"></a><span class="lineno">  256</span>        <span class="keywordflow">if</span> (id_to_node.find(<span class="keywordtype">id</span>) != id_to_node.end()) {</div>
+<div class="line"><a id="l00257" name="l00257"></a><span class="lineno">  257</span>            std::ostringstream oss;</div>
+<div class="line"><a id="l00258" name="l00258"></a><span class="lineno">  258</span>            oss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 节点 &quot;</span> &lt;&lt; <span class="keywordtype">id</span> &lt;&lt; <span class="stringliteral">&quot; 已存在，跳过创建&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00259" name="l00259"></a><span class="lineno">  259</span>            std::string msg = oss.str();</div>
+<div class="line"><a id="l00260" name="l00260"></a><span class="lineno">  260</span>            <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00261" name="l00261"></a><span class="lineno">  261</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00262" name="l00262"></a><span class="lineno">  262</span>        }</div>
+<div class="line"><a id="l00263" name="l00263"></a><span class="lineno">  263</span>    }</div>
+<div class="line"><a id="l00264" name="l00264"></a><span class="lineno">  264</span> </div>
+<div class="line"><a id="l00265" name="l00265"></a><span class="lineno">  265</span>    <span class="comment">// 创建节点时不持有锁</span></div>
+<div class="line"><a id="l00266" name="l00266"></a><span class="lineno">  266</span>    <span class="keyword">auto</span> tensor_ptr = std::make_unique&lt;Tensor&gt;(t.<a class="code hl_function" href="class_tensor.html#a57c37df58e2c5f03731df734e946b55c">clone</a>());</div>
+<div class="line"><a id="l00267" name="l00267"></a><span class="lineno">  267</span>    <span class="keyword">auto</span> node = std::make_unique&lt;Node&gt;(<span class="keywordtype">id</span>, std::move(tensor_ptr), requires_grad, <span class="keyword">true</span>);</div>
+<div class="line"><a id="l00268" name="l00268"></a><span class="lineno">  268</span> </div>
+<div class="line"><a id="l00269" name="l00269"></a><span class="lineno">  269</span>    {</div>
+<div class="line"><a id="l00270" name="l00270"></a><span class="lineno">  270</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00271" name="l00271"></a><span class="lineno">  271</span>        id_to_node[id] = std::move(node);</div>
+<div class="line"><a id="l00272" name="l00272"></a><span class="lineno">  272</span>    }</div>
+<div class="line"><a id="l00273" name="l00273"></a><span class="lineno">  273</span> </div>
+<div class="line"><a id="l00274" name="l00274"></a><span class="lineno">  274</span>    std::ostringstream oss;</div>
+<div class="line"><a id="l00275" name="l00275"></a><span class="lineno">  275</span>    oss &lt;&lt; <span class="stringliteral">&quot;&lt;&lt;&lt; AutoDiff::make_leaf - 完成, ID: &quot;</span> &lt;&lt; id;</div>
+<div class="line"><a id="l00276" name="l00276"></a><span class="lineno">  276</span>    std::string msg = oss.str();</div>
+<div class="line"><a id="l00277" name="l00277"></a><span class="lineno">  277</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00278" name="l00278"></a><span class="lineno">  278</span>    <a class="code hl_function" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">debug_print_state</a>(<span class="stringliteral">&quot;make_leaf完成后&quot;</span>);</div>
+<div class="line"><a id="l00279" name="l00279"></a><span class="lineno">  279</span>}</div>
+</div>
+<div class="line"><a id="l00280" name="l00280"></a><span class="lineno">  280</span> </div>
+<div class="line"><a id="l00281" name="l00281"></a><span class="lineno">  281</span><span class="comment">// ======================= 析构函数 =======================</span></div>
+<div class="foldopen" id="foldopen00282" data-start="{" data-end="}">
+<div class="line"><a id="l00282" name="l00282"></a><span class="lineno"><a class="line" href="class_auto_diff.html#abba90ea69c886cd2bcbe9c21f4abd39d">  282</a></span><a class="code hl_function" href="class_auto_diff.html#abba90ea69c886cd2bcbe9c21f4abd39d">AutoDiff::~AutoDiff</a>() {</div>
+<div class="line"><a id="l00283" name="l00283"></a><span class="lineno">  283</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&gt;&gt;&gt; AutoDiff 析构&quot;</span>);</div>
+<div class="line"><a id="l00284" name="l00284"></a><span class="lineno">  284</span>    <span class="comment">// 避免在析构时进行复杂操作</span></div>
+<div class="line"><a id="l00285" name="l00285"></a><span class="lineno">  285</span>    <span class="comment">// 直接清空，不持有锁</span></div>
+<div class="line"><a id="l00286" name="l00286"></a><span class="lineno">  286</span>    id_to_node.clear();</div>
+<div class="line"><a id="l00287" name="l00287"></a><span class="lineno">  287</span>    pending_records.clear();</div>
+<div class="line"><a id="l00288" name="l00288"></a><span class="lineno">  288</span>}</div>
+</div>
+<div class="line"><a id="l00289" name="l00289"></a><span class="lineno">  289</span> </div>
+<div class="line"><a id="l00290" name="l00290"></a><span class="lineno">  290</span><span class="comment">// ======================= defer_record函数 =======================</span></div>
+<div class="foldopen" id="foldopen00291" data-start="{" data-end="}">
+<div class="line"><a id="l00291" name="l00291"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a1889c09406cf332776024cbabe99f1ac">  291</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a1889c09406cf332776024cbabe99f1ac">AutoDiff::defer_record</a>(<span class="keywordtype">size_t</span> output_id, <a class="code hl_enumeration" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a> operation, <span class="keyword">const</span> std::vector&lt;Tensor*&gt;&amp; inputs) {</div>
+<div class="line"><a id="l00292" name="l00292"></a><span class="lineno">  292</span>    std::ostringstream oss;</div>
+<div class="line"><a id="l00293" name="l00293"></a><span class="lineno">  293</span>    oss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 进入 defer_record, output_id: &quot;</span> &lt;&lt; output_id;</div>
+<div class="line"><a id="l00294" name="l00294"></a><span class="lineno">  294</span>    std::string msg = oss.str();</div>
+<div class="line"><a id="l00295" name="l00295"></a><span class="lineno">  295</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msg);</div>
+<div class="line"><a id="l00296" name="l00296"></a><span class="lineno">  296</span>    <span class="keywordflow">if</span> (output_id == 0) {</div>
+<div class="line"><a id="l00297" name="l00297"></a><span class="lineno">  297</span>        <a class="code hl_function" href="class_ctorch___error.html#a4850c089416b2a55a8eed47bd212b91f">Ctorch_Error::log</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277">ErrorLevel::WARN</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7">ErrorType::TENSOR_STATE</a>, <span class="stringliteral">&quot;警告: output_id 为0&quot;</span>);</div>
+<div class="line"><a id="l00298" name="l00298"></a><span class="lineno">  298</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00299" name="l00299"></a><span class="lineno">  299</span>    }</div>
+<div class="line"><a id="l00300" name="l00300"></a><span class="lineno">  300</span> </div>
+<div class="line"><a id="l00301" name="l00301"></a><span class="lineno">  301</span>    <span class="comment">// 创建记录对象（不持有锁）</span></div>
+<div class="line"><a id="l00302" name="l00302"></a><span class="lineno">  302</span>    PendingRecord record;</div>
+<div class="line"><a id="l00303" name="l00303"></a><span class="lineno">  303</span>    record.operation = operation;</div>
+<div class="line"><a id="l00304" name="l00304"></a><span class="lineno">  304</span> </div>
+<div class="line"><a id="l00305" name="l00305"></a><span class="lineno">  305</span>    std::vector&lt;size_t&gt; input_ids;</div>
+<div class="line"><a id="l00306" name="l00306"></a><span class="lineno">  306</span>    std::vector&lt;std::vector&lt;size_t&gt;&gt; input_shapes;</div>
+<div class="line"><a id="l00307" name="l00307"></a><span class="lineno">  307</span> </div>
+<div class="line"><a id="l00308" name="l00308"></a><span class="lineno">  308</span>    <span class="comment">// 收集输入信息（不持有锁）</span></div>
+<div class="line"><a id="l00309" name="l00309"></a><span class="lineno">  309</span>    <span class="keywordflow">for</span> (<a class="code hl_class" href="class_tensor.html">Tensor</a>* input : inputs) {</div>
+<div class="line"><a id="l00310" name="l00310"></a><span class="lineno">  310</span>        <span class="keywordflow">if</span> (input &amp;&amp; input-&gt;id() != 0) {</div>
+<div class="line"><a id="l00311" name="l00311"></a><span class="lineno">  311</span>            input_ids.push_back(input-&gt;id());</div>
+<div class="line"><a id="l00312" name="l00312"></a><span class="lineno">  312</span>            input_shapes.push_back(input-&gt;shape());</div>
+<div class="line"><a id="l00313" name="l00313"></a><span class="lineno">  313</span>            std::ostringstream osss;</div>
+<div class="line"><a id="l00314" name="l00314"></a><span class="lineno">  314</span>            osss &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 处理输入: &quot;</span> &lt;&lt; input-&gt;id();</div>
+<div class="line"><a id="l00315" name="l00315"></a><span class="lineno">  315</span>            std::string msgs = osss.str();</div>
+<div class="line"><a id="l00316" name="l00316"></a><span class="lineno">  316</span>            <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgs);</div>
+<div class="line"><a id="l00317" name="l00317"></a><span class="lineno">  317</span> </div>
+<div class="line"><a id="l00318" name="l00318"></a><span class="lineno">  318</span>            <span class="comment">// 检查是否已注册，避免不必要的锁</span></div>
+<div class="line"><a id="l00319" name="l00319"></a><span class="lineno">  319</span>            <span class="keywordtype">bool</span> needs_registration = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00320" name="l00320"></a><span class="lineno">  320</span>            {</div>
+<div class="line"><a id="l00321" name="l00321"></a><span class="lineno">  321</span>                std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00322" name="l00322"></a><span class="lineno">  322</span>                needs_registration = (id_to_node.find(input-&gt;id()) == id_to_node.end());</div>
+<div class="line"><a id="l00323" name="l00323"></a><span class="lineno">  323</span>            }</div>
+<div class="line"><a id="l00324" name="l00324"></a><span class="lineno">  324</span> </div>
+<div class="line"><a id="l00325" name="l00325"></a><span class="lineno">  325</span>            <span class="keywordflow">if</span> (needs_registration) {</div>
+<div class="line"><a id="l00326" name="l00326"></a><span class="lineno">  326</span>                std::ostringstream ost;</div>
+<div class="line"><a id="l00327" name="l00327"></a><span class="lineno">  327</span>                ost &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 注册叶子节点: &quot;</span> &lt;&lt; input-&gt;id() &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00328" name="l00328"></a><span class="lineno">  328</span>                std::string msgt = ost.str();</div>
+<div class="line"><a id="l00329" name="l00329"></a><span class="lineno">  329</span>                <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, msgt);</div>
+<div class="line"><a id="l00330" name="l00330"></a><span class="lineno">  330</span> </div>
+<div class="line"><a id="l00331" name="l00331"></a><span class="lineno">  331</span>                <a class="code hl_function" href="class_auto_diff.html#a70833ad502f02ce164b8e9e9fb09f99a">make_leaf</a>(*input, input-&gt;requires_grad());</div>
+<div class="line"><a id="l00332" name="l00332"></a><span class="lineno">  332</span>            }</div>
+<div class="line"><a id="l00333" name="l00333"></a><span class="lineno">  333</span>        }</div>
+<div class="line"><a id="l00334" name="l00334"></a><span class="lineno">  334</span>    }</div>
+<div class="line"><a id="l00335" name="l00335"></a><span class="lineno">  335</span> </div>
+<div class="line"><a id="l00336" name="l00336"></a><span class="lineno">  336</span>    <span class="comment">// 现在持有锁并设置记录</span></div>
+<div class="line"><a id="l00337" name="l00337"></a><span class="lineno">  337</span>    {</div>
+<div class="line"><a id="l00338" name="l00338"></a><span class="lineno">  338</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00339" name="l00339"></a><span class="lineno">  339</span>        record.input_ids = input_ids;</div>
+<div class="line"><a id="l00340" name="l00340"></a><span class="lineno">  340</span>        record.input_shapes = input_shapes;</div>
+<div class="line"><a id="l00341" name="l00341"></a><span class="lineno">  341</span>        pending_records[output_id] = record;</div>
+<div class="line"><a id="l00342" name="l00342"></a><span class="lineno">  342</span>    }</div>
+<div class="line"><a id="l00343" name="l00343"></a><span class="lineno">  343</span> </div>
+<div class="line"><a id="l00344" name="l00344"></a><span class="lineno">  344</span>    <a class="code hl_function" href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <span class="stringliteral">&quot;&lt;&lt;&lt; 离开 defer_record&quot;</span>);</div>
+<div class="line"><a id="l00345" name="l00345"></a><span class="lineno">  345</span>}</div>
+</div>
+<div class="line"><a id="l00346" name="l00346"></a><span class="lineno">  346</span> </div>
+<div class="line"><a id="l00347" name="l00347"></a><span class="lineno">  347</span><span class="comment">// ======================= commit_record函数 =======================</span></div>
+<div class="foldopen" id="foldopen00348" data-start="{" data-end="}">
+<div class="line"><a id="l00348" name="l00348"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a7d004fe2ed8fedca5cef3f4a4d42f55e">  348</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a7d004fe2ed8fedca5cef3f4a4d42f55e">AutoDiff::commit_record</a>(<a class="code hl_class" href="class_tensor.html">Tensor</a>&amp; output) {</div>
+<div class="line"><a id="l00349" name="l00349"></a><span class="lineno">  349</span>    <span class="keywordtype">size_t</span> output_id = output.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>();</div>
+<div class="line"><a id="l00350" name="l00350"></a><span class="lineno">  350</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; AutoDiff::commit_record - 开始, ID: &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00351" name="l00351"></a><span class="lineno">  351</span> </div>
+<div class="line"><a id="l00352" name="l00352"></a><span class="lineno">  352</span>    <span class="keywordflow">if</span> (output_id == 0) {</div>
+<div class="line"><a id="l00353" name="l00353"></a><span class="lineno">  353</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 错误: 输出ID为0&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00354" name="l00354"></a><span class="lineno">  354</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00355" name="l00355"></a><span class="lineno">  355</span>    }</div>
+<div class="line"><a id="l00356" name="l00356"></a><span class="lineno">  356</span> </div>
+<div class="line"><a id="l00357" name="l00357"></a><span class="lineno">  357</span>    <a class="code hl_function" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">debug_print_state</a>(<span class="stringliteral">&quot;commit_record开始前&quot;</span>);</div>
+<div class="line"><a id="l00358" name="l00358"></a><span class="lineno">  358</span> </div>
+<div class="line"><a id="l00359" name="l00359"></a><span class="lineno">  359</span>    <span class="comment">// 第一步：收集必要信息（持有锁，但时间很短）</span></div>
+<div class="line"><a id="l00360" name="l00360"></a><span class="lineno">  360</span>    PendingRecord record_copy;</div>
+<div class="line"><a id="l00361" name="l00361"></a><span class="lineno">  361</span>    std::vector&lt;size_t&gt; input_ids_copy;</div>
+<div class="line"><a id="l00362" name="l00362"></a><span class="lineno">  362</span>    <span class="keywordtype">bool</span> should_create_node = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00363" name="l00363"></a><span class="lineno">  363</span> </div>
+<div class="line"><a id="l00364" name="l00364"></a><span class="lineno">  364</span>    {</div>
+<div class="line"><a id="l00365" name="l00365"></a><span class="lineno">  365</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00366" name="l00366"></a><span class="lineno">  366</span> </div>
+<div class="line"><a id="l00367" name="l00367"></a><span class="lineno">  367</span>        <span class="keyword">auto</span> it = pending_records.find(output_id);</div>
+<div class="line"><a id="l00368" name="l00368"></a><span class="lineno">  368</span>        <span class="keywordflow">if</span> (it == pending_records.end()) {</div>
+<div class="line"><a id="l00369" name="l00369"></a><span class="lineno">  369</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 警告: 找不到待处理记录 &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00370" name="l00370"></a><span class="lineno">  370</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00371" name="l00371"></a><span class="lineno">  371</span>        }</div>
+<div class="line"><a id="l00372" name="l00372"></a><span class="lineno">  372</span> </div>
+<div class="line"><a id="l00373" name="l00373"></a><span class="lineno">  373</span>        PendingRecord&amp; record = it-&gt;second;</div>
+<div class="line"><a id="l00374" name="l00374"></a><span class="lineno">  374</span>        <span class="keywordflow">if</span> (record.committed) {</div>
+<div class="line"><a id="l00375" name="l00375"></a><span class="lineno">  375</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 记录 &quot;</span> &lt;&lt; output_id &lt;&lt; <span class="stringliteral">&quot; 已提交，跳过&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00376" name="l00376"></a><span class="lineno">  376</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00377" name="l00377"></a><span class="lineno">  377</span>        }</div>
+<div class="line"><a id="l00378" name="l00378"></a><span class="lineno">  378</span> </div>
+<div class="line"><a id="l00379" name="l00379"></a><span class="lineno">  379</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 开始提交记录 &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00380" name="l00380"></a><span class="lineno">  380</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 操作类型: &quot;</span> &lt;&lt; <span class="keyword">static_cast&lt;</span><span class="keywordtype">int</span><span class="keyword">&gt;</span>(record.operation) &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00381" name="l00381"></a><span class="lineno">  381</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 输入IDs: &quot;</span>;</div>
+<div class="line"><a id="l00382" name="l00382"></a><span class="lineno">  382</span>        <span class="keywordflow">for</span> (<span class="keyword">auto</span> <span class="keywordtype">id</span> : record.input_ids) std::cout &lt;&lt; <span class="keywordtype">id</span> &lt;&lt; <span class="stringliteral">&quot; &quot;</span>;</div>
+<div class="line"><a id="l00383" name="l00383"></a><span class="lineno">  383</span>        std::cout &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00384" name="l00384"></a><span class="lineno">  384</span> </div>
+<div class="line"><a id="l00385" name="l00385"></a><span class="lineno">  385</span>        <span class="comment">// 验证输入节点</span></div>
+<div class="line"><a id="l00386" name="l00386"></a><span class="lineno">  386</span>        <span class="keywordtype">bool</span> valid = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00387" name="l00387"></a><span class="lineno">  387</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> input_id : record.input_ids) {</div>
+<div class="line"><a id="l00388" name="l00388"></a><span class="lineno">  388</span>            <span class="keywordflow">if</span> (id_to_node.find(input_id) == id_to_node.end()) {</div>
+<div class="line"><a id="l00389" name="l00389"></a><span class="lineno">  389</span>                std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 错误: 输入节点 &quot;</span> &lt;&lt; input_id &lt;&lt; <span class="stringliteral">&quot; 不存在&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00390" name="l00390"></a><span class="lineno">  390</span>                valid = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00391" name="l00391"></a><span class="lineno">  391</span>                <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00392" name="l00392"></a><span class="lineno">  392</span>            } <span class="keywordflow">else</span> {</div>
+<div class="line"><a id="l00393" name="l00393"></a><span class="lineno">  393</span>                std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 输入节点 &quot;</span> &lt;&lt; input_id &lt;&lt; <span class="stringliteral">&quot; 存在&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00394" name="l00394"></a><span class="lineno">  394</span>            }</div>
+<div class="line"><a id="l00395" name="l00395"></a><span class="lineno">  395</span>        }</div>
+<div class="line"><a id="l00396" name="l00396"></a><span class="lineno">  396</span> </div>
+<div class="line"><a id="l00397" name="l00397"></a><span class="lineno">  397</span>        <span class="keywordflow">if</span> (!valid) {</div>
+<div class="line"><a id="l00398" name="l00398"></a><span class="lineno">  398</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 记录验证失败，清除记录 &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00399" name="l00399"></a><span class="lineno">  399</span>            pending_records.erase(it);</div>
+<div class="line"><a id="l00400" name="l00400"></a><span class="lineno">  400</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00401" name="l00401"></a><span class="lineno">  401</span>        }</div>
+<div class="line"><a id="l00402" name="l00402"></a><span class="lineno">  402</span> </div>
+<div class="line"><a id="l00403" name="l00403"></a><span class="lineno">  403</span>        <span class="comment">// 复制必要信息，然后释放锁</span></div>
+<div class="line"><a id="l00404" name="l00404"></a><span class="lineno">  404</span>        record_copy = record;</div>
+<div class="line"><a id="l00405" name="l00405"></a><span class="lineno">  405</span>        input_ids_copy = record.input_ids;</div>
+<div class="line"><a id="l00406" name="l00406"></a><span class="lineno">  406</span>        should_create_node = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00407" name="l00407"></a><span class="lineno">  407</span> </div>
+<div class="line"><a id="l00408" name="l00408"></a><span class="lineno">  408</span>        <span class="comment">// 立即标记为已提交，避免重复处理</span></div>
+<div class="line"><a id="l00409" name="l00409"></a><span class="lineno">  409</span>        record.committed = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00410" name="l00410"></a><span class="lineno">  410</span>    } <span class="comment">// 释放锁</span></div>
+<div class="line"><a id="l00411" name="l00411"></a><span class="lineno">  411</span> </div>
+<div class="line"><a id="l00412" name="l00412"></a><span class="lineno">  412</span>    <span class="comment">// 第二步：在锁外创建节点（避免死锁）</span></div>
+<div class="line"><a id="l00413" name="l00413"></a><span class="lineno">  413</span>    <span class="keywordflow">if</span> (should_create_node) {</div>
+<div class="line"><a id="l00414" name="l00414"></a><span class="lineno">  414</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 在锁外创建操作节点 &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00415" name="l00415"></a><span class="lineno">  415</span> </div>
+<div class="line"><a id="l00416" name="l00416"></a><span class="lineno">  416</span>        <span class="comment">// 确定梯度需求（在锁外检查）</span></div>
+<div class="line"><a id="l00417" name="l00417"></a><span class="lineno">  417</span>        <span class="keywordtype">bool</span> requires_grad = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00418" name="l00418"></a><span class="lineno">  418</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> input_id : input_ids_copy) {</div>
+<div class="line"><a id="l00419" name="l00419"></a><span class="lineno">  419</span>            Node* input_node = get_node_by_id(input_id);</div>
+<div class="line"><a id="l00420" name="l00420"></a><span class="lineno">  420</span>            <span class="keywordflow">if</span> (input_node &amp;&amp; input_node-&gt;requires_grad) {</div>
+<div class="line"><a id="l00421" name="l00421"></a><span class="lineno">  421</span>                requires_grad = <span class="keyword">true</span>;</div>
+<div class="line"><a id="l00422" name="l00422"></a><span class="lineno">  422</span>                <span class="keywordflow">break</span>;</div>
+<div class="line"><a id="l00423" name="l00423"></a><span class="lineno">  423</span>            }</div>
+<div class="line"><a id="l00424" name="l00424"></a><span class="lineno">  424</span>        }</div>
+<div class="line"><a id="l00425" name="l00425"></a><span class="lineno">  425</span> </div>
+<div class="line"><a id="l00426" name="l00426"></a><span class="lineno">  426</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 节点 &quot;</span> &lt;&lt; output_id &lt;&lt; <span class="stringliteral">&quot; 需要梯度: &quot;</span> &lt;&lt; requires_grad &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00427" name="l00427"></a><span class="lineno">  427</span> </div>
+<div class="line"><a id="l00428" name="l00428"></a><span class="lineno">  428</span>        <span class="comment">// 创建节点（不持有锁）</span></div>
+<div class="line"><a id="l00429" name="l00429"></a><span class="lineno">  429</span>        <span class="keyword">auto</span> tensor_ptr = std::make_unique&lt;Tensor&gt;(output.<a class="code hl_function" href="class_tensor.html#a57c37df58e2c5f03731df734e946b55c">clone</a>());</div>
+<div class="line"><a id="l00430" name="l00430"></a><span class="lineno">  430</span>        <span class="keyword">auto</span> output_node = std::make_unique&lt;Node&gt;(output_id, std::move(tensor_ptr), requires_grad, <span class="keyword">false</span>);</div>
+<div class="line"><a id="l00431" name="l00431"></a><span class="lineno">  431</span>        output_node-&gt;operation = record_copy.operation;</div>
+<div class="line"><a id="l00432" name="l00432"></a><span class="lineno">  432</span>        output_node-&gt;input_ids = input_ids_copy;</div>
+<div class="line"><a id="l00433" name="l00433"></a><span class="lineno">  433</span> </div>
+<div class="line"><a id="l00434" name="l00434"></a><span class="lineno">  434</span>        <span class="comment">// 延迟创建梯度存储</span></div>
+<div class="line"><a id="l00435" name="l00435"></a><span class="lineno">  435</span>        <span class="keywordflow">if</span> (requires_grad) {</div>
+<div class="line"><a id="l00436" name="l00436"></a><span class="lineno">  436</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 为节点 &quot;</span> &lt;&lt; output_id &lt;&lt; <span class="stringliteral">&quot; 延迟分配梯度存储&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00437" name="l00437"></a><span class="lineno">  437</span>            <span class="comment">// 注意：不在构造函数中创建 grad，避免死锁</span></div>
+<div class="line"><a id="l00438" name="l00438"></a><span class="lineno">  438</span>        }</div>
+<div class="line"><a id="l00439" name="l00439"></a><span class="lineno">  439</span> </div>
+<div class="line"><a id="l00440" name="l00440"></a><span class="lineno">  440</span>        <span class="comment">// 第三步：重新加锁，快速插入节点</span></div>
+<div class="line"><a id="l00441" name="l00441"></a><span class="lineno">  441</span>        {</div>
+<div class="line"><a id="l00442" name="l00442"></a><span class="lineno">  442</span>            std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00443" name="l00443"></a><span class="lineno">  443</span>            id_to_node[output_id] = std::move(output_node);</div>
+<div class="line"><a id="l00444" name="l00444"></a><span class="lineno">  444</span> </div>
+<div class="line"><a id="l00445" name="l00445"></a><span class="lineno">  445</span>            <span class="comment">// 清理已提交的记录</span></div>
+<div class="line"><a id="l00446" name="l00446"></a><span class="lineno">  446</span>            <span class="keyword">auto</span> it = pending_records.find(output_id);</div>
+<div class="line"><a id="l00447" name="l00447"></a><span class="lineno">  447</span>            <span class="keywordflow">if</span> (it != pending_records.end() &amp;&amp; it-&gt;second.committed) {</div>
+<div class="line"><a id="l00448" name="l00448"></a><span class="lineno">  448</span>                pending_records.erase(it);</div>
+<div class="line"><a id="l00449" name="l00449"></a><span class="lineno">  449</span>            }</div>
+<div class="line"><a id="l00450" name="l00450"></a><span class="lineno">  450</span>        }</div>
+<div class="line"><a id="l00451" name="l00451"></a><span class="lineno">  451</span> </div>
+<div class="line"><a id="l00452" name="l00452"></a><span class="lineno">  452</span>        std::cout &lt;&lt; <span class="stringliteral">&quot;&lt;&lt;&lt; 记录提交完成 &quot;</span> &lt;&lt; output_id &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00453" name="l00453"></a><span class="lineno">  453</span>        <a class="code hl_function" href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">debug_print_state</a>(<span class="stringliteral">&quot;commit_record完成后&quot;</span>);</div>
+<div class="line"><a id="l00454" name="l00454"></a><span class="lineno">  454</span>    }</div>
+<div class="line"><a id="l00455" name="l00455"></a><span class="lineno">  455</span>}</div>
+</div>
+<div class="line"><a id="l00456" name="l00456"></a><span class="lineno">  456</span> </div>
+<div class="line"><a id="l00457" name="l00457"></a><span class="lineno">  457</span><span class="comment">// ======================= update_requires_grad函数 =======================</span></div>
+<div class="foldopen" id="foldopen00458" data-start="{" data-end="}">
+<div class="line"><a id="l00458" name="l00458"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a3e2ee312526b9024a0f966c2627284ae">  458</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a3e2ee312526b9024a0f966c2627284ae">AutoDiff::update_requires_grad</a>(<a class="code hl_class" href="class_tensor.html">Tensor</a>&amp; t, <span class="keywordtype">bool</span> requires_grad) {</div>
+<div class="line"><a id="l00459" name="l00459"></a><span class="lineno">  459</span>    <span class="keywordtype">size_t</span> <span class="keywordtype">id</span> = t.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>();</div>
+<div class="line"><a id="l00460" name="l00460"></a><span class="lineno">  460</span>    <span class="keywordflow">if</span> (<span class="keywordtype">id</span> == 0) <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00461" name="l00461"></a><span class="lineno">  461</span> </div>
+<div class="line"><a id="l00462" name="l00462"></a><span class="lineno">  462</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 更新梯度需求: &quot;</span> &lt;&lt; <span class="keywordtype">id</span> &lt;&lt; <span class="stringliteral">&quot; -&gt; &quot;</span> &lt;&lt; requires_grad &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00463" name="l00463"></a><span class="lineno">  463</span> </div>
+<div class="line"><a id="l00464" name="l00464"></a><span class="lineno">  464</span>    <span class="comment">// 使用更短的锁作用域</span></div>
+<div class="line"><a id="l00465" name="l00465"></a><span class="lineno">  465</span>    {</div>
+<div class="line"><a id="l00466" name="l00466"></a><span class="lineno">  466</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00467" name="l00467"></a><span class="lineno">  467</span>        <span class="keyword">auto</span> it = id_to_node.find(<span class="keywordtype">id</span>);</div>
+<div class="line"><a id="l00468" name="l00468"></a><span class="lineno">  468</span>        <span class="keywordflow">if</span> (it != id_to_node.end() &amp;&amp; it-&gt;second) {</div>
+<div class="line"><a id="l00469" name="l00469"></a><span class="lineno">  469</span>            it-&gt;second-&gt;requires_grad = requires_grad;</div>
+<div class="line"><a id="l00470" name="l00470"></a><span class="lineno">  470</span>            <span class="keywordflow">if</span> (requires_grad) {</div>
+<div class="line"><a id="l00471" name="l00471"></a><span class="lineno">  471</span>                <span class="keywordflow">if</span> (!it-&gt;second-&gt;grad) {</div>
+<div class="line"><a id="l00472" name="l00472"></a><span class="lineno">  472</span>                    it-&gt;second-&gt;grad = std::make_unique&lt;Tensor&gt;(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, t.<a class="code hl_function" href="class_tensor.html#a862c66fb2e11307dfa2e094f24ccf231">sizes</a>(), t.<a class="code hl_function" href="class_tensor.html#ab22ae7947bd71b2fb9b880171f3d356e">dtype</a>(), t.<a class="code hl_function" href="class_tensor.html#aaa2a3a00912a4685de301b4adeb23d4c">device</a>());</div>
+<div class="line"><a id="l00473" name="l00473"></a><span class="lineno">  473</span>                    it-&gt;second-&gt;grad-&gt;zero();</div>
+<div class="line"><a id="l00474" name="l00474"></a><span class="lineno">  474</span>                }</div>
+<div class="line"><a id="l00475" name="l00475"></a><span class="lineno">  475</span>            }</div>
+<div class="line"><a id="l00476" name="l00476"></a><span class="lineno">  476</span>        } <span class="keywordflow">else</span> {</div>
+<div class="line"><a id="l00477" name="l00477"></a><span class="lineno">  477</span>            <span class="comment">// 如果节点不存在，可能需要创建它</span></div>
+<div class="line"><a id="l00478" name="l00478"></a><span class="lineno">  478</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 节点不存在，可能需要创建: &quot;</span> &lt;&lt; <span class="keywordtype">id</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00479" name="l00479"></a><span class="lineno">  479</span>        }</div>
+<div class="line"><a id="l00480" name="l00480"></a><span class="lineno">  480</span>    }</div>
+<div class="line"><a id="l00481" name="l00481"></a><span class="lineno">  481</span> </div>
+<div class="line"><a id="l00482" name="l00482"></a><span class="lineno">  482</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&lt;&lt;&lt; 更新梯度需求完成&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00483" name="l00483"></a><span class="lineno">  483</span>}</div>
+</div>
+<div class="line"><a id="l00484" name="l00484"></a><span class="lineno">  484</span> </div>
+<div class="line"><a id="l00485" name="l00485"></a><span class="lineno">  485</span><span class="comment">// ======================= set_retain_graph函数 =======================</span></div>
+<div class="foldopen" id="foldopen00486" data-start="{" data-end="}">
+<div class="line"><a id="l00486" name="l00486"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a4fc62a838bd4f63cb7ca50866a8aed69">  486</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a4fc62a838bd4f63cb7ca50866a8aed69">AutoDiff::set_retain_graph</a>(<span class="keywordtype">bool</span> retain) {</div>
+<div class="line"><a id="l00487" name="l00487"></a><span class="lineno">  487</span>    retain_graph = retain;</div>
+<div class="line"><a id="l00488" name="l00488"></a><span class="lineno">  488</span>}</div>
+</div>
+<div class="line"><a id="l00489" name="l00489"></a><span class="lineno">  489</span> </div>
+<div class="line"><a id="l00490" name="l00490"></a><span class="lineno">  490</span><span class="comment">// ======================= backward函数（版本1） =======================</span></div>
+<div class="foldopen" id="foldopen00491" data-start="{" data-end="}">
+<div class="line"><a id="l00491" name="l00491"></a><span class="lineno"><a class="line" href="class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8">  491</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8">AutoDiff::backward</a>(<a class="code hl_class" href="class_tensor.html">Tensor</a>&amp; root) {</div>
+<div class="line"><a id="l00492" name="l00492"></a><span class="lineno">  492</span>    <span class="comment">// 创建值为1的Tensor，但不使用AutoDiff上下文</span></div>
+<div class="line"><a id="l00493" name="l00493"></a><span class="lineno">  493</span>    <a class="code hl_class" href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a> guard(<span class="keyword">nullptr</span>); <span class="comment">// 临时禁用AutoDiff上下文</span></div>
+<div class="line"><a id="l00494" name="l00494"></a><span class="lineno">  494</span>    <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_output(1.0f);</div>
+<div class="line"><a id="l00495" name="l00495"></a><span class="lineno">  495</span>    <a class="code hl_function" href="class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8">backward</a>(root, grad_output);</div>
+<div class="line"><a id="l00496" name="l00496"></a><span class="lineno">  496</span>}</div>
+</div>
+<div class="line"><a id="l00497" name="l00497"></a><span class="lineno">  497</span> </div>
+<div class="line"><a id="l00498" name="l00498"></a><span class="lineno">  498</span><span class="comment">// ======================= backward函数（版本2） =======================</span></div>
+<div class="foldopen" id="foldopen00499" data-start="{" data-end="}">
+<div class="line"><a id="l00499" name="l00499"></a><span class="lineno"><a class="line" href="class_auto_diff.html#ad4b0748277a25d269c2009c9b7848223">  499</a></span><span class="keywordtype">void</span> <a class="code hl_function" href="class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8">AutoDiff::backward</a>(<a class="code hl_class" href="class_tensor.html">Tensor</a>&amp; root, <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_output) {</div>
+<div class="line"><a id="l00500" name="l00500"></a><span class="lineno">  500</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; =========================================&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00501" name="l00501"></a><span class="lineno">  501</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 进入 backward 函数，root ID: &quot;</span> &lt;&lt; root.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>() &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00502" name="l00502"></a><span class="lineno">  502</span> </div>
+<div class="line"><a id="l00503" name="l00503"></a><span class="lineno">  503</span>    <span class="keywordflow">if</span> (root.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>() == 0) {</div>
+<div class="line"><a id="l00504" name="l00504"></a><span class="lineno">  504</span>        <a class="code hl_function" href="class_ctorch___error.html#ad21308b712af0daeb257141d65101594">Ctorch_Error::throwException</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7">ErrorType::TENSOR_STATE</a>, <span class="stringliteral">&quot;反向传播的无效根张量 (ID为0)&quot;</span>);</div>
+<div class="line"><a id="l00505" name="l00505"></a><span class="lineno">  505</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00506" name="l00506"></a><span class="lineno">  506</span>    }</div>
+<div class="line"><a id="l00507" name="l00507"></a><span class="lineno">  507</span> </div>
+<div class="line"><a id="l00508" name="l00508"></a><span class="lineno">  508</span>    <span class="comment">// 阶段1：准备阶段（不持有锁）</span></div>
+<div class="line"><a id="l00509" name="l00509"></a><span class="lineno">  509</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 阶段1: 准备阶段&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00510" name="l00510"></a><span class="lineno">  510</span> </div>
+<div class="line"><a id="l00511" name="l00511"></a><span class="lineno">  511</span>    <span class="comment">// 阶段2：验证阶段和设置根节点梯度</span></div>
+<div class="line"><a id="l00512" name="l00512"></a><span class="lineno">  512</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 阶段2: 验证和设置根节点梯度&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00513" name="l00513"></a><span class="lineno">  513</span>    Node* root_node = <span class="keyword">nullptr</span>;</div>
+<div class="line"><a id="l00514" name="l00514"></a><span class="lineno">  514</span>    <span class="keywordtype">bool</span> root_requires_grad = <span class="keyword">false</span>;</div>
+<div class="line"><a id="l00515" name="l00515"></a><span class="lineno">  515</span>    std::vector&lt;size_t&gt; root_shape;</div>
+<div class="line"><a id="l00516" name="l00516"></a><span class="lineno">  516</span> </div>
+<div class="line"><a id="l00517" name="l00517"></a><span class="lineno">  517</span>    {</div>
+<div class="line"><a id="l00518" name="l00518"></a><span class="lineno">  518</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00519" name="l00519"></a><span class="lineno">  519</span>        <span class="keyword">auto</span> it = id_to_node.find(root.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>());</div>
+<div class="line"><a id="l00520" name="l00520"></a><span class="lineno">  520</span>        <span class="keywordflow">if</span> (it == id_to_node.end() || !it-&gt;second) {</div>
+<div class="line"><a id="l00521" name="l00521"></a><span class="lineno">  521</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 错误: 找不到根节点 &quot;</span> &lt;&lt; root.<a class="code hl_function" href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">id</a>() &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00522" name="l00522"></a><span class="lineno">  522</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00523" name="l00523"></a><span class="lineno">  523</span>        }</div>
+<div class="line"><a id="l00524" name="l00524"></a><span class="lineno">  524</span>        root_node = it-&gt;second.get();</div>
+<div class="line"><a id="l00525" name="l00525"></a><span class="lineno">  525</span>        root_requires_grad = root_node-&gt;requires_grad;</div>
+<div class="line"><a id="l00526" name="l00526"></a><span class="lineno">  526</span>        root_shape = root.<a class="code hl_function" href="class_tensor.html#a862c66fb2e11307dfa2e094f24ccf231">sizes</a>();</div>
+<div class="line"><a id="l00527" name="l00527"></a><span class="lineno">  527</span> </div>
+<div class="line"><a id="l00528" name="l00528"></a><span class="lineno">  528</span>        <span class="keywordflow">if</span> (!root_requires_grad) {</div>
+<div class="line"><a id="l00529" name="l00529"></a><span class="lineno">  529</span>            std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 根节点不需要梯度，跳过反向传播&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00530" name="l00530"></a><span class="lineno">  530</span>            <span class="keywordflow">return</span>;</div>
+<div class="line"><a id="l00531" name="l00531"></a><span class="lineno">  531</span>        }</div>
+<div class="line"><a id="l00532" name="l00532"></a><span class="lineno">  532</span> </div>
+<div class="line"><a id="l00533" name="l00533"></a><span class="lineno">  533</span>        <span class="comment">// 设置根节点梯度</span></div>
+<div class="line"><a id="l00534" name="l00534"></a><span class="lineno">  534</span>        <span class="keywordflow">if</span> (!root_node-&gt;grad) {</div>
+<div class="line"><a id="l00535" name="l00535"></a><span class="lineno">  535</span>            root_node-&gt;grad = std::make_unique&lt;Tensor&gt;(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, root_shape, root.<a class="code hl_function" href="class_tensor.html#ab22ae7947bd71b2fb9b880171f3d356e">dtype</a>(), root.<a class="code hl_function" href="class_tensor.html#aaa2a3a00912a4685de301b4adeb23d4c">device</a>());</div>
+<div class="line"><a id="l00536" name="l00536"></a><span class="lineno">  536</span>        }</div>
+<div class="line"><a id="l00537" name="l00537"></a><span class="lineno">  537</span>        *root_node-&gt;grad = grad_output;</div>
+<div class="line"><a id="l00538" name="l00538"></a><span class="lineno">  538</span>    }</div>
+<div class="line"><a id="l00539" name="l00539"></a><span class="lineno">  539</span> </div>
+<div class="line"><a id="l00540" name="l00540"></a><span class="lineno">  540</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 根节点需要梯度，开始反向传播&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00541" name="l00541"></a><span class="lineno">  541</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 根节点形状: &quot;</span> &lt;&lt; root_shape.size() &lt;&lt; <span class="stringliteral">&quot;D&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00542" name="l00542"></a><span class="lineno">  542</span> </div>
+<div class="line"><a id="l00543" name="l00543"></a><span class="lineno">  543</span>    <span class="comment">// 阶段3：反向传播（实现实际的梯度计算）</span></div>
+<div class="line"><a id="l00544" name="l00544"></a><span class="lineno">  544</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 阶段3: 反向传播计算&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00545" name="l00545"></a><span class="lineno">  545</span>    </div>
+<div class="line"><a id="l00546" name="l00546"></a><span class="lineno">  546</span>    <span class="comment">// 只处理标量情况</span></div>
+<div class="line"><a id="l00547" name="l00547"></a><span class="lineno">  547</span>    <span class="keywordflow">if</span> (root_shape.empty()) {</div>
+<div class="line"><a id="l00548" name="l00548"></a><span class="lineno">  548</span>        std::lock_guard&lt;std::mutex&gt; lock(records_mutex);</div>
+<div class="line"><a id="l00549" name="l00549"></a><span class="lineno">  549</span>        </div>
+<div class="line"><a id="l00550" name="l00550"></a><span class="lineno">  550</span>        <span class="comment">// 1. 收集所有节点到一个向量中</span></div>
+<div class="line"><a id="l00551" name="l00551"></a><span class="lineno">  551</span>        std::vector&lt;Node*&gt; all_nodes;</div>
+<div class="line"><a id="l00552" name="l00552"></a><span class="lineno">  552</span>        <span class="keywordflow">for</span> (<span class="keyword">auto</span>&amp; [<span class="keywordtype">id</span>, node_ptr] : id_to_node) {</div>
+<div class="line"><a id="l00553" name="l00553"></a><span class="lineno">  553</span>            <span class="keywordflow">if</span> (node_ptr) {</div>
+<div class="line"><a id="l00554" name="l00554"></a><span class="lineno">  554</span>                all_nodes.push_back(node_ptr.get());</div>
+<div class="line"><a id="l00555" name="l00555"></a><span class="lineno">  555</span>            }</div>
+<div class="line"><a id="l00556" name="l00556"></a><span class="lineno">  556</span>        }</div>
+<div class="line"><a id="l00557" name="l00557"></a><span class="lineno">  557</span>        </div>
+<div class="line"><a id="l00558" name="l00558"></a><span class="lineno">  558</span>        <span class="comment">// 2. 按节点ID逆序排序 - 因为更高的ID对应更晚创建的节点，符合反向传播顺序</span></div>
+<div class="line"><a id="l00559" name="l00559"></a><span class="lineno">  559</span>        std::sort(all_nodes.begin(), all_nodes.end(), [](Node* a, Node* b) {</div>
+<div class="line"><a id="l00560" name="l00560"></a><span class="lineno">  560</span>            return a-&gt;tensor_id &gt; b-&gt;tensor_id;</div>
+<div class="line"><a id="l00561" name="l00561"></a><span class="lineno">  561</span>        });</div>
+<div class="line"><a id="l00562" name="l00562"></a><span class="lineno">  562</span>        </div>
+<div class="line"><a id="l00563" name="l00563"></a><span class="lineno">  563</span>        <span class="comment">// 3. 处理每个节点，传播梯度到输入节点</span></div>
+<div class="line"><a id="l00564" name="l00564"></a><span class="lineno">  564</span>        <span class="keywordflow">for</span> (Node* node : all_nodes) {</div>
+<div class="line"><a id="l00565" name="l00565"></a><span class="lineno">  565</span>            <span class="comment">// 跳过不需要梯度的节点</span></div>
+<div class="line"><a id="l00566" name="l00566"></a><span class="lineno">  566</span>            <span class="keywordflow">if</span> (!node-&gt;requires_grad) {</div>
+<div class="line"><a id="l00567" name="l00567"></a><span class="lineno">  567</span>                <span class="keywordflow">continue</span>;</div>
+<div class="line"><a id="l00568" name="l00568"></a><span class="lineno">  568</span>            }</div>
+<div class="line"><a id="l00569" name="l00569"></a><span class="lineno">  569</span>            </div>
+<div class="line"><a id="l00570" name="l00570"></a><span class="lineno">  570</span>            <span class="comment">// 计算梯度并传播到输入节点</span></div>
+<div class="line"><a id="l00571" name="l00571"></a><span class="lineno">  571</span>            <span class="keywordflow">if</span> (node-&gt;grad) {</div>
+<div class="line"><a id="l00572" name="l00572"></a><span class="lineno">  572</span>                <span class="keywordtype">float</span> grad_val = node-&gt;grad-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00573" name="l00573"></a><span class="lineno">  573</span>                </div>
+<div class="line"><a id="l00574" name="l00574"></a><span class="lineno">  574</span>                <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> input_id : node-&gt;input_ids) {</div>
+<div class="line"><a id="l00575" name="l00575"></a><span class="lineno">  575</span>                    <span class="keyword">auto</span> input_it = id_to_node.find(input_id);</div>
+<div class="line"><a id="l00576" name="l00576"></a><span class="lineno">  576</span>                    <span class="keywordflow">if</span> (input_it != id_to_node.end() &amp;&amp; input_it-&gt;second &amp;&amp; input_it-&gt;second-&gt;requires_grad) {</div>
+<div class="line"><a id="l00577" name="l00577"></a><span class="lineno">  577</span>                        <span class="keyword">auto</span>&amp; input_node = *input_it-&gt;second;</div>
+<div class="line"><a id="l00578" name="l00578"></a><span class="lineno">  578</span>                        </div>
+<div class="line"><a id="l00579" name="l00579"></a><span class="lineno">  579</span>                        <span class="comment">// 初始化输入节点的梯度</span></div>
+<div class="line"><a id="l00580" name="l00580"></a><span class="lineno">  580</span>                        <span class="keywordflow">if</span> (!input_node.grad) {</div>
+<div class="line"><a id="l00581" name="l00581"></a><span class="lineno">  581</span>                            input_node.grad = std::make_unique&lt;Tensor&gt;(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, input_node.tensor-&gt;sizes(), input_node.tensor-&gt;dtype(), input_node.tensor-&gt;device());</div>
+<div class="line"><a id="l00582" name="l00582"></a><span class="lineno">  582</span>                            input_node.grad-&gt;zero();</div>
+<div class="line"><a id="l00583" name="l00583"></a><span class="lineno">  583</span>                        }</div>
+<div class="line"><a id="l00584" name="l00584"></a><span class="lineno">  584</span>                        </div>
+<div class="line"><a id="l00585" name="l00585"></a><span class="lineno">  585</span>                        <span class="comment">// 根据操作类型计算梯度</span></div>
+<div class="line"><a id="l00586" name="l00586"></a><span class="lineno">  586</span>                        <span class="keywordtype">float</span> input_grad_val = 0.0f;</div>
+<div class="line"><a id="l00587" name="l00587"></a><span class="lineno">  587</span>                        </div>
+<div class="line"><a id="l00588" name="l00588"></a><span class="lineno">  588</span>                        <span class="comment">// 处理不同操作类型</span></div>
+<div class="line"><a id="l00589" name="l00589"></a><span class="lineno">  589</span>                        <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9">op::Add</a>) {</div>
+<div class="line"><a id="l00590" name="l00590"></a><span class="lineno">  590</span>                            <span class="comment">// ∂(a+b)/∂a = 1, ∂(a+b)/∂b = 1</span></div>
+<div class="line"><a id="l00591" name="l00591"></a><span class="lineno">  591</span>                            input_grad_val = grad_val;</div>
+<div class="line"><a id="l00592" name="l00592"></a><span class="lineno">  592</span>                        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2">op::Sub</a>) {</div>
+<div class="line"><a id="l00593" name="l00593"></a><span class="lineno">  593</span>                            <span class="comment">// 第一个输入是a，第二个是b，∂(a-b)/∂a = 1, ∂(a-b)/∂b = -1</span></div>
+<div class="line"><a id="l00594" name="l00594"></a><span class="lineno">  594</span>                            input_grad_val = grad_val * (input_id == node-&gt;input_ids[0] ? 1.0f : -1.0f);</div>
+<div class="line"><a id="l00595" name="l00595"></a><span class="lineno">  595</span>                        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2">op::Mul</a>) {</div>
+<div class="line"><a id="l00596" name="l00596"></a><span class="lineno">  596</span>                            <span class="comment">// 找到另一个输入张量</span></div>
+<div class="line"><a id="l00597" name="l00597"></a><span class="lineno">  597</span>                            <span class="keywordtype">size_t</span> other_input_id = (input_id == node-&gt;input_ids[0]) ? node-&gt;input_ids[1] : node-&gt;input_ids[0];</div>
+<div class="line"><a id="l00598" name="l00598"></a><span class="lineno">  598</span>                            <span class="keyword">auto</span> other_it = id_to_node.find(other_input_id);</div>
+<div class="line"><a id="l00599" name="l00599"></a><span class="lineno">  599</span>                            <span class="keywordflow">if</span> (other_it != id_to_node.end() &amp;&amp; other_it-&gt;second) {</div>
+<div class="line"><a id="l00600" name="l00600"></a><span class="lineno">  600</span>                                input_grad_val = grad_val * other_it-&gt;second-&gt;tensor-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00601" name="l00601"></a><span class="lineno">  601</span>                            }</div>
+<div class="line"><a id="l00602" name="l00602"></a><span class="lineno">  602</span>                        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a">op::Div</a>) {</div>
+<div class="line"><a id="l00603" name="l00603"></a><span class="lineno">  603</span>                            <span class="comment">// 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)</span></div>
+<div class="line"><a id="l00604" name="l00604"></a><span class="lineno">  604</span>                            <span class="keywordflow">if</span> (input_id == node-&gt;input_ids[0]) {</div>
+<div class="line"><a id="l00605" name="l00605"></a><span class="lineno">  605</span>                                <span class="comment">// ∂(a/b)/∂a = 1/b</span></div>
+<div class="line"><a id="l00606" name="l00606"></a><span class="lineno">  606</span>                                <span class="keywordtype">size_t</span> b_id = node-&gt;input_ids[1];</div>
+<div class="line"><a id="l00607" name="l00607"></a><span class="lineno">  607</span>                                <span class="keyword">auto</span> b_it = id_to_node.find(b_id);</div>
+<div class="line"><a id="l00608" name="l00608"></a><span class="lineno">  608</span>                                <span class="keywordflow">if</span> (b_it != id_to_node.end() &amp;&amp; b_it-&gt;second) {</div>
+<div class="line"><a id="l00609" name="l00609"></a><span class="lineno">  609</span>                                    <span class="keywordtype">float</span> b_val = b_it-&gt;second-&gt;tensor-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00610" name="l00610"></a><span class="lineno">  610</span>                                    input_grad_val = grad_val / b_val;</div>
+<div class="line"><a id="l00611" name="l00611"></a><span class="lineno">  611</span>                                }</div>
+<div class="line"><a id="l00612" name="l00612"></a><span class="lineno">  612</span>                            } <span class="keywordflow">else</span> {</div>
+<div class="line"><a id="l00613" name="l00613"></a><span class="lineno">  613</span>                                <span class="comment">// ∂(a/b)/∂b = -a/(b^2)</span></div>
+<div class="line"><a id="l00614" name="l00614"></a><span class="lineno">  614</span>                                <span class="keywordtype">size_t</span> a_id = node-&gt;input_ids[0];</div>
+<div class="line"><a id="l00615" name="l00615"></a><span class="lineno">  615</span>                                <span class="keyword">auto</span> a_it = id_to_node.find(a_id);</div>
+<div class="line"><a id="l00616" name="l00616"></a><span class="lineno">  616</span>                                <span class="keyword">auto</span> b_it = id_to_node.find(input_id);</div>
+<div class="line"><a id="l00617" name="l00617"></a><span class="lineno">  617</span>                                <span class="keywordflow">if</span> (a_it != id_to_node.end() &amp;&amp; a_it-&gt;second &amp;&amp; b_it != id_to_node.end() &amp;&amp; b_it-&gt;second) {</div>
+<div class="line"><a id="l00618" name="l00618"></a><span class="lineno">  618</span>                                    <span class="keywordtype">float</span> a_val = a_it-&gt;second-&gt;tensor-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00619" name="l00619"></a><span class="lineno">  619</span>                                    <span class="keywordtype">float</span> b_val = b_it-&gt;second-&gt;tensor-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00620" name="l00620"></a><span class="lineno">  620</span>                                    input_grad_val = -grad_val * a_val / (b_val * b_val);</div>
+<div class="line"><a id="l00621" name="l00621"></a><span class="lineno">  621</span>                                }</div>
+<div class="line"><a id="l00622" name="l00622"></a><span class="lineno">  622</span>                            }</div>
+<div class="line"><a id="l00623" name="l00623"></a><span class="lineno">  623</span>                        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd">op::Neg</a>) {</div>
+<div class="line"><a id="l00624" name="l00624"></a><span class="lineno">  624</span>                            <span class="comment">// ∂(-a)/∂a = -1</span></div>
+<div class="line"><a id="l00625" name="l00625"></a><span class="lineno">  625</span>                            input_grad_val = -grad_val;</div>
+<div class="line"><a id="l00626" name="l00626"></a><span class="lineno">  626</span>                        } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (node-&gt;operation == <a class="code hl_enumvalue" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378">op::ReLU</a>) {</div>
+<div class="line"><a id="l00627" name="l00627"></a><span class="lineno">  627</span>                            <span class="comment">// ∂ReLU(x)/∂x = 1 if x &gt; 0 else 0</span></div>
+<div class="line"><a id="l00628" name="l00628"></a><span class="lineno">  628</span>                            <span class="keywordtype">float</span> x_val = input_node.tensor-&gt;item&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00629" name="l00629"></a><span class="lineno">  629</span>                            input_grad_val = grad_val * (x_val &gt; 0.0f ? 1.0f : 0.0f);</div>
+<div class="line"><a id="l00630" name="l00630"></a><span class="lineno">  630</span>                        } <span class="keywordflow">else</span> {</div>
+<div class="line"><a id="l00631" name="l00631"></a><span class="lineno">  631</span>                            std::cout &lt;&lt; <span class="stringliteral">&quot;!!! 不支持的操作类型: &quot;</span> &lt;&lt; <span class="keyword">static_cast&lt;</span><span class="keywordtype">int</span><span class="keyword">&gt;</span>(node-&gt;operation) &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00632" name="l00632"></a><span class="lineno">  632</span>                        }</div>
+<div class="line"><a id="l00633" name="l00633"></a><span class="lineno">  633</span>                        </div>
+<div class="line"><a id="l00634" name="l00634"></a><span class="lineno">  634</span>                        <span class="comment">// 累加梯度 - 直接访问梯度数据</span></div>
+<div class="line"><a id="l00635" name="l00635"></a><span class="lineno">  635</span>                        <span class="keywordtype">float</span>* grad_data = input_node.grad-&gt;data&lt;<span class="keywordtype">float</span>&gt;();</div>
+<div class="line"><a id="l00636" name="l00636"></a><span class="lineno">  636</span>                        <span class="keywordflow">if</span> (grad_data) {</div>
+<div class="line"><a id="l00637" name="l00637"></a><span class="lineno">  637</span>                            *grad_data += input_grad_val;</div>
+<div class="line"><a id="l00638" name="l00638"></a><span class="lineno">  638</span>                        }</div>
+<div class="line"><a id="l00639" name="l00639"></a><span class="lineno">  639</span>                        std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 节点 &quot;</span> &lt;&lt; node-&gt;tensor_id &lt;&lt; <span class="stringliteral">&quot; 向节点 &quot;</span> &lt;&lt; input_id &lt;&lt; <span class="stringliteral">&quot; 传播梯度: &quot;</span> &lt;&lt; input_grad_val &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00640" name="l00640"></a><span class="lineno">  640</span>                    }</div>
+<div class="line"><a id="l00641" name="l00641"></a><span class="lineno">  641</span>                }</div>
+<div class="line"><a id="l00642" name="l00642"></a><span class="lineno">  642</span>            }</div>
+<div class="line"><a id="l00643" name="l00643"></a><span class="lineno">  643</span>        }</div>
+<div class="line"><a id="l00644" name="l00644"></a><span class="lineno">  644</span>    }</div>
+<div class="line"><a id="l00645" name="l00645"></a><span class="lineno">  645</span> </div>
+<div class="line"><a id="l00646" name="l00646"></a><span class="lineno">  646</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&gt;&gt;&gt; 反向传播完成&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00647" name="l00647"></a><span class="lineno">  647</span>    std::cout &lt;&lt; <span class="stringliteral">&quot;&lt;&lt;&lt; =========================================&quot;</span> &lt;&lt; std::endl;</div>
+<div class="line"><a id="l00648" name="l00648"></a><span class="lineno">  648</span>}</div>
+</div>
+<div class="line"><a id="l00649" name="l00649"></a><span class="lineno">  649</span> </div>
+<div class="line"><a id="l00650" name="l00650"></a><span class="lineno">  650</span><span class="comment">// ======================= 辅助函数 =======================</span></div>
+<div class="foldopen" id="foldopen00651" data-start="{" data-end="}">
+<div class="line"><a id="l00651" name="l00651"></a><span class="lineno"><a class="line" href="_auto_diff_8cpp.html#a4065877672797632cd44a742ed4c094f">  651</a></span><a class="code hl_class" href="class_tensor.html">Tensor</a> <a class="code hl_function" href="_auto_diff_8h.html#a4065877672797632cd44a742ed4c094f">create_empty_tensor</a>() {</div>
+<div class="line"><a id="l00652" name="l00652"></a><span class="lineno">  652</span>    <span class="keywordflow">return</span> <a class="code hl_class" href="class_tensor.html">Tensor</a>(<a class="code hl_struct" href="struct_shape_tag.html">ShapeTag</a>{}, std::vector&lt;size_t&gt;{}, <a class="code hl_enumvalue" href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">DType::kFloat</a>, <a class="code hl_enumvalue" href="_ctools_8h.html#ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903">DeviceType::kCPU</a>);</div>
+<div class="line"><a id="l00653" name="l00653"></a><span class="lineno">  653</span>}</div>
+</div>
+<div class="ttc" id="a_auto_diff_8h_html"><div class="ttname"><a href="_auto_diff_8h.html">AutoDiff.h</a></div><div class="ttdoc">Ctorch 自动微分系统</div></div>
+<div class="ttc" id="a_auto_diff_8h_html_a4065877672797632cd44a742ed4c094f"><div class="ttname"><a href="_auto_diff_8h.html#a4065877672797632cd44a742ed4c094f">create_empty_tensor</a></div><div class="ttdeci">Tensor create_empty_tensor()</div><div class="ttdoc">创建空张量的辅助函数</div><div class="ttdef"><b>定义</b> <a href="#l00651">AutoDiff.cpp:651</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277"><div class="ttname"><a href="_ctools_8h.html#a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277">ErrorLevel::WARN</a></div><div class="ttdeci">@ WARN</div><div class="ttdoc">非致命问题（如CUDA版本兼容提示）</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00088">Ctools.h:88</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a96f6c2a9728066fa81235ada8a5dbc30"><div class="ttname"><a href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30">DType</a></div><div class="ttdeci">DType</div><div class="ttdoc">数据类型枚举，定义张量元素的类型</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00162">Ctools.h:162</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0"><div class="ttname"><a href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a355088fbd6ac81f051e0bd6ede5ab8e0">DType::kInt</a></div><div class="ttdeci">@ kInt</div><div class="ttdoc">32位整数 (torch.int32)</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00165">Ctools.h:165</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e"><div class="ttname"><a href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a6a285ab26ec7ec4c22536626eeaaf52e">DType::kLong</a></div><div class="ttdeci">@ kLong</div><div class="ttdoc">64位整数 (torch.int64)</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00166">Ctools.h:166</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28"><div class="ttname"><a href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a7fb3efa35444cd88d5a31dc125ca9c28">DType::kDouble</a></div><div class="ttdeci">@ kDouble</div><div class="ttdoc">64位浮点数 (torch.float64)</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00164">Ctools.h:164</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e"><div class="ttname"><a href="_ctools_8h.html#a96f6c2a9728066fa81235ada8a5dbc30a8425cd882e78bc9251db970b8a1da20e">DType::kFloat</a></div><div class="ttdeci">@ kFloat</div><div class="ttdoc">32位浮点数 (torch.float32)</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00163">Ctools.h:163</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a></div><div class="ttdeci">op</div><div class="ttdoc">自动微分操作符枚举</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00174">Ctools.h:174</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a43d11850893d2fe84a1e618121c1cc0a">op::Div</a></div><div class="ttdeci">@ Div</div><div class="ttdoc">除</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00180">Ctools.h:180</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0a62b6d55816cf737bfc6f42e60df1a3f2">op::Mul</a></div><div class="ttdeci">@ Mul</div><div class="ttdoc">乘</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00179">Ctools.h:179</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0add10d919fa85cf27fc78c0e06fe0b378">op::ReLU</a></div><div class="ttdeci">@ ReLU</div><div class="ttdoc">线性整流函数</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00191">Ctools.h:191</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0ae80155eceb940c89e2de63ad05868db2">op::Sub</a></div><div class="ttdeci">@ Sub</div><div class="ttdoc">减</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00177">Ctools.h:177</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0aec211f7c20af43e742bf2570c3cb84f9">op::Add</a></div><div class="ttdeci">@ Add</div><div class="ttdoc">加</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00176">Ctools.h:176</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd"><div class="ttname"><a href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0afb278fa5defd7e699fcbc930c3e76ccd">op::Neg</a></div><div class="ttdeci">@ Neg</div><div class="ttdoc">负号</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00178">Ctools.h:178</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea"><div class="ttname"><a href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa02ff2101e64dbed6c34c715aa8d5cfea">ErrorType::DATATYPE</a></div><div class="ttdeci">@ DATATYPE</div><div class="ttdoc">数据类型（不匹配/转换失败/不支持的类型）</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00115">Ctools.h:115</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7"><div class="ttname"><a href="_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa112e02b3dc2a262659954cc20f8003e7">ErrorType::TENSOR_STATE</a></div><div class="ttdeci">@ TENSOR_STATE</div><div class="ttdoc">Tensor状态（未初始化/只读/已释放）</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00117">Ctools.h:117</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903"><div class="ttname"><a href="_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba2ce310327f474afc9f6774faa2f57903">ErrorPlatform::kCPU</a></div><div class="ttdeci">@ kCPU</div><div class="ttdoc">CPU设备</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00098">Ctools.h:98</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_ad258d4c51629346fceac4679b3209ad9"><div class="ttname"><a href="_ctools_8h.html#ad258d4c51629346fceac4679b3209ad9">DeviceType</a></div><div class="ttdeci">DeviceType</div><div class="ttdoc">设备类型枚举，定义张量存储的位置</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00149">Ctools.h:149</a></div></div>
+<div class="ttc" id="a_ctools_8h_html_ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903"><div class="ttname"><a href="_ctools_8h.html#ad258d4c51629346fceac4679b3209ad9a2ce310327f474afc9f6774faa2f57903">DeviceType::kCPU</a></div><div class="ttdeci">@ kCPU</div><div class="ttdoc">CPU设备</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00150">Ctools.h:150</a></div></div>
+<div class="ttc" id="a_tensor_8h_html"><div class="ttname"><a href="_tensor_8h.html">Tensor.h</a></div><div class="ttdoc">张量类和相关操作的定义</div></div>
+<div class="ttc" id="aclass_auto_diff_context_1_1_guard_html"><div class="ttname"><a href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a></div><div class="ttdoc">自动微分上下文的保护类，用于管理自动微分对象的生命周期</div><div class="ttdef"><b>定义</b> <a href="_auto_diff_8h_source.html#l00043">AutoDiff.h:43</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a1889c09406cf332776024cbabe99f1ac"><div class="ttname"><a href="class_auto_diff.html#a1889c09406cf332776024cbabe99f1ac">AutoDiff::defer_record</a></div><div class="ttdeci">void defer_record(size_t output_id, op operation, const std::vector&lt; Tensor * &gt; &amp;inputs)</div><div class="ttdoc">延迟记录操作</div><div class="ttdef"><b>定义</b> <a href="#l00291">AutoDiff.cpp:291</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a3e2ee312526b9024a0f966c2627284ae"><div class="ttname"><a href="class_auto_diff.html#a3e2ee312526b9024a0f966c2627284ae">AutoDiff::update_requires_grad</a></div><div class="ttdeci">void update_requires_grad(Tensor &amp;t, bool requires_grad)</div><div class="ttdoc">更新梯度需求</div><div class="ttdef"><b>定义</b> <a href="#l00458">AutoDiff.cpp:458</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a4fc62a838bd4f63cb7ca50866a8aed69"><div class="ttname"><a href="class_auto_diff.html#a4fc62a838bd4f63cb7ca50866a8aed69">AutoDiff::set_retain_graph</a></div><div class="ttdeci">void set_retain_graph(bool retain)</div><div class="ttdoc">设置是否保留计算图</div><div class="ttdef"><b>定义</b> <a href="#l00486">AutoDiff.cpp:486</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a70833ad502f02ce164b8e9e9fb09f99a"><div class="ttname"><a href="class_auto_diff.html#a70833ad502f02ce164b8e9e9fb09f99a">AutoDiff::make_leaf</a></div><div class="ttdeci">void make_leaf(Tensor &amp;t, bool requires_grad)</div><div class="ttdoc">将张量设为叶子节点</div><div class="ttdef"><b>定义</b> <a href="#l00241">AutoDiff.cpp:241</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a7d004fe2ed8fedca5cef3f4a4d42f55e"><div class="ttname"><a href="class_auto_diff.html#a7d004fe2ed8fedca5cef3f4a4d42f55e">AutoDiff::commit_record</a></div><div class="ttdeci">void commit_record(Tensor &amp;output)</div><div class="ttdoc">提交延迟记录</div><div class="ttdef"><b>定义</b> <a href="#l00348">AutoDiff.cpp:348</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_a7f35000c9f9ed60dacbb92e131177da8"><div class="ttname"><a href="class_auto_diff.html#a7f35000c9f9ed60dacbb92e131177da8">AutoDiff::backward</a></div><div class="ttdeci">void backward(Tensor &amp;root)</div><div class="ttdoc">反向传播（版本1：用户不提供grad_output，使用默认的1.0）</div><div class="ttdef"><b>定义</b> <a href="#l00491">AutoDiff.cpp:491</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_abba90ea69c886cd2bcbe9c21f4abd39d"><div class="ttname"><a href="class_auto_diff.html#abba90ea69c886cd2bcbe9c21f4abd39d">AutoDiff::~AutoDiff</a></div><div class="ttdeci">~AutoDiff()</div><div class="ttdoc">析构函数</div><div class="ttdef"><b>定义</b> <a href="#l00282">AutoDiff.cpp:282</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_abd92891a5fa6d81ae5a18c4a4ae18fde"><div class="ttname"><a href="class_auto_diff.html#abd92891a5fa6d81ae5a18c4a4ae18fde">AutoDiff::get_grad</a></div><div class="ttdeci">Tensor get_grad(const Tensor *t)</div><div class="ttdoc">获取张量的梯度</div><div class="ttdef"><b>定义</b> <a href="#l00085">AutoDiff.cpp:85</a></div></div>
+<div class="ttc" id="aclass_auto_diff_html_abfa1b02dd3279254a9be08f8061fd0ca"><div class="ttname"><a href="class_auto_diff.html#abfa1b02dd3279254a9be08f8061fd0ca">AutoDiff::debug_print_state</a></div><div class="ttdeci">void debug_print_state(const std::string &amp;context)</div><div class="ttdoc">添加详细的调试方法</div><div class="ttdef"><b>定义</b> <a href="#l00063">AutoDiff.cpp:63</a></div></div>
+<div class="ttc" id="aclass_ctorch___error_html_a03e4a731ec3834a3a597869785532703"><div class="ttname"><a href="class_ctorch___error.html#a03e4a731ec3834a3a597869785532703">Ctorch_Error::trace</a></div><div class="ttdeci">static void trace(ErrorPlatform platform, std::string msg)</div><div class="ttdoc">记录TRACE级别信息</div><div class="ttdef"><b>定义</b> <a href="_ctorch___error_8h_source.html#l00449">Ctorch_Error.h:449</a></div></div>
+<div class="ttc" id="aclass_ctorch___error_html_a4850c089416b2a55a8eed47bd212b91f"><div class="ttname"><a href="class_ctorch___error.html#a4850c089416b2a55a8eed47bd212b91f">Ctorch_Error::log</a></div><div class="ttdeci">static void log(ErrorLevel level, ErrorPlatform platform, ErrorType type, const std::string msg)</div><div class="ttdoc">记录日志信息</div><div class="ttdef"><b>定义</b> <a href="_ctorch___error_8h_source.html#l00352">Ctorch_Error.h:352</a></div></div>
+<div class="ttc" id="aclass_ctorch___error_html_ad21308b712af0daeb257141d65101594"><div class="ttname"><a href="class_ctorch___error.html#ad21308b712af0daeb257141d65101594">Ctorch_Error::throwException</a></div><div class="ttdeci">static void throwException(ErrorPlatform platform, ErrorType type, const std::string &amp;msg)</div><div class="ttdoc">抛出异常方法：记录错误并抛出异常</div><div class="ttdef"><b>定义</b> <a href="_ctorch___error_8h_source.html#l00516">Ctorch_Error.h:516</a></div></div>
+<div class="ttc" id="aclass_tensor_html"><div class="ttname"><a href="class_tensor.html">Tensor</a></div><div class="ttdoc">张量类，用于表示和操作多维数组</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00069">Tensor.h:69</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a3b990b33ed4539c0eb0568a59ed902ab"><div class="ttname"><a href="class_tensor.html#a3b990b33ed4539c0eb0568a59ed902ab">Tensor::shape</a></div><div class="ttdeci">const std::vector&lt; size_t &gt; &amp; shape() const</div><div class="ttdoc">获取张量的形状</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00040">Tensor.cpp:40</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a3c00cc931f7df000ae220a13572888ba"><div class="ttname"><a href="class_tensor.html#a3c00cc931f7df000ae220a13572888ba">Tensor::data</a></div><div class="ttdeci">const T * data() const</div><div class="ttdoc">获取常量原始数据指针</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00518">Tensor.h:518</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a480ed061597629c91760708913941333"><div class="ttname"><a href="class_tensor.html#a480ed061597629c91760708913941333">Tensor::item</a></div><div class="ttdeci">T item() const</div><div class="ttdoc">获取标量值</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00150">Tensor.cpp:150</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a57c37df58e2c5f03731df734e946b55c"><div class="ttname"><a href="class_tensor.html#a57c37df58e2c5f03731df734e946b55c">Tensor::clone</a></div><div class="ttdeci">Tensor clone() const</div><div class="ttdoc">创建一个新的张量，形状相同，数据不同</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00187">Tensor.cpp:187</a></div></div>
+<div class="ttc" id="aclass_tensor_html_a862c66fb2e11307dfa2e094f24ccf231"><div class="ttname"><a href="class_tensor.html#a862c66fb2e11307dfa2e094f24ccf231">Tensor::sizes</a></div><div class="ttdeci">const std::vector&lt; size_t &gt; &amp; sizes() const</div><div class="ttdoc">获取张量的维度大小</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00491">Tensor.h:491</a></div></div>
+<div class="ttc" id="aclass_tensor_html_aa9c0f9a38618f824e5f11f9cb54b9a99"><div class="ttname"><a href="class_tensor.html#aa9c0f9a38618f824e5f11f9cb54b9a99">Tensor::id</a></div><div class="ttdeci">size_t id() const</div><div class="ttdoc">获取张量ID</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00417">Tensor.h:417</a></div></div>
+<div class="ttc" id="aclass_tensor_html_aaa2a3a00912a4685de301b4adeb23d4c"><div class="ttname"><a href="class_tensor.html#aaa2a3a00912a4685de301b4adeb23d4c">Tensor::device</a></div><div class="ttdeci">DeviceType device() const</div><div class="ttdoc">获取张量所在的设备</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00451">Tensor.h:451</a></div></div>
+<div class="ttc" id="aclass_tensor_html_ab22ae7947bd71b2fb9b880171f3d356e"><div class="ttname"><a href="class_tensor.html#ab22ae7947bd71b2fb9b880171f3d356e">Tensor::dtype</a></div><div class="ttdeci">DType dtype() const</div><div class="ttdoc">获取张量的数据类型</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00443">Tensor.h:443</a></div></div>
+<div class="ttc" id="aclass_tensor_html_ae16abae53b9c97f24e7d7f4a320f52a9"><div class="ttname"><a href="class_tensor.html#ae16abae53b9c97f24e7d7f4a320f52a9">Tensor::numel</a></div><div class="ttdeci">size_t numel() const</div><div class="ttdoc">获取张量的大小（元素总数量）</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00049">Tensor.cpp:49</a></div></div>
+<div class="ttc" id="astruct_shape_tag_html"><div class="ttname"><a href="struct_shape_tag.html">ShapeTag</a></div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00051">Tensor.h:51</a></div></div>
+</div><!-- fragment --></div><!-- contents -->
+</div><!-- doc-content -->
+</div><!-- container -->
+<!-- start footer part -->
+<div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
+  <ul>
+    <li class="navelem"><a href="_auto_diff_8cpp.html">AutoDiff.cpp</a></li>
+    <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
+  </ul>
+</div>
+</body>
+</html>
