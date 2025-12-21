@@ -325,3 +325,5 @@ int main() {
 
     return (passed_tests == total_tests) ? 0 : 1;
 }
+
+// 编译：clang++ -std=c++23 -O3 -ffast-math -o main main.cpp Tensor.cpp AutoDiff.cpp Ctools.cpp Storage.cpp kernels/CPU-BASIC/Add_BASIC_kernel.cpp kernels/CPU-BASIC/Sub_BASIC_kernel.cpp kernels/CPU-BASIC/Neg_BASIC_kernel.cpp kernels/CPU-BASIC/Mul_BASIC_kernel.cpp kernels/CPU-BASIC/Div_BASIC_kernel.cpp
