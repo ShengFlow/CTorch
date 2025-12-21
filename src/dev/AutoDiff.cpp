@@ -495,6 +495,31 @@ void AutoDiff::backward(Tensor& root) {
     backward(root, grad_output);
 }
 
+// ======================= 私有辅助函数：DFS拓扑排序 =======================
+/**
+ * @brief 执行DFS后序遍历，生成拓扑序列
+ * @param node 当前节点
+ * @param visited 已访问节点集合
+ * @param result 拓扑序列结果
+ */
+void AutoDiff::dfs_topological_sort(Node* node, std::unordered_set<Node*>& visited, std::vector<Node*>& result) {
+    if (!node) return;
+    if (visited.find(node) != visited.end()) return;
+    
+    visited.insert(node);
+    
+    // 先访问所有输入节点（依赖节点）
+    for (size_t input_id : node->input_ids) {
+        auto input_it = id_to_node.find(input_id);
+        if (input_it != id_to_node.end() && input_it->second) {
+            dfs_topological_sort(input_it->second.get(), visited, result);
+        }
+    }
+    
+    // 后序遍历：当前节点处理完所有依赖后，加入结果
+    result.push_back(node);
+}
+
 // ======================= backward函数（版本2） =======================
 void AutoDiff::backward(Tensor& root, Tensor grad_output) {
     std::cout << ">>> =========================================" << std::endl;
@@ -543,25 +568,26 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
     // 阶段3：反向传播（实现实际的梯度计算）
     std::cout << ">>> 阶段3: 反向传播计算" << std::endl;
     
-    // 只处理标量情况
-    if (root_shape.empty()) {
+    std::vector<Node*> topological_order;
+    {
         std::lock_guard<std::mutex> lock(records_mutex);
         
-        // 1. 收集所有节点到一个向量中
-        std::vector<Node*> all_nodes;
-        for (auto& [id, node_ptr] : id_to_node) {
-            if (node_ptr) {
-                all_nodes.push_back(node_ptr.get());
-            }
-        }
+        // 生成拓扑序列
+        std::unordered_set<Node*> visited;
+        std::vector<Node*> forward_order;
+        dfs_topological_sort(root_node, visited, forward_order);
         
-        // 2. 按节点ID逆序排序 - 因为更高的ID对应更晚创建的节点，符合反向传播顺序
-        std::sort(all_nodes.begin(), all_nodes.end(), [](Node* a, Node* b) {
-            return a->tensor_id > b->tensor_id;
-        });
+        // 反转得到逆拓扑序列（反向传播顺序）
+        topological_order = forward_order;
+        std::reverse(topological_order.begin(), topological_order.end());
         
-        // 3. 处理每个节点，传播梯度到输入节点
-        for (Node* node : all_nodes) {
+        std::cout << ">>> 拓扑排序完成，节点数量: " << topological_order.size() << std::endl;
+    }
+    
+    // 处理每个节点，传播梯度到输入节点
+    {
+        std::lock_guard<std::mutex> lock(records_mutex);
+        for (Node* node : topological_order) {
             // 跳过不需要梯度的节点
             if (!node->requires_grad) {
                 continue;
@@ -569,6 +595,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
             
             // 计算梯度并传播到输入节点
             if (node->grad) {
+                // 对于标量情况，直接获取梯度值
                 float grad_val = node->grad->item<float>();
                 
                 for (size_t input_id : node->input_ids) {

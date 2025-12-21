@@ -13,6 +13,7 @@
 #include "Ctools.h"
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <atomic>
 #include <memory>
@@ -121,6 +122,14 @@ private:
      * @return 节点指针
      */
     Node* get_node_by_id(size_t id);
+
+    /**
+     * @brief 私有辅助函数：DFS拓扑排序
+     * @param node 当前节点
+     * @param visited 已访问节点集合
+     * @param result 拓扑序列结果
+     */
+    void dfs_topological_sort(Node* node, std::unordered_set<Node*>& visited, std::vector<Node*>& result);
 
 public:
     /**
