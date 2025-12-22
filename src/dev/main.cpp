@@ -307,7 +307,7 @@ int main() {
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
     std::cout.tie(nullptr);
-    Ctorch_Error::setPrintLevel(PrintLevel::MEDIUM);
+    Ctorch_Error::setPrintLevel(PrintLevel::MINIUM);
     // 记录开始时间
     auto start_time = std::chrono::high_resolution_clock::now();
 
