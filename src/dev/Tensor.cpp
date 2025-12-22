@@ -612,18 +612,76 @@ Tensor grad(const Tensor& t) {
 }
 
 // 全局的matMul函数
-Tensor matMul(const Tensor& a, const Tensor& b) {
-    Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device()) = Ctorch_Scheduler::getInstance().dispatch(a,b,op::MatMul);
-    // TODO: Test this!!!
-    // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(&this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::MatMul, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
+Tensor matMul(const Tensor &a, const Tensor &b) {
+    // 严格检查维度：必须是2D矩阵
+    if (a.dim() != 2 || b.dim() != 2) {
+        throw std::runtime_error("matMul requires both tensors to be 2D matrices");
     }
+
+    // 检查内层维度是否匹配
+    size_t a_cols = a.shape()[1];
+    size_t b_rows = b.shape()[0];
+    if (a_cols != b_rows) {
+        std::ostringstream oss;
+        oss << "Matrix dimensions mismatch: " << a_cols << " != " << b_rows;
+        throw std::runtime_error(oss.str());
+    }
+
+    // 创建结果张量 [M x N]
+    size_t M = a.shape()[0];
+    size_t N = b.shape()[1];
+    Tensor result(ShapeTag{}, {M, N}, a.dtype(), a.device());
+    result.zero(); // 初始化结果为零矩阵
+
+    // 根据数据类型进行计算
+    switch (a.dtype()) {
+    case DType::kFloat: {
+        const float* a_data = a.data<float>();
+        const float* b_data = b.data<float>();
+        float* r_data = result.data<float>();
+        const int BLOCK = 512;
+        // 三层分块循环
+#pragma omp parallel for
+        for (int i0 = 0; i0 < M; i0 += BLOCK) {
+            int i_end = minx(i0 + BLOCK, M);  // 计算行边界
+            for (int k0 = 0; k0 < a_cols; k0 += BLOCK) {
+                int k_end = minx(k0 + BLOCK, a_cols);  // 计算中间维度边界
+                for (int j0 = 0; j0 < N; j0 += BLOCK) {
+                    int j_end = minx(j0 + BLOCK, N);  // 计算列边界
+                    // 核心计算：只处理完整块内的元素
+                    for (int i = i0; i < i_end; i++) {
+                        for (int k = k0; k < k_end; k++) {
+                            float a_val = a_data[i*a_cols + k];  // 一次加载A元素
+                            // 内层循环：连续访问B和C
+                            for (int j = j0; j < j_end; j++) {
+                                r_data[i*N + j] += a_val * b_data[k*N + j];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double* a_data = a.data<double>();
+        const double* b_data = b.data<double>();
+        double* r_data = result.data<double>();
+
+        for (size_t i = 0; i < M; ++i) {
+            for (size_t k = 0; k < a_cols; ++k) {
+                double a_val = a_data[i * a_cols + k];
+                for (size_t j = 0; j < N; ++j) {
+                    r_data[i * N + j] += a_val * b_data[k * N + j];
+                }
+            }
+        }
+        break;
+    }
+    default:
+        throw std::runtime_error("Unsupported dtype for matMul");
+    }
+
     return result;
 }
 
