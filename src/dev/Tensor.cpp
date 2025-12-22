@@ -661,36 +661,42 @@ Tensor operator/(float scalar, const Tensor& tensor) {
 
 // 比较操作符重载（右操作数）
 Tensor operator>(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
 
 // 比较操作符重载（右操作数）
 Tensor operator<(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
 
 // 比较操作符重载（右操作数）
 Tensor operator==(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
 
 // 比较操作符重载（右操作数）
 Tensor operator>=(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
 
 // 比较操作符重载（右操作数）
 Tensor operator<=(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
 
 // 比较操作符重载（右操作数）
 Tensor operator!=(float scalar, const Tensor& tensor) {
+    // TODO: FIX it!!!!
     // 简化实现，返回空张量
     return Tensor();
 }
