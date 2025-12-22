@@ -1,5 +1,5 @@
 var searchData=
 [
-  ['warn_0',['WARN',['../_ctools_8h.html#a88f6d947bf467e369055535af5907aa1a32bd8a1db2275458673903bdb84cb277',1,'Ctools.h']]],
-  ['warn_1',['warn',['../class_ctorch___error.html#af27b22085edd12c18ec7e6f14bc024d6',1,'Ctorch_Error']]]
+  ['核心概念_0',['核心概念',['../index.html#autotoc_md6',1,'核心概念'],['../md__a_p_i___guide.html#autotoc_md20',1,'2. 核心概念']]],
+  ['核心_20api_20使用指南_1',['3. 核心 API 使用指南',['../md__a_p_i___guide.html#autotoc_md25',1,'']]]
 ];

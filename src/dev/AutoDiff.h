@@ -130,6 +130,14 @@ private:
      * @param result 拓扑序列结果
      */
     void dfs_topological_sort(Node* node, std::unordered_set<Node*>& visited, std::vector<Node*>& result);
+    
+    /**
+     * @brief 私有辅助函数：检查并调整梯度形状
+     * @param grad 输入梯度张量
+     * @param target_shape 目标形状
+     * @return 调整后的梯度张量
+     */
+    Tensor check_and_adjust_grad_shape(const Tensor& grad, const std::vector<size_t>& target_shape);
 
 public:
     /**

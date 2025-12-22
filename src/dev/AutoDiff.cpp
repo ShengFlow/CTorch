@@ -186,7 +186,9 @@ Tensor AutoDiff::get_grad(const Tensor* t) {
             }
         }
         std::ostringstream osss;
-        osss << ">>> 最终梯度副本值: " << result.item<float>() << std::endl;
+        osss << ">>> 最终梯度副本形状: ";
+        for (size_t s : result.sizes()) osss << s << " ";
+        osss << std::endl;
         osss << "<<< get_grad - 完成" << std::endl;
 
         std::string msgs = osss.str();
@@ -495,6 +497,184 @@ void AutoDiff::backward(Tensor& root) {
     backward(root, grad_output);
 }
 
+// ======================= 私有辅助函数：检查和调整梯度形状 =======================
+/**
+ * @brief 检查并调整梯度张量形状，确保与目标形状匹配
+ * @param grad 输入梯度张量
+ * @param target_shape 目标形状
+ * @return 调整后的梯度张量
+ */
+Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vector<size_t>& target_shape) {
+    // 如果形状已经匹配，直接返回
+    if (grad.sizes() == target_shape) {
+        return grad;
+    }
+    
+    std::cout << ">>> 调整梯度形状: ";
+    for (size_t s : grad.sizes()) std::cout << s << " ";
+    std::cout << "-> ";
+    for (size_t s : target_shape) std::cout << s << " ";
+    std::cout << std::endl;
+    
+    // 处理标量情况
+    if (grad.sizes().empty()) {
+        // 标量梯度扩展到目标形状
+        Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
+        float val = grad.item<float>();
+        
+        // 使用循环填充张量
+        size_t numel = result.numel();
+        float* data = result.data<float>();
+        for (size_t i = 0; i < numel; ++i) {
+            data[i] = val;
+        }
+        
+        return result;
+    }
+    
+    size_t grad_rank = grad.sizes().size();
+    size_t target_rank = target_shape.size();
+    
+    // 情况1：grad的秩小于target_shape的秩，需要在前面添加维度
+    if (grad_rank < target_rank) {
+        // 创建新的梯度张量，在前面添加维度
+        std::vector<size_t> new_grad_shape(target_rank, 1);
+        for (size_t i = 0; i < grad_rank; ++i) {
+            new_grad_shape[target_rank - grad_rank + i] = grad.sizes()[i];
+        }
+        
+        // 创建临时张量，形状为new_grad_shape
+        Tensor temp_grad(ShapeTag{}, new_grad_shape, grad.dtype(), grad.device());
+        
+        // 将grad数据复制到temp_grad
+        float* temp_data = temp_grad.data<float>();
+        const float* grad_data = grad.data<float>();
+        size_t grad_numel = grad.numel();
+        size_t temp_numel = temp_grad.numel();
+        
+        for (size_t i = 0; i < temp_numel; ++i) {
+            temp_data[i] = grad_data[i % grad_numel];
+        }
+        
+        // 递归调用，处理新的形状
+        return check_and_adjust_grad_shape(temp_grad, target_shape);
+    }
+    
+    // 情况2：grad的秩大于等于target_shape的秩
+    bool can_broadcast = true;
+    
+    // 从末尾开始比较形状
+    for (size_t i = 1; i <= target_rank; ++i) {
+        size_t grad_idx = grad_rank - i;
+        size_t target_idx = target_rank - i;
+        
+        size_t grad_dim = grad.sizes()[grad_idx];
+        size_t target_dim = target_shape[target_idx];
+        
+        if (grad_dim != target_dim && grad_dim != 1 && target_dim != 1) {
+            can_broadcast = false;
+            break;
+        }
+    }
+    
+    if (can_broadcast) {
+        // 创建结果张量
+        Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
+        result.zero();
+        
+        // 实现广播逻辑：对于每个目标元素，找到对应的grad元素并累加
+        size_t result_numel = result.numel();
+        float* result_data = result.data<float>();
+        const float* grad_data = grad.data<float>();
+        
+        // 计算每个维度的步幅
+        std::vector<size_t> grad_strides = grad.strides();
+        std::vector<size_t> result_strides = result.strides();
+        
+        // 遍历结果张量的每个元素
+        for (size_t i = 0; i < result_numel; ++i) {
+            // 计算结果张量在各维度的索引
+            std::vector<size_t> result_indices(target_rank, 0);
+            size_t temp = i;
+            for (int j = target_rank - 1; j >= 0; --j) {
+                result_indices[j] = temp / result_strides[j];
+                temp %= result_strides[j];
+            }
+            
+            // 计算对应的grad索引
+            std::vector<size_t> grad_indices(grad_rank, 0);
+            
+            // 从末尾开始匹配索引
+            for (size_t j = 1; j <= target_rank; ++j) {
+                size_t grad_idx = grad_rank - j;
+                size_t result_idx = target_rank - j;
+                
+                // 如果grad维度是1，则使用0索引
+                if (grad.sizes()[grad_idx] == 1) {
+                    grad_indices[grad_idx] = 0;
+                } else {
+                    grad_indices[grad_idx] = result_indices[result_idx];
+                }
+            }
+            
+            // 计算grad的线性索引
+            size_t grad_index = 0;
+            for (size_t j = 0; j < grad_rank; ++j) {
+                grad_index += grad_indices[j] * grad_strides[j];
+            }
+            
+            // 累加梯度
+            result_data[i] += grad_data[grad_index];
+        }
+        
+        return result;
+    }
+    
+    // 情况3：处理广播后的梯度求和
+    // 例如：target_shape = [3], grad_shape = [2, 3]，则对grad的第一个维度求和
+    bool can_reduce = true;
+    
+    // 检查是否可以通过求和得到目标形状
+    for (size_t i = 1; i <= std::min(grad_rank, target_rank); ++i) {
+        size_t grad_idx = grad_rank - i;
+        size_t target_idx = target_rank - i;
+        
+        size_t grad_dim = grad.sizes()[grad_idx];
+        size_t target_dim = target_shape[target_idx];
+        
+        if (grad_dim != target_dim && target_dim != 1) {
+            can_reduce = false;
+            break;
+        }
+    }
+    
+    if (can_reduce) {
+        // 创建结果张量
+        Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
+        result.zero();
+        
+        // 实现简单的求和逻辑
+        float* result_data = result.data<float>();
+        const float* grad_data = grad.data<float>();
+        
+        size_t result_numel = result.numel();
+        size_t grad_numel = grad.numel();
+        
+        // 简化处理：直接对所有元素求和
+        for (size_t i = 0; i < grad_numel; ++i) {
+            result_data[i % result_numel] += grad_data[i];
+        }
+        
+        return result;
+    }
+    
+    // 其他情况：如果形状不匹配且无法广播，返回零张量
+    std::cout << ">>> 警告: 无法调整梯度形状，返回零张量" << std::endl;
+    Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
+    result.zero();
+    return result;
+}
+
 // ======================= 私有辅助函数：DFS拓扑排序 =======================
 /**
  * @brief 执行DFS后序遍历，生成拓扑序列
@@ -555,15 +735,19 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
             return;
         }
 
-        // 设置根节点梯度
+        // 设置根节点梯度，确保形状匹配
         if (!root_node->grad) {
             root_node->grad = std::make_unique<Tensor>(ShapeTag{}, root_shape, root.dtype(), root.device());
         }
-        *root_node->grad = grad_output;
+        
+        // 检查并调整梯度输出形状，确保与根节点形状匹配
+        Tensor adjusted_grad_output = check_and_adjust_grad_shape(grad_output, root_shape);
+        *root_node->grad = adjusted_grad_output;
     }
 
     std::cout << ">>> 根节点需要梯度，开始反向传播" << std::endl;
     std::cout << ">>> 根节点形状: " << root_shape.size() << "D" << std::endl;
+    std::cout << ">>> 梯度输出形状: " << grad_output.sizes().size() << "D" << std::endl;
 
     // 阶段3：反向传播（实现实际的梯度计算）
     std::cout << ">>> 阶段3: 反向传播计算" << std::endl;
@@ -595,36 +779,47 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
             
             // 计算梯度并传播到输入节点
             if (node->grad) {
-                // 对于标量情况，直接获取梯度值
-                float grad_val = node->grad->item<float>();
+                // 对于张量梯度，直接使用梯度张量进行计算
+                Tensor& node_grad = *node->grad;
                 
                 for (size_t input_id : node->input_ids) {
                     auto input_it = id_to_node.find(input_id);
                     if (input_it != id_to_node.end() && input_it->second && input_it->second->requires_grad) {
                         auto& input_node = *input_it->second;
                         
-                        // 初始化输入节点的梯度
+                        // 初始化输入节点的梯度，确保形状匹配
                         if (!input_node.grad) {
                             input_node.grad = std::make_unique<Tensor>(ShapeTag{}, input_node.tensor->sizes(), input_node.tensor->dtype(), input_node.tensor->device());
                             input_node.grad->zero();
                         }
                         
+                        Tensor& input_grad = *input_node.grad;
+                        
                         // 根据操作类型计算梯度
-                        float input_grad_val = 0.0f;
+                        Tensor input_grad_val;
                         
                         // 处理不同操作类型
                         if (node->operation == op::Add) {
                             // ∂(a+b)/∂a = 1, ∂(a+b)/∂b = 1
-                            input_grad_val = grad_val;
+                            // 对于张量加法，梯度直接传播
+                            input_grad_val = node_grad;
                         } else if (node->operation == op::Sub) {
                             // 第一个输入是a，第二个是b，∂(a-b)/∂a = 1, ∂(a-b)/∂b = -1
-                            input_grad_val = grad_val * (input_id == node->input_ids[0] ? 1.0f : -1.0f);
+                            if (input_id == node->input_ids[0]) {
+                                // 对第一个输入的梯度是正的
+                                input_grad_val = node_grad;
+                            } else {
+                                // 对第二个输入的梯度是负的
+                                input_grad_val = -node_grad;
+                            }
                         } else if (node->operation == op::Mul) {
                             // 找到另一个输入张量
                             size_t other_input_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
                             auto other_it = id_to_node.find(other_input_id);
                             if (other_it != id_to_node.end() && other_it->second) {
-                                input_grad_val = grad_val * other_it->second->tensor->item<float>();
+                                // 对于张量乘法，梯度是另一个输入张量与当前节点梯度的乘积
+                                Tensor& other_tensor = *other_it->second->tensor;
+                                input_grad_val = other_tensor * node_grad;
                             }
                         } else if (node->operation == op::Div) {
                             // 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)
@@ -633,8 +828,8 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 size_t b_id = node->input_ids[1];
                                 auto b_it = id_to_node.find(b_id);
                                 if (b_it != id_to_node.end() && b_it->second) {
-                                    float b_val = b_it->second->tensor->item<float>();
-                                    input_grad_val = grad_val / b_val;
+                                    Tensor& b_tensor = *b_it->second->tensor;
+                                    input_grad_val = node_grad / b_tensor;
                                 }
                             } else {
                                 // ∂(a/b)/∂b = -a/(b^2)
@@ -642,28 +837,44 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 auto a_it = id_to_node.find(a_id);
                                 auto b_it = id_to_node.find(input_id);
                                 if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
-                                    float a_val = a_it->second->tensor->item<float>();
-                                    float b_val = b_it->second->tensor->item<float>();
-                                    input_grad_val = -grad_val * a_val / (b_val * b_val);
+                                    Tensor& a_tensor = *a_it->second->tensor;
+                                    Tensor& b_tensor = *b_it->second->tensor;
+                                    input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
                                 }
                             }
                         } else if (node->operation == op::Neg) {
                             // ∂(-a)/∂a = -1
-                            input_grad_val = -grad_val;
+                            input_grad_val = -node_grad;
                         } else if (node->operation == op::ReLU) {
                             // ∂ReLU(x)/∂x = 1 if x > 0 else 0
-                            float x_val = input_node.tensor->item<float>();
-                            input_grad_val = grad_val * (x_val > 0.0f ? 1.0f : 0.0f);
+                            // 对于张量ReLU，梯度是node_grad乘以x>0的掩码
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 实现ReLU梯度计算：直接在梯度上乘以mask
+                            // 这里简化处理，直接创建一个与x_tensor形状相同的张量，x>0时为1，否则为0
+                            Tensor mask(ShapeTag{}, x_tensor.sizes(), x_tensor.dtype(), x_tensor.device());
+                            float* mask_data = mask.data<float>();
+                            const float* x_data = x_tensor.data<float>();
+                            size_t numel = x_tensor.numel();
+                            
+                            for (size_t i = 0; i < numel; ++i) {
+                                mask_data[i] = (x_data[i] > 0.0f) ? 1.0f : 0.0f;
+                            }
+                            
+                            input_grad_val = node_grad * mask;
                         } else {
                             std::cout << "!!! 不支持的操作类型: " << static_cast<int>(node->operation) << std::endl;
+                            continue;
                         }
                         
-                        // 累加梯度 - 直接访问梯度数据
-                        float* grad_data = input_node.grad->data<float>();
-                        if (grad_data) {
-                            *grad_data += input_grad_val;
-                        }
-                        std::cout << ">>> 节点 " << node->tensor_id << " 向节点 " << input_id << " 传播梯度: " << input_grad_val << std::endl;
+                        // 检查并调整梯度形状，确保与输入节点形状匹配
+                        Tensor adjusted_grad_val = check_and_adjust_grad_shape(input_grad_val, input_node.tensor->sizes());
+                        
+                        // 累加梯度 - 使用Tensor的operator+和赋值操作符
+                        input_grad = input_grad + adjusted_grad_val;
+                        
+                        std::cout << ">>> 节点 " << node->tensor_id << " 向节点 " << input_id << " 传播梯度" << std::endl;
+                        std::cout << ">>> 梯度形状: " << input_grad_val.sizes().size() << "D" << std::endl;
                     }
                 }
             }

@@ -26,7 +26,6 @@
 <table cellspacing="0" cellpadding="0">
  <tbody>
  <tr id="projectrow">
-  <td id="projectlogo"><img alt="Logo" src="logo.jpg"/></td>
   <td id="projectalign">
    <div id="projectname">Ctorch<span id="projectnumber">&#160;RC v1.0</span>
    </div>
@@ -122,55 +121,43 @@ $(function(){initNavTree('index.html','',''); });
 <div class="line">make</div>
 </div><!-- fragment --><h2 class="doxsection"><a class="anchor" id="autotoc_md5"></a>
 基本使用</h2>
-<div class="fragment"><div class="line"><span class="preprocessor">#include &quot;<a class="code" href="_tensor_8h.html">Tensor.h</a>&quot;</span></div>
-<div class="line"><span class="preprocessor">#include &quot;<a class="code" href="_auto_diff_8h.html">AutoDiff.h</a>&quot;</span></div>
+<div class="fragment"><div class="line"><span class="preprocessor">#include &quot;Tensor.h&quot;</span></div>
+<div class="line"><span class="preprocessor">#include &quot;AutoDiff.h&quot;</span></div>
 <div class="line"> </div>
-<div class="line"><span class="keywordtype">int</span> <a class="code hl_function" href="large__scale__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4">main</a>() {</div>
+<div class="line"><span class="keywordtype">int</span> main() {</div>
 <div class="line">    <span class="comment">// 设置输出级别为最详细</span></div>
-<div class="line">    <a class="code hl_function" href="class_ctorch___error.html#afb536e46fd5ebc767924046de3164929">Ctorch_Error::setPrintLevel</a>(<a class="code hl_enumvalue" href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1">PrintLevel::FULL</a>);</div>
+<div class="line">    Ctorch_Error::setPrintLevel(PrintLevel::FULL);</div>
 <div class="line">    <span class="comment">// 创建自动微分上下文</span></div>
-<div class="line">    <a class="code hl_class" href="class_auto_diff.html">AutoDiff</a> ctx;</div>
-<div class="line">    <a class="code hl_class" href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a> guard(&amp;ctx);</div>
+<div class="line">    AutoDiff ctx;</div>
+<div class="line">    AutoDiffContext::Guard guard(&amp;ctx);</div>
 <div class="line"> </div>
 <div class="line">    <span class="comment">// 创建需要梯度的张量</span></div>
-<div class="line">    <a class="code hl_class" href="class_tensor.html">Tensor</a> a(2.0f);</div>
-<div class="line">    <a class="code hl_class" href="class_tensor.html">Tensor</a> b(3.0f);</div>
+<div class="line">    Tensor a(2.0f);</div>
+<div class="line">    Tensor b(3.0f);</div>
 <div class="line">    a.requires_grad(<span class="keyword">true</span>);</div>
 <div class="line">    b.requires_grad(<span class="keyword">true</span>);</div>
 <div class="line"> </div>
 <div class="line">    <span class="comment">// 执行正向计算</span></div>
-<div class="line">    <a class="code hl_class" href="class_tensor.html">Tensor</a> c = a + b;</div>
+<div class="line">    Tensor c = a + b;</div>
 <div class="line"> </div>
 <div class="line">    <span class="comment">// 反向传播</span></div>
-<div class="line">    <a class="code hl_function" href="_tensor_8cpp.html#a238cfb33005ea4db90368204b8309f9b">backward</a>(c);</div>
+<div class="line">    backward(c);</div>
 <div class="line"> </div>
 <div class="line">    <span class="comment">// 获取梯度</span></div>
-<div class="line">    <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_a = <a class="code hl_function" href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a>(a);</div>
-<div class="line">    <a class="code hl_class" href="class_tensor.html">Tensor</a> grad_b = <a class="code hl_function" href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a>(b);</div>
+<div class="line">    Tensor grad_a = grad(a);</div>
+<div class="line">    Tensor grad_b = grad(b);</div>
 <div class="line"> </div>
 <div class="line">    <span class="comment">// 输出结果</span></div>
 <div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;a = &quot;</span> &lt;&lt; a.item&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
 <div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;b = &quot;</span> &lt;&lt; b.item&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
-<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;c = a + b = &quot;</span> &lt;&lt; c.<a class="code hl_function" href="class_tensor.html#a480ed061597629c91760708913941333">item</a>&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
-<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;∂c/∂a = &quot;</span> &lt;&lt; grad_a.<a class="code hl_function" href="class_tensor.html#a480ed061597629c91760708913941333">item</a>&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
-<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;∂c/∂b = &quot;</span> &lt;&lt; grad_b.<a class="code hl_function" href="class_tensor.html#a480ed061597629c91760708913941333">item</a>&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
+<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;c = a + b = &quot;</span> &lt;&lt; c.item&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
+<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;∂c/∂a = &quot;</span> &lt;&lt; grad_a.item&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
+<div class="line">    std::cout &lt;&lt; <span class="stringliteral">&quot;∂c/∂b = &quot;</span> &lt;&lt; grad_b.item&lt;<span class="keywordtype">float</span>&gt;() &lt;&lt; std::endl;</div>
 <div class="line">    </div>
 <div class="line">    <span class="comment">// 获取统计信息，包括Error统计、Warn统计、计时等</span></div>
-<div class="line">    <a class="code hl_function" href="class_ctorch___error.html#ad71c0c8d96b3e3665261ee3537034770">Ctorch_Error::stats</a>();</div>
+<div class="line">    Ctorch_Error::stats();</div>
 <div class="line">    <span class="keywordflow">return</span> 0;</div>
 <div class="line">}</div>
-<div class="ttc" id="a_auto_diff_8h_html"><div class="ttname"><a href="_auto_diff_8h.html">AutoDiff.h</a></div><div class="ttdoc">Ctorch 自动微分系统</div></div>
-<div class="ttc" id="a_ctools_8h_html_a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1"><div class="ttname"><a href="_ctools_8h.html#a83ff212f474e3669d8fac2d727f65de5aba7de5bc6888294e5884b024a4c894f1">PrintLevel::FULL</a></div><div class="ttdeci">@ FULL</div><div class="ttdoc">全部级别输出</div><div class="ttdef"><b>定义</b> <a href="_ctools_8h_source.html#l00128">Ctools.h:128</a></div></div>
-<div class="ttc" id="a_tensor_8cpp_html_a238cfb33005ea4db90368204b8309f9b"><div class="ttname"><a href="_tensor_8cpp.html#a238cfb33005ea4db90368204b8309f9b">backward</a></div><div class="ttdeci">void backward(Tensor &amp;root)</div><div class="ttdoc">全局的backward函数，用于启动反向传播</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00593">Tensor.cpp:593</a></div></div>
-<div class="ttc" id="a_tensor_8cpp_html_af5f5ad16e026fcd4f7c70201c57fd118"><div class="ttname"><a href="_tensor_8cpp.html#af5f5ad16e026fcd4f7c70201c57fd118">grad</a></div><div class="ttdeci">Tensor grad(const Tensor &amp;t)</div><div class="ttdoc">全局的grad函数，用于获取张量的梯度</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00607">Tensor.cpp:607</a></div></div>
-<div class="ttc" id="a_tensor_8h_html"><div class="ttname"><a href="_tensor_8h.html">Tensor.h</a></div><div class="ttdoc">张量类和相关操作的定义</div></div>
-<div class="ttc" id="aclass_auto_diff_context_1_1_guard_html"><div class="ttname"><a href="class_auto_diff_context_1_1_guard.html">AutoDiffContext::Guard</a></div><div class="ttdoc">自动微分上下文的保护类，用于管理自动微分对象的生命周期</div><div class="ttdef"><b>定义</b> <a href="_auto_diff_8h_source.html#l00044">AutoDiff.h:44</a></div></div>
-<div class="ttc" id="aclass_auto_diff_html"><div class="ttname"><a href="class_auto_diff.html">AutoDiff</a></div><div class="ttdoc">自动微分类，用于管理计算图和执行反向传播</div><div class="ttdef"><b>定义</b> <a href="_auto_diff_8h_source.html#l00073">AutoDiff.h:73</a></div></div>
-<div class="ttc" id="aclass_ctorch___error_html_ad71c0c8d96b3e3665261ee3537034770"><div class="ttname"><a href="class_ctorch___error.html#ad71c0c8d96b3e3665261ee3537034770">Ctorch_Error::stats</a></div><div class="ttdeci">static void stats()</div><div class="ttdoc">打印统计信息</div><div class="ttdef"><b>定义</b> <a href="_ctorch___error_8h_source.html#l00425">Ctorch_Error.h:425</a></div></div>
-<div class="ttc" id="aclass_ctorch___error_html_afb536e46fd5ebc767924046de3164929"><div class="ttname"><a href="class_ctorch___error.html#afb536e46fd5ebc767924046de3164929">Ctorch_Error::setPrintLevel</a></div><div class="ttdeci">static void setPrintLevel(PrintLevel level)</div><div class="ttdoc">设置打印级别</div><div class="ttdef"><b>定义</b> <a href="_ctorch___error_8h_source.html#l00437">Ctorch_Error.h:437</a></div></div>
-<div class="ttc" id="aclass_tensor_html"><div class="ttname"><a href="class_tensor.html">Tensor</a></div><div class="ttdoc">张量类，用于表示和操作多维数组</div><div class="ttdef"><b>定义</b> <a href="_tensor_8h_source.html#l00069">Tensor.h:69</a></div></div>
-<div class="ttc" id="aclass_tensor_html_a480ed061597629c91760708913941333"><div class="ttname"><a href="class_tensor.html#a480ed061597629c91760708913941333">Tensor::item</a></div><div class="ttdeci">T item() const</div><div class="ttdoc">获取标量值</div><div class="ttdef"><b>定义</b> <a href="_tensor_8cpp_source.html#l00150">Tensor.cpp:150</a></div></div>
-<div class="ttc" id="alarge__scale__test_8cpp_html_ae66f6b31b5ad750f1fe042a706a4e3d4"><div class="ttname"><a href="large__scale__test_8cpp.html#ae66f6b31b5ad750f1fe042a706a4e3d4">main</a></div><div class="ttdeci">int main()</div><div class="ttdoc">主函数，运行所有测试</div><div class="ttdef"><b>定义</b> <a href="large__scale__test_8cpp_source.html#l00132">large_scale_test.cpp:132</a></div></div>
 </div><!-- fragment --><h1 class="doxsection"><a class="anchor" id="autotoc_md6"></a>
 核心概念</h1>
 <h2 class="doxsection"><a class="anchor" id="autotoc_md7"></a>
