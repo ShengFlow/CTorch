@@ -33,9 +33,7 @@ private:
         binary_kernel_map_[op::Sub][DeviceType::kCPU] = Sub_BASIC_kernel;
         binary_kernel_map_[op::Mul][DeviceType::kCPU] = Mul_BASIC_kernel;
         binary_kernel_map_[op::Div][DeviceType::kCPU] = Div_BASIC_kernel;
-        
-        // 矩阵乘法算子 - 仅注册映射关系，不绑定具体函数
-        binary_kernel_map_[op::MatMul];
+        binary_kernel_map_[op::MatMul][DeviceType::kCPU] = MatMul_BASIC_kernel;
         
         // 点乘算子 - 仅注册映射关系，不绑定具体函数
         binary_kernel_map_[op::Dot];

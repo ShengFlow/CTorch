@@ -613,30 +613,17 @@ Tensor grad(const Tensor& t) {
 
 // 全局的matMul函数
 Tensor matMul(const Tensor& a, const Tensor& b) {
-    // 简单实现，仅支持2D张量
-    if (a.shape().size() != 2 || b.shape().size() != 2) {
-        throw std::invalid_argument("matMul仅支持2D张量");
-    }
-    if (a.shape()[1] != b.shape()[0]) {
-        throw std::invalid_argument("矩阵维度不匹配");
-    }
-    
-    size_t m = a.shape()[0];
-    size_t k = a.shape()[1];
-    size_t n = b.shape()[1];
-    
-    Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device());
-    // 简单的矩阵乘法实现
-    for (size_t i = 0; i < m; ++i) {
-        for (size_t j = 0; j < n; ++j) {
-            float sum = 0.0f;
-            for (size_t l = 0; l < k; ++l) {
-                sum += a.data<float>()[i * k + l] * b.data<float>()[l * n + j];
-            }
-            result.data<float>()[i * n + j] = sum;
+    Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device()) = Ctorch_Scheduler::getInstance().dispatch(a,b,op::MatMul);
+    // TODO: Test this!!!
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(&this), const_cast<Tensor*>(&other)};
+        AutoDiffContext::current()->defer_record(result.id(), op::MatMul, inputs);
+        result._requires_grad = _requires_grad || other.requires_grad();
+        if (result._requires_grad) {
+            result.commit_pending_record();
         }
     }
-    
     return result;
 }
 
