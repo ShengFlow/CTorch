@@ -13,6 +13,7 @@ else()
 endif()
 
 
-add_executable(Ctorch_test)
+add_executable(Ctorch_test
+        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp)
 target_sources(Ctorch_test PUBLIC main.cpp Tensor.h AutoDiff.h Tensor.cpp AutoDiff.cpp kernels/CPU-BASIC/Add_BASIC_kernel.cpp kernels/CPU-BASIC/Sub_BASIC_kernel.cpp kernels/CPU-BASIC/Mul_BASIC_kernel.cpp kernels/CPU-BASIC/Div_BASIC_kernel.cpp kernels/CPU-BASIC/Neg_BASIC_kernel.cpp Ctools.h Ctools.cpp)
 # mkdir build && cd build && cmake .. && make
