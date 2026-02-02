@@ -410,6 +410,21 @@ Tensor Tensor::relu() const {
     return result;
 }
 
+Tensor Tensor::dot(const Tensor &other) const{
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Dot);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Dot, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
 // 张量除法运算符
 Tensor Tensor::operator/(const Tensor& other) const {
     // 简单实现张量除法

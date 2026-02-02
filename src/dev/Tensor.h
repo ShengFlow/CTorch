@@ -992,6 +992,10 @@ public:
      */
     Tensor relu() const;
 
+    Tensor dot(const Tensor &other) const;
+
+    Tensor dot(const Tensor &other);
+
     /**
      * @brief 求Leaky ReLU操作
      * @param negative_slope 负斜率值

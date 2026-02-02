@@ -40,15 +40,13 @@ private:
         
         // ================= 单输入算子注册 =================
         unary_kernel_map_[op::Neg][DeviceType::kCPU] = Neg_BASIC_kernel;
-        
+        unary_kernel_map_[op::ReLU][DeviceType::kCPU] = ReLU_BASIC_kernel;
+
         // 余弦算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::Cos];
         
         // 正弦算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::Sin];
-        
-        // ReLU算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::ReLU];
         
         // Tanh算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::Tanh];

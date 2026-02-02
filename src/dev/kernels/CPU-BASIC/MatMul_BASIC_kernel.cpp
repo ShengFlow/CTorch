@@ -27,7 +27,7 @@ Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
 
     // 简单实现，仅支持2D张量
     if (a.shape().size() != 2 || b.shape().size() != 2) {
-        throw std::invalid_argument("matMul仅支持2D张量");
+        throw std::invalid_argument("MatMul仅支持2D张量");
     }
     if (a.shape()[1] != b.shape()[0]) {
         throw std::invalid_argument("矩阵维度不匹配");
