@@ -992,9 +992,12 @@ public:
      */
     Tensor relu() const;
 
-    Tensor dot(const Tensor &other) const;
 
-    Tensor dot(const Tensor &other);
+    /**
+     * @brief 求Cos操作
+     * @return Cos 结果张量
+     */
+    Tensor dot(const Tensor &other) const;
 
     /**
      * @brief 求Leaky ReLU操作

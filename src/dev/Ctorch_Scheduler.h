@@ -34,19 +34,13 @@ private:
         binary_kernel_map_[op::Mul][DeviceType::kCPU] = Mul_BASIC_kernel;
         binary_kernel_map_[op::Div][DeviceType::kCPU] = Div_BASIC_kernel;
         binary_kernel_map_[op::MatMul][DeviceType::kCPU] = MatMul_BASIC_kernel;
-        
-        // 点乘算子 - 仅注册映射关系，不绑定具体函数
-        binary_kernel_map_[op::Dot];
+        binary_kernel_map_[op::Dot][DeviceType::kCPU] = Dot_BASIC_kernel;
         
         // ================= 单输入算子注册 =================
         unary_kernel_map_[op::Neg][DeviceType::kCPU] = Neg_BASIC_kernel;
         unary_kernel_map_[op::ReLU][DeviceType::kCPU] = ReLU_BASIC_kernel;
-
-        // 余弦算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::Cos];
-        
-        // 正弦算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::Sin];
+        unary_kernel_map_[op::Cos][DeviceType::kCPU] = Cos_BASIC_kernel;
+        unary_kernel_map_[op::Sin][DeviceType::kCPU] = Sin_BASIC_kernel;
         
         // Tanh算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::Tanh];

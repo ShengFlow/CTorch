@@ -425,6 +425,39 @@ Tensor Tensor::dot(const Tensor &other) const{
 
     return result;
 }
+
+Tensor Tensor::cos() const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::Cos);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Cos, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+Tensor Tensor::sin() const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::Sin);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Sin, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
 // 张量除法运算符
 Tensor Tensor::operator/(const Tensor& other) const {
     // 简单实现张量除法
