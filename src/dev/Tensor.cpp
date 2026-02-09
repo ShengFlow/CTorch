@@ -458,6 +458,37 @@ Tensor Tensor::sin() const {
     return result;
 }
 
+// 求和操作
+Tensor Tensor::sum() const {
+    // 简单实现求和操作
+    Tensor result(ShapeTag{}, {}, _dtype, _device);
+
+    if (_dtype == DType::kFloat) {
+        const float* data = _storage.data<float>();
+        float sum = 0.0f;
+        for (size_t i = 0; i < numel(); ++i) {
+            sum += data[i + _storage_offset];
+        }
+        result._storage = Storage(1, _dtype, _device);
+        float* result_data = result._storage.data<float>();
+        if (result_data) {
+            *result_data = sum;
+        }
+    }
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Sum, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
 // 张量除法运算符
 Tensor Tensor::operator/(const Tensor& other) const {
     // 简单实现张量除法
@@ -574,6 +605,23 @@ Tensor Tensor::operator+(float scalar) const {
         float* data = result.data<float>();
         for (size_t i = 0; i < count; ++i) {
             data[i] += scalar;
+        }
+    }
+    
+    return result;
+}
+
+// 标量除法运算符
+Tensor Tensor::operator/(float scalar) const {
+    // 简单实现标量除法
+    Tensor result(*this);
+    result._storage = _storage.clone();
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        float* data = result.data<float>();
+        for (size_t i = 0; i < count; ++i) {
+            data[i] /= scalar;
         }
     }
     
@@ -745,4 +793,106 @@ template void Tensor::checkDType<float>() const;
 template void Tensor::checkDType<double>() const;
 template void Tensor::checkDType<int32_t>() const;
 template void Tensor::checkDType<int64_t>() const;
+
+// Tanh激活函数
+Tensor Tensor::tanh() const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Tanh);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Tanh, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+// Sigmoid激活函数
+Tensor Tensor::sigmoid() const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Sigmoid);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Sigmoid, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+// Softmax激活函数
+Tensor Tensor::softmax(int dim) const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Softmax);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
+        AutoDiffContext::current()->defer_record(result.id(), op::Softmax, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+// MSE损失函数
+Tensor Tensor::mse_loss(const Tensor& target) const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::MSE);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
+        AutoDiffContext::current()->defer_record(result.id(), op::MSE, inputs);
+        result._requires_grad = _requires_grad || target.requires_grad();
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+// CrossEntropy损失函数
+Tensor Tensor::cross_entropy(const Tensor& target) const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::CE);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
+        AutoDiffContext::current()->defer_record(result.id(), op::CE, inputs);
+        result._requires_grad = _requires_grad || target.requires_grad();
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
+
+// MAE损失函数
+Tensor Tensor::mae_loss(const Tensor& target) const {
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::MAE);
+
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
+        AutoDiffContext::current()->defer_record(result.id(), op::MAE, inputs);
+        result._requires_grad = _requires_grad || target.requires_grad();
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+
+    return result;
+}
 

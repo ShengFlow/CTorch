@@ -862,6 +862,130 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                             }
                             
                             input_grad_val = node_grad * mask;
+                        } else if (node->operation == op::Sigmoid) {
+                            // ∂sigmoid(x)/∂x = sigmoid(x) * (1 - sigmoid(x)) * grad
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 计算 sigmoid(x)
+                            Tensor sigmoid_x = x_tensor.sigmoid();
+                            
+                            // 计算 1 - sigmoid(x)
+                            Tensor one_minus_sigmoid_x = Tensor(1.0f) - sigmoid_x;
+                            
+                            // 计算梯度
+                            input_grad_val = sigmoid_x * one_minus_sigmoid_x * node_grad;
+                        } else if (node->operation == op::Tanh) {
+                            // ∂tanh(x)/∂x = (1 - tanh(x)^2) * grad
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 计算 tanh(x)
+                            Tensor tanh_x = x_tensor.tanh();
+                            
+                            // 计算 tanh(x)^2
+                            Tensor tanh_x_squared = tanh_x * tanh_x;
+                            
+                            // 计算 1 - tanh(x)^2
+                            Tensor one_minus_tanh_x_squared = Tensor(1.0f) - tanh_x_squared;
+                            
+                            // 计算梯度
+                            input_grad_val = one_minus_tanh_x_squared * node_grad;
+                        } else if (node->operation == op::Softmax) {
+                            // ∂softmax(x)/∂x = softmax(x) * (grad - sum(softmax(x) * grad))
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 计算 softmax(x)
+                            Tensor softmax_x = x_tensor.softmax(0);
+                            
+                            // 计算 softmax(x) * grad
+                            Tensor softmax_x_times_grad = softmax_x * node_grad;
+                            
+                            // 计算 sum(softmax(x) * grad)
+                            Tensor sum_softmax_x_times_grad = softmax_x_times_grad.sum();
+                            
+                            // 计算 grad - sum(softmax(x) * grad)
+                            Tensor grad_minus_sum = node_grad - sum_softmax_x_times_grad;
+                            
+                            // 计算梯度
+                            input_grad_val = softmax_x * grad_minus_sum;
+                        } else if (node->operation == op::MSE) {
+                            // ∂MSE(pred, target)/∂pred = 2 * (pred - target) / n * grad
+                            // 找到另一个输入张量（目标张量）
+                            size_t target_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
+                            auto target_it = id_to_node.find(target_id);
+                            if (target_it != id_to_node.end() && target_it->second) {
+                                Tensor& pred_tensor = *input_node.tensor;
+                                Tensor& target_tensor = *target_it->second->tensor;
+                                
+                                // 计算 pred - target
+                                Tensor pred_minus_target = pred_tensor - target_tensor;
+                                
+                                // 计算 2 * (pred - target)
+                                Tensor two_times_diff = pred_minus_target * 2.0f;
+                                
+                                // 计算元素数量
+                                size_t n = pred_tensor.numel();
+                                
+                                // 计算 2 * (pred - target) / n
+                                Tensor grad_contrib = two_times_diff / static_cast<float>(n);
+                                
+                                // 计算梯度
+                                input_grad_val = grad_contrib * node_grad;
+                            }
+                        } else if (node->operation == op::CE) {
+                            // ∂CrossEntropy(pred, target)/∂pred = (softmax(pred) - target) * grad
+                            // 找到另一个输入张量（目标张量）
+                            size_t target_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
+                            auto target_it = id_to_node.find(target_id);
+                            if (target_it != id_to_node.end() && target_it->second) {
+                                Tensor& pred_tensor = *input_node.tensor;
+                                Tensor& target_tensor = *target_it->second->tensor;
+                                
+                                // 计算 softmax(pred)
+                                Tensor softmax_pred = pred_tensor.softmax(0);
+                                
+                                // 计算 softmax(pred) - target
+                                Tensor softmax_minus_target = softmax_pred - target_tensor;
+                                
+                                // 计算梯度
+                                input_grad_val = softmax_minus_target * node_grad;
+                            }
+                        } else if (node->operation == op::MAE) {
+                            // ∂MAE(pred, target)/∂pred = sign(pred - target) / n * grad
+                            // 找到另一个输入张量（目标张量）
+                            size_t target_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
+                            auto target_it = id_to_node.find(target_id);
+                            if (target_it != id_to_node.end() && target_it->second) {
+                                Tensor& pred_tensor = *input_node.tensor;
+                                Tensor& target_tensor = *target_it->second->tensor;
+                                
+                                // 计算 pred - target
+                                Tensor pred_minus_target = pred_tensor - target_tensor;
+                                
+                                // 计算 sign(pred - target)
+                                Tensor sign_tensor(ShapeTag{}, pred_minus_target.sizes(), pred_minus_target.dtype(), pred_minus_target.device());
+                                float* sign_data = sign_tensor.data<float>();
+                                const float* diff_data = pred_minus_target.data<float>();
+                                size_t numel = pred_minus_target.numel();
+                                
+                                for (size_t i = 0; i < numel; ++i) {
+                                    if (diff_data[i] > 0.0f) {
+                                        sign_data[i] = 1.0f;
+                                    } else if (diff_data[i] < 0.0f) {
+                                        sign_data[i] = -1.0f;
+                                    } else {
+                                        sign_data[i] = 0.0f;
+                                    }
+                                }
+                                
+                                // 计算元素数量
+                                size_t n = pred_tensor.numel();
+                                
+                                // 计算 sign(pred - target) / n
+                                Tensor grad_contrib = sign_tensor / static_cast<float>(n);
+                                
+                                // 计算梯度
+                                input_grad_val = grad_contrib * node_grad;
+                            }
                         } else {
                             std::cout << "!!! 不支持的操作类型: " << static_cast<int>(node->operation) << std::endl;
                             continue;

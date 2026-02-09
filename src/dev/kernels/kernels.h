@@ -204,4 +204,43 @@ Tensor LReLU_CUDA_kernel(const Tensor& a);
 Tensor LReLU_AMX_kernel(const Tensor& a);
 Tensor LReLU_MPS_kernel(const Tensor& a);
 
+/**
+ * @brief 基本MSE算子实现
+ * @details 执行张量的MSE操作
+ * @param a 第一个输入张量
+ * @param b 第二个输入张量
+ * @return MSE结果张量
+ */
+Tensor MSE_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor MSE_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor MSE_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor MSE_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor MSE_MPS_kernel(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief 基本CrossEntropy算子实现
+ * @details 执行张量的CrossEntropy操作
+ * @param a 第一个输入张量
+ * @param b 第二个输入张量
+ * @return CrossEntropy结果张量
+ */
+Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor CrossEntropy_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor CrossEntropy_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor CrossEntropy_MPS_kernel(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief 基本MAE算子实现
+ * @details 执行张量的MAE操作
+ * @param a 第一个输入张量
+ * @param b 第二个输入张量
+ * @return MAE结果张量
+ */
+Tensor MAE_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor MAE_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor MAE_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor MAE_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor MAE_MPS_kernel(const Tensor& a, const Tensor& b);
+
 #endif //KERNELS_H

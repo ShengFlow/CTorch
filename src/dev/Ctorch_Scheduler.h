@@ -35,21 +35,18 @@ private:
         binary_kernel_map_[op::Div][DeviceType::kCPU] = Div_BASIC_kernel;
         binary_kernel_map_[op::MatMul][DeviceType::kCPU] = MatMul_BASIC_kernel;
         binary_kernel_map_[op::Dot][DeviceType::kCPU] = Dot_BASIC_kernel;
+        binary_kernel_map_[op::MSE][DeviceType::kCPU] = MSE_BASIC_kernel;
+        binary_kernel_map_[op::CE][DeviceType::kCPU] = CrossEntropy_BASIC_kernel;
+        binary_kernel_map_[op::MAE][DeviceType::kCPU] = MAE_BASIC_kernel;
         
         // ================= 单输入算子注册 =================
         unary_kernel_map_[op::Neg][DeviceType::kCPU] = Neg_BASIC_kernel;
         unary_kernel_map_[op::ReLU][DeviceType::kCPU] = ReLU_BASIC_kernel;
         unary_kernel_map_[op::Cos][DeviceType::kCPU] = Cos_BASIC_kernel;
         unary_kernel_map_[op::Sin][DeviceType::kCPU] = Sin_BASIC_kernel;
-        
-        // Tanh算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::Tanh];
-        
-        // Sigmoid算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::Sigmoid];
-        
-        // Softmax算子 - 仅注册映射关系，不绑定具体函数
-        unary_kernel_map_[op::Softmax];
+        unary_kernel_map_[op::Tanh][DeviceType::kCPU] = Tanh_BASIC_kernel;
+        unary_kernel_map_[op::Sigmoid][DeviceType::kCPU] = Sigmoid_BASIC_kernel;
+        unary_kernel_map_[op::Softmax][DeviceType::kCPU] = Softmax_BASIC_kernel;
         
         // LReLU算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::LReLU];
