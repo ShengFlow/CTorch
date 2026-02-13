@@ -229,7 +229,10 @@ public:
      */
     Tensor(float value) : tensor_id_(global_tensor_id++), _shape({}),
                           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
-        std::cout << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value << std::endl;
+        std::ostringstream oss;
+        oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
+        std::string msg = oss.str();
+        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
         computeStrides();
         _storage = Storage(1, _dtype, _device);
         if (_storage.data<float>()) {
@@ -477,6 +480,19 @@ public:
     }
 
     /**
+     * @brief 检查存储偏移量是否有效
+     * @return 如果存储偏移量有效返回true，否则返回false
+     */
+    [[nodiscard]] bool check_storage_offset() const;
+
+    /**
+     * @brief 检查索引是否在边界内
+     * @param indices 多维索引
+     * @return 如果索引在边界内返回true，否则返回false
+     */
+    [[nodiscard]] bool check_index_bounds(const std::vector<size_t>& indices) const;
+
+    /**
      * @brief 获取张量的维度
      * @return 张量的维度数量
      */
@@ -512,11 +528,14 @@ public:
      * @brief 获取常量原始数据指针
      * @tparam T 数据类型
      * @return 常量数据指针
-     * @throw std::runtime_error 如果数据类型不匹配
+     * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T>
     [[nodiscard]] const T* data() const {
         checkDType<T>();
+        if (!check_storage_offset()) {
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, "张量存储偏移量无效");
+        }
         return _storage.data<T>() + _storage_offset;
     }
 
@@ -524,11 +543,14 @@ public:
      * @brief 获取可修改的原始数据指针
      * @tparam T 数据类型
      * @return 可修改的数据指针
-     * @throw std::runtime_error 如果数据类型不匹配
+     * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T>
     T* data() {
         checkDType<T>();
+        if (!check_storage_offset()) {
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, "张量存储偏移量无效");
+        }
         return _storage.data<T>() + _storage_offset;
     }
 

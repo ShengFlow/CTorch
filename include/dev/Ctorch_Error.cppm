@@ -1,11 +1,5 @@
-/**
-* @file Ctorch_Error.h
- * @brief Ctorch 错误处理类
- * @author GhostFace
- * @date 2025/12/20
- */
-#ifndef CTORCH_ERROR_H
-#define CTORCH_ERROR_H
+module; // 全局模块片段
+
 #include <cstring>
 #include <chrono>   // 核心时间库（C++11+）
 #include <cstdint>  // uint64_t（固定宽度整数，存储时间戳）
@@ -17,7 +11,6 @@
 #include <inttypes.h>// PRIu32 等格式化宏
 #include <mutex>
 #include <thread>
-#include "Ctools.h"   // 引入通用工具头文件
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
 #endif
@@ -30,6 +23,10 @@
     #include <fstream>
 #endif
 
+export module Ctorch_Error;
+import Ctools;
+
+export {
 
 /**
  * @class Ctorch_Stats
@@ -79,7 +76,7 @@ private:
         // printf(ESC_START COLOR_ALERT);
         printf("============================================================\n");
         printf(" $$$$$$\\  $$$$$$$$\\  $$$$$$\\  $$$$$$$\\   $$$$$$\\  $$\\   $$\\\n");
-        printf("$$  __$$\\ \\__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
+        printf("$$  __$$\\ \__$$  __|$$  __$$\\ $$  __$$\\ $$  __$$\\ $$ |  $$ |\n");
         printf("$$ /  \\__|   $$ |   $$ /  $$ |$$ |  $$ |$$ /  \\__|$$ |  $$ |\n");
         printf("$$ |         $$ |   $$ |  $$ |$$$$$$$  |$$ |      $$$$$$$$ |\n");
         printf("$$ |         $$ |   $$ |  $$ |$$  __$$< $$ |      $$  __$$ |\n");
@@ -281,7 +278,6 @@ class Ctorch_Error {
             case ErrorPlatform::kMPS: return "MPS";
             case ErrorPlatform::kAMX: return "AMX";
             case ErrorPlatform::kGENERAL: return "GENERAL";
-            case ErrorPlatform::kAutoDiff: return "AUTO_DIFF";
             default: return "UNKNOWN";
         }
     }
@@ -409,7 +405,7 @@ public:
      * @param platform 错误平台
      * @param msg 信息内容
      */
-    static void info(ErrorPlatform platform, const std::string& msg) {
+    static void info(ErrorPlatform platform, std::string msg) {
         printf(ESC_START COLOR_INFO);
         printf("[INFO]" ESC_END "  [%s %" PRIu64 "] [PLATFORM:%s] %s\n",
                getFormattedTimeMs().c_str(),
@@ -489,7 +485,14 @@ public:
         log(ErrorLevel::FATAL, platform, type, msg);
     }
     
-
+    /**
+     * @brief 便捷方法：快速记录INFO级别信息
+     * @param platform 错误平台
+     * @param msg 信息内容
+     */
+    static void info(ErrorPlatform platform, const std::string& msg) {
+        log(ErrorLevel::INFO, platform, ErrorType::UNKNOWN, msg);
+    }
     
     /**
      * @brief 便捷方法：快速记录DEBUG级别信息
@@ -528,7 +531,5 @@ public:
         throw std::runtime_error(msg);
     }
 };
-// DONE: 完成按设备统计、TopK统计
-// TODO: 优化Tensor.cpp
-// DONE: 编写API文档
-#endif //CTORCH_ERROR_H
+
+}

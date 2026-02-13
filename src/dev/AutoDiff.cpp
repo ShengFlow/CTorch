@@ -50,7 +50,7 @@ AutoDiff::Node* AutoDiff::get_node_by_id(size_t id) {
     if (it != id_to_node.end()) {
         return it->second.get();
     }
-    std::cout << ">>> 警告: 找不到节点 " << id << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "警告: 找不到节点 " + std::to_string(id));
     return nullptr;
 }
 
@@ -349,10 +349,10 @@ void AutoDiff::defer_record(size_t output_id, op operation, const std::vector<Te
 // ======================= commit_record函数 =======================
 void AutoDiff::commit_record(Tensor& output) {
     size_t output_id = output.id();
-    std::cout << ">>> AutoDiff::commit_record - 开始, ID: " << output_id << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "AutoDiff::commit_record - 开始, ID: " + std::to_string(output_id));
 
     if (output_id == 0) {
-        std::cout << "!!! 错误: 输出ID为0" << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "错误: 输出ID为0");
         return;
     }
 
@@ -368,36 +368,37 @@ void AutoDiff::commit_record(Tensor& output) {
 
         auto it = pending_records.find(output_id);
         if (it == pending_records.end()) {
-            std::cout << "!!! 警告: 找不到待处理记录 " << output_id << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "警告: 找不到待处理记录 " + std::to_string(output_id));
             return;
         }
 
         PendingRecord& record = it->second;
         if (record.committed) {
-            std::cout << ">>> 记录 " << output_id << " 已提交，跳过" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "记录 " + std::to_string(output_id) + " 已提交，跳过");
             return;
         }
 
-        std::cout << ">>> 开始提交记录 " << output_id << std::endl;
-        std::cout << ">>> 操作类型: " << static_cast<int>(record.operation) << std::endl;
-        std::cout << ">>> 输入IDs: ";
-        for (auto id : record.input_ids) std::cout << id << " ";
-        std::cout << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "开始提交记录 " + std::to_string(output_id));
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "操作类型: " + std::to_string(static_cast<int>(record.operation)));
+        std::ostringstream oss;
+        oss << "输入IDs: ";
+        for (auto id : record.input_ids) oss << id << " ";
+        Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
 
         // 验证输入节点
         bool valid = true;
         for (size_t input_id : record.input_ids) {
             if (id_to_node.find(input_id) == id_to_node.end()) {
-                std::cout << "!!! 错误: 输入节点 " << input_id << " 不存在" << std::endl;
+                Ctorch_Error::trace(ErrorPlatform::kCPU, "错误: 输入节点 " + std::to_string(input_id) + " 不存在");
                 valid = false;
                 break;
             } else {
-                std::cout << ">>> 输入节点 " << input_id << " 存在" << std::endl;
+                Ctorch_Error::trace(ErrorPlatform::kCPU, "输入节点 " + std::to_string(input_id) + " 存在");
             }
         }
 
         if (!valid) {
-            std::cout << "!!! 记录验证失败，清除记录 " << output_id << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "记录验证失败，清除记录 " + std::to_string(output_id));
             pending_records.erase(it);
             return;
         }
@@ -413,7 +414,7 @@ void AutoDiff::commit_record(Tensor& output) {
 
     // 第二步：在锁外创建节点（避免死锁）
     if (should_create_node) {
-        std::cout << ">>> 在锁外创建操作节点 " << output_id << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "在锁外创建操作节点 " + std::to_string(output_id));
 
         // 确定梯度需求（在锁外检查）
         bool requires_grad = false;
@@ -425,7 +426,7 @@ void AutoDiff::commit_record(Tensor& output) {
             }
         }
 
-        std::cout << ">>> 节点 " << output_id << " 需要梯度: " << requires_grad << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "节点 " + std::to_string(output_id) + " 需要梯度: " + (requires_grad ? "1" : "0"));
 
         // 创建节点（不持有锁）
         auto tensor_ptr = std::make_unique<Tensor>(output.clone());
@@ -435,7 +436,7 @@ void AutoDiff::commit_record(Tensor& output) {
 
         // 延迟创建梯度存储
         if (requires_grad) {
-            std::cout << ">>> 为节点 " << output_id << " 延迟分配梯度存储" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "为节点 " + std::to_string(output_id) + " 延迟分配梯度存储");
             // 注意：不在构造函数中创建 grad，避免死锁
         }
 
@@ -451,7 +452,7 @@ void AutoDiff::commit_record(Tensor& output) {
             }
         }
 
-        std::cout << "<<< 记录提交完成 " << output_id << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "记录提交完成 " + std::to_string(output_id));
         debug_print_state("commit_record完成后");
     }
 }
@@ -461,7 +462,7 @@ void AutoDiff::update_requires_grad(Tensor& t, bool requires_grad) {
     size_t id = t.id();
     if (id == 0) return;
 
-    std::cout << ">>> 更新梯度需求: " << id << " -> " << requires_grad << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "更新梯度需求: " + std::to_string(id) + " -> " + (requires_grad ? "1" : "0"));
 
     // 使用更短的锁作用域
     {
@@ -477,11 +478,11 @@ void AutoDiff::update_requires_grad(Tensor& t, bool requires_grad) {
             }
         } else {
             // 如果节点不存在，可能需要创建它
-            std::cout << ">>> 节点不存在，可能需要创建: " << id << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "节点不存在，可能需要创建: " + std::to_string(id));
         }
     }
 
-    std::cout << "<<< 更新梯度需求完成" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "更新梯度需求完成");
 }
 
 // ======================= set_retain_graph函数 =======================
@@ -510,11 +511,12 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
         return grad;
     }
     
-    std::cout << ">>> 调整梯度形状: ";
-    for (size_t s : grad.sizes()) std::cout << s << " ";
-    std::cout << "-> ";
-    for (size_t s : target_shape) std::cout << s << " ";
-    std::cout << std::endl;
+    std::ostringstream oss;
+    oss << "调整梯度形状: ";
+    for (size_t s : grad.sizes()) oss << s << " ";
+    oss << "-> ";
+    for (size_t s : target_shape) oss << s << " ";
+    Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
     
     // 处理标量情况
     if (grad.sizes().empty()) {
@@ -669,7 +671,7 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
     }
     
     // 其他情况：如果形状不匹配且无法广播，返回零张量
-    std::cout << ">>> 警告: 无法调整梯度形状，返回零张量" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "警告: 无法调整梯度形状，返回零张量");
     Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
     result.zero();
     return result;
@@ -702,8 +704,8 @@ void AutoDiff::dfs_topological_sort(Node* node, std::unordered_set<Node*>& visit
 
 // ======================= backward函数（版本2） =======================
 void AutoDiff::backward(Tensor& root, Tensor grad_output) {
-    std::cout << ">>> =========================================" << std::endl;
-    std::cout << ">>> 进入 backward 函数，root ID: " << root.id() << std::endl;
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("======================================="));
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("进入 backward 函数，root ID: ") + std::to_string(root.id()));
 
     if (root.id() == 0) {
         Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::TENSOR_STATE, "反向传播的无效根张量 (ID为0)");
@@ -711,10 +713,10 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
     }
 
     // 阶段1：准备阶段（不持有锁）
-    std::cout << ">>> 阶段1: 准备阶段" << std::endl;
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("阶段1: 准备阶段"));
 
     // 阶段2：验证阶段和设置根节点梯度
-    std::cout << ">>> 阶段2: 验证和设置根节点梯度" << std::endl;
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("阶段2: 验证和设置根节点梯度"));
     Node* root_node = nullptr;
     bool root_requires_grad = false;
     std::vector<size_t> root_shape;
@@ -723,7 +725,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
         std::lock_guard<std::mutex> lock(records_mutex);
         auto it = id_to_node.find(root.id());
         if (it == id_to_node.end() || !it->second) {
-            std::cout << "!!! 错误: 找不到根节点 " << root.id() << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "错误: 找不到根节点 " + std::to_string(root.id()));
             return;
         }
         root_node = it->second.get();
@@ -731,7 +733,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
         root_shape = root.sizes();
 
         if (!root_requires_grad) {
-            std::cout << ">>> 根节点不需要梯度，跳过反向传播" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "根节点不需要梯度，跳过反向传播");
             return;
         }
 
@@ -745,12 +747,12 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
         *root_node->grad = adjusted_grad_output;
     }
 
-    std::cout << ">>> 根节点需要梯度，开始反向传播" << std::endl;
-    std::cout << ">>> 根节点形状: " << root_shape.size() << "D" << std::endl;
-    std::cout << ">>> 梯度输出形状: " << grad_output.sizes().size() << "D" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "根节点需要梯度，开始反向传播");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "根节点形状: " + std::to_string(root_shape.size()) + "D");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "梯度输出形状: " + std::to_string(grad_output.sizes().size()) + "D");
 
     // 阶段3：反向传播（实现实际的梯度计算）
-    std::cout << ">>> 阶段3: 反向传播计算" << std::endl;
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("阶段3: 反向传播计算"));
     
     std::vector<Node*> topological_order;
     {
@@ -765,7 +767,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
         topological_order = forward_order;
         std::reverse(topological_order.begin(), topological_order.end());
         
-        std::cout << ">>> 拓扑排序完成，节点数量: " << topological_order.size() << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "拓扑排序完成，节点数量: " + std::to_string(topological_order.size()));
     }
     
     // 处理每个节点，传播梯度到输入节点
@@ -829,6 +831,21 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 auto b_it = id_to_node.find(b_id);
                                 if (b_it != id_to_node.end() && b_it->second) {
                                     Tensor& b_tensor = *b_it->second->tensor;
+                                    // 检查b_tensor是否包含零值
+                                    bool has_zero = false;
+                                    size_t numel = b_tensor.numel();
+                                    if (b_tensor.dtype() == DType::kFloat) {
+                                        const float* b_data = b_tensor.data<float>();
+                                        for (size_t i = 0; i < numel; ++i) {
+                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                has_zero = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (has_zero) {
+                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                    }
                                     input_grad_val = node_grad / b_tensor;
                                 }
                             } else {
@@ -839,6 +856,21 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
                                     Tensor& a_tensor = *a_it->second->tensor;
                                     Tensor& b_tensor = *b_it->second->tensor;
+                                    // 检查b_tensor是否包含零值
+                                    bool has_zero = false;
+                                    size_t numel = b_tensor.numel();
+                                    if (b_tensor.dtype() == DType::kFloat) {
+                                        const float* b_data = b_tensor.data<float>();
+                                        for (size_t i = 0; i < numel; ++i) {
+                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                has_zero = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (has_zero) {
+                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                    }
                                     input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
                                 }
                             }
@@ -987,7 +1019,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 input_grad_val = grad_contrib * node_grad;
                             }
                         } else {
-                            std::cout << "!!! 不支持的操作类型: " << static_cast<int>(node->operation) << std::endl;
+                            Ctorch_Error::trace(ErrorPlatform::kCPU, "不支持的操作类型: " + std::to_string(static_cast<int>(node->operation)));
                             continue;
                         }
                         
@@ -997,16 +1029,16 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                         // 累加梯度 - 使用Tensor的operator+和赋值操作符
                         input_grad = input_grad + adjusted_grad_val;
                         
-                        std::cout << ">>> 节点 " << node->tensor_id << " 向节点 " << input_id << " 传播梯度" << std::endl;
-                        std::cout << ">>> 梯度形状: " << input_grad_val.sizes().size() << "D" << std::endl;
+                        Ctorch_Error::trace(ErrorPlatform::kCPU, "节点 " + std::to_string(node->tensor_id) + " 向节点 " + std::to_string(input_id) + " 传播梯度");
+                        Ctorch_Error::trace(ErrorPlatform::kCPU, "梯度形状: " + std::to_string(input_grad_val.sizes().size()) + "D");
                     }
                 }
             }
         }
     }
 
-    std::cout << ">>> 反向传播完成" << std::endl;
-    std::cout << "<<< =========================================" << std::endl;
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("反向传播完成"));
+    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("========================================"));
 }
 
 // ======================= 辅助函数 =======================

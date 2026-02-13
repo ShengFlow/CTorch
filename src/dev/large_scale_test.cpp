@@ -7,6 +7,7 @@
 
 #include "Tensor.h"
 #include "Ctorch_Scheduler.h"
+#include "Ctorch_Error.h"
 #include <chrono>
 #include <iomanip>
 
@@ -16,7 +17,7 @@
  * @return 测试是否通过
  */
 bool test_large_scale_addition(size_t size) {
-    std::cout << "=== 测试：大规模Tensor加法 (" << size << " 元素) ===" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "=== 测试：大规模Tensor加法 (" + std::to_string(size) + " 元素) ===");
     try {
         // 创建两个大型Tensor
         Tensor a(size, DType::kFloat, DeviceType::kCPU, true);
@@ -49,14 +50,14 @@ bool test_large_scale_addition(size_t size) {
         }
         
         if (passed) {
-            std::cout << "✅ 大规模加法测试通过，耗时：" << duration.count() << " ms" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "✅ 大规模加法测试通过，耗时：" + std::to_string(duration.count()) + " ms");
             return true;
         } else {
-            std::cout << "❌ 大规模加法测试失败" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 大规模加法测试失败");
             return false;
         }
     } catch (const std::exception& e) {
-        std::cout << "!!! 大规模加法测试异常: " << e.what() << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 大规模加法测试异常: " + std::string(e.what()));
         return false;
     }
 }
@@ -66,7 +67,7 @@ bool test_large_scale_addition(size_t size) {
  * @return 测试是否通过
  */
 bool test_20_nodes_autodiff() {
-    std::cout << "=== 测试：20个节点的自动微分测试 ===" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "=== 测试：20个节点的自动微分测试 ===");
     try {
         AutoDiff ctx;
         AutoDiffContext::Guard guard(&ctx);
@@ -107,20 +108,20 @@ bool test_20_nodes_autodiff() {
                 expected_grad = -1.0f;
             }
             if (std::abs(gradient.item<float>() - expected_grad) > 1e-6) {
-                std::cout << "❌ 节点 " << i << " 梯度错误: 期望 " << expected_grad << ", 实际 " << gradient.item<float>() << std::endl;
+                Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 节点 " + std::to_string(i) + " 梯度错误: 期望 " + std::to_string(expected_grad) + ", 实际 " + std::to_string(gradient.item<float>()));
                 passed = false;
             }
         }
         
         if (passed) {
-            std::cout << "✅ 20个节点的自动微分测试通过" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "✅ 20个节点的自动微分测试通过");
             return true;
         } else {
-            std::cout << "❌ 20个节点的自动微分测试失败" << std::endl;
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 20个节点的自动微分测试失败");
             return false;
         }
     } catch (const std::exception& e) {
-        std::cout << "!!! 20个节点的自动微分测试异常: " << e.what() << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 20个节点的自动微分测试异常: " + std::string(e.what()));
         return false;
     }
 }
@@ -134,8 +135,8 @@ int main() {
     std::cin.tie(nullptr);
     std::cout.tie(nullptr);
     
-    std::cout << "🚀 开始大规模Tensor计算测试和20个节点的自动微分测试" << std::endl;
-    std::cout << "=========================================" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "🚀 开始大规模Tensor计算测试和20个节点的自动微分测试");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "=========================================");
     
     // 记录开始时间
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -171,32 +172,31 @@ int main() {
     auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
     
     // 生成测试报告
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << " 大规模Tensor计算测试报告" << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n" + std::string(60, '='));
+    Ctorch_Error::trace(ErrorPlatform::kCPU, " 大规模Tensor计算测试报告");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, std::string(60, '='));
     
-    std::cout << "\n 测试统计:" << std::endl;
-    std::cout << "   总测试数: " << total_tests << std::endl;
-    std::cout << "   通过测试: " << passed_tests << std::endl;
-    std::cout << "   失败测试: " << (total_tests - passed_tests) << std::endl;
-    std::cout << "   成功率: " << std::fixed << std::setprecision(1)
-              << (static_cast<double>(passed_tests) / total_tests * 100.0) << "%" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n 测试统计:");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   总测试数: " + std::to_string(total_tests));
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   通过测试: " + std::to_string(passed_tests));
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   失败测试: " + std::to_string(total_tests - passed_tests));
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   成功率: " + std::to_string(std::fixed) + std::to_string(std::setprecision(1)) + std::to_string(static_cast<double>(passed_tests) / total_tests * 100.0) + "%");
     
-    std::cout << "\n 性能统计:" << std::endl;
-    std::cout << "   总运行时间: " << total_duration.count() << " ms" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n 性能统计:");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   总运行时间: " + std::to_string(total_duration.count()) + " ms");
     
-    std::cout << "\n 测试覆盖范围:" << std::endl;
-    std::cout << "   ✓ 大规模Tensor加法 (10万+ 元素)" << std::endl;
-    std::cout << "   ✓ 20个节点的自动微分 (仅加减操作)" << std::endl;
-    std::cout << "   ✓ 调度器调用验证" << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n 测试覆盖范围:");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   ✓ 大规模Tensor加法 (10万+ 元素)");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   ✓ 20个节点的自动微分 (仅加减操作)");
+    Ctorch_Error::trace(ErrorPlatform::kCPU, "   ✓ 调度器调用验证");
     
     if (passed_tests == total_tests) {
-        std::cout << "\n 所有测试通过" << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "\n 所有测试通过");
     } else {
-        std::cout << "\n 部分测试失败，请检查相关功能。" << std::endl;
+        Ctorch_Error::trace(ErrorPlatform::kCPU, "\n 部分测试失败，请检查相关功能。");
     }
     
-    std::cout << std::string(60, '=') << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, std::string(60, '='));
     
     return (passed_tests == total_tests) ? 0 : 1;
 }

@@ -9,6 +9,7 @@
 #include "Tensor.h"
 #include "kernels/kernels.h"
 #include "Ctorch_Scheduler.h"
+#include <random>
 
 /**
  * @var Tensor::global_tensor_id
@@ -264,7 +265,7 @@ Tensor Tensor::reshape(std::initializer_list<size_t> new_shape) const {
 Tensor Tensor::reshape(const std::vector<size_t>& new_shape) const {
     size_t new_numel = std::accumulate(new_shape.begin(), new_shape.end(), 1ULL, std::multiplies<>());
     if (new_numel != numel()) {
-        throw std::invalid_argument("新形状元素数量不同");
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "新形状元素数量不同");
     }
     
     Tensor result(*this);
@@ -273,12 +274,111 @@ Tensor Tensor::reshape(const std::vector<size_t>& new_shape) const {
     return result;
 }
 
-// 广播张量到指定形状
+/**
+ * @brief 广播张量到指定形状
+ * @details 实现标准的NumPy风格广播规则，支持完整的广播逻辑
+ * @param shape 目标形状
+ * @return 广播后的张量
+ * @throw Ctorch_Error 如果广播目标形状为空
+ * @throw Ctorch_Error 如果广播形状不兼容
+ */
 Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
-    // 简单实现，仅支持广播到相同或更大的形状
+    // 实现标准的NumPy风格广播规则
+    
+    // 步骤1：检查输入形状是否有效
+    if (shape.empty()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播目标形状不能为空");
+    }
+    
+    // 步骤2：计算广播后的形状和当前张量的扩展形状
+    std::vector<size_t> current_shape = _shape;
+    std::vector<size_t> target_shape = shape;
+    
+    // 补全维度，确保两个张量的维度数相同
+    while (current_shape.size() < target_shape.size()) {
+        current_shape.insert(current_shape.begin(), 1);
+    }
+    while (target_shape.size() < current_shape.size()) {
+        target_shape.insert(target_shape.begin(), 1);
+    }
+    
+    // 步骤3：检查广播是否可行
+    for (size_t i = 0; i < current_shape.size(); ++i) {
+        if (current_shape[i] != target_shape[i] && current_shape[i] != 1) {
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播形状不兼容");
+        }
+    }
+    
+    // 步骤4：创建结果张量
     Tensor result(ShapeTag{}, shape, _dtype, _device);
-    // 复制数据到广播后的张量
-    // 注意：这是一个简化实现，实际广播逻辑更复杂
+    
+    // 步骤5：执行广播（复制数据）
+    if (_dtype == DType::kFloat) {
+        const float* src_data = data<float>();
+        float* dst_data = result.data<float>();
+        
+        // 检查数据指针是否有效
+        if (!src_data || !dst_data) {
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, "张量数据指针无效");
+        }
+        
+        // 计算当前张量的元素数量
+        size_t src_numel = numel();
+        
+        // 计算广播后的元素数量
+        size_t dst_numel = result.numel();
+        
+        // 对于标量广播，直接复制到所有位置
+        if (src_numel == 1) {
+            float value = src_data[0];
+            for (size_t i = 0; i < dst_numel; ++i) {
+                dst_data[i] = value;
+            }
+        } else {
+            // 实现完整的NumPy风格广播逻辑
+            // 计算当前张量的步幅
+            std::vector<size_t> src_strides(current_shape.size());
+            src_strides.back() = 1;
+            for (int i = static_cast<int>(current_shape.size()) - 2; i >= 0; --i) {
+                src_strides[i] = src_strides[i + 1] * current_shape[i + 1];
+            }
+            
+            // 计算目标张量的步幅
+            std::vector<size_t> dst_strides(target_shape.size());
+            dst_strides.back() = 1;
+            for (int i = static_cast<int>(target_shape.size()) - 2; i >= 0; --i) {
+                dst_strides[i] = dst_strides[i + 1] * target_shape[i + 1];
+            }
+            
+            // 对于广播后的每个元素，计算原始张量中的对应索引
+            for (size_t i = 0; i < dst_numel; ++i) {
+                // 计算目标张量中元素i的多维索引
+                std::vector<size_t> dst_indices(target_shape.size());
+                size_t temp = i;
+                for (int j = static_cast<int>(target_shape.size()) - 1; j >= 0; --j) {
+                    dst_indices[j] = temp / dst_strides[j];
+                    temp %= dst_strides[j];
+                }
+                
+                // 计算原始张量中的对应索引
+                size_t src_idx = 0;
+                for (size_t j = 0; j < current_shape.size(); ++j) {
+                    // 如果当前维度大小为1，则使用0索引（广播）
+                    size_t idx = (current_shape[j] == 1) ? 0 : dst_indices[j];
+                    src_idx += idx * src_strides[j];
+                }
+                
+                // 检查源索引是否在有效范围内
+                if (src_idx >= src_numel) {
+                    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播时源索引越界");
+                }
+                
+                // 复制数据
+                dst_data[i] = src_data[src_idx];
+            }
+        }
+    }
+    
     return result;
 }
 
@@ -346,19 +446,29 @@ void Tensor::ones() {
     }
 }
 
-// 随机初始化张量
+/**
+ * @brief 随机初始化张量
+ * @details 使用C++11线程安全的随机数生成器，生成[0, 1)之间的随机数
+ * @note 仅支持float和double类型的张量
+ */
 void Tensor::rand() {
-    // 简单实现，生成[0, 1)之间的随机数
+    // 使用C++11线程安全的随机数生成器
     size_t count = numel();
+    
+    // 为每个线程创建独立的随机数生成器
+    thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_real_distribution<float> distribution_float(0.0f, 1.0f);
+    std::uniform_real_distribution<double> distribution_double(0.0, 1.0);
+    
     if (_dtype == DType::kFloat) {
         float* data = _storage.data<float>();
         for (size_t i = 0; i < count; ++i) {
-            data[i] = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+            data[i] = distribution_float(generator);
         }
     } else if (_dtype == DType::kDouble) {
         double* data = _storage.data<double>();
         for (size_t i = 0; i < count; ++i) {
-            data[i] = static_cast<double>(std::rand()) / static_cast<double>(RAND_MAX);
+            data[i] = distribution_double(generator);
         }
     }
     // 其他类型暂不支持
@@ -371,18 +481,56 @@ Tensor Tensor::matmul(const Tensor& other) const {
 
 // 反向传播
 void Tensor::backward() const {
-    if (AutoDiffContext::current()) {
-        Tensor self_const_cast = const_cast<Tensor&>(*this);
-        AutoDiffContext::current()->backward(self_const_cast);
+    // 错误检查1：确保自动微分上下文存在
+    if (!AutoDiffContext::current()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "反向传播需要自动微分上下文");
     }
+    
+    // 错误检查2：确保张量需要梯度
+    if (!_requires_grad) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量不需要梯度，无法执行反向传播");
+    }
+    
+    // 错误检查3：确保张量数据有效
+    if (is_cleared() || numel() == 0) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量数据无效，无法执行反向传播");
+    }
+    
+    // 执行反向传播
+    Tensor self_const_cast = const_cast<Tensor&>(*this);
+    AutoDiffContext::current()->backward(self_const_cast);
 }
 
 // 反向传播（带有梯度输出）
 void Tensor::backward(const Tensor& grad_output) const {
-    if (AutoDiffContext::current()) {
-        Tensor self_const_cast = const_cast<Tensor&>(*this);
-        AutoDiffContext::current()->backward(self_const_cast, grad_output);
+    // 错误检查1：确保自动微分上下文存在
+    if (!AutoDiffContext::current()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "反向传播需要自动微分上下文");
     }
+    
+    // 错误检查2：确保张量需要梯度
+    if (!_requires_grad) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量不需要梯度，无法执行反向传播");
+    }
+    
+    // 错误检查3：确保张量数据有效
+    if (is_cleared() || numel() == 0) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量数据无效，无法执行反向传播");
+    }
+    
+    // 错误检查4：确保梯度输出形状与张量形状匹配
+    if (grad_output.shape() != _shape) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "梯度输出形状与张量形状不匹配");
+    }
+    
+    // 错误检查5：确保梯度输出数据类型与张量数据类型匹配
+    if (grad_output.dtype() != _dtype) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "梯度输出数据类型与张量数据类型不匹配");
+    }
+    
+    // 执行反向传播
+    Tensor self_const_cast = const_cast<Tensor&>(*this);
+    AutoDiffContext::current()->backward(self_const_cast, grad_output);
 }
 
 // ======================= 缺失方法实现 =======================
@@ -390,6 +538,11 @@ void Tensor::backward(const Tensor& grad_output) const {
 // 默认构造函数
 Tensor::Tensor() : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat), _requires_grad(false), record_committed_(false) {
     computeStrides();
+}
+
+// 检查存储偏移是否有效
+bool Tensor::check_storage_offset() const {
+    return _storage_offset < _storage.size();
 }
 
 // ReLU激活函数
@@ -628,6 +781,342 @@ Tensor Tensor::operator/(float scalar) const {
     return result;
 }
 
+// ======================= 比较操作符实现 =======================
+
+// 张量与标量之间的比较操作符
+
+/**
+ * @brief 张量大于标量比较操作符
+ * @details 实现张量与标量的元素级大于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator>(float scalar) const {
+    // 实现张量大于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] > scalar;
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量小于标量比较操作符
+ * @details 实现张量与标量的元素级小于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator<(float scalar) const {
+    // 实现张量小于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] < scalar;
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量等于标量比较操作符
+ * @details 实现张量与标量的元素级等于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator==(float scalar) const {
+    // 实现张量等于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] == scalar;
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量大于等于标量比较操作符
+ * @details 实现张量与标量的元素级大于等于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator>=(float scalar) const {
+    // 实现张量大于等于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] >= scalar;
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量小于等于标量比较操作符
+ * @details 实现张量与标量的元素级小于等于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator<=(float scalar) const {
+    // 实现张量小于等于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] <= scalar;
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量不等于标量比较操作符
+ * @details 实现张量与标量的元素级不等于比较
+ * @param scalar 标量值
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator!=(float scalar) const {
+    // 实现张量不等于标量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] != scalar;
+        }
+    }
+    
+    return result;
+}
+
+// 张量与张量之间的比较操作符
+
+/**
+ * @brief 张量大于张量比较操作符
+ * @details 实现张量与张量的元素级大于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator>(const Tensor& other) const {
+    // 实现张量大于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] > other_data[i];
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量小于张量比较操作符
+ * @details 实现张量与张量的元素级小于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator<(const Tensor& other) const {
+    // 实现张量小于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] < other_data[i];
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量等于张量比较操作符
+ * @details 实现张量与张量的元素级等于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator==(const Tensor& other) const {
+    // 实现张量等于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] == other_data[i];
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量大于等于张量比较操作符
+ * @details 实现张量与张量的元素级大于等于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator>=(const Tensor& other) const {
+    // 实现张量大于等于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] >= other_data[i];
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量小于等于张量比较操作符
+ * @details 实现张量与张量的元素级小于等于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator<=(const Tensor& other) const {
+    // 实现张量小于等于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] <= other_data[i];
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * @brief 张量不等于张量比较操作符
+ * @details 实现张量与张量的元素级不等于比较
+ * @param other 另一个张量
+ * @return 比较结果张量，元素为布尔类型
+ */
+Tensor Tensor::operator!=(const Tensor& other) const {
+    // 实现张量不等于张量的元素级比较
+    Tensor result(ShapeTag{}, _shape, DType::kBool, _device);
+    
+    // 检查形状是否匹配
+    if (_shape != other.shape()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
+    }
+    
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    size_t count = numel();
+    if (_dtype == DType::kFloat) {
+        const float* data = this->data<float>();
+        const float* other_data = other.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = data[i] != other_data[i];
+        }
+    }
+    
+    return result;
+}
+
 // ======================= 辅助方法 =======================
 
 // 清空存储的方法
@@ -646,6 +1135,19 @@ void Tensor::commit_pending_record() {
         AutoDiffContext::current()->commit_record(*this);
     }
     record_committed_ = true;
+}
+
+// 检查索引是否在边界内
+bool Tensor::check_index_bounds(const std::vector<size_t>& indices) const {
+    if (indices.size() != _shape.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < indices.size(); ++i) {
+        if (indices[i] >= _shape[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // 增强调试信息
@@ -671,7 +1173,7 @@ void Tensor::debug_info_detailed(const std::string& name) const {
     oss << "  Record committed: " << record_committed_ << std::endl;
     oss << "  Storage: " << (_storage.empty() ? "empty" : "non-empty") << std::endl;
     
-    std::cout << oss.str() << std::endl;
+    Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
 }
 
 // ======================= 全局函数实现 =======================
@@ -713,68 +1215,188 @@ BroadCastResult broadCast(const Tensor& a, const Tensor& tensor2) {
     return result;
 }
 
-// 标量加法操作符重载
+/**
+ * @brief 标量加法操作符重载（右操作数）
+ * @details 实现标量与张量的加法操作
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 加法结果张量
+ */
 Tensor operator+(float scalar, const Tensor& tensor) {
     return tensor + scalar;
 }
 
-// 标量减法操作符重载
+/**
+ * @brief 标量减法操作符重载（右操作数）
+ * @details 实现标量与张量的减法操作
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 减法结果张量
+ */
 Tensor operator-(float scalar, const Tensor& tensor) {
     Tensor result = Tensor(scalar) - tensor;
     return result;
 }
 
-// 标量乘法操作符重载
+/**
+ * @brief 标量乘法操作符重载（右操作数）
+ * @details 实现标量与张量的乘法操作
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 乘法结果张量
+ */
 Tensor operator*(float scalar, const Tensor& tensor) {
     return tensor * scalar;
 }
 
-// 标量除法操作符重载
+/**
+ * @brief 标量除法操作符重载（右操作数）
+ * @details 实现标量与张量的除法操作
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 除法结果张量
+ */
 Tensor operator/(float scalar, const Tensor& tensor) {
     Tensor result = Tensor(scalar) / tensor;
     return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量大于张量（右操作数）
+ * @details 实现标量与张量的元素级大于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator>(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量大于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar > data[i];
+        }
+    }
+    
+    return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量小于张量（右操作数）
+ * @details 实现标量与张量的元素级小于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator<(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量小于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar < data[i];
+        }
+    }
+    
+    return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量等于张量（右操作数）
+ * @details 实现标量与张量的元素级等于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator==(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量等于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar == data[i];
+        }
+    }
+    
+    return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量大于等于张量（右操作数）
+ * @details 实现标量与张量的元素级大于等于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator>=(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量大于等于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar >= data[i];
+        }
+    }
+    
+    return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量小于等于张量（右操作数）
+ * @details 实现标量与张量的元素级小于等于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator<=(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量小于等于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar <= data[i];
+        }
+    }
+    
+    return result;
 }
 
-// 比较操作符重载（右操作数）
+/**
+ * @brief 比较操作符重载：标量不等于张量（右操作数）
+ * @details 实现标量与张量的元素级不等于比较
+ * @param scalar 标量值
+ * @param tensor 张量
+ * @return 比较结果张量，元素为布尔类型
+ */
 Tensor operator!=(float scalar, const Tensor& tensor) {
-    // TODO: FIX it!!!!
-    // 简化实现，返回空张量
-    return Tensor();
+    // 实现标量不等于张量的元素级比较
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    
+    size_t count = tensor.numel();
+    if (tensor.dtype() == DType::kFloat) {
+        const float* data = tensor.data<float>();
+        bool* result_data = result.data<bool>();
+        for (size_t i = 0; i < count; ++i) {
+            result_data[i] = scalar != data[i];
+        }
+    }
+    
+    return result;
 }
 
 // 输出张量信息

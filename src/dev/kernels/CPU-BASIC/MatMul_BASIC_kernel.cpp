@@ -16,21 +16,17 @@ Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
         Ctorch_Error::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC MatMul_Kernel: 仅在CPU支持");
     }
-    // 校验形状：必须一致
-    if (a.sizes() != b.sizes()) {
-        Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC MatMul_Kernel: Tensor形状不匹配");
-    }
     // 校验数据类型
     if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC MatMul_Kernel: Tensor数据类型不匹配");
+        Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DATATYPE,"CPU-BASIC MatMul_Kernel: Tensor数据类型不匹配");
     }
 
     // 简单实现，仅支持2D张量
     if (a.shape().size() != 2 || b.shape().size() != 2) {
-        throw std::invalid_argument("MatMul仅支持2D张量");
+        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "MatMul仅支持2D张量");
     }
     if (a.shape()[1] != b.shape()[0]) {
-        throw std::invalid_argument("矩阵维度不匹配");
+        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "矩阵维度不匹配");
     }
     
     size_t m = a.shape()[0];

@@ -94,23 +94,28 @@ public:
 
         // 获取调度器实例，初始化kernel映射表（仅首次调用）
         Ctorch_Scheduler &instance = getInstance();
-        std::lock_guard<std::mutex> lock(instance.mutex_);
-        static bool kernel_map_inited = false;
-        if (!kernel_map_inited) {
-            instance.initKernelMap();
-            kernel_map_inited = true;
+        {
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            static bool kernel_map_inited = false;
+            if (!kernel_map_inited) {
+                instance.initKernelMap();
+                kernel_map_inited = true;
+            }
         }
 
         // 确定目标设备，查找可用kernel
         DeviceType target_dev = getTargetDevice(a, b);
         BinaryKernelFunc target_kernel = nullptr;
 
-        // 从映射表中查找对应kernel
-        auto op_it = instance.binary_kernel_map_.find(op_type);
-        if (op_it != instance.binary_kernel_map_.end()) {
-            auto dev_it = op_it->second.find(target_dev);
-            if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
-                target_kernel = dev_it->second;
+        {   
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            // 从映射表中查找对应kernel
+            auto op_it = instance.binary_kernel_map_.find(op_type);
+            if (op_it != instance.binary_kernel_map_.end()) {
+                auto dev_it = op_it->second.find(target_dev);
+                if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
+                    target_kernel = dev_it->second;
+                }
             }
         }
 
@@ -126,23 +131,28 @@ public:
     Tensor dispatch(const Tensor& a, op op_type) {
         // 获取调度器实例，初始化kernel映射表（仅首次调用）
         Ctorch_Scheduler &instance = getInstance();
-        std::lock_guard<std::mutex> lock(instance.mutex_);
-        static bool kernel_map_inited = false;
-        if (!kernel_map_inited) {
-            instance.initKernelMap();
-            kernel_map_inited = true;
+        {
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            static bool kernel_map_inited = false;
+            if (!kernel_map_inited) {
+                instance.initKernelMap();
+                kernel_map_inited = true;
+            }
         }
 
         // 确定目标设备，查找可用kernel
         DeviceType target_dev = a.device();
         UnaryKernelFunc target_kernel = nullptr;
 
-        // 从映射表中查找对应kernel
-        auto op_it = instance.unary_kernel_map_.find(op_type);
-        if (op_it != instance.unary_kernel_map_.end()) {
-            auto dev_it = op_it->second.find(target_dev);
-            if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
-                target_kernel = dev_it->second;
+        {
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            // 从映射表中查找对应kernel
+            auto op_it = instance.unary_kernel_map_.find(op_type);
+            if (op_it != instance.unary_kernel_map_.end()) {
+                auto dev_it = op_it->second.find(target_dev);
+                if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
+                    target_kernel = dev_it->second;
+                }
             }
         }
 

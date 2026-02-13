@@ -6,23 +6,68 @@ add_library(CTorch STATIC)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
-target_sources(CTorch
-        PUBLIC
-        FILE_SET cxx_modules TYPE CXX_MODULES
-        BASE_DIRS
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        FILES
-#        include/dev/Tensor.cppm
-        include/dev/NeuralNet.cppm
-        include/dev/Functional.cppm
-        include/dev/Tensor_dev.cppm
+# 禁用C++模块扫描
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+target_sources(CTorch
         PRIVATE
-#        src/dev/Tensor.cpp
-        src/dev/NeuralNet.cpp
-        src/dev/Functional.cpp
-        src/dev/Tensor_dev.cpp
+        src/dev/Tensor.cpp
+        src/dev/AutoDiff.cpp
+        src/dev/Storage.cpp
+        src/dev/Ctools.cpp
+        src/dev/kernels/CPU-BASIC/Add_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Div_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
+        src/dev/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+        src/dev/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
+        src/dev/kernels/CPU-SIMD/Sub_SIMD_kernel.cpp
+        src/dev/kernels/CPU-SIMD/Mul_SIMD_kernel.cpp
+        src/dev/kernels/CPU-SIMD/Div_SIMD_kernel.cpp
 )
+
+# 包含头文件目录
+target_include_directories(CTorch
+        PUBLIC
+        # ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/dev
+)
+
+# 添加编译选项
+target_compile_options(CTorch PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -O3
+)
+
+# 检测平台并添加相应的编译选项
+if(APPLE)
+    # macOS 特定选项
+    target_compile_options(CTorch PRIVATE
+            -march=native
+    )
+elseif(UNIX AND NOT APPLE)
+    # Linux 特定选项
+    target_compile_options(CTorch PRIVATE
+            -march=native
+            -fopenmp
+    )
+    target_link_libraries(CTorch PRIVATE
+            -fopenmp
+    )
+endif()
 
 option(TEST_ENABLED "Enable tests?" ON)
 if (${TEST_ENABLED})

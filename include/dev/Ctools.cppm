@@ -1,12 +1,4 @@
-/**
- * @file Ctools.h
- * @brief Ctorch 通用工具类，包含通用枚举类型和辅助函数
- * @author GhostFace
- * @date 2025/12/21
- */
-
-#ifndef CTOOLS_H
-#define CTOOLS_H
+module; // 全局模块片段
 
 #include <cstring>
 #include <chrono>   // 核心时间库（C++11+）
@@ -23,59 +15,63 @@
 #include <memory>   // 智能指针
 #include <iostream> // 输入输出流
 
+export module Ctools;
+
+export {
+
 /**
  * @def ESC_START
  * @brief 终端颜色转义序列的标准开头
  */
-#define ESC_START       "\033["         
+#define ESC_START       "\033["
 
 /**
  * @def ESC_END
  * @brief 终端颜色转义序列的标准结束
  */
-#define ESC_END         "\033[0m"       
+#define ESC_END         "\033[0m"
 
 /**
  * @def COLOR_TRACE
  * @brief TRACE级别的终端颜色：灰色（低优先级）
  */
-#define COLOR_TRACE     "38;5;246m"     
+#define COLOR_TRACE     "38;5;246m"
 
 /**
  * @def COLOR_DEBUG
  * @brief DEBUG级别的终端颜色：青蓝色加粗（开发调试）
  */
-#define COLOR_DEBUG     "36;1m"         
+#define COLOR_DEBUG     "36;1m"
 
 /**
  * @def COLOR_INFO
  * @brief INFO级别的终端颜色：绿色加粗（正常信息）
  */
-#define COLOR_INFO      "32;1m"         
+#define COLOR_INFO      "32;1m"
 
 /**
  * @def COLOR_WARN
  * @brief WARN级别的终端颜色：黄色加粗（警告）
  */
-#define COLOR_WARN      "33;1m"         
+#define COLOR_WARN      "33;1m"
 
 /**
  * @def COLOR_ERR
  * @brief ERROR级别的终端颜色：红色加粗（错误）
  */
-#define COLOR_ERR       "31;1m"         
+#define COLOR_ERR       "31;1m"
 
 /**
  * @def COLOR_FATAL
  * @brief FATAL级别的终端颜色：亮红+闪烁+加粗（致命错误）
  */
-#define COLOR_FATAL     "31;5;1m"       
+#define COLOR_FATAL     "31;5;1m"
 
 /**
  * @def COLOR_ALERT
  * @brief 保留：欢迎信息用的终端颜色（白色加粗）
  */
-#define COLOR_ALERT     "37;1m"         
+#define COLOR_ALERT     "37;1m"
 
 /**
  * @enum ErrorLevel
@@ -101,7 +97,6 @@ enum class ErrorPlatform {
     kAMX = 3,      ///< AMX设备
     kUNKNOWN = 4,  ///< 未知设备
     kGENERAL = 5,  ///< 通用设备
-    kAutoDiff = 6, ///< 自动微分系统
 };
 
 /**
@@ -246,7 +241,7 @@ ErrorPlatform DeviceTypeToErrorPlatform(const DeviceType device_type);
  * @param platforms 错误平台枚举
  * @return 对应的设备类型枚举
  */
-constexpr static inline DeviceType platform(ErrorPlatform platforms) {
+constexpr inline DeviceType platform(ErrorPlatform platforms) {
     return static_cast<DeviceType>(static_cast<uint32_t>(platforms));
 }
 
@@ -326,4 +321,33 @@ inline void ctorch_sleep(uint64_t ms) {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-#endif // CTOOLS_H
+}
+
+// 实现部分
+
+uint32_t computeCode(ErrorLevel level, ErrorPlatform platform, ErrorType type) {
+    return (static_cast<uint32_t>(level) << 24) | 
+           (static_cast<uint32_t>(platform) << 16) | 
+           static_cast<uint32_t>(type);
+}
+
+std::string getFormattedTimeMs() {
+    auto now = std::chrono::system_clock::now();
+    auto now_c = std::chrono::system_clock::to_time_t(now);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S") 
+       << "." << std::setw(3) << std::setfill('0') << ms.count();
+    return ss.str();
+}
+
+uint64_t getTimestampMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
+ErrorPlatform DeviceTypeToErrorPlatform(const DeviceType device_type) {
+    return static_cast<ErrorPlatform>(static_cast<uint32_t>(device_type));
+}
