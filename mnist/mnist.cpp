@@ -266,12 +266,14 @@ void show_progress(int current, int total, const std::string& status, float loss
 int main() {
     try {
         // 设置输出级别为MINIUM，以取消TRACE和DEBUG级别的输出
+        // 这里，调到FULL！
     Ctorch_Error::setPrintLevel(PrintLevel::MINIUM);
         
         // 设置随机种子
         srand(42);
         
         // 加载MNIST数据
+
         Ctorch_Error::info(ErrorPlatform::kAutoDiff, "加载MNIST数据...");
         MNISTLoader loader(".");
         
