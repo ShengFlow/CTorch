@@ -78,7 +78,7 @@ private:
      */
     struct Node {
         size_t tensor_id;        ///< 张量ID
-        std::unique_ptr<Tensor> tensor;  ///< 张量指针
+        std::unique_ptr<Tensor> tensor;  ///< 张量指针（拥有所有权）
         std::unique_ptr<Tensor> grad;    ///< 梯度指针
         std::vector<size_t> input_ids;   ///< 输入节点ID列表
         op operation;          ///< 操作类型

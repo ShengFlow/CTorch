@@ -29,7 +29,10 @@ void Tensor::requires_grad(bool key) {
     if (key) {
         // 如果需要梯度，确保已注册到计算图
         if (AutoDiffContext::current()) {
+            // 先尝试make_leaf
             AutoDiffContext::current()->make_leaf(*this, key);
+            // 然后强制更新requires_grad状态，确保节点在当前上下文中正确注册
+            AutoDiffContext::current()->update_requires_grad(*this, key);
         }
     }
 }
@@ -240,9 +243,9 @@ Tensor Tensor::to(DType dtype) const {
 
 // 转置张量
 Tensor Tensor::transpose(int dim0, int dim1) const {
-    // 简单实现，仅支持2D张量
-    if (_shape.size() != 2) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "转置仅支持2D张量");
+    // 检查维度索引是否有效
+    if (dim0 < 0 || dim0 >= static_cast<int>(_shape.size()) || dim1 < 0 || dim1 >= static_cast<int>(_shape.size())) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "转置维度索引超出范围");
     }
     
     Tensor result(*this);
@@ -476,7 +479,20 @@ void Tensor::rand() {
 
 // 矩阵乘法
 Tensor Tensor::matmul(const Tensor& other) const {
-    return matMul(*this, other);
+    // 使用调度器执行矩阵乘法
+    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::MatMul);
+    
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
+        AutoDiffContext::current()->defer_record(result.id(), op::MatMul, inputs);
+        result._requires_grad = _requires_grad || other.requires_grad();
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    }
+    
+    return result;
 }
 
 // 反向传播
@@ -644,6 +660,16 @@ Tensor Tensor::sum() const {
 
 // 张量除法运算符
 Tensor Tensor::operator/(const Tensor& other) const {
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    // 检查设备类型是否匹配
+    if (_device != other.device()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
+    }
+    
     // 简单实现张量除法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Div);
     
@@ -662,6 +688,16 @@ Tensor Tensor::operator/(const Tensor& other) const {
 
 // 张量减法运算符
 Tensor Tensor::operator-(const Tensor& other) const {
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    // 检查设备类型是否匹配
+    if (_device != other.device()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
+    }
+    
     // 使用调度器调用加法kernel执行张量加法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::Sub);
     // 记录操作到计算图
@@ -679,6 +715,16 @@ Tensor Tensor::operator-(const Tensor& other) const {
 
 // 张量乘法运算符
 Tensor Tensor::operator*(const Tensor& other) const {
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    // 检查设备类型是否匹配
+    if (_device != other.device()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
+    }
+    
     // 简单实现张量乘法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Mul);
     // 记录操作到计算图
@@ -701,11 +747,52 @@ Tensor Tensor::operator*(float scalar) const {
     result._storage = _storage.clone();
     
     size_t count = numel();
-    if (_dtype == DType::kFloat) {
-        float* data = result.data<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] *= scalar;
+    // 根据数据类型处理
+    switch (_dtype) {
+        case DType::kFloat: {
+            float* data = result.data<float>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] *= scalar;
+            }
+            break;
         }
+        case DType::kDouble: {
+            double* data = result.data<double>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] *= static_cast<double>(scalar);
+            }
+            break;
+        }
+        case DType::kInt: {
+            int32_t* data = result.data<int32_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] *= static_cast<int32_t>(scalar);
+            }
+            break;
+        }
+        case DType::kLong: {
+            int64_t* data = result.data<int64_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] *= static_cast<int64_t>(scalar);
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量乘法不支持的dtype");
+    }
+    
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        // 对于标量操作，我们创建一个标量张量作为另一个输入
+        Tensor scalar_tensor(scalar);
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
+        AutoDiffContext::current()->defer_record(result.id(), op::Mul, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    } else {
+        result._requires_grad = _requires_grad;
     }
     
     return result;
@@ -731,6 +818,16 @@ Tensor Tensor::operator-() const {
 
 // 张量加法运算符
 Tensor Tensor::operator+(const Tensor& other) const {
+    // 检查数据类型是否匹配
+    if (_dtype != other.dtype()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "张量数据类型不匹配");
+    }
+    
+    // 检查设备类型是否匹配
+    if (_device != other.device()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
+    }
+    
     // 使用调度器调用加法kernel执行张量加法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::Add);
     
@@ -754,11 +851,52 @@ Tensor Tensor::operator+(float scalar) const {
     result._storage = _storage.clone();
     
     size_t count = numel();
-    if (_dtype == DType::kFloat) {
-        float* data = result.data<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] += scalar;
+    // 根据数据类型处理
+    switch (_dtype) {
+        case DType::kFloat: {
+            float* data = result.data<float>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] += scalar;
+            }
+            break;
         }
+        case DType::kDouble: {
+            double* data = result.data<double>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] += static_cast<double>(scalar);
+            }
+            break;
+        }
+        case DType::kInt: {
+            int32_t* data = result.data<int32_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] += static_cast<int32_t>(scalar);
+            }
+            break;
+        }
+        case DType::kLong: {
+            int64_t* data = result.data<int64_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] += static_cast<int64_t>(scalar);
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量加法不支持的dtype");
+    }
+    
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        // 对于标量操作，我们创建一个标量张量作为另一个输入
+        Tensor scalar_tensor(scalar);
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
+        AutoDiffContext::current()->defer_record(result.id(), op::Add, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    } else {
+        result._requires_grad = _requires_grad;
     }
     
     return result;
@@ -770,12 +908,58 @@ Tensor Tensor::operator/(float scalar) const {
     Tensor result(*this);
     result._storage = _storage.clone();
     
+    // 检查除数是否为零
+    if (std::abs(scalar) < std::numeric_limits<float>::epsilon()) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：标量除法中除数为零");
+    }
+    
     size_t count = numel();
-    if (_dtype == DType::kFloat) {
-        float* data = result.data<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] /= scalar;
+    // 根据数据类型处理
+    switch (_dtype) {
+        case DType::kFloat: {
+            float* data = result.data<float>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] /= scalar;
+            }
+            break;
         }
+        case DType::kDouble: {
+            double* data = result.data<double>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] /= static_cast<double>(scalar);
+            }
+            break;
+        }
+        case DType::kInt: {
+            int32_t* data = result.data<int32_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] /= static_cast<int32_t>(scalar);
+            }
+            break;
+        }
+        case DType::kLong: {
+            int64_t* data = result.data<int64_t>();
+            for (size_t i = 0; i < count; ++i) {
+                data[i] /= static_cast<int64_t>(scalar);
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量除法不支持的dtype");
+    }
+    
+    // 记录操作到计算图
+    if (AutoDiffContext::current()) {
+        // 对于标量操作，我们创建一个标量张量作为另一个输入
+        Tensor scalar_tensor(scalar);
+        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
+        AutoDiffContext::current()->defer_record(result.id(), op::Div, inputs);
+        result._requires_grad = _requires_grad;
+        if (result._requires_grad) {
+            result.commit_pending_record();
+        }
+    } else {
+        result._requires_grad = _requires_grad;
     }
     
     return result;

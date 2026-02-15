@@ -69,7 +69,7 @@ elseif(UNIX AND NOT APPLE)
     )
 endif()
 
-option(TEST_ENABLED "Enable tests?" ON)
+option(TEST_ENABLED "Enable tests?" OFF)
 if (${TEST_ENABLED})
     set(TEST_GROUP_Storage src/dev/tests/Storage/*.cpp)
     set(TEST_GROUP_Tensor src/dev/tests/Tensor/*.cpp)

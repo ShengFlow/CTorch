@@ -84,12 +84,13 @@ public:
 
 // 公共接口实现：dispatch（双输入算子）
     Tensor dispatch(const Tensor& a, const Tensor& b, op op_type) {
-        // 1. 参数合法性校验（形状、dtype一致）
-        if (a.sizes() != b.sizes()) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
-        }
+        // 1. 参数合法性校验（dtype一致）
         if (a.dtype() != b.dtype()) {
             Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
+        }
+        // 对于加法、乘法、减法、除法、交叉熵和矩阵乘法操作，允许形状不同（支持广播、不同标签格式和矩阵乘法维度要求）
+        if (op_type != op::Add && op_type != op::Mul && op_type != op::Sub && op_type != op::Div && op_type != op::CE && op_type != op::MatMul && a.sizes() != b.sizes()) {
+            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
         }
 
         // 获取调度器实例，初始化kernel映射表（仅首次调用）

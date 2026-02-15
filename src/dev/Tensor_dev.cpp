@@ -446,20 +446,27 @@ Tensor::Tensor(std::initializer_list<bool> values): _shape({values.size()}), _st
     if(zero_init) zero();
 }
 
-Tensor::Tensor(const Tensor& other) : _shape(other._shape), _strides(other._strides),
+Tensor::Tensor(const Tensor& other) : tensor_id_(other.tensor_id_), _shape(other._shape), _strides(other._strides),
          _storage_offset(other._storage_offset),
          _device(other._device), _dtype(other._dtype),
+         _requires_grad(other._requires_grad),
+         record_committed_(other.record_committed_),
          _storage(other._storage.clone()) {}
 
-Tensor::Tensor(Tensor &&other) noexcept:
+Tensor::Tensor(Tensor &&other) noexcept: tensor_id_(other.tensor_id_),
         _strides(std::move(other._strides)),
         _storage_offset(other._storage_offset),
         _device(other._device),
         _dtype(other._dtype), _storage(std::move(other._storage)),
-        _shape(std::move(other._shape)) {
+        _shape(std::move(other._shape)),
+        _requires_grad(other._requires_grad),
+        record_committed_(other.record_committed_) {
+    other.tensor_id_ = 0;
     other._storage_offset = 0;
     other._shape.clear();
     other._strides.clear();
+    other._requires_grad = false;
+    other.record_committed_ = false;
 }
 
 const std::vector<size_t> &Tensor::shape() const { return _shape; }

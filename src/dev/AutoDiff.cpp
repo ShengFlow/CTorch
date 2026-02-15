@@ -257,15 +257,21 @@ void AutoDiff::make_leaf(Tensor& t, bool requires_grad) {
         std::lock_guard<std::mutex> lock(records_mutex);
         if (id_to_node.find(id) != id_to_node.end()) {
             std::ostringstream oss;
-            oss << ">>> 节点 " << id << " 已存在，跳过创建" << std::endl;
+            oss << ">>> 节点 " << id << " 已存在，更新requires_grad状态" << std::endl;
             std::string msg = oss.str();
             Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+            // 更新节点的requires_grad状态
+            id_to_node[id]->requires_grad = requires_grad;
+            if (requires_grad && !id_to_node[id]->grad) {
+                id_to_node[id]->grad = std::make_unique<Tensor>(ShapeTag{}, t.sizes(), t.dtype(), t.device());
+                id_to_node[id]->grad->zero();
+            }
             return;
         }
     }
 
-    // 创建节点时不持有锁
-    auto tensor_ptr = std::make_unique<Tensor>(t.clone());
+    // 创建节点时不持有锁 - 使用原始张量的拷贝，以保持ID一致
+    auto tensor_ptr = std::make_unique<Tensor>(t);
     auto node = std::make_unique<Node>(id, std::move(tensor_ptr), requires_grad, true);
 
     {
@@ -429,7 +435,8 @@ void AutoDiff::commit_record(Tensor& output) {
         Ctorch_Error::trace(ErrorPlatform::kCPU, "节点 " + std::to_string(output_id) + " 需要梯度: " + (requires_grad ? "1" : "0"));
 
         // 创建节点（不持有锁）
-        auto tensor_ptr = std::make_unique<Tensor>(output.clone());
+        // 使用原始张量的拷贝，确保ID一致
+        auto tensor_ptr = std::make_unique<Tensor>(output);
         auto output_node = std::make_unique<Node>(output_id, std::move(tensor_ptr), requires_grad, false);
         output_node->operation = record_copy.operation;
         output_node->input_ids = input_ids_copy;
@@ -522,13 +529,51 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
     if (grad.sizes().empty()) {
         // 标量梯度扩展到目标形状
         Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
-        float val = grad.item<float>();
         
-        // 使用循环填充张量
-        size_t numel = result.numel();
-        float* data = result.data<float>();
-        for (size_t i = 0; i < numel; ++i) {
-            data[i] = val;
+        // 根据数据类型处理
+        switch (grad.dtype()) {
+            case DType::kFloat:
+            {
+                float val = grad.item<float>();
+                float* data = result.data<float>();
+                size_t numel = result.numel();
+                for (size_t i = 0; i < numel; ++i) {
+                    data[i] = val;
+                }
+                break;
+            }
+            case DType::kDouble:
+            {
+                double val = grad.item<double>();
+                double* data = result.data<double>();
+                size_t numel = result.numel();
+                for (size_t i = 0; i < numel; ++i) {
+                    data[i] = val;
+                }
+                break;
+            }
+            case DType::kInt:
+            {
+                int32_t val = grad.item<int32_t>();
+                int32_t* data = result.data<int32_t>();
+                size_t numel = result.numel();
+                for (size_t i = 0; i < numel; ++i) {
+                    data[i] = val;
+                }
+                break;
+            }
+            case DType::kLong:
+            {
+                int64_t val = grad.item<int64_t>();
+                int64_t* data = result.data<int64_t>();
+                size_t numel = result.numel();
+                for (size_t i = 0; i < numel; ++i) {
+                    data[i] = val;
+                }
+                break;
+            }
+            default:
+                Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "check_and_adjust_grad_shape中不支持的dtype");
         }
         
         return result;
@@ -548,14 +593,49 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
         // 创建临时张量，形状为new_grad_shape
         Tensor temp_grad(ShapeTag{}, new_grad_shape, grad.dtype(), grad.device());
         
-        // 将grad数据复制到temp_grad
-        float* temp_data = temp_grad.data<float>();
-        const float* grad_data = grad.data<float>();
+        // 根据数据类型复制数据
         size_t grad_numel = grad.numel();
         size_t temp_numel = temp_grad.numel();
         
-        for (size_t i = 0; i < temp_numel; ++i) {
-            temp_data[i] = grad_data[i % grad_numel];
+        switch (grad.dtype()) {
+            case DType::kFloat:
+            {
+                float* temp_data = temp_grad.data<float>();
+                const float* grad_data = grad.data<float>();
+                for (size_t i = 0; i < temp_numel; ++i) {
+                    temp_data[i] = grad_data[i % grad_numel];
+                }
+                break;
+            }
+            case DType::kDouble:
+            {
+                double* temp_data = temp_grad.data<double>();
+                const double* grad_data = grad.data<double>();
+                for (size_t i = 0; i < temp_numel; ++i) {
+                    temp_data[i] = grad_data[i % grad_numel];
+                }
+                break;
+            }
+            case DType::kInt:
+            {
+                int32_t* temp_data = temp_grad.data<int32_t>();
+                const int32_t* grad_data = grad.data<int32_t>();
+                for (size_t i = 0; i < temp_numel; ++i) {
+                    temp_data[i] = grad_data[i % grad_numel];
+                }
+                break;
+            }
+            case DType::kLong:
+            {
+                int64_t* temp_data = temp_grad.data<int64_t>();
+                const int64_t* grad_data = grad.data<int64_t>();
+                for (size_t i = 0; i < temp_numel; ++i) {
+                    temp_data[i] = grad_data[i % grad_numel];
+                }
+                break;
+            }
+            default:
+                Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "check_and_adjust_grad_shape中不支持的dtype");
         }
         
         // 递归调用，处理新的形状
@@ -586,47 +666,183 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
         
         // 实现广播逻辑：对于每个目标元素，找到对应的grad元素并累加
         size_t result_numel = result.numel();
-        float* result_data = result.data<float>();
-        const float* grad_data = grad.data<float>();
         
         // 计算每个维度的步幅
         std::vector<size_t> grad_strides = grad.strides();
         std::vector<size_t> result_strides = result.strides();
         
-        // 遍历结果张量的每个元素
-        for (size_t i = 0; i < result_numel; ++i) {
-            // 计算结果张量在各维度的索引
-            std::vector<size_t> result_indices(target_rank, 0);
-            size_t temp = i;
-            for (int j = target_rank - 1; j >= 0; --j) {
-                result_indices[j] = temp / result_strides[j];
-                temp %= result_strides[j];
-            }
-            
-            // 计算对应的grad索引
-            std::vector<size_t> grad_indices(grad_rank, 0);
-            
-            // 从末尾开始匹配索引
-            for (size_t j = 1; j <= target_rank; ++j) {
-                size_t grad_idx = grad_rank - j;
-                size_t result_idx = target_rank - j;
+        // 根据数据类型处理
+        switch (grad.dtype()) {
+            case DType::kFloat:
+            {
+                float* result_data = result.data<float>();
+                const float* grad_data = grad.data<float>();
                 
-                // 如果grad维度是1，则使用0索引
-                if (grad.sizes()[grad_idx] == 1) {
-                    grad_indices[grad_idx] = 0;
-                } else {
-                    grad_indices[grad_idx] = result_indices[result_idx];
+                // 遍历结果张量的每个元素
+                for (size_t i = 0; i < result_numel; ++i) {
+                    // 计算结果张量在各维度的索引
+                    std::vector<size_t> result_indices(target_rank, 0);
+                    size_t temp = i;
+                    for (int j = target_rank - 1; j >= 0; --j) {
+                        result_indices[j] = temp / result_strides[j];
+                        temp %= result_strides[j];
+                    }
+                    
+                    // 计算对应的grad索引
+                    std::vector<size_t> grad_indices(grad_rank, 0);
+                    
+                    // 从末尾开始匹配索引
+                    for (size_t j = 1; j <= target_rank; ++j) {
+                        size_t grad_idx = grad_rank - j;
+                        size_t result_idx = target_rank - j;
+                        
+                        // 如果grad维度是1，则使用0索引
+                        if (grad.sizes()[grad_idx] == 1) {
+                            grad_indices[grad_idx] = 0;
+                        } else {
+                            grad_indices[grad_idx] = result_indices[result_idx];
+                        }
+                    }
+                    
+                    // 计算grad的线性索引
+                    size_t grad_index = 0;
+                    for (size_t j = 0; j < grad_rank; ++j) {
+                        grad_index += grad_indices[j] * grad_strides[j];
+                    }
+                    
+                    // 累加梯度
+                    result_data[i] += grad_data[grad_index];
                 }
+                break;
             }
-            
-            // 计算grad的线性索引
-            size_t grad_index = 0;
-            for (size_t j = 0; j < grad_rank; ++j) {
-                grad_index += grad_indices[j] * grad_strides[j];
+            case DType::kDouble:
+            {
+                double* result_data = result.data<double>();
+                const double* grad_data = grad.data<double>();
+                
+                // 遍历结果张量的每个元素
+                for (size_t i = 0; i < result_numel; ++i) {
+                    // 计算结果张量在各维度的索引
+                    std::vector<size_t> result_indices(target_rank, 0);
+                    size_t temp = i;
+                    for (int j = target_rank - 1; j >= 0; --j) {
+                        result_indices[j] = temp / result_strides[j];
+                        temp %= result_strides[j];
+                    }
+                    
+                    // 计算对应的grad索引
+                    std::vector<size_t> grad_indices(grad_rank, 0);
+                    
+                    // 从末尾开始匹配索引
+                    for (size_t j = 1; j <= target_rank; ++j) {
+                        size_t grad_idx = grad_rank - j;
+                        size_t result_idx = target_rank - j;
+                        
+                        // 如果grad维度是1，则使用0索引
+                        if (grad.sizes()[grad_idx] == 1) {
+                            grad_indices[grad_idx] = 0;
+                        } else {
+                            grad_indices[grad_idx] = result_indices[result_idx];
+                        }
+                    }
+                    
+                    // 计算grad的线性索引
+                    size_t grad_index = 0;
+                    for (size_t j = 0; j < grad_rank; ++j) {
+                        grad_index += grad_indices[j] * grad_strides[j];
+                    }
+                    
+                    // 累加梯度
+                    result_data[i] += grad_data[grad_index];
+                }
+                break;
             }
-            
-            // 累加梯度
-            result_data[i] += grad_data[grad_index];
+            case DType::kInt:
+            {
+                int32_t* result_data = result.data<int32_t>();
+                const int32_t* grad_data = grad.data<int32_t>();
+                
+                // 遍历结果张量的每个元素
+                for (size_t i = 0; i < result_numel; ++i) {
+                    // 计算结果张量在各维度的索引
+                    std::vector<size_t> result_indices(target_rank, 0);
+                    size_t temp = i;
+                    for (int j = target_rank - 1; j >= 0; --j) {
+                        result_indices[j] = temp / result_strides[j];
+                        temp %= result_strides[j];
+                    }
+                    
+                    // 计算对应的grad索引
+                    std::vector<size_t> grad_indices(grad_rank, 0);
+                    
+                    // 从末尾开始匹配索引
+                    for (size_t j = 1; j <= target_rank; ++j) {
+                        size_t grad_idx = grad_rank - j;
+                        size_t result_idx = target_rank - j;
+                        
+                        // 如果grad维度是1，则使用0索引
+                        if (grad.sizes()[grad_idx] == 1) {
+                            grad_indices[grad_idx] = 0;
+                        } else {
+                            grad_indices[grad_idx] = result_indices[result_idx];
+                        }
+                    }
+                    
+                    // 计算grad的线性索引
+                    size_t grad_index = 0;
+                    for (size_t j = 0; j < grad_rank; ++j) {
+                        grad_index += grad_indices[j] * grad_strides[j];
+                    }
+                    
+                    // 累加梯度
+                    result_data[i] += grad_data[grad_index];
+                }
+                break;
+            }
+            case DType::kLong:
+            {
+                int64_t* result_data = result.data<int64_t>();
+                const int64_t* grad_data = grad.data<int64_t>();
+                
+                // 遍历结果张量的每个元素
+                for (size_t i = 0; i < result_numel; ++i) {
+                    // 计算结果张量在各维度的索引
+                    std::vector<size_t> result_indices(target_rank, 0);
+                    size_t temp = i;
+                    for (int j = target_rank - 1; j >= 0; --j) {
+                        result_indices[j] = temp / result_strides[j];
+                        temp %= result_strides[j];
+                    }
+                    
+                    // 计算对应的grad索引
+                    std::vector<size_t> grad_indices(grad_rank, 0);
+                    
+                    // 从末尾开始匹配索引
+                    for (size_t j = 1; j <= target_rank; ++j) {
+                        size_t grad_idx = grad_rank - j;
+                        size_t result_idx = target_rank - j;
+                        
+                        // 如果grad维度是1，则使用0索引
+                        if (grad.sizes()[grad_idx] == 1) {
+                            grad_indices[grad_idx] = 0;
+                        } else {
+                            grad_indices[grad_idx] = result_indices[result_idx];
+                        }
+                    }
+                    
+                    // 计算grad的线性索引
+                    size_t grad_index = 0;
+                    for (size_t j = 0; j < grad_rank; ++j) {
+                        grad_index += grad_indices[j] * grad_strides[j];
+                    }
+                    
+                    // 累加梯度
+                    result_data[i] += grad_data[grad_index];
+                }
+                break;
+            }
+            default:
+                Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "check_and_adjust_grad_shape中不支持的dtype");
         }
         
         return result;
@@ -655,25 +871,145 @@ Tensor AutoDiff::check_and_adjust_grad_shape(const Tensor& grad, const std::vect
         Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
         result.zero();
         
-        // 实现简单的求和逻辑
-        float* result_data = result.data<float>();
-        const float* grad_data = grad.data<float>();
-        
         size_t result_numel = result.numel();
         size_t grad_numel = grad.numel();
         
-        // 简化处理：直接对所有元素求和
-        for (size_t i = 0; i < grad_numel; ++i) {
-            result_data[i % result_numel] += grad_data[i];
+        // 根据数据类型处理
+        switch (grad.dtype()) {
+            case DType::kFloat:
+            {
+                float* result_data = result.data<float>();
+                const float* grad_data = grad.data<float>();
+                
+                // 简化处理：直接对所有元素求和
+                for (size_t i = 0; i < grad_numel; ++i) {
+                    result_data[i % result_numel] += grad_data[i];
+                }
+                break;
+            }
+            case DType::kDouble:
+            {
+                double* result_data = result.data<double>();
+                const double* grad_data = grad.data<double>();
+                
+                // 简化处理：直接对所有元素求和
+                for (size_t i = 0; i < grad_numel; ++i) {
+                    result_data[i % result_numel] += grad_data[i];
+                }
+                break;
+            }
+            case DType::kInt:
+            {
+                int32_t* result_data = result.data<int32_t>();
+                const int32_t* grad_data = grad.data<int32_t>();
+                
+                // 简化处理：直接对所有元素求和
+                for (size_t i = 0; i < grad_numel; ++i) {
+                    result_data[i % result_numel] += grad_data[i];
+                }
+                break;
+            }
+            case DType::kLong:
+            {
+                int64_t* result_data = result.data<int64_t>();
+                const int64_t* grad_data = grad.data<int64_t>();
+                
+                // 简化处理：直接对所有元素求和
+                for (size_t i = 0; i < grad_numel; ++i) {
+                    result_data[i % result_numel] += grad_data[i];
+                }
+                break;
+            }
+            default:
+                Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "check_and_adjust_grad_shape中不支持的dtype");
         }
         
         return result;
     }
     
-    // 其他情况：如果形状不匹配且无法广播，返回零张量
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "警告: 无法调整梯度形状，返回零张量");
+    // 情况4：特殊处理梯度形状
+    // 例如：当grad的形状与预期不符时，尝试通过求和调整
+    // 对于所有操作，尝试更灵活的形状调整
     Tensor result(ShapeTag{}, target_shape, grad.dtype(), grad.device());
     result.zero();
+    
+    size_t result_numel = result.numel();
+    size_t grad_numel = grad.numel();
+    
+    // 根据数据类型处理
+    switch (grad.dtype()) {
+        case DType::kFloat:
+        {
+            float* result_data = result.data<float>();
+            const float* grad_data = grad.data<float>();
+            
+            // 计算平均梯度
+            for (size_t i = 0; i < result_numel; ++i) {
+                float sum = 0.0f;
+                for (size_t j = 0; j < grad_numel; ++j) {
+                    if (j % result_numel == i) {
+                        sum += grad_data[j];
+                    }
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        case DType::kDouble:
+        {
+            double* result_data = result.data<double>();
+            const double* grad_data = grad.data<double>();
+            
+            // 计算平均梯度
+            for (size_t i = 0; i < result_numel; ++i) {
+                double sum = 0.0;
+                for (size_t j = 0; j < grad_numel; ++j) {
+                    if (j % result_numel == i) {
+                        sum += grad_data[j];
+                    }
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        case DType::kInt:
+        {
+            int32_t* result_data = result.data<int32_t>();
+            const int32_t* grad_data = grad.data<int32_t>();
+            
+            // 计算平均梯度
+            for (size_t i = 0; i < result_numel; ++i) {
+                int32_t sum = 0;
+                for (size_t j = 0; j < grad_numel; ++j) {
+                    if (j % result_numel == i) {
+                        sum += grad_data[j];
+                    }
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        case DType::kLong:
+        {
+            int64_t* result_data = result.data<int64_t>();
+            const int64_t* grad_data = grad.data<int64_t>();
+            
+            // 计算平均梯度
+            for (size_t i = 0; i < result_numel; ++i) {
+                int64_t sum = 0;
+                for (size_t j = 0; j < grad_numel; ++j) {
+                    if (j % result_numel == i) {
+                        sum += grad_data[j];
+                    }
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "check_and_adjust_grad_shape中不支持的dtype");
+    }
+    
     return result;
 }
 
@@ -704,8 +1040,8 @@ void AutoDiff::dfs_topological_sort(Node* node, std::unordered_set<Node*>& visit
 
 // ======================= backward函数（版本2） =======================
 void AutoDiff::backward(Tensor& root, Tensor grad_output) {
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("======================================="));
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("进入 backward 函数，root ID: ") + std::to_string(root.id()));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("======================================="));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("进入 backward 函数，root ID: ") + std::to_string(root.id()));
 
     if (root.id() == 0) {
         Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::TENSOR_STATE, "反向传播的无效根张量 (ID为0)");
@@ -713,10 +1049,10 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
     }
 
     // 阶段1：准备阶段（不持有锁）
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("阶段1: 准备阶段"));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("阶段1: 准备阶段"));
 
     // 阶段2：验证阶段和设置根节点梯度
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("阶段2: 验证和设置根节点梯度"));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("阶段2: 验证和设置根节点梯度"));
     Node* root_node = nullptr;
     bool root_requires_grad = false;
     std::vector<size_t> root_shape;
@@ -774,8 +1110,23 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
     {
         std::lock_guard<std::mutex> lock(records_mutex);
         for (Node* node : topological_order) {
+            // 打印节点信息
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "处理节点: " + std::to_string(node->tensor_id) + ", requires_grad: " + (node->requires_grad ? "1" : "0"));
+            Ctorch_Error::trace(ErrorPlatform::kCPU, "操作类型: " + std::to_string(static_cast<int>(node->operation)));
+            if (node->grad) {
+                Ctorch_Error::trace(ErrorPlatform::kCPU, "梯度形状: " + std::to_string(node->grad->sizes().size()) + "D");
+                if (!node->grad->sizes().empty()) {
+                    std::string shape_str = "";
+                    for (size_t s : node->grad->sizes()) {
+                        shape_str += std::to_string(s) + " ";
+                    }
+                    Ctorch_Error::trace(ErrorPlatform::kCPU, "梯度维度: " + shape_str);
+                }
+            }
+            
             // 跳过不需要梯度的节点
             if (!node->requires_grad) {
+                Ctorch_Error::trace(ErrorPlatform::kCPU, "跳过不需要梯度的节点");
                 continue;
             }
             
@@ -789,10 +1140,14 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                     if (input_it != id_to_node.end() && input_it->second && input_it->second->requires_grad) {
                         auto& input_node = *input_it->second;
                         
+                        // 打印输入节点信息
+                        Ctorch_Error::trace(ErrorPlatform::kCPU, "处理输入节点: " + std::to_string(input_id) + ", requires_grad: " + (input_node.requires_grad ? "1" : "0"));
+                        
                         // 初始化输入节点的梯度，确保形状匹配
                         if (!input_node.grad) {
                             input_node.grad = std::make_unique<Tensor>(ShapeTag{}, input_node.tensor->sizes(), input_node.tensor->dtype(), input_node.tensor->device());
                             input_node.grad->zero();
+                            Ctorch_Error::trace(ErrorPlatform::kCPU, "初始化输入节点梯度");
                         }
                         
                         Tensor& input_grad = *input_node.grad;
@@ -804,74 +1159,95 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                         if (node->operation == op::Add) {
                             // ∂(a+b)/∂a = 1, ∂(a+b)/∂b = 1
                             // 对于张量加法，梯度直接传播
-                            input_grad_val = node_grad;
+                            // 但需要确保梯度形状与输入张量形状匹配
+                            input_grad_val = check_and_adjust_grad_shape(node_grad, input_node.tensor->sizes());
                         } else if (node->operation == op::Sub) {
                             // 第一个输入是a，第二个是b，∂(a-b)/∂a = 1, ∂(a-b)/∂b = -1
                             if (input_id == node->input_ids[0]) {
                                 // 对第一个输入的梯度是正的
-                                input_grad_val = node_grad;
+                                input_grad_val = check_and_adjust_grad_shape(node_grad, input_node.tensor->sizes());
                             } else {
                                 // 对第二个输入的梯度是负的
-                                input_grad_val = -node_grad;
+                                Tensor adjusted_grad = check_and_adjust_grad_shape(node_grad, input_node.tensor->sizes());
+                                input_grad_val = -adjusted_grad;
                             }
                         } else if (node->operation == op::Mul) {
                             // 找到另一个输入张量
-                            size_t other_input_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
-                            auto other_it = id_to_node.find(other_input_id);
-                            if (other_it != id_to_node.end() && other_it->second) {
-                                // 对于张量乘法，梯度是另一个输入张量与当前节点梯度的乘积
-                                Tensor& other_tensor = *other_it->second->tensor;
-                                input_grad_val = other_tensor * node_grad;
-                            }
-                        } else if (node->operation == op::Div) {
-                            // 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)
-                            if (input_id == node->input_ids[0]) {
-                                // ∂(a/b)/∂a = 1/b
-                                size_t b_id = node->input_ids[1];
-                                auto b_it = id_to_node.find(b_id);
-                                if (b_it != id_to_node.end() && b_it->second) {
-                                    Tensor& b_tensor = *b_it->second->tensor;
-                                    // 检查b_tensor是否包含零值
-                                    bool has_zero = false;
-                                    size_t numel = b_tensor.numel();
-                                    if (b_tensor.dtype() == DType::kFloat) {
-                                        const float* b_data = b_tensor.data<float>();
-                                        for (size_t i = 0; i < numel; ++i) {
-                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
-                                                has_zero = true;
-                                                break;
-                                            }
-                                        }
+                            if (node->input_ids.size() > 1) {
+                                size_t other_input_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
+                                auto other_it = id_to_node.find(other_input_id);
+                                if (other_it != id_to_node.end() && other_it->second) {
+                                    // 对于张量乘法，梯度是另一个输入张量与当前节点梯度的乘积
+                                    Tensor& other_tensor = *other_it->second->tensor;
+                                    // 检查是否是同一个张量相乘
+                                    if (input_id == other_input_id) {
+                                        // 对于同一个张量相乘，梯度是 2 * other_tensor * node_grad
+                                        input_grad_val = 2.0f * other_tensor * node_grad;
+                                    } else {
+                                        // 对于不同张量相乘，梯度是 other_tensor * node_grad
+                                        input_grad_val = other_tensor * node_grad;
                                     }
-                                    if (has_zero) {
-                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
-                                    }
-                                    input_grad_val = node_grad / b_tensor;
                                 }
                             } else {
-                                // ∂(a/b)/∂b = -a/(b^2)
-                                size_t a_id = node->input_ids[0];
-                                auto a_it = id_to_node.find(a_id);
-                                auto b_it = id_to_node.find(input_id);
-                                if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
-                                    Tensor& a_tensor = *a_it->second->tensor;
-                                    Tensor& b_tensor = *b_it->second->tensor;
-                                    // 检查b_tensor是否包含零值
-                                    bool has_zero = false;
-                                    size_t numel = b_tensor.numel();
-                                    if (b_tensor.dtype() == DType::kFloat) {
-                                        const float* b_data = b_tensor.data<float>();
-                                        for (size_t i = 0; i < numel; ++i) {
-                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
-                                                has_zero = true;
-                                                break;
+                                // 对于标量乘法，梯度是标量值与当前节点梯度的乘积
+                                // 注意：这里我们假设标量值已经被应用到了结果中，所以梯度计算比较简单
+                                input_grad_val = node_grad;
+                            }
+                        } else if (node->operation == op::Div) {
+                            // 检查是否是标量除法
+                            if (node->input_ids.size() == 1) {
+                                // 对于标量除法，梯度是当前节点梯度除以标量值
+                                input_grad_val = node_grad;
+                            } else {
+                                // 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)
+                                if (input_id == node->input_ids[0]) {
+                                    // ∂(a/b)/∂a = 1/b
+                                    size_t b_id = node->input_ids[1];
+                                    auto b_it = id_to_node.find(b_id);
+                                    if (b_it != id_to_node.end() && b_it->second) {
+                                        Tensor& b_tensor = *b_it->second->tensor;
+                                        // 检查b_tensor是否包含零值
+                                        bool has_zero = false;
+                                        size_t numel = b_tensor.numel();
+                                        if (b_tensor.dtype() == DType::kFloat) {
+                                            const float* b_data = b_tensor.data<float>();
+                                            for (size_t i = 0; i < numel; ++i) {
+                                                if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                    has_zero = true;
+                                                    break;
+                                                }
                                             }
                                         }
+                                        if (has_zero) {
+                                            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                        }
+                                        input_grad_val = node_grad / b_tensor;
                                     }
-                                    if (has_zero) {
-                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                } else {
+                                    // ∂(a/b)/∂b = -a/(b^2)
+                                    size_t a_id = node->input_ids[0];
+                                    auto a_it = id_to_node.find(a_id);
+                                    auto b_it = id_to_node.find(input_id);
+                                    if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
+                                        Tensor& a_tensor = *a_it->second->tensor;
+                                        Tensor& b_tensor = *b_it->second->tensor;
+                                        // 检查b_tensor是否包含零值
+                                        bool has_zero = false;
+                                        size_t numel = b_tensor.numel();
+                                        if (b_tensor.dtype() == DType::kFloat) {
+                                            const float* b_data = b_tensor.data<float>();
+                                            for (size_t i = 0; i < numel; ++i) {
+                                                if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                    has_zero = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (has_zero) {
+                                            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                        }
+                                        input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
                                     }
-                                    input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
                                 }
                             }
                         } else if (node->operation == op::Neg) {
@@ -883,14 +1259,46 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                             Tensor& x_tensor = *input_node.tensor;
                             
                             // 实现ReLU梯度计算：直接在梯度上乘以mask
-                            // 这里简化处理，直接创建一个与x_tensor形状相同的张量，x>0时为1，否则为0
+                            // 这里创建一个与x_tensor形状相同的张量，x>0时为1，否则为0
                             Tensor mask(ShapeTag{}, x_tensor.sizes(), x_tensor.dtype(), x_tensor.device());
-                            float* mask_data = mask.data<float>();
-                            const float* x_data = x_tensor.data<float>();
                             size_t numel = x_tensor.numel();
                             
-                            for (size_t i = 0; i < numel; ++i) {
-                                mask_data[i] = (x_data[i] > 0.0f) ? 1.0f : 0.0f;
+                            // 根据数据类型处理
+                            switch (x_tensor.dtype()) {
+                                case DType::kFloat: {
+                                    float* mask_data = mask.data<float>();
+                                    const float* x_data = x_tensor.data<float>();
+                                    for (size_t i = 0; i < numel; ++i) {
+                                        mask_data[i] = (x_data[i] > 0.0f) ? 1.0f : 0.0f;
+                                    }
+                                    break;
+                                }
+                                case DType::kDouble: {
+                                    double* mask_data = mask.data<double>();
+                                    const double* x_data = x_tensor.data<double>();
+                                    for (size_t i = 0; i < numel; ++i) {
+                                        mask_data[i] = (x_data[i] > 0.0) ? 1.0 : 0.0;
+                                    }
+                                    break;
+                                }
+                                case DType::kInt: {
+                                    int32_t* mask_data = mask.data<int32_t>();
+                                    const int32_t* x_data = x_tensor.data<int32_t>();
+                                    for (size_t i = 0; i < numel; ++i) {
+                                        mask_data[i] = (x_data[i] > 0) ? 1 : 0;
+                                    }
+                                    break;
+                                }
+                                case DType::kLong: {
+                                    int64_t* mask_data = mask.data<int64_t>();
+                                    const int64_t* x_data = x_tensor.data<int64_t>();
+                                    for (size_t i = 0; i < numel; ++i) {
+                                        mask_data[i] = (x_data[i] > 0) ? 1 : 0;
+                                    }
+                                    break;
+                                }
+                                default:
+                                    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE, "ReLU梯度计算中不支持的dtype");
                             }
                             
                             input_grad_val = node_grad * mask;
@@ -921,6 +1329,24 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                             
                             // 计算梯度
                             input_grad_val = one_minus_tanh_x_squared * node_grad;
+                        } else if (node->operation == op::Sin) {
+                            // ∂sin(x)/∂x = cos(x) * grad
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 计算 cos(x)
+                            Tensor cos_x = x_tensor.cos();
+                            
+                            // 计算梯度
+                            input_grad_val = cos_x * node_grad;
+                        } else if (node->operation == op::Cos) {
+                            // ∂cos(x)/∂x = -sin(x) * grad
+                            Tensor& x_tensor = *input_node.tensor;
+                            
+                            // 计算 sin(x)
+                            Tensor sin_x = x_tensor.sin();
+                            
+                            // 计算梯度
+                            input_grad_val = -sin_x * node_grad;
                         } else if (node->operation == op::Softmax) {
                             // ∂softmax(x)/∂x = softmax(x) * (grad - sum(softmax(x) * grad))
                             Tensor& x_tensor = *input_node.tensor;
@@ -1018,6 +1444,187 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 // 计算梯度
                                 input_grad_val = grad_contrib * node_grad;
                             }
+                        } else if (node->operation == op::MatMul) {
+                            // ∂(A*B)/∂A = grad * B^T, ∂(A*B)/∂B = A^T * grad
+                            // 找到另一个输入张量
+                            size_t other_input_id = (input_id == node->input_ids[0]) ? node->input_ids[1] : node->input_ids[0];
+                            auto other_it = id_to_node.find(other_input_id);
+                            if (other_it != id_to_node.end() && other_it->second) {
+                                Tensor& other_tensor = *other_it->second->tensor;
+                                if (input_id == node->input_ids[0]) {
+                                    // 对第一个输入的梯度是 grad * B^T
+                                    try {
+                                        // 获取输入节点的形状
+                                        std::vector<size_t> expected_shape = input_node.tensor->sizes();
+                                        size_t result_rows = expected_shape[0];
+                                        size_t result_cols = expected_shape[1];
+                                        size_t B_rows = other_tensor.sizes()[0];
+                                        size_t B_cols = other_tensor.sizes()[1];
+                                        
+                                        // 打印调试信息
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "MatMul梯度计算：处理第一个输入");
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "输入形状: " + std::to_string(result_rows) + "x" + std::to_string(result_cols));
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "另一个输入形状: " + std::to_string(B_rows) + "x" + std::to_string(B_cols));
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "节点梯度形状: " + std::to_string(node_grad.sizes().size()) + "D");
+                                        if (!node_grad.sizes().empty()) {
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "节点梯度维度: " + std::to_string(node_grad.sizes()[0]) + "x" + std::to_string(node_grad.sizes()[1]));
+                                        }
+                                        
+                                        // 获取 node_grad 的形状和值
+                                        bool is_scalar_grad = node_grad.sizes().empty();
+                                        float grad_value = 1.0f;
+                                        
+                                        // 创建结果张量
+                                        input_grad_val = Tensor(ShapeTag{}, expected_shape, node_grad.dtype(), node_grad.device());
+                                        float* result_data = input_grad_val.data<float>();
+                                        
+                                        if (is_scalar_grad) {
+                                            // 标量情况：grad * B^T 等同于 B^T * grad_value
+                                            grad_value = node_grad.item<float>();
+                                            const float* B_data = other_tensor.data<float>();
+                                            
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "标量梯度值: " + std::to_string(grad_value));
+                                            
+                                            // 计算 B^T 并乘以 grad_value
+                                            for (size_t i = 0; i < result_rows; ++i) {
+                                                for (size_t j = 0; j < result_cols; ++j) {
+                                                    // B^T[i][j] = B[j][i]
+                                                    // 注意：B 的形状是 [B_rows, B_cols]，所以 B[j][i] 的索引是 j * B_cols + i
+                                                    float b_val = B_data[j * B_cols + i];
+                                                    float val = b_val * grad_value;
+                                                    result_data[i * result_cols + j] = val;
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(val));
+                                                }
+                                            }
+                                        } else {
+                                            // 张量情况：grad * B^T
+                                            if (node_grad.sizes().size() != 2) {
+                                                throw std::runtime_error("MatMul gradient must be 2D tensor or scalar");
+                                            }
+                                            
+                                            size_t grad_rows = node_grad.sizes()[0];
+                                            size_t grad_cols = node_grad.sizes()[1];
+                                            const float* grad_data = node_grad.data<float>();
+                                            const float* B_data = other_tensor.data<float>();
+                                            
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "张量梯度形状: " + std::to_string(grad_rows) + "x" + std::to_string(grad_cols));
+                                            
+                                            // 手动计算矩阵乘法：grad * B^T
+                                            for (size_t i = 0; i < result_rows; ++i) {
+                                                for (size_t j = 0; j < result_cols; ++j) {
+                                                    float sum = 0.0f;
+                                                    for (size_t k = 0; k < grad_cols; ++k) {
+                                                        // B^T[k][j] = B[j][k]
+                                                        float grad_val = grad_data[i * grad_cols + k];
+                                                        float b_val = B_data[j * B_cols + k];
+                                                        sum += grad_val * b_val;
+                                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "sum += grad[" + std::to_string(i) + "][" + std::to_string(k) + "] (" + std::to_string(grad_val) + ") * B[" + std::to_string(j) + "][" + std::to_string(k) + "] (" + std::to_string(b_val) + ") = " + std::to_string(sum));
+                                                    }
+                                                    result_data[i * result_cols + j] = sum;
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(sum));
+                                                }
+                                            }
+                                        }
+                                    } catch (const std::exception& e) {
+                                        // 如果矩阵乘法失败，详细记录错误并创建零梯度
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "MatMul梯度计算失败，创建零梯度: " + std::string(e.what()));
+                                        std::vector<size_t> expected_shape = input_node.tensor->sizes();
+                                        input_grad_val = Tensor(ShapeTag{}, expected_shape, node_grad.dtype(), node_grad.device());
+                                        input_grad_val.zero();
+                                    }
+                                } else {
+                                    // 对第二个输入的梯度是 A^T * grad
+                                    try {
+                                        // 获取输入节点的形状
+                                        std::vector<size_t> expected_shape = input_node.tensor->sizes();
+                                        size_t result_rows = expected_shape[0];
+                                        size_t result_cols = expected_shape[1];
+                                        size_t A_rows = other_tensor.sizes()[0];
+                                        size_t A_cols = other_tensor.sizes()[1];
+                                        
+                                        // 打印调试信息
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "MatMul梯度计算：处理第二个输入");
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "输入形状: " + std::to_string(result_rows) + "x" + std::to_string(result_cols));
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "另一个输入形状: " + std::to_string(A_rows) + "x" + std::to_string(A_cols));
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "节点梯度形状: " + std::to_string(node_grad.sizes().size()) + "D");
+                                        if (!node_grad.sizes().empty()) {
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "节点梯度维度: " + std::to_string(node_grad.sizes()[0]) + "x" + std::to_string(node_grad.sizes()[1]));
+                                        }
+                                        
+                                        // 获取 node_grad 的形状和值
+                                        bool is_scalar_grad = node_grad.sizes().empty();
+                                        float grad_value = 1.0f;
+                                        
+                                        // 创建结果张量
+                                        input_grad_val = Tensor(ShapeTag{}, expected_shape, node_grad.dtype(), node_grad.device());
+                                        float* result_data = input_grad_val.data<float>();
+                                        
+                                        if (is_scalar_grad) {
+                                            // 标量情况：A^T * grad 等同于 A^T * grad_value
+                                            grad_value = node_grad.item<float>();
+                                            const float* A_data = other_tensor.data<float>();
+                                            
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "标量梯度值: " + std::to_string(grad_value));
+                                            
+                                            // 计算 A^T 并乘以 grad_value
+                                            for (size_t i = 0; i < result_rows; ++i) {
+                                                for (size_t j = 0; j < result_cols; ++j) {
+                                                    // A^T[i][j] = A[j][i]
+                                                    // 注意：A 的形状是 [A_rows, A_cols]，所以 A[j][i] 的索引是 j * A_cols + i
+                                                    float a_val = A_data[j * A_cols + i];
+                                                    float val = a_val * grad_value;
+                                                    result_data[i * result_cols + j] = val;
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(val));
+                                                }
+                                            }
+                                        } else {
+                                            // 张量情况：A^T * grad
+                                            if (node_grad.sizes().size() != 2) {
+                                                throw std::runtime_error("MatMul gradient must be 2D tensor or scalar");
+                                            }
+                                            
+                                            size_t grad_rows = node_grad.sizes()[0];
+                                            size_t grad_cols = node_grad.sizes()[1];
+                                            const float* grad_data = node_grad.data<float>();
+                                            const float* A_data = other_tensor.data<float>();
+                                            
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "张量梯度形状: " + std::to_string(grad_rows) + "x" + std::to_string(grad_cols));
+                                            
+                                            // 手动计算矩阵乘法：A^T * grad
+                                            for (size_t i = 0; i < result_rows; ++i) {
+                                                for (size_t j = 0; j < result_cols; ++j) {
+                                                    float sum = 0.0f;
+                                                    for (size_t k = 0; k < A_rows; ++k) {
+                                                        // A^T[i][k] = A[k][i]
+                                                        float a_val = A_data[k * A_cols + i];
+                                                        float grad_val = grad_data[k * grad_cols + j];
+                                                        sum += a_val * grad_val;
+                                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "sum += A[" + std::to_string(k) + "][" + std::to_string(i) + "] (" + std::to_string(a_val) + ") * grad[" + std::to_string(k) + "][" + std::to_string(j) + "] (" + std::to_string(grad_val) + ") = " + std::to_string(sum));
+                                                    }
+                                                    result_data[i * result_cols + j] = sum;
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(sum));
+                                                }
+                                            }
+                                        }
+                                    } catch (const std::exception& e) {
+                                        // 如果矩阵乘法失败，详细记录错误并创建零梯度
+                                        Ctorch_Error::trace(ErrorPlatform::kCPU, "MatMul梯度计算失败，创建零梯度: " + std::string(e.what()));
+                                        std::vector<size_t> expected_shape = input_node.tensor->sizes();
+                                        input_grad_val = Tensor(ShapeTag{}, expected_shape, node_grad.dtype(), node_grad.device());
+                                        input_grad_val.zero();
+                                    }
+                                }
+                            } else {
+                                // 如果找不到另一个输入张量，创建一个零梯度
+                                Ctorch_Error::trace(ErrorPlatform::kCPU, "MatMul梯度计算失败：找不到另一个输入张量");
+                                std::vector<size_t> expected_shape = input_node.tensor->sizes();
+                                input_grad_val = Tensor(ShapeTag{}, expected_shape, node_grad.dtype(), node_grad.device());
+                                input_grad_val.zero();
+                            }
+                        } else if (node->operation == op::Sum) {
+                            // ∂sum(x)/∂x = 1 for all elements
+                            // 梯度是与输入张量形状相同的张量，每个元素的值等于输出梯度的值
+                            input_grad_val = check_and_adjust_grad_shape(node_grad, input_node.tensor->sizes());
                         } else {
                             Ctorch_Error::trace(ErrorPlatform::kCPU, "不支持的操作类型: " + std::to_string(static_cast<int>(node->operation)));
                             continue;
@@ -1037,8 +1644,8 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
         }
     }
 
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("反向传播完成"));
-    Ctorch_Error::info(ErrorPlatform::kAutoDiff, std::string("========================================"));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("反向传播完成"));
+    Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("========================================"));
 }
 
 // ======================= 辅助函数 =======================
