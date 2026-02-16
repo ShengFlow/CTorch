@@ -99,8 +99,8 @@ z.backward();                // 反向传播
 ### 构建步骤
 
 ```bash
-git clone https://github.com/Beapoe/CTorch.git
-cd CTorch/src/dev
+git clone https://github.com/ShengFlow/CTorch.git
+cd CTorch
 mkdir build
 cd build
 cmake ..
@@ -127,13 +127,13 @@ Ctorch/
 │   ├── html/          # API 文档（Doxygen 生成）
 │   │   └── index.html # API 文档入口文件
 │   └── API_Guide.md   # API 使用指南
-├── images/            # 图片资源
-├── include/           # 头文件（开发版）
+├── images/            
+├── include/           （开发版）
 ├── src/               # 源代码
 │   └── dev/           # 开发目录
 │       ├── kernels/   # 算子实现
 │       │   ├── kernels.h        # 算子统一声明
-│       │   └── CPU-BASIC/       # CPU 基础实现
+│       │   └── CPU-BASIC/       
 │       │       ├── Add_BASIC_kernel.cpp
 │       │       ├── Sub_BASIC_kernel.cpp
 │       │       ├── Mul_BASIC_kernel.cpp
@@ -151,28 +151,63 @@ Ctorch/
 └── LICENSE            # 许可证文件
 ```
 
-## API 文档
-
-完整的 API 文档已通过 Doxygen 生成，包含所有类、方法和函数的详细说明。
-
-### 如何查看 API 文档
-
-1. 打开项目根目录下的 `docs/html/index.html` 文件
-2. 在浏览器中查看完整的 API 文档
-3. 文档包含以下主要部分：
-        - 类层次结构
-        - Tensor 类的详细说明
-        - 自动微分系统
-        - 算子和函数
-        - 示例代码
-
-### 关键 API 快速参考
-
-- **Tensor 构造函数**：支持标量、初始化列表、形状（使用ShapeTag）等多种方式创建张量
-- **自动微分**：`requires_grad(true)` 开启梯度追踪，`backward()` 执行反向传播
-- **算术运算**：支持 `+`, `-`, `*`, `/` 等运算符重载
-- **矩阵操作**：`matmul()` 方法执行矩阵乘法
-- **激活函数**：`relu()` 等方法执行激活操作
+```
+├── CMakeLists.txt
+├── CONTRIBUTING.md
+├── Dev_log.md
+├── Inspirations.md
+├── LICENSE
+├── README.md
+├── images   # 图片资源
+│   ├── logo-dark.png
+│   ├── logo-light.png
+│   ├── logo.jpg
+│   └── logo.png
+├── include  # 头文件
+│   ├── AutoDiff.h
+│   ├── Ctools.h
+│   ├── Ctorch_Error.h
+│   ├── Ctorch_Scheduler.h
+│   ├── Storage.h
+│   └── Tensor.h
+├── mnist    # mnist测试
+│   ├── mnist.cpp
+│   ├── mnist_loader.cpp
+│   ├── mnist_loader.h
+│   ├── t10k-images-idx3-ubyte
+│   ├── t10k-labels-idx1-ubyte
+│   ├── train-images-idx3-ubyte
+│   └── train-labels-idx1-ubyte
+└── src
+    ├── AutoDiff.cpp
+    ├── Ctools.cpp
+    ├── Storage.cpp
+    ├── Tensor.cpp
+    ├── kernels # 算子实现
+    │   ├── CPU-BASIC  # CPU 基础实现
+    │   │   ├── Add_BASIC_kernel.cpp
+    │   │   ├── Cos_BASIC_kernel.cpp
+    │   │   ├── CrossEntropy_BASIC_kernel.cpp
+    │   │   ├── Div_BASIC_kernel.cpp
+    │   │   ├── Dot_BASIC_kernel.cpp
+    │   │   ├── MAE_BASIC_kernel.cpp
+    │   │   ├── MSE_BASIC_kernel.cpp
+    │   │   ├── MatMul_BASIC_kernel.cpp
+    │   │   ├── Mul_BASIC_kernel.cpp
+    │   │   ├── Neg_BASIC_kernel.cpp
+    │   │   ├── ReLU_BASIC_kernel.cpp
+    │   │   ├── Sigmoid_BASIC_kernel.cpp
+    │   │   ├── Sin_BASIC_kernel.cpp
+    │   │   ├── Softmax_BASIC_kernel.cpp
+    │   │   ├── Sub_BASIC_kernel.cpp
+    │   │   └── Tanh_BASIC_kernel.cpp
+    │   └── kernels.h
+    └── tests
+        ├── performance_test.cpp
+        ├── test.cpp
+        ├── test_activation_loss.cpp
+        └── test_tensor_grad.cpp
+```
 
 ## 未来计划
 

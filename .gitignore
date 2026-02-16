@@ -6,3 +6,5 @@ compile_commands.json
 /mnist/CMakeFiles/
 /.idea/codeStyles/codeStyleConfig.xml
 /.idea/codeStyles/Project.xml
+*.Identifier
+cmake-build-debug
