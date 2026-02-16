@@ -1,6 +1,8 @@
 build
-/.idea/*.*
+.idea/*.*
 .cache
 compile_commands.json
 .gitignore
 /mnist/CMakeFiles/
+/.idea/codeStyles/codeStyleConfig.xml
+/.idea/codeStyles/Project.xml
