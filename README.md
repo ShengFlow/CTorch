@@ -157,7 +157,7 @@ Ctorch/
 
 ### 如何查看 API 文档
 
-1. 打开项目根目录下的 `docs/index.html` 文件
+1. 打开项目根目录下的 `docs/html/index.html` 文件
 2. 在浏览器中查看完整的 API 文档
 3. 文档包含以下主要部分：
         - 类层次结构

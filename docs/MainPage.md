@@ -23,9 +23,9 @@ Ctorch 是一个轻量级、高性能的 C++ 深度学习框架，专注于自�
 ### 安装
 
 ```bash
-git clone https://github.com/Beapoe/CTorch
-cd Ctorch-Test
-mkdir -p build
+git clone https://github.com/Beapoe/CTorch.git
+cd CTorch/src/dev
+mkdir build
 cd build
 cmake ..
 make
@@ -98,11 +98,11 @@ int main() {
 
 ## 示例
 
-- [基本运算](./basic__test_8cpp.html)
-- [边界测试](./boundary__test_8cpp.html)
-- [梯度值测试](./gradient__value__test_8cpp.html)
-- [大型数据测试](./large__data__test_8cpp.html)
-- [简单测试](./simple__test_8cpp.html)
+- [基本测试](./test_8cpp.html)
+- [激活函数和损失函数测试](./test__activation__loss_8cpp.html)
+- [自动微分综合测试](./test__autodiff__comprehensive_8cpp.html)
+- [线性回归测试](./test__linear__regression_8cpp.html)
+- [张量梯度测试](./test__tensor__grad_8cpp.html)
 
 ## 贡献
 
