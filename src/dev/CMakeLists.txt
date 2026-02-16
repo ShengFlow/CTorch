@@ -152,4 +152,39 @@ target_include_directories(test_autodiff_comprehensive
     ${CMAKE_SOURCE_DIR}
 )
 
+# 线性回归测试可执行文件
+add_executable(test_linear_regression
+        test_linear_regression.cpp
+        Ctools.cpp
+        Ctools.h
+        AutoDiff.cpp
+        AutoDiff.h
+        Tensor.cpp
+        Tensor.h
+        Storage.cpp
+        Storage.h
+        kernels/CPU-BASIC/Add_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Div_BASIC_kernel.cpp
+        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
+        kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
+        kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
+        kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
+        kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
+        kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+)
+
+# 为test_linear_regression添加包含目录
+target_include_directories(test_linear_regression
+    PUBLIC
+    ${CMAKE_SOURCE_DIR}
+)
+
 # mkdir build && cd build && cmake .. && make

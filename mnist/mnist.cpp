@@ -67,10 +67,21 @@ public:
             std::cout << "ERROR: AutoDiff context does not exist!" << std::endl;
         }
         
-        // 重新设置requires_grad，确保在新的上下文中医正确跟踪
-        std::cout << "Setting requires_grad(true) for W2 and b2..." << std::endl;
-        W2.requires_grad(true);
-        b2.requires_grad(true);
+        // 手动将W2和b2注册到当前的AutoDiff上下文中
+        if (AutoDiffContext::current()) {
+            std::cout << "Registering W2 and b2 as leaf nodes..." << std::endl;
+            AutoDiffContext::current()->make_leaf(W2, true);
+            AutoDiffContext::current()->make_leaf(b2, true);
+        }
+        
+        // 确保W2和b2的requires_grad状态为true
+        if (!W2.requires_grad()) {
+            std::cout << "Setting requires_grad(true) for W2 and b2..." << std::endl;
+            W2.requires_grad(true);
+            b2.requires_grad(true);
+        } else {
+            std::cout << "W2 and b2 already require grad." << std::endl;
+        }
         
         // 再次检查AutoDiff上下文
         if (AutoDiffContext::current()) {
@@ -81,6 +92,9 @@ public:
         
         // 打印W2和b2的requires_grad状态
         std::cout << "W2 requires_grad: " << W2.requires_grad() << ", b2 requires_grad: " << b2.requires_grad() << std::endl;
+        
+        // 打印W2的前几个值，检查是否为0
+        std::cout << "W2[0][0]: " << W2.data<float>()[0] << ", W2[0][1]: " << W2.data<float>()[1] << std::endl;
         
         // 计算MSE损失 - 使用张量操作
         std::cout << "Computing forward pass..." << std::endl;
@@ -124,10 +138,43 @@ public:
             std::cout << s << " ";
         }
         std::cout << std::endl;
-        std::cout << "W2 grad[0][0]: " << W2_grad.data<float>()[0] << std::endl;
+        
+        // 打印W2梯度的前几个值
+        std::cout << "W2 grad values: ";
+        for (int i = 0; i < 5; ++i) {
+            std::cout << W2_grad.data<float>()[i] << " ";
+        }
+        std::cout << "..." << std::endl;
+        
+        // 打印b2梯度
+        Tensor b2_grad = grad(b2);
+        std::cout << "b2 grad shape: ";
+        for (size_t s : b2_grad.sizes()) {
+            std::cout << s << " ";
+        }
+        std::cout << std::endl;
+        std::cout << "b2 grad values: ";
+        for (int i = 0; i < 5; ++i) {
+            std::cout << b2_grad.data<float>()[i] << " ";
+        }
+        std::cout << "..." << std::endl;
         
         // 打印W2和b2的requires_grad状态
         std::cout << "W2 requires_grad: " << W2.requires_grad() << ", b2 requires_grad: " << b2.requires_grad() << std::endl;
+        
+        // 打印前向传播输出的前几个值
+        std::cout << "y_pred values: ";
+        for (int i = 0; i < 5; ++i) {
+            std::cout << y_pred.data<float>()[i] << " ";
+        }
+        std::cout << "..." << std::endl;
+        
+        // 打印标签的前几个值
+        std::cout << "y_one_hot values: ";
+        for (int i = 0; i < 5; ++i) {
+            std::cout << y_one_hot.data<float>()[i] << " ";
+        }
+        std::cout << "..." << std::endl;
         
         // 更新参数
         update_parameters();
@@ -275,7 +322,8 @@ int main() {
         // 加载MNIST数据
 
         Ctorch_Error::info(ErrorPlatform::kAutoDiff, "加载MNIST数据...");
-        MNISTLoader loader(".");
+        // 数据集文件在上级目录中
+        MNISTLoader loader("../");
         
         Tensor train_images, train_labels;
         Tensor test_images, test_labels;

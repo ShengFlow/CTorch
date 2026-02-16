@@ -513,8 +513,8 @@ void Tensor::backward() const {
     }
     
     // 执行反向传播
-    Tensor self_const_cast = const_cast<Tensor&>(*this);
-    AutoDiffContext::current()->backward(self_const_cast);
+    Tensor& self_ref = const_cast<Tensor&>(*this);
+    AutoDiffContext::current()->backward(self_ref);
 }
 
 // 反向传播（带有梯度输出）
@@ -545,8 +545,8 @@ void Tensor::backward(const Tensor& grad_output) const {
     }
     
     // 执行反向传播
-    Tensor self_const_cast = const_cast<Tensor&>(*this);
-    AutoDiffContext::current()->backward(self_const_cast, grad_output);
+    Tensor& self_ref = const_cast<Tensor&>(*this);
+    AutoDiffContext::current()->backward(self_ref, grad_output);
 }
 
 // ======================= 缺失方法实现 =======================

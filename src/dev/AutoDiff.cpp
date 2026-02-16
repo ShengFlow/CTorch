@@ -115,7 +115,7 @@ Tensor AutoDiff::get_grad(const Tensor* t) {
             grad_device = it->second->grad->device();
 
             // 获取梯度值用于调试
-            if (grad_dtype == DType::kFloat && !grad_shape.empty()) {
+            if (grad_dtype == DType::kFloat) {
                 const float *grad_data = it->second->grad->data<float>();
                 if (grad_data) {
                     grad_value = grad_data[0]; // 对于标量，取第一个元素
@@ -1182,7 +1182,8 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                     // 检查是否是同一个张量相乘
                                     if (input_id == other_input_id) {
                                         // 对于同一个张量相乘，梯度是 2 * other_tensor * node_grad
-                                        input_grad_val = 2.0f * other_tensor * node_grad;
+                                        // 但由于会遍历两次输入节点，这里只计算一次
+                                        input_grad_val = other_tensor * node_grad;
                                     } else {
                                         // 对于不同张量相乘，梯度是 other_tensor * node_grad
                                         input_grad_val = other_tensor * node_grad;
@@ -1194,60 +1195,54 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                 input_grad_val = node_grad;
                             }
                         } else if (node->operation == op::Div) {
-                            // 检查是否是标量除法
-                            if (node->input_ids.size() == 1) {
-                                // 对于标量除法，梯度是当前节点梯度除以标量值
-                                input_grad_val = node_grad;
+                            // 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)
+                            if (input_id == node->input_ids[0]) {
+                                // ∂(a/b)/∂a = 1/b
+                                size_t b_id = node->input_ids[1];
+                                auto b_it = id_to_node.find(b_id);
+                                if (b_it != id_to_node.end() && b_it->second) {
+                                    Tensor& b_tensor = *b_it->second->tensor;
+                                    // 检查b_tensor是否包含零值
+                                    bool has_zero = false;
+                                    size_t numel = b_tensor.numel();
+                                    if (b_tensor.dtype() == DType::kFloat) {
+                                        const float* b_data = b_tensor.data<float>();
+                                        for (size_t i = 0; i < numel; ++i) {
+                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                has_zero = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (has_zero) {
+                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
+                                    }
+                                    input_grad_val = node_grad / b_tensor;
+                                }
                             } else {
-                                // 第一个输入是a，第二个是b，∂(a/b)/∂a = 1/b, ∂(a/b)/∂b = -a/(b^2)
-                                if (input_id == node->input_ids[0]) {
-                                    // ∂(a/b)/∂a = 1/b
-                                    size_t b_id = node->input_ids[1];
-                                    auto b_it = id_to_node.find(b_id);
-                                    if (b_it != id_to_node.end() && b_it->second) {
-                                        Tensor& b_tensor = *b_it->second->tensor;
-                                        // 检查b_tensor是否包含零值
-                                        bool has_zero = false;
-                                        size_t numel = b_tensor.numel();
-                                        if (b_tensor.dtype() == DType::kFloat) {
-                                            const float* b_data = b_tensor.data<float>();
-                                            for (size_t i = 0; i < numel; ++i) {
-                                                if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
-                                                    has_zero = true;
-                                                    break;
-                                                }
+                                // ∂(a/b)/∂b = -a/(b^2)
+                                size_t a_id = node->input_ids[0];
+                                auto a_it = id_to_node.find(a_id);
+                                auto b_it = id_to_node.find(input_id);
+                                if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
+                                    Tensor& a_tensor = *a_it->second->tensor;
+                                    Tensor& b_tensor = *b_it->second->tensor;
+                                    // 检查b_tensor是否包含零值
+                                    bool has_zero = false;
+                                    size_t numel = b_tensor.numel();
+                                    if (b_tensor.dtype() == DType::kFloat) {
+                                        const float* b_data = b_tensor.data<float>();
+                                        for (size_t i = 0; i < numel; ++i) {
+                                            if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
+                                                has_zero = true;
+                                                break;
                                             }
                                         }
-                                        if (has_zero) {
-                                            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
-                                        }
-                                        input_grad_val = node_grad / b_tensor;
                                     }
-                                } else {
-                                    // ∂(a/b)/∂b = -a/(b^2)
-                                    size_t a_id = node->input_ids[0];
-                                    auto a_it = id_to_node.find(a_id);
-                                    auto b_it = id_to_node.find(input_id);
-                                    if (a_it != id_to_node.end() && a_it->second && b_it != id_to_node.end() && b_it->second) {
-                                        Tensor& a_tensor = *a_it->second->tensor;
-                                        Tensor& b_tensor = *b_it->second->tensor;
-                                        // 检查b_tensor是否包含零值
-                                        bool has_zero = false;
-                                        size_t numel = b_tensor.numel();
-                                        if (b_tensor.dtype() == DType::kFloat) {
-                                            const float* b_data = b_tensor.data<float>();
-                                            for (size_t i = 0; i < numel; ++i) {
-                                                if (std::abs(b_data[i]) < std::numeric_limits<float>::epsilon()) {
-                                                    has_zero = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if (has_zero) {
-                                            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
-                                        }
-                                        input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
+                                    if (has_zero) {
+                                        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "除零错误：Div操作的梯度计算中除数为零");
                                     }
+                                    input_grad_val = -a_tensor * node_grad / (b_tensor * b_tensor);
                                 }
                             }
                         } else if (node->operation == op::Neg) {
@@ -1510,8 +1505,12 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                             Ctorch_Error::trace(ErrorPlatform::kCPU, "张量梯度形状: " + std::to_string(grad_rows) + "x" + std::to_string(grad_cols));
                                             
                                             // 手动计算矩阵乘法：grad * B^T
-                                            for (size_t i = 0; i < result_rows; ++i) {
-                                                for (size_t j = 0; j < result_cols; ++j) {
+                                            // grad 形状: [grad_rows, grad_cols] = [batch_size, output_size]
+                                            // B 形状: [B_rows, B_cols] = [input_size, output_size]
+                                            // B^T 形状: [B_cols, B_rows] = [output_size, input_size]
+                                            // 结果形状: [grad_rows, B_rows] = [batch_size, input_size]
+                                            for (size_t i = 0; i < grad_rows; ++i) {
+                                                for (size_t j = 0; j < B_rows; ++j) {
                                                     float sum = 0.0f;
                                                     for (size_t k = 0; k < grad_cols; ++k) {
                                                         // B^T[k][j] = B[j][k]
@@ -1591,8 +1590,18 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                             Ctorch_Error::trace(ErrorPlatform::kCPU, "张量梯度形状: " + std::to_string(grad_rows) + "x" + std::to_string(grad_cols));
                                             
                                             // 手动计算矩阵乘法：A^T * grad
-                                            for (size_t i = 0; i < result_rows; ++i) {
-                                                for (size_t j = 0; j < result_cols; ++j) {
+                                            // A 形状: [A_rows, A_cols] = [batch_size, input_size]
+                                            // A^T 形状: [A_cols, A_rows] = [input_size, batch_size]
+                                            // grad 形状: [grad_rows, grad_cols] = [batch_size, output_size]
+                                            // 结果形状: [A_cols, grad_cols] = [input_size, output_size]
+                                            // 打印详细的形状信息用于调试
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "A_rows: " + std::to_string(A_rows) + ", A_cols: " + std::to_string(A_cols));
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "grad_rows: " + std::to_string(grad_rows) + ", grad_cols: " + std::to_string(grad_cols));
+                                            Ctorch_Error::trace(ErrorPlatform::kCPU, "result_rows: " + std::to_string(result_rows) + ", result_cols: " + std::to_string(result_cols));
+                                            
+                                            // 正确计算 A^T * grad
+                                            for (size_t i = 0; i < A_cols; ++i) {
+                                                for (size_t j = 0; j < grad_cols; ++j) {
                                                     float sum = 0.0f;
                                                     for (size_t k = 0; k < A_rows; ++k) {
                                                         // A^T[i][k] = A[k][i]
@@ -1601,8 +1610,12 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                                                         sum += a_val * grad_val;
                                                         Ctorch_Error::trace(ErrorPlatform::kCPU, "sum += A[" + std::to_string(k) + "][" + std::to_string(i) + "] (" + std::to_string(a_val) + ") * grad[" + std::to_string(k) + "][" + std::to_string(j) + "] (" + std::to_string(grad_val) + ") = " + std::to_string(sum));
                                                     }
-                                                    result_data[i * result_cols + j] = sum;
-                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(sum));
+                                                    // 确保索引计算正确
+                                                    size_t index = i * result_cols + j;
+                                                    result_data[index] = sum;
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result[" + std::to_string(i) + "][" + std::to_string(j) + "] = " + std::to_string(sum) + ", index: " + std::to_string(index));
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "result_rows: " + std::to_string(result_rows) + ", result_cols: " + std::to_string(result_cols));
+                                                    Ctorch_Error::trace(ErrorPlatform::kCPU, "A_cols: " + std::to_string(A_cols) + ", grad_cols: " + std::to_string(grad_cols));
                                                 }
                                             }
                                         }
@@ -1624,6 +1637,7 @@ void AutoDiff::backward(Tensor& root, Tensor grad_output) {
                         } else if (node->operation == op::Sum) {
                             // ∂sum(x)/∂x = 1 for all elements
                             // 梯度是与输入张量形状相同的张量，每个元素的值等于输出梯度的值
+                            // 当输出是标量时，输入梯度应该是全1的张量
                             input_grad_val = check_and_adjust_grad_shape(node_grad, input_node.tensor->sizes());
                         } else {
                             Ctorch_Error::trace(ErrorPlatform::kCPU, "不支持的操作类型: " + std::to_string(static_cast<int>(node->operation)));
