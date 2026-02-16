@@ -8,6 +8,8 @@
 #include "./../kernels.h"
 #include "./../../Ctorch_Error.h"
 #include "./../../Tensor.h"
+#include <cmath>
+#include <algorithm>
 
 Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
@@ -33,30 +35,55 @@ Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 2. 类别索引：形状为 [batch_size]
     if (a.sizes() == b.sizes()) {
         // 独热编码情况
-        size_t batch_size = a.sizes()[0];
-        size_t num_classes = a.sizes()[1];
-        
-        for (size_t i = 0; i < batch_size; ++i) {
-            // 对每个样本应用softmax
-            float max_val = data_a[i * num_classes];
-            for (size_t j = 1; j < num_classes; ++j) {
-                if (data_a[i * num_classes + j] > max_val) {
-                    max_val = data_a[i * num_classes + j];
+        // 支持两种形状：
+        // - [batch_size, num_classes]
+        // - [num_classes]（视为 batch_size=1）
+        if (a.sizes().size() == 2) {
+            size_t batch_size = a.sizes()[0];
+            size_t num_classes = a.sizes()[1];
+            
+            for (size_t i = 0; i < batch_size; ++i) {
+                // 对每个样本应用softmax
+                float max_val = data_a[i * num_classes];
+                for (size_t j = 1; j < num_classes; ++j) {
+                    if (data_a[i * num_classes + j] > max_val) {
+                        max_val = data_a[i * num_classes + j];
+                    }
+                }
+                
+                float exp_sum = 0.0f;
+                for (size_t j = 0; j < num_classes; ++j) {
+                    exp_sum += std::exp(data_a[i * num_classes + j] - max_val);
+                }
+                
+                for (size_t j = 0; j < num_classes; ++j) {
+                    // 计算softmax值
+                    float pred = std::exp(data_a[i * num_classes + j] - max_val) / exp_sum;
+                    // 确保预测值不为0，避免log(0)的情况
+                    pred = std::max(pred, 1e-10f);
+                    cross_entropy -= data_b[i * num_classes + j] * std::log(pred);
                 }
             }
-            
+        } else if (a.sizes().size() == 1) {
+            // 单样本：a,b 形状为 [num_classes]
+            size_t num_classes = a.sizes()[0];
+            float max_val = data_a[0];
+            for (size_t j = 1; j < num_classes; ++j) {
+                if (data_a[j] > max_val) max_val = data_a[j];
+            }
             float exp_sum = 0.0f;
             for (size_t j = 0; j < num_classes; ++j) {
-                exp_sum += std::exp(data_a[i * num_classes + j] - max_val);
+                exp_sum += std::exp(data_a[j] - max_val);
             }
-            
             for (size_t j = 0; j < num_classes; ++j) {
-                // 计算softmax值
-                float pred = std::exp(data_a[i * num_classes + j] - max_val) / exp_sum;
-                // 确保预测值不为0，避免log(0)的情况
+                float pred = std::exp(data_a[j] - max_val) / exp_sum;
                 pred = std::max(pred, 1e-10f);
-                cross_entropy -= data_b[i * num_classes + j] * std::log(pred);
+                cross_entropy -= data_b[j] * std::log(pred);
             }
+        } else {
+            Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                              "CPU-BASIC CrossEntropy_Kernel: one-hot 仅支持 1D/2D");
+            return Tensor();
         }
     } else if (b.sizes().size() == 1 && a.sizes().size() == 2 && b.sizes()[0] == a.sizes()[0]) {
         // 类别索引情况：b是 [batch_size]，a是 [batch_size, num_classes]

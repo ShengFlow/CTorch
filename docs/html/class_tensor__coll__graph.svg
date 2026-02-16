@@ -27,7 +27,7 @@
 <text xml:space="preserve" text-anchor="start" x="4" y="-101" font-family="Helvetica,sans-Serif" font-size="10.00">+</text>
 <text xml:space="preserve" text-anchor="start" x="14" y="-101" font-family="Helvetica,sans-Serif" font-size="10.00">has_pending_record()</text>
 <text xml:space="preserve" text-anchor="start" x="4" y="-85.75" font-family="Helvetica,sans-Serif" font-size="10.00">+</text>
-<text xml:space="preserve" text-anchor="start" x="14" y="-85.75" font-family="Helvetica,sans-Serif" font-size="10.00">Tensor()</text>
+<text xml:space="preserve" text-anchor="start" x="14" y="-85.75" font-family="Helvetica,sans-Serif" font-size="10.00">set_id()</text>
 <text xml:space="preserve" text-anchor="start" x="4" y="-70.5" font-family="Helvetica,sans-Serif" font-size="10.00">+</text>
 <text xml:space="preserve" text-anchor="start" x="14" y="-70.5" font-family="Helvetica,sans-Serif" font-size="10.00">Tensor()</text>
 <text xml:space="preserve" text-anchor="start" x="4" y="-55.25" font-family="Helvetica,sans-Serif" font-size="10.00">+</text>
@@ -36,7 +36,7 @@
 <text xml:space="preserve" text-anchor="start" x="14" y="-40" font-family="Helvetica,sans-Serif" font-size="10.00">Tensor()</text>
 <text xml:space="preserve" text-anchor="start" x="4" y="-24.75" font-family="Helvetica,sans-Serif" font-size="10.00">+</text>
 <text xml:space="preserve" text-anchor="start" x="14" y="-24.75" font-family="Helvetica,sans-Serif" font-size="10.00">Tensor()</text>
-<text xml:space="preserve" text-anchor="start" x="14" y="-9.5" font-family="Helvetica,sans-Serif" font-size="10.00">和 100 更多...</text>
+<text xml:space="preserve" text-anchor="start" x="14" y="-9.5" font-family="Helvetica,sans-Serif" font-size="10.00">和 104 更多...</text>
 <polygon fill="#666666" stroke="#666666" points="0,-188.75 0,-188.75 127.5,-188.75 127.5,-188.75 0,-188.75"/>
 <polygon fill="#666666" stroke="#666666" points="0,-173.5 0,-173.5 12,-173.5 12,-173.5 0,-173.5"/>
 <polygon fill="#666666" stroke="#666666" points="12,-173.5 12,-173.5 127.5,-173.5 127.5,-173.5 12,-173.5"/>

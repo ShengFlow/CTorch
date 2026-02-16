@@ -1,21 +1,42 @@
 var indexSectionsWithContent =
 {
-  0: "123456789acgmt主使反基复多大如安常张快性支文标核梯激版矩示简算联自获计许设贡错高",
-  1: "am",
-  2: "123456789acgt主使反基复多大如安常张快性支文标核梯激版矩示简算联自获计许设贡错高"
+  0: "123456789_abcdefghiklmnoprstuvwz~主使反基复多大如安常张快性支文标核梯激版矩示简算联自获计许设贡错高",
+  1: "abcgmst",
+  2: "acflmnpst",
+  3: "abcdefghilmnorstuvwz~",
+  4: "_bels",
+  5: "demop",
+  6: "abcdefiklmnoprstuw",
+  7: "ce",
+  8: "123456789acgt主使反基复多大如安常张快性支文标核梯激版矩示简算联自获计许设贡错高",
+  9: "t"
 };
 
 var indexSectionNames =
 {
   0: "all",
-  1: "files",
-  2: "pages"
+  1: "classes",
+  2: "files",
+  3: "functions",
+  4: "variables",
+  5: "enums",
+  6: "enumvalues",
+  7: "defines",
+  8: "pages",
+  9: "modules"
 };
 
 var indexSectionLabels =
 {
   0: "全部",
-  1: "文件",
-  2: "页"
+  1: "类",
+  2: "文件",
+  3: "函数",
+  4: "变量",
+  5: "枚举",
+  6: "枚举值",
+  7: "宏定义",
+  8: "页",
+  9: "模块"
 };
 

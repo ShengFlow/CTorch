@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.15.0"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Ctorch: Tensor.cpp 文件参考</title>
+<title>Ctorch: /Users/ghostface/CLionProjects/Ctorch_2.13/CTorch/src/dev/Tensor.cpp 文件参考</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -100,10 +100,12 @@ $(function(){initNavTree('_tensor_8cpp.html','',''); });
 <div class="textblock"><code>#include &quot;<a class="el" href="_tensor_8h_source.html">Tensor.h</a>&quot;</code><br />
 <code>#include &quot;kernels/kernels.h&quot;</code><br />
 <code>#include &quot;<a class="el" href="_ctorch___scheduler_8h_source.html">Ctorch_Scheduler.h</a>&quot;</code><br />
+<code>#include &lt;random&gt;</code><br />
+<code>#include &lt;cmath&gt;</code><br />
 </div><div class="textblock"><div class="dynheader">
 Tensor.cpp 的引用(Include)关系图:</div>
 <div class="dyncontent">
-<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="_tensor_8cpp__incl.svg" width="1744" height="479"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="_tensor_8cpp__incl.svg" width="1758" height="508"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
 </div>
 </div>
 <p><a href="_tensor_8cpp_source.html">浏览该文件的源代码.</a></p>
@@ -129,17 +131,17 @@ Tensor.cpp 的引用(Include)关系图:</div>
 <tr class="memitem:a167ba3f6f7112a6e100ca1113ded3d9c" id="r_a167ba3f6f7112a6e100ca1113ded3d9c"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a167ba3f6f7112a6e100ca1113ded3d9c">operator/</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
 <tr class="memdesc:a167ba3f6f7112a6e100ca1113ded3d9c"><td class="mdescLeft">&#160;</td><td class="mdescRight">标量除法操作符重载（右操作数）  <br /></td></tr>
 <tr class="memitem:ace52d403aa4f436d4340d1436f7f61eb" id="r_ace52d403aa4f436d4340d1436f7f61eb"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ace52d403aa4f436d4340d1436f7f61eb">operator&gt;</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:ace52d403aa4f436d4340d1436f7f61eb"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量大于张量  <br /></td></tr>
+<tr class="memdesc:ace52d403aa4f436d4340d1436f7f61eb"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量大于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a50412a3c49d39aa9324751cd890ffc6d" id="r_a50412a3c49d39aa9324751cd890ffc6d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a50412a3c49d39aa9324751cd890ffc6d">operator&lt;</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:a50412a3c49d39aa9324751cd890ffc6d"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量小于张量  <br /></td></tr>
+<tr class="memdesc:a50412a3c49d39aa9324751cd890ffc6d"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量小于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a2053d7670f1460b45026bd0a4108a0b0" id="r_a2053d7670f1460b45026bd0a4108a0b0"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2053d7670f1460b45026bd0a4108a0b0">operator==</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:a2053d7670f1460b45026bd0a4108a0b0"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量等于张量  <br /></td></tr>
+<tr class="memdesc:a2053d7670f1460b45026bd0a4108a0b0"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量等于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a121802be2c103a5aa98f2be71eb1b59b" id="r_a121802be2c103a5aa98f2be71eb1b59b"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a121802be2c103a5aa98f2be71eb1b59b">operator&gt;=</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:a121802be2c103a5aa98f2be71eb1b59b"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量大于等于张量  <br /></td></tr>
+<tr class="memdesc:a121802be2c103a5aa98f2be71eb1b59b"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量大于等于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a405b2fd7e8303e28e6872d9b64ada34b" id="r_a405b2fd7e8303e28e6872d9b64ada34b"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a405b2fd7e8303e28e6872d9b64ada34b">operator&lt;=</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:a405b2fd7e8303e28e6872d9b64ada34b"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量小于等于张量  <br /></td></tr>
+<tr class="memdesc:a405b2fd7e8303e28e6872d9b64ada34b"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量小于等于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a7486cf7a8b8f05a6a74c94fe91e6cf33" id="r_a7486cf7a8b8f05a6a74c94fe91e6cf33"><td class="memItemLeft" align="right" valign="top"><a class="el" href="class_tensor.html">Tensor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7486cf7a8b8f05a6a74c94fe91e6cf33">operator!=</a> (float scalar, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
-<tr class="memdesc:a7486cf7a8b8f05a6a74c94fe91e6cf33"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量不等于张量  <br /></td></tr>
+<tr class="memdesc:a7486cf7a8b8f05a6a74c94fe91e6cf33"><td class="mdescLeft">&#160;</td><td class="mdescRight">比较操作符重载：标量不等于张量（右操作数）  <br /></td></tr>
 <tr class="memitem:a07daa26f0a2da4a162cb2c7242556ab1" id="r_a07daa26f0a2da4a162cb2c7242556ab1"><td class="memItemLeft" align="right" valign="top">std::ostream &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a07daa26f0a2da4a162cb2c7242556ab1">operator&lt;&lt;</a> (std::ostream &amp;os, const <a class="el" href="class_tensor.html">Tensor</a> &amp;tensor)</td></tr>
 <tr class="memdesc:a07daa26f0a2da4a162cb2c7242556ab1"><td class="mdescLeft">&#160;</td><td class="mdescRight">输出张量信息  <br /></td></tr>
 </table>
@@ -175,7 +177,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00593">593</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01373">1373</a> 行定义.</p>
 
 </div>
 </div>
@@ -207,7 +209,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00600">600</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01380">1380</a> 行定义.</p>
 
 </div>
 </div>
@@ -240,7 +242,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>广播结果 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00644">644</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01400">1400</a> 行定义.</p>
 
 </div>
 </div>
@@ -268,7 +270,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>梯度张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00607">607</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01387">1387</a> 行定义.</p>
 
 </div>
 </div>
@@ -302,7 +304,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>矩阵乘法结果 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00615">615</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01395">1395</a> 行定义.</p>
 
 </div>
 </div>
@@ -325,8 +327,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量不等于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量不等于张量（右操作数） </p>
+<p>比较操作符重载：标量不等于张量</p>
+<p>实现标量与张量的元素级不等于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -335,7 +338,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00706">706</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01577">1577</a> 行定义.</p>
 
 </div>
 </div>
@@ -359,16 +362,16 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </div><div class="memdoc">
 
 <p>标量乘法操作符重载（右操作数） </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>实现标量与张量的乘法操作 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>返回</dt><dd>乘法结果 </dd></dl>
+<dl class="section return"><dt>返回</dt><dd>乘法结果张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00665">665</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01439">1439</a> 行定义.</p>
 
 </div>
 </div>
@@ -392,16 +395,16 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </div><div class="memdoc">
 
 <p>标量加法操作符重载（右操作数） </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>实现标量与张量的加法操作 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>返回</dt><dd>加法结果 </dd></dl>
+<dl class="section return"><dt>返回</dt><dd>加法结果张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00654">654</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01416">1416</a> 行定义.</p>
 
 </div>
 </div>
@@ -425,16 +428,16 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </div><div class="memdoc">
 
 <p>标量减法操作符重载（右操作数） </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>实现标量与张量的减法操作 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>返回</dt><dd>减法结果 </dd></dl>
+<dl class="section return"><dt>返回</dt><dd>减法结果张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00659">659</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01427">1427</a> 行定义.</p>
 
 </div>
 </div>
@@ -458,16 +461,16 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </div><div class="memdoc">
 
 <p>标量除法操作符重载（右操作数） </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>实现标量与张量的除法操作 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>返回</dt><dd>除法结果 </dd></dl>
+<dl class="section return"><dt>返回</dt><dd>除法结果张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00670">670</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01450">1450</a> 行定义.</p>
 
 </div>
 </div>
@@ -490,8 +493,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量小于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量小于张量（右操作数） </p>
+<p>比较操作符重载：标量小于张量</p>
+<p>实现标量与张量的元素级小于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -500,7 +504,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00682">682</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01485">1485</a> 行定义.</p>
 
 </div>
 </div>
@@ -533,7 +537,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>输出流 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00712">712</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01594">1594</a> 行定义.</p>
 
 </div>
 </div>
@@ -556,8 +560,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量小于等于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量小于等于张量（右操作数） </p>
+<p>比较操作符重载：标量小于等于张量</p>
+<p>实现标量与张量的元素级小于等于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -566,7 +571,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00700">700</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01554">1554</a> 行定义.</p>
 
 </div>
 </div>
@@ -589,8 +594,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量等于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量等于张量（右操作数） </p>
+<p>比较操作符重载：标量等于张量</p>
+<p>实现标量与张量的元素级等于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -599,7 +605,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00688">688</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01508">1508</a> 行定义.</p>
 
 </div>
 </div>
@@ -622,8 +628,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量大于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量大于张量（右操作数） </p>
+<p>比较操作符重载：标量大于张量</p>
+<p>实现标量与张量的元素级大于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -632,7 +639,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00676">676</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01462">1462</a> 行定义.</p>
 
 </div>
 </div>
@@ -655,8 +662,9 @@ Tensor.cpp 的引用(Include)关系图:</div>
       </table>
 </div><div class="memdoc">
 
-<p>比较操作符重载：标量大于等于张量 </p>
-<dl class="params"><dt>参数</dt><dd>
+<p>比较操作符重载：标量大于等于张量（右操作数） </p>
+<p>比较操作符重载：标量大于等于张量</p>
+<p>实现标量与张量的元素级大于等于比较 </p><dl class="params"><dt>参数</dt><dd>
   <table class="params">
     <tr><td class="paramname">scalar</td><td>标量值 </td></tr>
     <tr><td class="paramname">tensor</td><td>张量 </td></tr>
@@ -665,7 +673,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>比较结果张量，元素为布尔类型 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l00694">694</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_tensor_8cpp_source.html">Tensor.cpp</a> 第 <a class="el" href="_tensor_8cpp_source.html#l01531">1531</a> 行定义.</p>
 
 </div>
 </div>
@@ -682,7 +690,7 @@ Tensor.cpp 的引用(Include)关系图:</div>
 <!-- start footer part -->
 <div id="nav-path" class="navpath"><!-- id is needed for treeview function! -->
   <ul>
-    <li class="navelem"><a href="_tensor_8cpp.html">Tensor.cpp</a></li>
+    <li class="navelem"><a href="dir_68267d1309a1af8e8297ef4c3efbcdba.html">src</a></li><li class="navelem"><a href="dir_79aff18505430beab4d731f694f82366.html">dev</a></li><li class="navelem"><a href="_tensor_8cpp.html">Tensor.cpp</a></li>
     <li class="footer">制作者 <a href="https://www.doxygen.org/index.html"><img class="footer" src="doxygen.svg" width="104" height="31" alt="doxygen"/></a> 1.15.0 </li>
   </ul>
 </div>

@@ -74,7 +74,7 @@ public:
      * @param dtype 数据类型
      * @param device 设备类型，默认CPU
      */
-    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)]) : nullptr) {}
+    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)], std::default_delete<char[]>()) : nullptr) {}
 
     /**
      * @brief 构造函数：从现有数据复制
@@ -176,12 +176,6 @@ public:
         Storage new_storage(_size, _dtype, _device);
         if (_size > 0 && _data) {
             std::memcpy(new_storage._data.get(), _data.get(), _size * dtypeSize(_dtype));
-
-            // 验证复制是否正确
-            if (_dtype == DType::kFloat && _size > 0) {
-                const float* src = reinterpret_cast<const float*>(_data.get());
-                float* dst = reinterpret_cast<float*>(new_storage._data.get());
-            }
         }
         return new_storage;
     }

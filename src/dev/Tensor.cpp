@@ -10,6 +10,7 @@
 #include "kernels/kernels.h"
 #include "Ctorch_Scheduler.h"
 #include <random>
+#include <cmath>
 
 /**
  * @var Tensor::global_tensor_id
@@ -552,7 +553,13 @@ void Tensor::backward(const Tensor& grad_output) const {
 // ======================= 缺失方法实现 =======================
 
 // 默认构造函数
-Tensor::Tensor() : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat), _requires_grad(false), record_committed_(false) {
+Tensor::Tensor()
+    : tensor_id_(global_tensor_id++),
+      record_committed_(false),
+      _requires_grad(false),
+      _storage_offset(0),
+      _device(DeviceType::kCPU),
+      _dtype(DType::kFloat) {
     computeStrides();
 }
 
@@ -1636,12 +1643,156 @@ Tensor Tensor::sigmoid() const {
 
 // Softmax激活函数
 Tensor Tensor::softmax(int dim) const {
-    Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Softmax);
+    // 彻底实现 dim-softmax（目前支持 1D/2D；dim=-1 表示最后一维）
+    std::vector<size_t> shape = this->sizes();
+    if (shape.empty()) {
+        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                     "Softmax: 不支持标量 softmax");
+    }
 
-    // 记录操作到计算图
+    int rank = static_cast<int>(shape.size());
+    if (dim < 0) dim += rank; // -1 -> last dim
+    if (dim < 0 || dim >= rank) {
+        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                     "Softmax: dim 越界");
+    }
+
+    if (this->device() != DeviceType::kCPU) {
+        Ctorch_Error::throwException(DeviceTypeToErrorPlatform(this->device()),
+                                     ErrorType::DEVICE_COMPAT,
+                                     "Softmax: 当前仅实现 CPU");
+    }
+
+    Tensor result(ShapeTag{}, shape, this->dtype(), this->device());
+
+    if (shape.size() == 1) {
+        // 1D: 只有 dim=0 合法
+        if (dim != 0) {
+            Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                         "Softmax: 1D 张量仅支持 dim=0/-1");
+        }
+        size_t n = this->numel();
+        switch (this->dtype()) {
+        case DType::kFloat: {
+            const float* in = this->data<float>();
+            float* out = result.data<float>();
+            float max_val = in[0];
+            for (size_t i = 1; i < n; ++i) if (in[i] > max_val) max_val = in[i];
+            float sum = 0.0f;
+            for (size_t i = 0; i < n; ++i) { out[i] = std::exp(in[i] - max_val); sum += out[i]; }
+            for (size_t i = 0; i < n; ++i) out[i] /= sum;
+            break;
+        }
+        case DType::kDouble: {
+            const double* in = this->data<double>();
+            double* out = result.data<double>();
+            double max_val = in[0];
+            for (size_t i = 1; i < n; ++i) if (in[i] > max_val) max_val = in[i];
+            double sum = 0.0;
+            for (size_t i = 0; i < n; ++i) { out[i] = std::exp(in[i] - max_val); sum += out[i]; }
+            for (size_t i = 0; i < n; ++i) out[i] /= sum;
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+                                         "Softmax: 仅支持 float/double");
+        }
+    } else if (shape.size() == 2) {
+        size_t rows = shape[0];
+        size_t cols = shape[1];
+        // 2D: 支持 dim=0 或 dim=1
+        if (dim != 0 && dim != 1) {
+            Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                         "Softmax: 2D 张量仅支持 dim=0/1/-1");
+        }
+        switch (this->dtype()) {
+        case DType::kFloat: {
+            const float* in = this->data<float>();
+            float* out = result.data<float>();
+            if (dim == 1) {
+                // 按行 softmax
+                for (size_t i = 0; i < rows; ++i) {
+                    float max_val = in[i * cols];
+                    for (size_t j = 1; j < cols; ++j) {
+                        float v = in[i * cols + j];
+                        if (v > max_val) max_val = v;
+                    }
+                    float sum = 0.0f;
+                    for (size_t j = 0; j < cols; ++j) {
+                        float e = std::exp(in[i * cols + j] - max_val);
+                        out[i * cols + j] = e;
+                        sum += e;
+                    }
+                    for (size_t j = 0; j < cols; ++j) out[i * cols + j] /= sum;
+                }
+            } else {
+                // 按列 softmax
+                for (size_t j = 0; j < cols; ++j) {
+                    float max_val = in[j];
+                    for (size_t i = 1; i < rows; ++i) {
+                        float v = in[i * cols + j];
+                        if (v > max_val) max_val = v;
+                    }
+                    float sum = 0.0f;
+                    for (size_t i = 0; i < rows; ++i) {
+                        float e = std::exp(in[i * cols + j] - max_val);
+                        out[i * cols + j] = e;
+                        sum += e;
+                    }
+                    for (size_t i = 0; i < rows; ++i) out[i * cols + j] /= sum;
+                }
+            }
+            break;
+        }
+        case DType::kDouble: {
+            const double* in = this->data<double>();
+            double* out = result.data<double>();
+            if (dim == 1) {
+                for (size_t i = 0; i < rows; ++i) {
+                    double max_val = in[i * cols];
+                    for (size_t j = 1; j < cols; ++j) {
+                        double v = in[i * cols + j];
+                        if (v > max_val) max_val = v;
+                    }
+                    double sum = 0.0;
+                    for (size_t j = 0; j < cols; ++j) {
+                        double e = std::exp(in[i * cols + j] - max_val);
+                        out[i * cols + j] = e;
+                        sum += e;
+                    }
+                    for (size_t j = 0; j < cols; ++j) out[i * cols + j] /= sum;
+                }
+            } else {
+                for (size_t j = 0; j < cols; ++j) {
+                    double max_val = in[j];
+                    for (size_t i = 1; i < rows; ++i) {
+                        double v = in[i * cols + j];
+                        if (v > max_val) max_val = v;
+                    }
+                    double sum = 0.0;
+                    for (size_t i = 0; i < rows; ++i) {
+                        double e = std::exp(in[i * cols + j] - max_val);
+                        out[i * cols + j] = e;
+                        sum += e;
+                    }
+                    for (size_t i = 0; i < rows; ++i) out[i * cols + j] /= sum;
+                }
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+                                         "Softmax: 仅支持 float/double");
+        }
+    } else {
+        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                     "Softmax: 暂仅支持 1D/2D");
+    }
+
+    // 记录操作到计算图（把 dim 写进 op_param_i）
     if (AutoDiffContext::current()) {
         std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Softmax, inputs);
+        AutoDiffContext::current()->defer_record(result.id(), op::Softmax, inputs, dim);
         result._requires_grad = _requires_grad;
         if (result._requires_grad) {
             result.commit_pending_record();

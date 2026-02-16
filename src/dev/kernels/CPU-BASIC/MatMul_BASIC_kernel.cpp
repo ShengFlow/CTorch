@@ -34,14 +34,22 @@ Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
     size_t n = b.shape()[1];
     
     Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device());
-    // 简单的矩阵乘法实现
+    // 考虑步长的矩阵乘法实现
+    const std::vector<size_t>& a_strides = a.strides();
+    const std::vector<size_t>& b_strides = b.strides();
+    const std::vector<size_t>& result_strides = result.strides();
+    
     for (size_t i = 0; i < m; ++i) {
         for (size_t j = 0; j < n; ++j) {
             float sum = 0.0f;
             for (size_t l = 0; l < k; ++l) {
-                sum += a.data<float>()[i * k + l] * b.data<float>()[l * n + j];
+                // 使用步长访问数据，支持转置后的张量
+                size_t a_idx = i * a_strides[0] + l * a_strides[1];
+                size_t b_idx = l * b_strides[0] + j * b_strides[1];
+                sum += a.data<float>()[a_idx] * b.data<float>()[b_idx];
             }
-            result.data<float>()[i * n + j] = sum;
+            size_t result_idx = i * result_strides[0] + j * result_strides[1];
+            result.data<float>()[result_idx] = sum;
         }
     }
     

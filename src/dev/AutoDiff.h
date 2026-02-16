@@ -82,6 +82,7 @@ private:
         std::unique_ptr<Tensor> grad;    ///< 梯度指针
         std::vector<size_t> input_ids;   ///< 输入节点ID列表
         op operation;          ///< 操作类型
+        int op_param_i = 0;   ///< 算子整型参数（目前用于 Softmax dim）
         bool requires_grad;    ///< 是否需要梯度
         bool is_leaf;          ///< 是否为叶子节点
 
@@ -108,6 +109,7 @@ private:
         op operation;                  ///< 操作类型
         std::vector<size_t> input_ids;     ///< 输入节点ID列表
         std::vector<std::vector<size_t>> input_shapes;  ///< 输入节点形状列表
+        int op_param_i = 0;            ///< 算子整型参数（目前用于 Softmax dim）
         bool committed = false;         ///< 是否已提交
     };
 
@@ -161,6 +163,12 @@ public:
     void make_leaf(Tensor& t, bool requires_grad);
 
     /**
+     * @brief 清零指定张量的梯度（用于每个batch训练前，避免梯度累积）
+     * @param t 需要清零梯度的张量
+     */
+    void zero_grad(Tensor& t);
+
+    /**
      * @brief 析构函数
      */
     ~AutoDiff();
@@ -171,7 +179,7 @@ public:
      * @param operation 操作类型
      * @param inputs 输入张量列表
      */
-    void defer_record(size_t output_id, op operation, const std::vector<Tensor*>& inputs);
+    void defer_record(size_t output_id, op operation, const std::vector<Tensor*>& inputs, int op_param_i = 0);
 
     /**
      * @brief 提交延迟记录

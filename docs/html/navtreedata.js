@@ -67,13 +67,39 @@ var NAVTREE =
       [ "7. 错误处理", "md__a_p_i___guide.html#autotoc_md46", null ],
       [ "8. 性能优化建议", "md__a_p_i___guide.html#autotoc_md47", null ],
       [ "9. 版本信息", "md__a_p_i___guide.html#autotoc_md48", null ]
+    ] ],
+    [ "模块", "modules.html", [
+      [ "模块列表", "modules.html", "modules_dup" ],
+      [ "模块成员", "modulemembers.html", [
+        [ "全部", "modulemembers.html", null ],
+        [ "函数", "modulemembers_func.html", null ]
+      ] ]
+    ] ],
+    [ "类", "annotated.html", [
+      [ "类列表", "annotated.html", "annotated_dup" ],
+      [ "类索引", "classes.html", null ],
+      [ "类成员", "functions.html", [
+        [ "全部", "functions.html", null ],
+        [ "函数", "functions_func.html", null ],
+        [ "变量", "functions_vars.html", null ]
+      ] ]
+    ] ],
+    [ "文件", "files.html", [
+      [ "文件列表", "files.html", "files_dup" ],
+      [ "文件成员", "globals.html", [
+        [ "全部", "globals.html", null ],
+        [ "函数", "globals_func.html", null ],
+        [ "枚举", "globals_enum.html", null ],
+        [ "宏定义", "globals_defs.html", null ]
+      ] ]
     ] ]
   ] ]
 ];
 
 var NAVTREEINDEX =
 [
-"index.html"
+"_auto_diff_8cpp.html",
+"class_tensor.html#a4f38731c372ba2ef54730cf90fb2f687"
 ];
 
 var SYNCONMSG = '点击 关闭 面板同步';

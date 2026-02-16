@@ -2,234 +2,130 @@
 #include "AutoDiff.h"
 #include "Ctorch_Error.h"
 #include <iostream>
-#include <chrono>
 #include <iomanip>
+#include <cmath>
 
-// 简单的全连接神经网络类
+// 两隐藏层 MLP: 784 -> 256(ReLU) -> 128(ReLU) -> 10
 class NeuralNetwork {
 private:
-    Tensor W1, b1, W2, b2;
+    Tensor W1, b1, W2, b2, W3, b3;
     float learning_rate;
     
+    static void xavier_init(Tensor& W, size_t fan_in) {
+        float std = std::sqrt(1.0f / fan_in);
+        for (size_t i = 0; i < W.numel(); ++i) {
+            float r = (2.0f * rand() / static_cast<float>(RAND_MAX)) - 1.0f;
+            W.data<float>()[i] = r * std;
+        }
+    }
+    
 public:
-    NeuralNetwork(int input_size, int hidden_size, int output_size, float lr) : 
+    NeuralNetwork(int input_size, int hidden1, int hidden2, int output_size, float lr) : 
         learning_rate(lr) {
+        W1 = Tensor(ShapeTag{}, {static_cast<size_t>(input_size), static_cast<size_t>(hidden1)}, DType::kFloat, DeviceType::kCPU);
+        b1 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1)}, DType::kFloat, DeviceType::kCPU);
+        W2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1), static_cast<size_t>(hidden2)}, DType::kFloat, DeviceType::kCPU);
+        b2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2)}, DType::kFloat, DeviceType::kCPU);
+        W3 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2), static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
+        b3 = Tensor(ShapeTag{}, {static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
         
-        // 初始化权重和偏置 - 对于线性模型，我们只需要W2和b2
-        // 注意：hidden_size参数在这里被忽略，因为我们使用的是线性模型
-        std::vector<size_t> w2_shape = {static_cast<size_t>(input_size), static_cast<size_t>(output_size)};
-        std::vector<size_t> b2_shape = {static_cast<size_t>(output_size)};
-        
-        // 使用随机初始化
-        // 对于线性模型，我们不需要W1和b1
-        W2 = Tensor(ShapeTag{}, w2_shape, DType::kFloat, DeviceType::kCPU);
-        b2 = Tensor(ShapeTag{}, b2_shape, DType::kFloat, DeviceType::kCPU);
-        
-        // 使用Xavier初始化，适合线性模型
-        float std = sqrt(1.0f / input_size);
-        for (size_t i = 0; i < W2.numel(); ++i) {
-            // 生成[-1, 1]的随机数，然后乘以标准差
-            float rand_val = (2.0f * rand() / static_cast<float>(RAND_MAX)) - 1.0f;
-            W2.data<float>()[i] = rand_val * std;
-        }
-        
-        // 偏置初始化为0
-        for (size_t i = 0; i < b2.numel(); ++i) {
-            b2.data<float>()[i] = 0.0f;
-        }
-        
-        // 注意：requires_grad将在train_step中设置，确保在AutoDiff上下文内部
+        xavier_init(W1, input_size);
+        xavier_init(W2, hidden1);
+        xavier_init(W3, hidden2);
+        b1.zero(); b2.zero(); b3.zero();
     }
     
-    // 前向传播
     Tensor forward(const Tensor& x) {
-        // 简单的线性模型：x * W2 + b2
-        Tensor z2 = x.matmul(W2);
-        Tensor z3 = z2 + b2;
-        
-        // 直接返回 logits
-        return z3;
+        Tensor h1 = (x.matmul(W1) + b1).relu();
+        Tensor h2 = (h1.matmul(W2) + b2).relu();
+        return h2.matmul(W3) + b3;
     }
     
-    // 训练一步
     float train_step(const Tensor& x, const Tensor& y) {
-        // 打印当前函数名，方便调试
-        std::cout << "=== Entering train_step ===" << std::endl;
-        
-        // 打印W2和b2的ID，确保它们在每次迭代中保持一致
-        std::cout << "W2 ID: " << W2.id() << ", b2 ID: " << b2.id() << std::endl;
-        
-        // 检查AutoDiff上下文是否存在
-        std::cout << "Checking AutoDiff context..." << std::endl;
         if (AutoDiffContext::current()) {
-            std::cout << "AutoDiff context exists." << std::endl;
-        } else {
-            std::cout << "ERROR: AutoDiff context does not exist!" << std::endl;
-        }
-        
-        // 手动将W2和b2注册到当前的AutoDiff上下文中
-        if (AutoDiffContext::current()) {
-            std::cout << "Registering W2 and b2 as leaf nodes..." << std::endl;
+            AutoDiffContext::current()->make_leaf(W1, true);
+            AutoDiffContext::current()->make_leaf(b1, true);
             AutoDiffContext::current()->make_leaf(W2, true);
             AutoDiffContext::current()->make_leaf(b2, true);
+            AutoDiffContext::current()->make_leaf(W3, true);
+            AutoDiffContext::current()->make_leaf(b3, true);
         }
+        W1.requires_grad(true); b1.requires_grad(true);
+        W2.requires_grad(true); b2.requires_grad(true);
+        W3.requires_grad(true); b3.requires_grad(true);
         
-        // 确保W2和b2的requires_grad状态为true
-        if (!W2.requires_grad()) {
-            std::cout << "Setting requires_grad(true) for W2 and b2..." << std::endl;
-            W2.requires_grad(true);
-            b2.requires_grad(true);
-        } else {
-            std::cout << "W2 and b2 already require grad." << std::endl;
-        }
-        
-        // 再次检查AutoDiff上下文
         if (AutoDiffContext::current()) {
-            std::cout << "AutoDiff context still exists after requires_grad." << std::endl;
-        } else {
-            std::cout << "ERROR: AutoDiff context lost after requires_grad!" << std::endl;
+            AutoDiffContext::current()->zero_grad(W1);
+            AutoDiffContext::current()->zero_grad(b1);
+            AutoDiffContext::current()->zero_grad(W2);
+            AutoDiffContext::current()->zero_grad(b2);
+            AutoDiffContext::current()->zero_grad(W3);
+            AutoDiffContext::current()->zero_grad(b3);
         }
         
-        // 打印W2和b2的requires_grad状态
-        std::cout << "W2 requires_grad: " << W2.requires_grad() << ", b2 requires_grad: " << b2.requires_grad() << std::endl;
-        
-        // 打印W2的前几个值，检查是否为0
-        std::cout << "W2[0][0]: " << W2.data<float>()[0] << ", W2[0][1]: " << W2.data<float>()[1] << std::endl;
-        
-        // 计算MSE损失 - 使用张量操作
-        std::cout << "Computing forward pass..." << std::endl;
-        Tensor y_pred = forward(x);
-        std::cout << "Forward pass completed. y_pred ID: " << y_pred.id() << std::endl;
-        
-        // 首先将标签转换为one-hot编码
+        Tensor logits = forward(x);
         Tensor y_one_hot = Tensor(ShapeTag{}, {static_cast<size_t>(y.numel()), 10}, DType::kFloat, DeviceType::kCPU);
         for (size_t i = 0; i < y.numel(); ++i) {
-            int label = static_cast<int>(y.data<float>()[i]);
-            for (size_t j = 0; j < 10; ++j) {
-                y_one_hot.data<float>()[i * 10 + j] = (j == label) ? 1.0f : 0.0f;
-            }
+            int lab = static_cast<int>(y.data<float>()[i]);
+            for (int j = 0; j < 10; ++j)
+                y_one_hot.data<float>()[i * 10 + j] = (j == lab) ? 1.0f : 0.0f;
         }
-        
-        // 计算MSE损失
-        std::cout << "Computing loss..." << std::endl;
-        Tensor diff = y_pred - y_one_hot;
-        std::cout << "diff ID: " << diff.id() << std::endl;
-        Tensor diff_squared = diff * diff;
-        std::cout << "diff_squared ID: " << diff_squared.id() << std::endl;
-        Tensor sum_diff = diff_squared.sum();
-        std::cout << "sum_diff ID: " << sum_diff.id() << std::endl;
-        float numel = static_cast<float>(diff_squared.numel());
-        Tensor loss = sum_diff / numel;
-        std::cout << "loss ID: " << loss.id() << std::endl;
+        Tensor loss = logits.cross_entropy(y_one_hot);
         float loss_value = loss.item<float>();
-        
-        // 打印损失值
-        std::cout << "Loss: " << loss_value << std::endl;
-        
-        // 反向传播
-        std::cout << "Starting backward propagation..." << std::endl;
         backward(loss);
-        std::cout << "Backward propagation completed." << std::endl;
-        
-        // 打印梯度信息
-        Tensor W2_grad = grad(W2);
-        std::cout << "W2 grad shape: ";
-        for (size_t s : W2_grad.sizes()) {
-            std::cout << s << " ";
-        }
-        std::cout << std::endl;
-        
-        // 打印W2梯度的前几个值
-        std::cout << "W2 grad values: ";
-        for (int i = 0; i < 5; ++i) {
-            std::cout << W2_grad.data<float>()[i] << " ";
-        }
-        std::cout << "..." << std::endl;
-        
-        // 打印b2梯度
-        Tensor b2_grad = grad(b2);
-        std::cout << "b2 grad shape: ";
-        for (size_t s : b2_grad.sizes()) {
-            std::cout << s << " ";
-        }
-        std::cout << std::endl;
-        std::cout << "b2 grad values: ";
-        for (int i = 0; i < 5; ++i) {
-            std::cout << b2_grad.data<float>()[i] << " ";
-        }
-        std::cout << "..." << std::endl;
-        
-        // 打印W2和b2的requires_grad状态
-        std::cout << "W2 requires_grad: " << W2.requires_grad() << ", b2 requires_grad: " << b2.requires_grad() << std::endl;
-        
-        // 打印前向传播输出的前几个值
-        std::cout << "y_pred values: ";
-        for (int i = 0; i < 5; ++i) {
-            std::cout << y_pred.data<float>()[i] << " ";
-        }
-        std::cout << "..." << std::endl;
-        
-        // 打印标签的前几个值
-        std::cout << "y_one_hot values: ";
-        for (int i = 0; i < 5; ++i) {
-            std::cout << y_one_hot.data<float>()[i] << " ";
-        }
-        std::cout << "..." << std::endl;
-        
-        // 更新参数
         update_parameters();
-        
-        std::cout << "=== Exiting train_step ===" << std::endl;
         return loss_value;
     }
     
-    // 更新参数
     void update_parameters() {
-        // 使用真实的梯度信息进行参数更新
         float lr = learning_rate;
-        
-        // 获取梯度并更新参数
-        if (W2.requires_grad()) {
-            Tensor W2_grad = grad(W2);
-            std::cout << "W2 Grad Shape: ";
-            for (size_t s : W2_grad.sizes()) {
-                std::cout << s << " ";
-            }
-            std::cout << std::endl;
-            
-            // 获取W2的数据指针
-            float* W2_data = W2.data<float>();
-            const float* W2_grad_data = W2_grad.data<float>();
-            size_t numel = W2.numel();
-            
-            // 打印W2的第一个元素和对应的梯度
-            std::cout << "W2[0] before: " << W2_data[0] << ", grad: " << W2_grad_data[0] << std::endl;
-            
-            // 更新权重
-            for (size_t i = 0; i < numel; ++i) {
-                W2_data[i] -= W2_grad_data[i] * lr;
-            }
-            
-            // 打印W2的第一个元素更新后的值
-            std::cout << "W2[0] after: " << W2_data[0] << std::endl;
-        }
-        
-        if (b2.requires_grad()) {
-            Tensor b2_grad = grad(b2);
-            float* b2_data = b2.data<float>();
-            const float* b2_grad_data = b2_grad.data<float>();
-            size_t numel = b2.numel();
-            for (size_t i = 0; i < numel; ++i) {
-                b2_data[i] -= b2_grad_data[i] * lr;
-            }
-        }
+        auto sgd_step = [this, lr](Tensor& param) {
+            Tensor g = grad(param);
+            float* p = param.data<float>();
+            const float* gp = g.data<float>();
+            for (size_t i = 0; i < param.numel(); ++i)
+                p[i] -= gp[i] * lr;
+        };
+        sgd_step(W1); sgd_step(b1);
+        sgd_step(W2); sgd_step(b2);
+        sgd_step(W3); sgd_step(b3);
     }
     
-    // 预测
+    // 预测（这里不需要计算梯度，手动实现按行 softmax，确保每个样本的10类概率和为1）
     Tensor predict(const Tensor& x) {
-        Tensor logits = forward(x);
-        // 对 logits 应用 softmax 得到预测概率
-        Tensor y_pred = logits.softmax(1);
+        Tensor logits = forward(x);  // [batch_size, 10]
+        std::vector<size_t> shape = logits.sizes();
+        if (shape.size() != 2 || shape[1] != 10) {
+            // 防御性检查：如果形状不符合预期，直接返回 logits
+            return logits;
+        }
+        size_t batch_size = shape[0];
+        size_t num_classes = shape[1];
+        
+        Tensor y_pred(ShapeTag{}, shape, logits.dtype(), logits.device());
+        const float* in = logits.data<float>();
+        float* out = y_pred.data<float>();
+        
+        for (size_t i = 0; i < batch_size; ++i) {
+            // 数值稳定的 softmax：先减去该样本的最大值
+            float max_val = in[i * num_classes];
+            for (size_t j = 1; j < num_classes; ++j) {
+                float v = in[i * num_classes + j];
+                if (v > max_val) max_val = v;
+            }
+            
+            float exp_sum = 0.0f;
+            for (size_t j = 0; j < num_classes; ++j) {
+                float e = std::exp(in[i * num_classes + j] - max_val);
+                out[i * num_classes + j] = e;
+                exp_sum += e;
+            }
+            // 归一化
+            for (size_t j = 0; j < num_classes; ++j) {
+                out[i * num_classes + j] /= exp_sum;
+            }
+        }
+        
         return y_pred;
     }
 };
@@ -312,106 +208,69 @@ void show_progress(int current, int total, const std::string& status, float loss
 
 int main() {
     try {
-        // 设置输出级别为MINIUM，以取消TRACE和DEBUG级别的输出
-        // 这里，调到FULL！
-    Ctorch_Error::setPrintLevel(PrintLevel::MINIUM);
+        // MINIUM=少输出, FULL=显示TRACE(含阶段3、W2梯度验证)
+        Ctorch_Error::setPrintLevel(PrintLevel::MINIUM);
         
         // 设置随机种子
         srand(42);
         
         // 加载MNIST数据
 
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "加载MNIST数据...");
-        // 数据集文件在上级目录中
-        MNISTLoader loader("../");
-        
+        MNISTLoader loader(".");
         Tensor train_images, train_labels;
         Tensor test_images, test_labels;
-        
         loader.load_training_data(train_images, train_labels);
         loader.load_test_data(test_images, test_labels);
         
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "数据加载完成");
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "训练集大小: " + std::to_string(train_images.shape()[0]));
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "测试集大小: " + std::to_string(test_images.shape()[0]));
+        std::cout << "MNIST 加载完成 | 训练:" << train_images.shape()[0] << " 测试:" << test_images.shape()[0] << std::endl;
         
-        // 初始化神经网络
-        int input_size = 784;  // 28x28
-        int hidden_size = 128;
-        int output_size = 10;   // 10个类别
-        float learning_rate = 0.001;
+        int input_size = 784;
+        int hidden1 = 128, hidden2 = 64;  // 简化：256->128, 128->64
+        int output_size = 10;
+        float learning_rate = 0.01f;  // 提高学习率加速收敛
         
-        NeuralNetwork model(input_size, hidden_size, output_size, learning_rate);
+        NeuralNetwork model(input_size, hidden1, hidden2, output_size, learning_rate);
         
-        // 训练参数
-        int epochs = 10;
-        int batch_size = 64;
-        int num_batches = train_images.shape()[0] / batch_size;
+        int epochs = 5;  // 减少epochs
+        int batch_size = 128;  // 增大batch size减少batch数量
+        int num_batches = static_cast<int>(train_images.shape()[0]) / batch_size;
         
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "开始训练...");
+        std::cout << "网络: 784->" << hidden1 << "->" << hidden2 << "->10 | Epochs:" << epochs << " | Batch:" << batch_size << " | lr:" << learning_rate << std::endl;
         
-        // 训练循环
+        // 创建一个AutoDiff上下文用于整个训练过程
+        AutoDiff autodiff;
+        AutoDiffContext::Guard guard(&autodiff);
+        
+        // 完整训练：遍历所有 epoch 和 batch
         for (int epoch = 0; epoch < epochs; ++epoch) {
             float epoch_loss = 0.0f;
-            auto start_time = std::chrono::high_resolution_clock::now();
-            
             for (int batch = 0; batch < num_batches; ++batch) {
-                // 为每个批次创建新的AutoDiff上下文，与main.cpp中的方式一致
-                AutoDiff autodiff;
-                AutoDiffContext::Guard guard(&autodiff);
-                
-                // 获取批次数据
                 Tensor batch_images, batch_labels;
                 get_batch(train_images, train_labels, batch_size, batch, batch_images, batch_labels);
-                
-                // 设置requires_grad
                 batch_images.requires_grad(false);
                 batch_labels.requires_grad(false);
                 
-                // 训练一步
                 float batch_loss = model.train_step(batch_images, batch_labels);
                 epoch_loss += batch_loss;
                 
-                // 显示进度条
-                std::string status = "Epoch " + std::to_string(epoch+1) + "/" + std::to_string(epochs);
-                show_progress(batch + 1, num_batches, status, batch_loss);
+                if (batch % 50 == 0 || batch == num_batches - 1) {
+                    show_progress(epoch * num_batches + batch + 1, epochs * num_batches, 
+                                 "E" + std::to_string(epoch + 1) + "/" + std::to_string(epochs), 
+                                 batch_loss);
+                }
             }
-            
-            // 训练完成后换行
-            std::cout << std::endl;
-            
-            auto end_time = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<float> elapsed = end_time - start_time;
-            
-            epoch_loss /= num_batches;
-            
-            // 计算训练准确率
-            Tensor train_pred = model.predict(train_images);
-            float train_accuracy = calculate_accuracy(train_pred, train_labels);
-            
-            // 计算测试准确率
-            Tensor test_pred = model.predict(test_images);
-            float test_accuracy = calculate_accuracy(test_pred, test_labels);
-            
-            Ctorch_Error::info(ErrorPlatform::kAutoDiff, "Epoch: " + std::to_string(epoch+1) + ", Average Loss: " + std::to_string(epoch_loss) + ", Train Acc: " + std::to_string(train_accuracy * 100) + "%, Test Acc: " + std::to_string(test_accuracy * 100) + "%, Time: " + std::to_string(elapsed.count()) + "s");
+            epoch_loss /= static_cast<float>(num_batches);
+            std::cout << "\nEpoch " << (epoch + 1) << "/" << epochs << " Loss: " 
+                      << std::fixed << std::setprecision(4) << epoch_loss << std::endl;
         }
         
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "训练完成");
-        
-        // 评估模型
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "评估模型...");
-        
-        // 计算测试集准确率
         Tensor test_pred = model.predict(test_images);
-        float test_accuracy = calculate_accuracy(test_pred, test_labels);
-        
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "测试集准确率: " + std::to_string(test_accuracy * 100) + "%");
-        
-        // 计算训练集准确率
+        float test_acc = calculate_accuracy(test_pred, test_labels);
         Tensor train_pred = model.predict(train_images);
-        float train_accuracy = calculate_accuracy(train_pred, train_labels);
+        float train_acc = calculate_accuracy(train_pred, train_labels);
         
-        Ctorch_Error::info(ErrorPlatform::kAutoDiff, "训练集准确率: " + std::to_string(train_accuracy * 100) + "%");
+        std::cout << "\n>>> 训练集准确率: " << std::fixed << std::setprecision(2) << (train_acc * 100) << "%" << std::endl;
+        std::cout << ">>> 测试集准确率: " << std::fixed << std::setprecision(2) << (test_acc * 100) << "%" << std::endl;
         
     } catch (const std::exception& e) {
         Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "错误: " + std::string(e.what()));

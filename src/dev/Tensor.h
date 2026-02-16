@@ -11,6 +11,7 @@
 
 // includes
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include "Ctorch_Error.h"
 #include "Storage.h"
@@ -215,6 +216,14 @@ public:
     bool has_pending_record() {
         return !record_committed_;
     }
+    
+    /**
+     * @brief 设置张量ID（仅用于自动微分系统）
+     * @param id 新的张量ID
+     */
+    void set_id(size_t id) {
+        tensor_id_ = id;
+    }
    // ======================= 构造和析构 =======================
 
 
@@ -227,8 +236,12 @@ public:
      * @brief 标量构造函数
      * @param value 标量值
      */
-    Tensor(float value) : tensor_id_(global_tensor_id++), _shape({}),
-                          _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+    Tensor(float value)
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0),
+          _device(DeviceType::kCPU),
+          _dtype(DType::kFloat) {
+        _shape = {};
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
@@ -251,8 +264,11 @@ public:
      * @param values 初始化列表
      */
     Tensor(std::initializer_list<float> values)
-        : tensor_id_(global_tensor_id++), _shape({values.size()}),
-          _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0),
+          _device(DeviceType::kCPU),
+          _dtype(DType::kFloat) {
+        _shape = {values.size()};
         computeStrides();
         _storage = Storage(values.begin(), values.size(), _dtype, _device);
     }
@@ -265,10 +281,13 @@ public:
      * @param device 设备类型
      * @param zero_init 是否零初始化
      */
-    Tensor(ShapeTag tag, const std::vector<size_t>& shape, DType dtype = DType::kFloat,
+    Tensor(ShapeTag /*tag*/, const std::vector<size_t>& shape, DType dtype = DType::kFloat,
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
-        : tensor_id_(global_tensor_id++), _shape(shape), _storage_offset(0),
-          _device(device), _dtype(dtype) {
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0),
+          _device(device),
+          _dtype(dtype) {
+        _shape = shape;
         computeStrides();
         _storage = Storage(numel(), _dtype, _device);
         if(zero_init) zero();
@@ -283,8 +302,11 @@ public:
      */
     Tensor(size_t size, DType dtype = DType::kFloat, 
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
-        : tensor_id_(global_tensor_id++), _shape({size}),
-          _storage_offset(0), _device(device), _dtype(dtype) {
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0),
+          _device(device),
+          _dtype(dtype) {
+        _shape = {size};
         computeStrides();
         _storage = Storage(size, _dtype, _device);
         if(zero_init) zero();
@@ -297,12 +319,13 @@ public:
      */
     Tensor(const Tensor& other)
         : tensor_id_(global_tensor_id++),
-          _shape(other._shape), _strides(other._strides),
+          record_committed_(false),
+          _requires_grad(other._requires_grad),
+          _strides(other._strides),
           _storage_offset(other._storage_offset),
           _device(other._device), _dtype(other._dtype),
           _storage(other._storage.clone()),  // 注意：这里调用了clone()
-          _requires_grad(other._requires_grad),
-          record_committed_(false) {
+          _shape(other._shape) {
         // std::cout << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_ << std::endl;
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
@@ -340,14 +363,14 @@ public:
      */
     Tensor(Tensor&& other) noexcept
         : tensor_id_(other.tensor_id_),
-          _shape(std::move(other._shape)),
+          record_committed_(other.record_committed_),
+          _requires_grad(other._requires_grad),
           _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset),
           _device(other._device),
           _dtype(other._dtype),
           _storage(std::move(other._storage)),
-          _requires_grad(other._requires_grad),
-          record_committed_(other.record_committed_) {
+          _shape(std::move(other._shape)) {
         // 移动构造后，原对象的tensor_id变为0，避免冲突
         other.tensor_id_ = 0;
         other.record_committed_ = false;

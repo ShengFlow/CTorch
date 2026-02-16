@@ -102,7 +102,7 @@ $(function(){initNavTree('class_auto_diff.html','','class_auto_diff-members'); }
 <div class="dynheader">
 AutoDiff 的协作图:</div>
 <div class="dyncontent">
-<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="class_auto_diff__coll__graph.svg" width="167" height="260"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
+<div class="center"><iframe scrolling="no" loading="lazy" frameborder="0" src="class_auto_diff__coll__graph.svg" width="167" height="280"><p><b>This browser is not able to show SVG: try Firefox, Chrome, Safari, or Opera instead.</b></p></iframe></div>
 </div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 id="header-pub-methods" class="groupheader"><a id="pub-methods" name="pub-methods"></a>
@@ -113,10 +113,12 @@ Public 成员函数</h2></td></tr>
 <tr class="memdesc:abd92891a5fa6d81ae5a18c4a4ae18fde"><td class="mdescLeft">&#160;</td><td class="mdescRight">获取张量的梯度  <br /></td></tr>
 <tr class="memitem:a70833ad502f02ce164b8e9e9fb09f99a" id="r_a70833ad502f02ce164b8e9e9fb09f99a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a70833ad502f02ce164b8e9e9fb09f99a">make_leaf</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;t, bool requires_grad)</td></tr>
 <tr class="memdesc:a70833ad502f02ce164b8e9e9fb09f99a"><td class="mdescLeft">&#160;</td><td class="mdescRight">将张量设为叶子节点  <br /></td></tr>
+<tr class="memitem:a5f0e2ffb5bd8a0ba0fb1ec7fb766117b" id="r_a5f0e2ffb5bd8a0ba0fb1ec7fb766117b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5f0e2ffb5bd8a0ba0fb1ec7fb766117b">zero_grad</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;t)</td></tr>
+<tr class="memdesc:a5f0e2ffb5bd8a0ba0fb1ec7fb766117b"><td class="mdescLeft">&#160;</td><td class="mdescRight">清零指定张量的梯度（用于每个batch训练前，避免梯度累积）  <br /></td></tr>
 <tr class="memitem:abba90ea69c886cd2bcbe9c21f4abd39d" id="r_abba90ea69c886cd2bcbe9c21f4abd39d"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abba90ea69c886cd2bcbe9c21f4abd39d">~AutoDiff</a> ()</td></tr>
 <tr class="memdesc:abba90ea69c886cd2bcbe9c21f4abd39d"><td class="mdescLeft">&#160;</td><td class="mdescRight">析构函数  <br /></td></tr>
-<tr class="memitem:a1889c09406cf332776024cbabe99f1ac" id="r_a1889c09406cf332776024cbabe99f1ac"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1889c09406cf332776024cbabe99f1ac">defer_record</a> (size_t output_id, <a class="el" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a> operation, const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;inputs)</td></tr>
-<tr class="memdesc:a1889c09406cf332776024cbabe99f1ac"><td class="mdescLeft">&#160;</td><td class="mdescRight">延迟记录操作  <br /></td></tr>
+<tr class="memitem:a78e3b8639008cd0b693d110a188d6b18" id="r_a78e3b8639008cd0b693d110a188d6b18"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a78e3b8639008cd0b693d110a188d6b18">defer_record</a> (size_t output_id, <a class="el" href="_ctools_8h.html#a99a30df0f2488360cdd46b4b88e5f5f0">op</a> operation, const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;inputs, int op_param_i=0)</td></tr>
+<tr class="memdesc:a78e3b8639008cd0b693d110a188d6b18"><td class="mdescLeft">&#160;</td><td class="mdescRight">延迟记录操作  <br /></td></tr>
 <tr class="memitem:a7d004fe2ed8fedca5cef3f4a4d42f55e" id="r_a7d004fe2ed8fedca5cef3f4a4d42f55e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7d004fe2ed8fedca5cef3f4a4d42f55e">commit_record</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;output)</td></tr>
 <tr class="memdesc:a7d004fe2ed8fedca5cef3f4a4d42f55e"><td class="mdescLeft">&#160;</td><td class="mdescRight">提交延迟记录  <br /></td></tr>
 <tr class="memitem:a3e2ee312526b9024a0f966c2627284ae" id="r_a3e2ee312526b9024a0f966c2627284ae"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3e2ee312526b9024a0f966c2627284ae">update_requires_grad</a> (<a class="el" href="class_tensor.html">Tensor</a> &amp;t, bool requires_grad)</td></tr>
@@ -150,7 +152,7 @@ Public 成员函数</h2></td></tr>
 
 <p>析构函数 </p>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00282">282</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00305">305</a> 行定义.</p>
 
 </div>
 </div>
@@ -178,7 +180,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00491">491</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00548">548</a> 行定义.</p>
 
 </div>
 </div>
@@ -210,7 +212,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00524">524</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l01080">1080</a> 行定义.</p>
 
 </div>
 </div>
@@ -237,7 +239,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00348">348</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00373">373</a> 行定义.</p>
 
 </div>
 </div>
@@ -265,12 +267,12 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00063">63</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00064">64</a> 行定义.</p>
 
 </div>
 </div>
-<a id="a1889c09406cf332776024cbabe99f1ac" name="a1889c09406cf332776024cbabe99f1ac"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1889c09406cf332776024cbabe99f1ac">&#9670;&#160;</a></span>defer_record()</h2>
+<a id="a78e3b8639008cd0b693d110a188d6b18" name="a78e3b8639008cd0b693d110a188d6b18"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a78e3b8639008cd0b693d110a188d6b18">&#9670;&#160;</a></span>defer_record()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -288,7 +290,12 @@ Public 成员函数</h2></td></tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>inputs</em></span>&#160;)</td>
+          <td class="paramtype">const std::vector&lt; <a class="el" href="class_tensor.html">Tensor</a> * &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>inputs</em></span>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int</td>          <td class="paramname"><span class="paramname"><em>op_param_i</em></span><span class="paramdefsep"> = </span><span class="paramdefval">0</span>&#160;)</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -303,7 +310,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00291">291</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00314">314</a> 行定义.</p>
 
 </div>
 </div>
@@ -331,7 +338,7 @@ Public 成员函数</h2></td></tr>
 </dl>
 <dl class="section return"><dt>返回</dt><dd>梯度张量 </dd></dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00085">85</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00086">86</a> 行定义.</p>
 
 </div>
 </div>
@@ -363,7 +370,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00241">241</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00250">250</a> 行定义.</p>
 
 </div>
 </div>
@@ -390,7 +397,7 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00486">486</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00545">545</a> 行定义.</p>
 
 </div>
 </div>
@@ -422,13 +429,40 @@ Public 成员函数</h2></td></tr>
   </dd>
 </dl>
 
-<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00458">458</a> 行定义.</p>
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00513">513</a> 行定义.</p>
+
+</div>
+</div>
+<a id="a5f0e2ffb5bd8a0ba0fb1ec7fb766117b" name="a5f0e2ffb5bd8a0ba0fb1ec7fb766117b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5f0e2ffb5bd8a0ba0fb1ec7fb766117b">&#9670;&#160;</a></span>zero_grad()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void AutoDiff::zero_grad </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="class_tensor.html">Tensor</a> &amp;</td>          <td class="paramname"><span class="paramname"><em>t</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>清零指定张量的梯度（用于每个batch训练前，避免梯度累积） </p>
+<dl class="params"><dt>参数</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">t</td><td>需要清零梯度的张量 </td></tr>
+  </table>
+  </dd>
+</dl>
+
+<p class="definition">在文件 <a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a> 第 <a class="el" href="_auto_diff_8cpp_source.html#l00502">502</a> 行定义.</p>
 
 </div>
 </div>
 <hr/>该类的文档由以下文件生成:<ul>
-<li><a class="el" href="_auto_diff_8h_source.html">AutoDiff.h</a></li>
-<li><a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a></li>
+<li>/Users/ghostface/CLionProjects/Ctorch_2.13/CTorch/src/dev/<a class="el" href="_auto_diff_8h_source.html">AutoDiff.h</a></li>
+<li>/Users/ghostface/CLionProjects/Ctorch_2.13/CTorch/src/dev/<a class="el" href="_auto_diff_8cpp_source.html">AutoDiff.cpp</a></li>
 </ul>
 </div><!-- contents -->
 </div><!-- doc-content -->

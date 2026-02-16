@@ -1,28 +1,34 @@
 cmake_minimum_required(VERSION 3.10)
-project(Ctorch)
+project(CTorchDev LANGUAGES CXX)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
-# set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)/
-# 确保编译器使用UTF-8编码处理源文件
+
+# 当本项目作为子目录被 add_subdirectory() 引入时，默认不构建这些可执行文件（避免“被依赖方”顺带构建一堆 demo）。
+set(_CTORCHDEV_TOP_LEVEL OFF)
+if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(_CTORCHDEV_TOP_LEVEL ON)
+endif()
+option(CTORCHDEV_BUILD_EXECUTABLES "Build dev executables (Ctorch_test, performance_test, etc.)" ${_CTORCHDEV_TOP_LEVEL})
+
+# 编译器 UTF-8 源码选项（只对支持的编译器生效）
 if (MSVC)
-    # Visual Studio编译器
     add_compile_options("/source-charset:utf-8")
 else()
-    # GCC/Clang编译器
     add_compile_options(-finput-charset=UTF-8)
 endif()
 
-add_executable(Ctorch_test
-        main.cpp
+# -------------------------
+# CTorch 静态库（核心代码只编译一次，供所有可执行文件/demo 复用）
+# -------------------------
+add_library(CTorch STATIC)
+
+target_sources(CTorch
+    PRIVATE
         Ctools.cpp
-        Ctools.h
         AutoDiff.cpp
-        AutoDiff.h
         Tensor.cpp
-        Tensor.h
         Storage.cpp
-        Storage.h
         kernels/CPU-BASIC/Add_BASIC_kernel.cpp
         kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
         kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
@@ -41,150 +47,52 @@ add_executable(Ctorch_test
         kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
 )
 
-# 添加包含目录
-target_include_directories(Ctorch_test
+target_include_directories(CTorch
     PUBLIC
-    ${CMAKE_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# 测试激活函数和损失函数的可执行文件
-add_executable(test_activation_loss
-        test_activation_loss.cpp
-        Ctools.cpp
-        Ctools.h
-        AutoDiff.cpp
-        AutoDiff.h
-        Tensor.cpp
-        Tensor.h
-        Storage.cpp
-        Storage.h
-        kernels/CPU-BASIC/Add_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Div_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
-        kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
-        kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+# 更“系统级”的隐藏问题，往往会被 warning 暗示；这里统一打开。
+target_compile_options(CTorch PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
 )
 
-# 为test_activation_loss添加包含目录
-target_include_directories(test_activation_loss
-    PUBLIC
-    ${CMAKE_SOURCE_DIR}
+# Release 优化（不强制覆盖 Debug）
+target_compile_options(CTorch PRIVATE
+    $<$<CONFIG:Release>:-O3>
+    $<$<CONFIG:Release>:-ffast-math>
 )
 
-# 性能测试可执行文件
-add_executable(performance_test
-        performance_test.cpp
-        Ctools.cpp
-        Ctools.h
-        AutoDiff.cpp
-        AutoDiff.h
-        Tensor.cpp
-        Tensor.h
-        Storage.cpp
-        Storage.h
-        kernels/CPU-BASIC/Add_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Div_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
-        kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
-        kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
-)
+# 尽量只在非 MSVC 下开启 -march=native；AppleClang 也支持，但保守起见只在 Release 使用。
+if (NOT MSVC)
+    target_compile_options(CTorch PRIVATE $<$<CONFIG:Release>:-march=native>)
+endif()
 
-# 为performance_test添加包含目录
-target_include_directories(performance_test
-    PUBLIC
-    ${CMAKE_SOURCE_DIR}
-)
+# Apple: 使用 Accelerate (BLAS) 时，链接到框架更稳；避免仅靠头文件 include。
+if (APPLE)
+    target_link_libraries(CTorch PUBLIC "-framework Accelerate")
+endif()
 
-# 自动微分系统全面测试可执行文件
-add_executable(test_autodiff_comprehensive
-        test_autodiff_comprehensive.cpp
-        Ctools.cpp
-        Ctools.h
-        AutoDiff.cpp
-        AutoDiff.h
-        Tensor.cpp
-        Tensor.h
-        Storage.cpp
-        Storage.h
-        kernels/CPU-BASIC/Add_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Div_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
-        kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
-        kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
-)
+# -------------------------
+# 可执行文件（dev 测试/基准）
+# -------------------------
+if (CTORCHDEV_BUILD_EXECUTABLES)
+    add_executable(Ctorch_test main.cpp)
+    target_link_libraries(Ctorch_test PRIVATE CTorch)
 
-# 为test_autodiff_comprehensive添加包含目录
-target_include_directories(test_autodiff_comprehensive
-    PUBLIC
-    ${CMAKE_SOURCE_DIR}
-)
+    add_executable(test_activation_loss test_activation_loss.cpp)
+    target_link_libraries(test_activation_loss PRIVATE CTorch)
 
-# 线性回归测试可执行文件
-add_executable(test_linear_regression
-        test_linear_regression.cpp
-        Ctools.cpp
-        Ctools.h
-        AutoDiff.cpp
-        AutoDiff.h
-        Tensor.cpp
-        Tensor.h
-        Storage.cpp
-        Storage.h
-        kernels/CPU-BASIC/Add_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Div_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Neg_BASIC_kernel.cpp
-        kernels/CPU-BASIC/ReLU_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Cos_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
-        kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
-        kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
-        kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
-)
+    add_executable(performance_test performance_test.cpp)
+    target_link_libraries(performance_test PRIVATE CTorch)
 
-# 为test_linear_regression添加包含目录
-target_include_directories(test_linear_regression
-    PUBLIC
-    ${CMAKE_SOURCE_DIR}
-)
+    add_executable(test_autodiff_comprehensive test_autodiff_comprehensive.cpp)
+    target_link_libraries(test_autodiff_comprehensive PRIVATE CTorch)
 
-# mkdir build && cd build && cmake .. && make
+    add_executable(test_linear_regression test_linear_regression.cpp)
+    target_link_libraries(test_linear_regression PRIVATE CTorch)
+endif()
+
+# mkdir build && cd build && cmake .. && cmake --build . -j

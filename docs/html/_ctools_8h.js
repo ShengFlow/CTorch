@@ -40,7 +40,8 @@ var _ctools_8h =
       [ "kMPS", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711bacff3881470cff8a3d6510571dea453bb", null ],
       [ "kAMX", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba19a2bdb651921902edb0204c0af3942d", null ],
       [ "kUNKNOWN", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba16bb40b9102367393ecf8213078d1c6e", null ],
-      [ "kGENERAL", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba63cf1c5a8190ef348344ddcec79a8034", null ]
+      [ "kGENERAL", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba63cf1c5a8190ef348344ddcec79a8034", null ],
+      [ "kAutoDiff", "_ctools_8h.html#ac325c5970308dcd6b065d1de90a0711ba62f60a0ac72101ba5c323f1fc7b26036", null ]
     ] ],
     [ "ErrorType", "_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45a", [
       [ "UNKNOWN", "_ctools_8h.html#ab0df38968e4f03a3f1f6d6df0f31f45aa696b031073e74bf2cb98e5ef201d4aa3", null ],
