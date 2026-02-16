@@ -26,8 +26,8 @@ int main() {
     Tensor d = c.sum();
     d.backward();
 
-    std::cout << "a的梯度: " << a << std::endl;
-    std::cout << "b的梯度: " << b << std::endl;
+    std::cout << "a: " << a << std::endl;
+    std::cout << "b: " << b << std::endl;
     return 0;
 }
 ```
