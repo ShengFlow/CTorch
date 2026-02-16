@@ -122,36 +122,7 @@ make
 ## 项目结构
 
 ```
-Ctorch/
-├── docs/              # 文档
-│   ├── html/          # API 文档（Doxygen 生成）
-│   │   └── index.html # API 文档入口文件
-│   └── API_Guide.md   # API 使用指南
-├── images/            
-├── include/           （开发版）
-├── src/               # 源代码
-│   └── dev/           # 开发目录
-│       ├── kernels/   # 算子实现
-│       │   ├── kernels.h        # 算子统一声明
-│       │   └── CPU-BASIC/       
-│       │       ├── Add_BASIC_kernel.cpp
-│       │       ├── Sub_BASIC_kernel.cpp
-│       │       ├── Mul_BASIC_kernel.cpp
-│       │       ├── Div_BASIC_kernel.cpp
-│       │       ├── MatMul_BASIC_kernel.cpp
-│       │       └── Neg_BASIC_kernel.cpp
-│       ├── tests/     # 测试代码
-│       ├── Tensor.cpp # 张量实现
-│       ├── Tensor.h   # 张量头文件
-│       ├── AutoDiff.cpp # 自动微分实现
-│       ├── AutoDiff.h   # 自动微分头文件
-│       ├── Ctorch_Scheduler.h # 调度器头文件
-│       └── CMakeLists.txt # 构建配置
-├── README.md          # 项目说明
-└── LICENSE            # 许可证文件
-```
-
-```
+Ctorch
 ├── CMakeLists.txt
 ├── CONTRIBUTING.md
 ├── Dev_log.md
