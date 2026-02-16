@@ -8,7 +8,7 @@
 
 ### 1. **准备环境**
 ```bash
-git clone https://github.com/Beapoe/CTorch.git
+git clone https://github.com/ShengFlow/CTorch.git
 cd CTorch
 mkdir build && cd build
 cmake .. 
