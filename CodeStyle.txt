@@ -1,0 +1,20 @@
+代码规范
+
+1. 命名规范
+   · 文件名：大驼峰，例如 TensorAgent.ts
+   · 类名/类型名：大驼峰，例如 class TensorAgent
+   · 函数名/方法名：小驼峰，例如 tensorAgent()
+   · 变量名（局部/参数）：小驼峰，例如 userName
+   · 私有成员变量：下划线开头 + 小驼峰，例如 _id
+2. 提交消息格式
+   · 格式：[类型] 描述
+   · 类型标签（建议）：[Init]、[Dev]、[Update]、[Fix]、[Doc]、[Style]、[Test]
+   · 示例：[Update] Update Readme
+3. 错误处理
+   · 统一使用自主研发的 CTorch-Error 框架
+   · 基本用法：throw new CTorchError('message', code)
+   · 详细使用规范待后续补充
+4. 单元测试
+   · 新增功能必须附带单元测试
+   · 测试文件命名：[模块名]-[测试内容].cpp（大驼峰，连字符分隔），例如 Tensor-DataVisit.cpp
+   · 存放路径：src/tests/[模块名]/，例如 src/tests/Tensor/Tensor-DataVisit.cpp
