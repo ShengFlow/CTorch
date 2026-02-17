@@ -22,7 +22,7 @@ set(CT-Core-Headers
 
 )
 
-set(CT-OPs
+set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/Add_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Sub_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Mul_BASIC_kernel.cpp
@@ -41,7 +41,15 @@ set(CT-OPs
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
 )
 
-add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-OPs})
+set(CT-CPU-SIMD-OPs
+        src/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Div_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Mul_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Sub_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
+)
+
+add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-CPU-BASIC-OPs} ${CT-CPU-SIMD-OPs})
 
 # 包含头文件目录
 target_include_directories(CTorch
