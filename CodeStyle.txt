@@ -14,7 +14,7 @@
 3. 文件组织
    · 源文件/头文件：推荐使用大驼峰命名，例如 TensorAgent.cpp、UserService.h（与类名保持一致）。
    · Kernel 文件：
-     · 按平台存放：CUDA kernel 放 cuda/，MPS kernel 放 mps/，CPU kernel 放 cpu/。
+     · 按平台存放：CUDA kernel 放 CUDA/，MPS kernel 放 MPS/，CPU kernel 放 CPU/。
      · 命名格式：[KernelName].[平台]_kernel.[扩展名]，例如：
        · MatMul.CUDA_kernel.cu
        · Activation.CPU_kernel.cpp
