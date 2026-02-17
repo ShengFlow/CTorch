@@ -96,8 +96,8 @@ endif()
 
 option(TEST_ENABLED "Enable tests?" ON)
 if (${TEST_ENABLED})
-    set(TEST_GROUP_Storage src/tests/Storage/*.cpp)
-    set(TEST_GROUP_Tensor src/tests/Tensor/*.cpp)
+    set(TEST_GROUP_Storage src/tests/units/Storage/*.cpp)
+    set(TEST_GROUP_Tensor src/tests/units/Tensor/*.cpp)
     file(GLOB_RECURSE ALL_TEST src/tests/units/*.cpp)
 
     if (NOT ALL_TEST)

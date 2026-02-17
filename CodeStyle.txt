@@ -5,7 +5,7 @@
    · 所有新增代码必须通过 clang-format 检查。
 2. 命名规范
    · 类名：首字母大写（大驼峰），例如 class TensorAgent。
-   · 函数名：全小写，过长时使用小驼峰，例如 getindex() 或 getIndex()（推荐统一为小驼峰）。
+   · 函数名：统一使用小驼峰，例如getIndex()。
    · 变量名（局部变量、中间变量）：采用小驼峰命名，如userName
    · 私有成员变量：下划线开头 + 小驼峰，例如 _dataPtr、_id（禁止类外部直接访问）。
    · 常量/宏：全大写，单词间用下划线分隔，例如 MAX_BUFFER_SIZE、PI_VALUE。
@@ -38,7 +38,7 @@
    · 单元测试：
      · 新增 C++ 代码必须包含单元测试，测试文件置于 src/tests/units 目录。
      · 测试文件命名：[模块名]-[测试内容].cpp（大驼峰，连字符分隔），例如 Tensor-DataVisit.cpp。
-     · 存放路径：src/tests/units/[模块名]/，例如 tests/Tensor/Tensor-DataVisit.cpp。
+     · 存放路径：src/tests/units/[模块名]/，例如 tests/units/Tensor/Tensor-DataVisit.cpp。
    · API 文档：
      · 接口变更必须同步更新 docs/api/ 下的对应文档。
      · 文档格式参照现有模板。
