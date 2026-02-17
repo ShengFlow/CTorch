@@ -1,20 +1,46 @@
 代码规范
 
-1. 命名规范
-   · 文件名：大驼峰，例如 TensorAgent.ts
-   · 类名/类型名：大驼峰，例如 class TensorAgent
-   · 函数名/方法名：小驼峰，例如 tensorAgent()
-   · 变量名（局部/参数）：小驼峰，例如 userName
-   · 私有成员变量：下划线开头 + 小驼峰，例如 _id
-2. 提交消息格式
+1. 代码风格
+   · 缩进遵循 LCLVM 风格，使用 clang-format 自动格式化（配置文件见项目根目录 .clang-format）。
+   · 所有新增代码必须通过 clang-format 检查。
+2. 命名规范
+   · 类名：首字母大写（大驼峰），例如 class TensorAgent。（与 PyTorch 兼容的类可例外）
+   · 模块名（目录名）：全小写，例如 cuda/、cpu/、mps/。
+   · 函数名：全小写，过长时使用小驼峰，例如 getindex() 或 getIndex()（推荐统一为小驼峰）。
+   · 变量名（局部变量、中间变量）：全小写，单词间用下划线分隔（snake_case），例如 user_name、data_size。
+   · 私有成员变量：下划线开头 + snake_case，例如 _data_ptr、_id（禁止类外部直接访问）。
+   · 常量/宏：全大写，单词间用下划线分隔，例如 MAX_BUFFER_SIZE、PI_VALUE。
+   · 命名空间：全小写，例如 namespace cudaops。
+3. 文件组织
+   · 源文件/头文件：推荐使用大驼峰命名，例如 TensorAgent.cpp、UserService.h（与类名保持一致）。
+   · Kernel 文件：
+     · 按平台存放：CUDA kernel 放 cuda/，MPS kernel 放 mps/，CPU kernel 放 cpu/。
+     · 命名格式：[KernelName].[平台]_kernel.[扩展名]，例如：
+       · MatMul.CUDA_kernel.cu
+       · Activation.CPU_kernel.cpp
+4. 模块化设计
+   · 优先使用组合而非深层继承，避免过度复杂的继承层次。
+   · 模块间通过清晰的接口交互，降低耦合。
+5. 提交消息格式
    · 格式：[类型] 描述
-   · 类型标签（建议）：[Init]、[Dev]、[Update]、[Fix]、[Doc]、[Style]、[Test]
-   · 示例：[Update] Update Readme
-3. 错误处理
-   · 统一使用自主研发的 CTorch-Error 框架
-   · 基本用法：throw new CTorchError('message', code)
-   · 详细使用规范待后续补充
-4. 单元测试
-   · 新增功能必须附带单元测试
-   · 测试文件命名：[模块名]-[测试内容].cpp（大驼峰，连字符分隔），例如 Tensor-DataVisit.cpp
-   · 存放路径：src/tests/[模块名]/，例如 src/tests/Tensor/Tensor-DataVisit.cpp
+   · 类型标签（建议）：
+     · [Init]    初始化项目
+     · [Dev]     新功能开发
+     · [Update]  代码更新（重构、优化等非功能新增）
+     · [Fix]     修复 Bug
+     · [Doc]     文档修改
+     · [Style]   代码格式调整（不影响逻辑）
+     · [Test]    测试相关
+   · 示例：[Update] Update Readme、[Fix] Fix null pointer in TensorAgent
+6. 错误处理
+   · 统一使用自主研发的 CTorch-Error 框架。
+   · 基本用法：throw new CTorchError('message', code)。
+   · 详细使用规范待后续补充，请关注项目文档更新。
+7. 测试与文档
+   · 单元测试：
+     · 新增 C++ 代码必须包含单元测试，测试文件置于 tests/ 目录。
+     · 测试文件命名：[模块名]-[测试内容].cpp（大驼峰，连字符分隔），例如 Tensor-DataVisit.cpp。
+     · 存放路径：tests/[模块名]/，例如 tests/Tensor/Tensor-DataVisit.cpp。
+   · API 文档：
+     · 接口变更必须同步更新 docs/api/ 下的对应文档。
+     · 文档格式参照现有模板。
