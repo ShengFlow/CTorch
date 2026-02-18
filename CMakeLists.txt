@@ -10,6 +10,9 @@ set(CT-Core
         src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
+        src/AutoGrad/Node.cpp
+        src/AutoGrad/Core.cpp
+        src/AutoGrad/IDDistributor.cpp
 )
 
 set(CT-Core-Headers
@@ -19,6 +22,10 @@ set(CT-Core-Headers
         include/Ctools.h
         include/Ctorch_Scheduler.h
         include/Ctorch_Error.h
+        include/AutoGrad/GradFn.h
+        include/AutoGrad/Node.h
+        include/AutoGrad/Core.h
+        include/AutoGrad/IDDistributor.h
 
 )
 

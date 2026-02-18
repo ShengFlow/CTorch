@@ -1853,3 +1853,4 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     return result;
 }
 
+std::weak_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
