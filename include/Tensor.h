@@ -621,6 +621,22 @@ public:
   Tensor broadcast_to(const std::vector<size_t> &shape) const;
 
   /**
+   * @brief 提取张量的子部分
+   * @param dim 维度
+   * @param start 起始索引
+   * @param end 结束索引
+   * @return 切片后的张量
+   */
+  Tensor slice(int dim, size_t start, size_t end) const;
+
+  /**
+   * @brief 将另一个张量的内容复制到当前张量
+   * @param other 源张量
+   * @return 当前张量的引用
+   */
+  Tensor& copy_(const Tensor &other);
+
+  /**
    * @brief 零初始化张量
    */
   void zero();

@@ -178,7 +178,7 @@ public:
   /**
    * @brief 打印级别
    */
-  PrintLevel level = PrintLevel::FULL;
+  PrintLevel level = PrintLevel::MINIUM;
   /**
    * @brief 程序开始时间戳
    */

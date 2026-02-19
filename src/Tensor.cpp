@@ -1945,3 +1945,65 @@ Tensor Tensor::mae_loss(const Tensor &target) const {
 
   return result;
 }
+
+// 提取张量的子部分
+Tensor Tensor::slice(int dim, size_t start, size_t end) const {
+  if (dim < 0) {
+    dim += static_cast<int>(_shape.size());
+  }
+  if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                 "无效维度");
+  }
+  if (start >= end || end > _shape[dim]) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                 "无效的切片范围");
+  }
+
+  Tensor result(*this);
+  result._shape[dim] = end - start;
+  result._storage_offset += start * _strides[dim];
+  result.computeStrides();
+  return result;
+}
+
+// 将另一个张量的内容复制到当前张量
+Tensor& Tensor::copy_(const Tensor &other) {
+  if (_shape != other.shape()) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                 "张量形状不匹配");
+  }
+  if (_dtype != other.dtype()) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+                                 "张量数据类型不匹配");
+  }
+  if (_device != other.device()) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT,
+                                 "张量设备类型不匹配");
+  }
+
+  size_t count = numel();
+  if (_dtype == DType::kFloat) {
+    const float *src_data = other.data<float>();
+    float *dst_data = data<float>();
+    std::memcpy(dst_data, src_data, count * sizeof(float));
+  } else if (_dtype == DType::kDouble) {
+    const double *src_data = other.data<double>();
+    double *dst_data = data<double>();
+    std::memcpy(dst_data, src_data, count * sizeof(double));
+  } else if (_dtype == DType::kInt) {
+    const int32_t *src_data = other.data<int32_t>();
+    int32_t *dst_data = data<int32_t>();
+    std::memcpy(dst_data, src_data, count * sizeof(int32_t));
+  } else if (_dtype == DType::kLong) {
+    const int64_t *src_data = other.data<int64_t>();
+    int64_t *dst_data = data<int64_t>();
+    std::memcpy(dst_data, src_data, count * sizeof(int64_t));
+  } else if (_dtype == DType::kBool) {
+    const bool *src_data = other.data<bool>();
+    bool *dst_data = data<bool>();
+    std::memcpy(dst_data, src_data, count * sizeof(bool));
+  }
+
+  return *this;
+}
