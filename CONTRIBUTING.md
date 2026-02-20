@@ -34,3 +34,23 @@ git push origin feat/your-feature-name
 ### 5.**.等待PR通过**
 - 待PR审核通过后，您的贡献便可被合并至项目中
 ---
+
+## ⚙️ 质量与规范
+
+### 代码要求
+- **C++ 风格**: 缩进使用LLVM风格
+  - 使用 `clang-format` 格式化（配置文件见 `.clang-format`）
+- **测试覆盖**：
+  - 新增 C++ 代码需包含单元测试（`tests/` 目录）
+  - 接口变更需更新 API 文档（`docs/api/`）
+- **模块化**：避免深层继承，优先组合模式 。
+### 命名规范
+- **所有的类（class）名首字母均大写（除torch类）**
+- **所有模块名均为小写**
+- **所有的函数名小写，如果过长，使用小驼峰命名规范 如getIndex()**
+- **所有的宏、常量均全大写**
+- **中间变量均小写，过长在中间加下划线**
+- **在类中的所有成员变量在前面加下划线**
+- **所有的kernel放入对应平台的文件夹(CUDA/MPS/CPU)**
+- **每个kernel的命名规范为「kernel-name_CUDA/MPS/CPU_kernel.cu/.cpp」，e.g.矩阵乘法的CUDA-kernel文件名为「MatMul_CUDA_kernel.cu」**
+
