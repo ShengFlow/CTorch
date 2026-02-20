@@ -101,7 +101,7 @@ if (${TEST_ENABLED})
     file(GLOB_RECURSE ALL_TEST src/tests/units/*.cpp)
 
     if (NOT ALL_TEST)
-        message(STATUS "No tests found.Skip.")
+        message(STATUS "No unit tests found.Skip.")
         set(TEST_ENABLED OFF)
         return()
     endif ()
