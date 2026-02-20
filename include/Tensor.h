@@ -567,6 +567,17 @@ public:
    * @return 索引结果张量
    * @throw std::runtime_error 如果索引操作不支持
    */
+
+  /**
+   * @brief 统一数据访问函数
+   * @tparam T 指定的转换类型
+   * @param idx 多维索引
+   * @return 指定类型的元素值
+   * @throw std::runtime_error 如果索引维度与张量维度不匹配或数据访问失败
+   */
+  template <typename T>
+  [[nodiscard]] T get(std::initializer_list<size_t> idx) const;
+
   Tensor operator[](size_t index) const;
 
   // ======================= 操作 =======================
@@ -634,7 +645,7 @@ public:
    * @param other 源张量
    * @return 当前张量的引用
    */
-  Tensor& copy_(const Tensor &other);
+  Tensor &copy_(const Tensor &other);
 
   /**
    * @brief 零初始化张量

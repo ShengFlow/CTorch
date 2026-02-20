@@ -1968,7 +1968,7 @@ Tensor Tensor::slice(int dim, size_t start, size_t end) const {
 }
 
 // 将另一个张量的内容复制到当前张量
-Tensor& Tensor::copy_(const Tensor &other) {
+Tensor &Tensor::copy_(const Tensor &other) {
   if (_shape != other.shape()) {
     Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                                  "张量形状不匹配");
@@ -1978,7 +1978,8 @@ Tensor& Tensor::copy_(const Tensor &other) {
                                  "张量数据类型不匹配");
   }
   if (_device != other.device()) {
-    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT,
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL,
+                                 ErrorType::DEVICE_COMPAT,
                                  "张量设备类型不匹配");
   }
 
@@ -2007,3 +2008,22 @@ Tensor& Tensor::copy_(const Tensor &other) {
 
   return *this;
 }
+
+// 统一数据访问函数实现
+template <typename T> T Tensor::get(std::initializer_list<size_t> idx) const {
+  size_t storage_idx = computeStorageIndex(idx);
+  checkDType<T>();
+  const T *data_ptr = _storage.data<T>();
+  if (!data_ptr) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL,
+                                 ErrorType::TENSOR_STATE, "张量数据为null");
+  }
+  return data_ptr[storage_idx];
+}
+
+// 显式实例化常用的get()模板
+template float Tensor::get<float>(std::initializer_list<size_t> idx) const;
+template double Tensor::get<double>(std::initializer_list<size_t> idx) const;
+template int32_t Tensor::get<int32_t>(std::initializer_list<size_t> idx) const;
+template int64_t Tensor::get<int64_t>(std::initializer_list<size_t> idx) const;
+template bool Tensor::get<bool>(std::initializer_list<size_t> idx) const;
