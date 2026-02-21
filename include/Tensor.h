@@ -36,11 +36,11 @@
 #include <limits>
 #include <map>
 #include "Ctools.h"
-#include "AutoGrad/Node.h"
 // #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 // ======================= 前向声明 =======================
 class Tensor;
 class Storage;
+class Node;
 // ======================= 存储类 (Storage) =======================
 
 /**
@@ -1091,6 +1091,8 @@ class Tensor {
     // 保留设置方法
 
     std::weak_ptr<Node> getRelatedNode() const;
+
+    Tensor view(std::initializer_list<size_t> shape);
 };
 
 /**

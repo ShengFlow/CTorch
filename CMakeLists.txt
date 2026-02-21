@@ -10,9 +10,8 @@ set(CT-Core
         src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
-        src/AutoGrad/Node.cpp
-        src/AutoGrad/Core.cpp
-        src/AutoGrad/IDDistributor.cpp
+        src/AutoGrad/DataCore.cpp
+        src/ThreadPool.cpp
 )
 
 set(CT-Core-Headers
@@ -22,11 +21,22 @@ set(CT-Core-Headers
         include/Ctools.h
         include/Ctorch_Scheduler.h
         include/Ctorch_Error.h
-        include/AutoGrad/GradFn.h
-        include/AutoGrad/Node.h
-        include/AutoGrad/Core.h
-        include/AutoGrad/IDDistributor.h
+        include/AutoGrad/DataCore.h
+        include/ThreadPool.h
+)
 
+set(CT-Nodes-Headers
+        include/AutoGrad/Node.h
+        include/AutoGrad/Nodes/AddNode.h
+        include/AutoGrad/Nodes/SubNode.h
+        include/AutoGrad/Nodes/MulNode.h
+)
+
+set(CT-Nodes
+        src/AutoGrad/Node.cpp
+        src/AutoGrad/Nodes/AddNode.cpp
+        src/AutoGrad/Nodes/SubNode.cpp
+        src/AutoGrad/Nodes/MulNode.cpp
 )
 
 set(CT-CPU-BASIC-OPs
@@ -56,7 +66,7 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
 )
 
-add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-CPU-BASIC-OPs} ${CT-CPU-SIMD-OPs})
+add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-CPU-BASIC-OPs} ${CT-CPU-SIMD-OPs} ${CT-Nodes} ${CT-Nodes-Headers})
 
 # 包含头文件目录
 target_include_directories(CTorch
