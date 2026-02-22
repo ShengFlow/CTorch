@@ -291,6 +291,26 @@ Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
   return result;
 }
 
+// 创建与原张量共享数据的视图
+Tensor Tensor::view(std::initializer_list<size_t> new_shape) const {
+  return view(std::vector<size_t>(new_shape));
+}
+
+// 创建与原张量共享数据的视图
+Tensor Tensor::view(const std::vector<size_t> &new_shape) const {
+  size_t new_numel = std::accumulate(new_shape.begin(), new_shape.end(), 1ULL,
+                                     std::multiplies<>());
+  if (new_numel != numel()) {
+    Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                 "新形状元素数量不同");
+  }
+
+  Tensor result(*this);
+  result._shape = new_shape;
+  result.computeStrides();
+  return result;
+}
+
 /**
  * @brief 广播张量到指定形状
  * @details 实现标准的NumPy风格广播规则，支持完整的广播逻辑

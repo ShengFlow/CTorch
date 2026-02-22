@@ -646,7 +646,19 @@ public:
    * @return 当前张量的引用
    */
   Tensor &copy_(const Tensor &other);
+  /**
+   * @brief 创建与原张量共享数据的视图
+   * @param new_shape 新的形状
+   * @return 视图张量
+   */
+  Tensor view(std::initializer_list<size_t> new_shape) const;
 
+  /**
+   * @brief 创建与原张量共享数据的视图
+   * @param new_shape 新的形状
+   * @return 视图张量
+   */
+  Tensor view(const std::vector<size_t> &new_shape) const;
   /**
    * @brief 零初始化张量
    */
