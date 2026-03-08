@@ -6,8 +6,9 @@
  */
 
 #include "../kernels.h"
-#include "../../Ctorch_Error.h"
-#include "../../Tensor.h"
+#include "../include/Ctorch_Error.h"
+#include "../include/Tensor.h"
+#include <cmath>
 
 #ifdef __x86_64__
 #include <immintrin.h>  // x86 SIMD指令

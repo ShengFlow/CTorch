@@ -6,8 +6,9 @@
  */
 
 #include "../kernels.h"
-#include "../../Ctorch_Error.h"
-#include "../../Tensor.h"
+#include "../include/Ctorch_Error.h"
+#include "../include/Tensor.h"
+#include <cmath>
 
 #ifdef __x86_64__
 #include <immintrin.h>  // x86 SIMD指令
@@ -29,23 +30,15 @@ Tensor Tanh_SIMD_kernel(const Tensor& a) {
     float *data = result.data<float>();
 
 #ifdef __x86_64__
-    // x86 SIMD优化实现
     size_t i = 0;
-    // 处理可以向量化的部分
+    #if defined(__INTEL_COMPILER) || (defined(__GNUC__) && defined(__AVX__) && defined(__SVML__))
+    // 使用 SVML 向量化
     for (; i + 7 < count; i += 8) {
-        // 加载8个float值
         __m256 x = _mm256_loadu_ps(&data[i]);
-        
-        // 计算exp(x)和exp(-x)
         __m256 exp_x = _mm256_exp_ps(x);
         __m256 exp_neg_x = _mm256_exp_ps(_mm256_sub_ps(_mm256_setzero_ps(), x));
-        
-        // 计算tanh(x) = (exp(x) - exp(-x)) / (exp(x) + exp(-x))
-        __m256 numerator = _mm256_sub_ps(exp_x, exp_neg_x);
-        __m256 denominator = _mm256_add_ps(exp_x, exp_neg_x);
-        __m256 tanh_x = _mm256_div_ps(numerator, denominator);
-        
-        // 存储结果
+        __m256 tanh_x = _mm256_div_ps(_mm256_sub_ps(exp_x, exp_neg_x),
+                                      _mm256_add_ps(exp_x, exp_neg_x));
         _mm256_storeu_ps(&data[i], tanh_x);
     }
     // 处理剩余部分
@@ -54,6 +47,7 @@ Tensor Tanh_SIMD_kernel(const Tensor& a) {
         float exp_neg_x = std::exp(-data[i]);
         data[i] = (exp_x - exp_neg_x) / (exp_x + exp_neg_x);
     }
+    #endif
 #elif defined(__aarch64__)
     // ARM NEON优化实现
     size_t i = 0;
