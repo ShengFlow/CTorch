@@ -12,6 +12,8 @@ set(CT-Core
         src/Ctools.cpp
         src/AutoGrad/DataCore.cpp
         src/ThreadPool.cpp
+        src/AutoGrad/ComputeCore.cpp
+        src/Arena.cpp
 )
 
 set(CT-Core-Headers
@@ -23,6 +25,8 @@ set(CT-Core-Headers
         include/Ctorch_Error.h
         include/AutoGrad/DataCore.h
         include/ThreadPool.h
+        include/AutoGrad/ComputeCore.h
+        include/Arena.h
 )
 
 set(CT-Nodes-Headers
