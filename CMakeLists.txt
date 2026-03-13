@@ -5,11 +5,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+include(FetchContent)
+
+enable_testing()
+FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://gh-proxy.org/https://github.com/google/googletest.git
+        GIT_TAG        v1.17.0
+)
+FetchContent_MakeAvailable(googletest)
+include(GoogleTest)
+
 set(CT-Core
         src/Tensor.cpp
         src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
+        src/Assertion.cpp
 )
 
 set(CT-Core-Headers
@@ -54,6 +66,10 @@ add_executable(StdTest src/tests/test.cpp)
 add_executable(ActivationLossTest src/tests/test_activation_loss.cpp)
 add_executable(TensorGradTest src/tests/test_tensor_grad.cpp)
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+
+add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
+target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
+gtest_discover_tests(tl-ArrayTest)
 
 target_link_libraries(PerformanceTest PRIVATE CTorch)
 target_link_libraries(StdTest PRIVATE CTorch)
