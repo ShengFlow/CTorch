@@ -7,6 +7,51 @@
 
 #include "VecBase.h"
 
+/**
+ * @file Vec.h
+ * @brief High-level SIMD vector operations API.
+ * 
+ * This file provides the user-facing API for SIMD vector operations, designed
+ * with a Highway-like interface. The API abstracts over different SIMD
+ * architectures and automatically handles:
+ * 
+ * - Single-word vectors (one hardware register)
+ * - Multi-word vectors (multiple registers concatenated)
+ * - Scalable vectors (runtime-determined size like SVE)
+ * - Scalar fallback (when no SIMD is available)
+ * 
+ * ## Usage Example
+ * @code
+ *   using namespace ct::tl::vec;
+ *   Tag<float32_t, 4> t;  // 4-element float vector
+ *   
+ *   // Fill with a value
+ *   auto v = fill(t, 1.0f);
+ *   
+ *   // Load from memory
+ *   float data[4] = {1, 2, 3, 4};
+ *   auto v2 = loadu(t, data);
+ *   
+ *   // Store to memory
+ *   storeu(t, data, v);
+ *   
+ *   // Process partial data (n elements)
+ *   auto v3 = loadu(t, data, 3, v);  // Load 3 elements, 4th from default_v
+ * @endcode
+ * 
+ * ## Design Notes
+ * 
+ * The API uses a tag-based dispatch system. All operations take a Tag parameter
+ * that specifies the vector type. This design:
+ * 
+ * 1. Enables compile-time type checking and optimization
+ * 2. Supports both fixed-size and scalable vectors uniformly
+ * 3. Allows the same API to work across different architectures
+ * 
+ * For multi-word vectors, operations are automatically unrolled across all words.
+ * The internal `vectorized_map_*` functions handle this transparently.
+ */
+
 #if defined(ARCH_X86_FAMILY)
 #if SIMD_WIDTH == 128
 #include "tl/cpu/impl/x86_128.h"
@@ -42,6 +87,16 @@
 namespace ct::tl::vec {
 namespace details {
 
+/**
+ * @brief Wrapper for a vector that should be split into words.
+ * 
+ * Used internally to pass vectors to vectorized_map functions where
+ * each word should be processed separately.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ */
 template <typename T, nint_t N, int P>
 struct ShardVec {
   Tag<T, N, P> tag;
@@ -51,6 +106,16 @@ struct ShardVec {
   constexpr ShardVec(Tag<T, N, P> t, Vec<Tag<T, N, P>>& v) : tag(t), v(v) {}
 };
 
+/**
+ * @brief Wrapper for a mask that should be split into words.
+ * 
+ * Used internally to pass masks to vectorized_map functions where
+ * each word should be processed separately.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ */
 template <typename T, nint_t N, int P>
 struct ShardMask {
   Tag<T, N, P> tag;
@@ -60,6 +125,14 @@ struct ShardMask {
   constexpr ShardMask(Tag<T, N, P> t, Mask<Tag<T, N, P>>& m) : tag(t), m(m) {}
 };
 
+/**
+ * @brief A pointer with a non-contiguous stride.
+ * 
+ * Used internally for operations that need to access data at fixed intervals,
+ * such as when processing multiple words of a multi-word vector.
+ * 
+ * @tparam T Element type
+ */
 template <typename T>
 struct StepPointer {
   T* p;
@@ -73,6 +146,15 @@ struct StepPointer {
   constexpr StepPointer(Tag<T, N, P> t, const T* p) : StepPointer(p, word_size(t)) {}
 };
 
+/**
+ * @brief Default argument transformer that passes arguments through unchanged.
+ * 
+ * Used by the vectorized_map infrastructure to transform arguments based on
+ * their type. This base case does no transformation.
+ * 
+ * @tparam Index The iteration index (unused in this case)
+ * @tparam T The argument type
+ */
 template <nint_t Index, typename T>
 struct ArgTransform {
   CT_ALWAYS_FORCEINLINE
@@ -86,6 +168,17 @@ struct ArgTransform {
   }
 };
 
+/**
+ * @brief Argument transformer that extracts a word from a ShardVec.
+ * 
+ * When a ShardVec is passed to a vectorized operation, this transformer
+ * extracts the Index-th word from the wrapped vector.
+ * 
+ * @tparam Index The word index to extract
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ */
 template <nint_t Index, typename T, nint_t N, int P>
 struct ArgTransform<Index, ShardVec<T, N, P>> {
   CT_ALWAYS_FORCEINLINE
@@ -99,6 +192,16 @@ struct ArgTransform<Index, ShardVec<T, N, P>> {
   }
 };
 
+/**
+ * @brief Argument transformer that extracts a word from a ShardMask.
+ * 
+ * Similar to the ShardVec transformer, but for masks.
+ * 
+ * @tparam Index The word index to extract
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ */
 template <nint_t Index, typename T, nint_t N, int P>
 struct ArgTransform<Index, ShardMask<T, N, P>> {
   CT_ALWAYS_FORCEINLINE
@@ -112,6 +215,16 @@ struct ArgTransform<Index, ShardMask<T, N, P>> {
   }
 };
 
+/**
+ * @brief Argument transformer for StepPointer that computes the actual address.
+ * 
+ * Transforms a StepPointer by computing: p + Index * step
+ * This is used when processing multi-word vectors where each word's data
+ * is at a different offset.
+ * 
+ * @tparam Index The iteration index
+ * @tparam T Element type
+ */
 template <nint_t Index, typename T>
 struct ArgTransform<Index, StepPointer<T>> {
   CT_ALWAYS_FORCEINLINE
@@ -125,10 +238,29 @@ struct ArgTransform<Index, StepPointer<T>> {
   }
 };
 
+/**
+ * @brief Compile-time loop for applying operations to transformed arguments.
+ * 
+ * This template implements a loop unrolling mechanism that iterates from I
+ * to NLoop with the given Step, transforming arguments at each iteration
+ * and applying the user's function.
+ * 
+ * @tparam NLoop Loop bound (exclusive)
+ * @tparam Step Loop step (must be positive)
+ * @tparam I Current iteration (starts at 0)
+ */
 template <nint_t NLoop, nint_t Step = 1, nint_t I = 0, typename = void /* SFINAE*/>
 struct ForEachTransformed {
   static_assert((Step > 0 && I < NLoop) || (Step < 0 && I > NLoop));
 
+  /**
+   * @brief Iterate from I to NLoop, calling f with transformed arguments.
+   * 
+   * @tparam F Function type (must have template operator()<Index>)
+   * @tparam TArgs Argument types
+   * @param f The function to call at each iteration
+   * @param args Arguments to transform and pass to f
+   */
   template <typename F, typename... TArgs>
   CT_ALWAYS_FORCEINLINE
   constexpr void operator()(F&& f, TArgs&& ... args) {
@@ -136,6 +268,15 @@ struct ForEachTransformed {
     ForEachTransformed<NLoop, Step, I + Step>()(std::forward<F>(f), std::forward<TArgs>(args)...);
   }
 
+  /**
+   * @brief Iterate from I to n (runtime bound), calling f with transformed arguments.
+   * 
+   * @tparam F Function type
+   * @tparam TArgs Argument types
+   * @param n The runtime loop bound
+   * @param f The function to call
+   * @param args Arguments to transform and pass to f
+   */
   template <typename F, typename... TArgs>
   CT_ALWAYS_FORCEINLINE
   constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {
@@ -145,6 +286,9 @@ struct ForEachTransformed {
   }
 };
 
+/**
+ * @brief Base case for ForEachTransformed when iteration is complete.
+ */
 template <nint_t NLoop, nint_t Step, nint_t I>
 struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
   template <typename F, typename... TArgs>
@@ -156,6 +300,22 @@ struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
   constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
 };
 
+/**
+ * @brief Apply a word-level operation to produce a vector result.
+ * 
+ * This is the core infrastructure for vector operations. It:
+ * 1. Checks if the vector is a single word (fast path)
+ * 2. If multi-word, iterates over all words, applying f to each
+ * 3. Collects results into the output vector
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type that takes (word_tag, word_args...) and returns a word
+ * @tparam TArgs Argument types (may include ShardVec, ShardMask, StepPointer)
+ * @param t The vector tag
+ * @param f The operation to apply to each word
+ * @param args Arguments to pass (will be transformed per-word)
+ * @return The result vector
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
@@ -176,6 +336,19 @@ Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
   }
 } // vectorized_map_v
 
+/**
+ * @brief Apply a word-level operation to produce a mask result.
+ * 
+ * Similar to vectorized_map_v, but for operations that return masks.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param f The operation to apply to each word
+ * @param args Arguments to pass
+ * @return The result mask
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
@@ -197,6 +370,21 @@ Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
 } // vectorized_map_m
 
 
+/**
+ * @brief Apply a word-level operation with index awareness to produce a vector result.
+ * 
+ * Similar to vectorized_map_v, but the function f receives the word index
+ * as a template parameter. Useful for operations that need to know which
+ * word they're processing (e.g., mwhilelt for generating sequential masks).
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type with template operator()<Index>(word_tag, args...)
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param f The operation to apply (receives word index as template param)
+ * @param args Arguments to pass
+ * @return The result vector
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
@@ -217,6 +405,17 @@ Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
   }
 } // vectorized_map_v_indexed
 
+/**
+ * @brief Apply a word-level operation with index awareness to produce a mask result.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type with template operator()<Index>
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param f The operation to apply
+ * @param args Arguments to pass
+ * @return The result mask
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
@@ -238,6 +437,24 @@ Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
 } // vectorized_map_m_indexed
 
 
+/**
+ * @brief Apply word-level operations with a partial (tail) handling.
+ * 
+ * This variant handles operations that may only process n elements,
+ * where n <= size(t). It uses f_complete for full words and f_tail
+ * for the partial last word.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam FnC Function type for complete words
+ * @tparam FnT Function type for tail (partial) word
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param n Number of elements to process (0 <= n <= size(t))
+ * @param f_complete Function for full words: f(word_tag, args...)
+ * @param f_tail Function for tail: f(word_tag, remaining, args...)
+ * @param args Arguments to pass
+ * @return The result vector
+ */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
@@ -270,6 +487,20 @@ Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TAr
   }
 } // vectorized_map_v
 
+/**
+ * @brief Apply word-level operations with partial handling for mask results.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam FnC Function type for complete words
+ * @tparam FnT Function type for tail word
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param n Number of elements to process
+ * @param f_complete Function for full words
+ * @param f_tail Function for tail word
+ * @param args Arguments to pass
+ * @return The result mask
+ */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
@@ -302,6 +533,18 @@ Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TA
   }
 } // vectorized_map_m
 
+/**
+ * @brief Apply a word-level operation without returning a result.
+ * 
+ * Used for operations like store that don't produce a value.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param f The operation to apply
+ * @param args Arguments to pass
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 void vectorized_foreach(TTag t, Fn&& f, TArgs&& ... args) {
@@ -323,6 +566,16 @@ void vectorized_foreach(TTag t, Fn&& f, TArgs&& ... args) {
 } // vectorized_foreach
 
 
+/**
+ * @brief Apply a word-level operation with index awareness, without returning a result.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam Fn Function type with template operator()<Index>
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param f The operation to apply
+ * @param args Arguments to pass
+ */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 void vectorized_foreach_indexed(TTag t, Fn&& f, TArgs&& ... args) {
@@ -344,6 +597,21 @@ void vectorized_foreach_indexed(TTag t, Fn&& f, TArgs&& ... args) {
 } // vectorized_foreach
 
 
+/**
+ * @brief Apply word-level operations with partial handling, without returning a result.
+ * 
+ * Used for store operations with partial element counts.
+ * 
+ * @tparam TTag The vector tag type
+ * @tparam FnC Function type for complete words
+ * @tparam FnT Function type for tail word
+ * @tparam TArgs Argument types
+ * @param t The vector tag
+ * @param n Number of elements to process
+ * @param f_complete Function for full words
+ * @param f_tail Function for tail word
+ * @param args Arguments to pass
+ */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
 void vectorized_foreach(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
@@ -381,6 +649,22 @@ void vectorized_foreach(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&
 //                               Constructors                                 //
 /* ************************************************************************** */
 
+/**
+ * @brief Create a vector filled with a single value.
+ * 
+ * All elements of the result vector are set to `value`.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param value The value to fill with
+ * @return Vector with all elements set to `value`
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   auto v = fill(t, 3.14f);  // v = [3.14, 3.14, 3.14, 3.14]
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
@@ -390,12 +674,37 @@ auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
   );
 }
 
+/**
+ * @brief Create a vector filled with zeros (default-constructed values).
+ * 
+ * Equivalent to fill(t, T()) where T is default-constructible.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @return Vector with all elements zero-initialized
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto zeros(Tag<T, N, P> t) -> VecOf(t) {
   return fill(t, T());
 }
 
+/**
+ * @brief Create a mask filled with a single boolean value.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param value The boolean value (true or false)
+ * @return Mask with all elements set to `value`
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   auto m = mfill(t, true);  // All lanes active
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
@@ -405,18 +714,61 @@ auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
   );
 }
 
+/**
+ * @brief Create a mask with all lanes active (all true).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @return Mask with all elements true
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mtrue(Tag<T, N, P> t) -> MaskOf(t) {
   return mfill(t, true);
 }
 
+/**
+ * @brief Create a mask with all lanes inactive (all false).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @return Mask with all elements false
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mfalse(Tag<T, N, P> t) -> MaskOf(t) {
   return mfill(t, false);
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) < b.
+ * 
+ * This is useful for creating masks for processing a partial number of
+ * elements. For a vector of size N:
+ *   result[i] = (a + i) < b
+ * 
+ * For multi-word vectors, each word's mask is computed independently
+ * with appropriate offsets.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Upper bound (exclusive)
+ * @return Mask where lanes [a, b) are true
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   auto m = mwhilelt(t, 0, 3);  // m = [true, true, true, false]
+ *   
+ *   // Useful for processing partial data:
+ *   auto m = mwhilelt(t, 0, n);  // Process n elements
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) {
@@ -427,18 +779,58 @@ auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) {
   );
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) <= b.
+ * 
+ * Equivalent to mwhilelt(t, a, b + 1).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Upper bound (inclusive)
+ * @return Mask where lanes [a, b] are true
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mwhilele(Tag<T, N, P> t, nint_t a, nint_t b) {
   return mwhilelt(t, a, b + 1);
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) > b.
+ * 
+ * Equivalent to mwhilege(t, a, b + 1).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Lower bound (exclusive)
+ * @return Mask where lanes > b are true
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mwhilegt(Tag<T, N, P> t, nint_t a, nint_t b) {
   return mwhilege(t, a, b + 1);
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) >= b.
+ * 
+ * For a vector of size N:
+ *   result[i] = (a + i) >= b
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Lower bound (inclusive)
+ * @return Mask where lanes >= b are true
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
@@ -454,7 +846,20 @@ auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
 /* ************************************************************************** */
 
 /**
- * Unaligned vector laod
+ * @brief Load a vector from unaligned memory.
+ * 
+ * Loads size(t) consecutive elements from memory starting at address p.
+ * The pointer p does not need to be aligned.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @return Loaded vector
+ * 
+ * @note For multi-word vectors, each word is loaded from consecutive addresses
+ *       (p, p + word_size, p + 2*word_size, etc.)
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -466,6 +871,22 @@ auto loadu(Tag<T, N, P> t, const T* p) -> VecOf(t) {
   );
 }
 
+/**
+ * @brief Load a vector from an initializer list.
+ * 
+ * Convenience overload for creating vectors from brace-enclosed values.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param list Initializer list with at least size(t) elements
+ * @return Loaded vector
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   auto v = loadu(t, {1.0f, 2.0f, 3.0f, 4.0f});
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto loadu(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
@@ -474,7 +895,19 @@ auto loadu(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
 }
 
 /**
- * Aligned vector load
+ * @brief Load a vector from aligned memory.
+ * 
+ * Loads size(t) consecutive elements from memory starting at address p.
+ * The pointer p must be aligned to DEFAULT_ALIGNMENT bytes.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @return Loaded vector
+ * 
+ * @warning Passing an unaligned pointer may cause crashes or performance issues.
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -486,6 +919,16 @@ auto load(Tag<T, N, P> t, const T* p) -> VecOf(t) {
   );
 }
 
+/**
+ * @brief Load a vector from an aligned initializer list.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param list Initializer list
+ * @return Loaded vector
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto load(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
@@ -493,7 +936,25 @@ auto load(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
 }
 
 /**
- * Unaligned load first n elements
+ * @brief Load first n elements from unaligned memory, with default for rest.
+ * 
+ * Loads n consecutive elements from memory. Elements beyond n are filled
+ * from default_v. This is useful for processing partial data at the end
+ * of an array.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @param n Number of elements to load (0 <= n <= size(t))
+ * @param default_v Default values for elements beyond n
+ * @return Vector with first n elements from memory, rest from default_v
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   float data[4] = {1, 2, 3, 4};
+ *   auto v = loadu(t, data, 2, zeros(t));  // v = [1, 2, 0, 0]
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -506,8 +967,23 @@ auto loadu(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) -> VecOf(t)
   );
 }
 
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto loadu(Tag<T, N, P> t, const T* p, nint_t n, T default_v = T()) -> VecOf(t) {
+  return loadu(t, p, n, fill(t, default_v));
+}
+
 /**
- * Aligned load first n elements
+ * @brief Load first n elements from aligned memory, with default for rest.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @param n Number of elements to load
+ * @param default_v Default values for elements beyond n
+ * @return Vector with loaded elements
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -520,8 +996,29 @@ auto load(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) -> VecOf(t) 
   );
 }
 
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto load(Tag<T, N, P> t, const T* p, nint_t n, T default_v = T()) {
+  return load(t, p, n, fill(t, default_v));
+}
+
 /**
- * Unaligned masked load elements
+ * @brief Masked load from unaligned memory.
+ * 
+ * For each lane i where mask[i] is true, loads from p[i]. For lanes
+ * where mask is false, takes the value from default_v[i].
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @param m Mask indicating which lanes to load
+ * @param default_v Default values for masked-out lanes
+ * @return Vector with masked-loaded elements
+ * 
+ * @note This operation may load from masked-out addresses; ensure
+ *       those addresses are valid even if the values won't be used.
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -533,8 +1030,23 @@ auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf
   );
 }
 
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
+  return loadu(t, p, m, fill(t, default_v));
+}
+
 /**
- * Aligned masked load elements
+ * @brief Masked load from aligned memory.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @param m Mask indicating which lanes to load
+ * @param default_v Default values for masked-out lanes
+ * @return Vector with masked-loaded elements
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -546,8 +1058,23 @@ auto load(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(
   );
 }
 
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto load(Tag<T, N, P> t, const T* p, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
+  return load(t, p, m, fill(t, default_v));
+}
+
 /**
- * Unaligned vector store
+ * @brief Store a vector to unaligned memory.
+ * 
+ * Stores size(t) consecutive elements to memory starting at address p.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -560,7 +1087,14 @@ void storeu(Tag<T, N, P> t, T* p, VecOf(t) v) {
 }
 
 /**
- * Aligned vector store
+ * @brief Store a vector to aligned memory.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -573,7 +1107,17 @@ void store(Tag<T, N, P> t, T* p, VecOf(t) v) {
 }
 
 /**
- * Unaligned store first n elements
+ * @brief Store first n elements of a vector to unaligned memory.
+ * 
+ * Only the first n elements are written to memory.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param n Number of elements to store (0 <= n <= size(t))
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -587,7 +1131,15 @@ void storeu(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
 }
 
 /**
- * Aligned store first n elements
+ * @brief Store first n elements of a vector to aligned memory.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param n Number of elements to store
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -601,7 +1153,18 @@ void store(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
 }
 
 /**
- * Unaligned masked vector store
+ * @brief Masked store to unaligned memory.
+ * 
+ * For each lane i where mask[i] is true, stores v[i] to p[i].
+ * Masked-out lanes are not written.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param m Mask indicating which lanes to store
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -614,7 +1177,15 @@ void storeu(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 }
 
 /**
- * Aligned masked vector store
+ * @brief Masked store to aligned memory.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param m Mask indicating which lanes to store
+ * @param v The vector to store
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -630,8 +1201,31 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 /* ************************************************************************** */
 //                         Indexed gather & scatter                           //
 /* ************************************************************************** */
+
 /**
- * Gather vector elements from index
+ * @brief Gather elements from memory using an index vector.
+ * 
+ * For each lane i, loads from p[i[i]] and returns the result.
+ * This is the vectorized equivalent of:
+ *   result[i] = p[index[i]]
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector (indices are signed integers of same size as T)
+ * @return Gathered vector
+ * 
+ * @note Gather operations can be significantly slower than consecutive loads
+ *       due to memory access patterns. Use consecutive loads when possible.
+ * 
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   float data[100] = {...};
+ *   int32_t indices[4] = {10, 20, 5, 15};
+ *   auto idx = loadu(Tag<int32_t, 4>(), indices);
+ *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -645,7 +1239,17 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) 
 }
 
 /**
- * Gather first n elements from index
+ * @brief Gather first n elements using an index vector, with default for rest.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param n Number of elements to gather (0 <= n <= size(t))
+ * @param default_v Default values for elements beyond n
+ * @return Gathered vector
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -659,6 +1263,21 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, Ve
   );
 }
 
+/**
+ * @brief Gather first n elements using an index vector, with scalar default.
+ * 
+ * Convenience overload that broadcasts a scalar default value.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param n Number of elements to gather
+ * @param default_v Scalar default value for elements beyond n
+ * @return Gathered vector
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) -> VecOf(t) {
@@ -666,7 +1285,22 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T 
 }
 
 /**
- * Masked gather vector elements from index
+ * @brief Masked gather from memory using an index vector.
+ * 
+ * For each lane i where mask[i] is true, loads from p[index[i]].
+ * For masked-out lanes, takes the value from default_v[i].
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param m Mask indicating which lanes to gather
+ * @param default_v Default values for masked-out lanes
+ * @return Gathered vector
+ * 
+ * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -679,6 +1313,19 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m,
   );
 }
 
+/**
+ * @brief Masked gather with scalar default.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param m Mask indicating which lanes to gather
+ * @param default_v Scalar default value for masked-out lanes
+ * @return Gathered vector
+ */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, T default_v) -> VecOf(t) {
@@ -686,7 +1333,24 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m,
 }
 
 /**
- * Scatter vector elements to index
+ * @brief Scatter elements to memory using an index vector.
+ * 
+ * For each lane i, stores v[i] to p[index[i]].
+ * This is the vectorized equivalent of:
+ *   p[index[i]] = v[i]
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * 
+ * @warning If indices are not unique, the result depends on execution order.
+ *          Multiple writes to the same location may race.
+ * 
+ * @note Scatter operations can be significantly slower than consecutive stores.
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -700,7 +1364,16 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
 }
 
 /**
- * Scatter first n elements to index
+ * @brief Scatter first n elements to memory using an index vector.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param n Number of elements to scatter (0 <= n <= size(t))
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -715,7 +1388,19 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_
 }
 
 /**
- * Masked scatter elements to index
+ * @brief Masked scatter to memory using an index vector.
+ * 
+ * For each lane i where mask[i] is true, stores v[i] to p[index[i]].
+ * Masked-out lanes are not written.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param m Mask indicating which lanes to scatter
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -733,8 +1418,19 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskO
 /* ************************************************************************** */
 
 /**
- * Get element at specified index
- * Note: slow
+ * @brief Get a single element from a vector by index.
+ * 
+ * @warning This operation is relatively slow as it requires extracting
+ *          the element from a SIMD register. Avoid using in performance-
+ *          critical inner loops.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The vector
+ * @param index Element index (0 <= index < size(t))
+ * @return The element at the specified index
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -746,8 +1442,17 @@ T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
 }
 
 /**
- * Get element at specified index
- * Note: slow
+ * @brief Get a single element from a mask by index.
+ * 
+ * @warning This operation is relatively slow. Avoid using in hot loops.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param m The mask
+ * @param index Element index (0 <= index < size(t))
+ * @return The boolean value at the specified index
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -759,8 +1464,19 @@ T get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
 }
 
 /**
- * Set element at specified index
- * Note: slow
+ * @brief Set a single element in a vector by index.
+ * 
+ * @warning This operation is relatively slow as it requires modifying
+ *          the SIMD register. Avoid using in performance-critical loops.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The original vector
+ * @param index Element index (0 <= index < size(t))
+ * @param x The new value
+ * @return Vector with the element at index set to x
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
@@ -772,8 +1488,18 @@ auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
 }
 
 /**
- * Set element at specified index
- * Note: slow
+ * @brief Set a single element in a mask by index.
+ * 
+ * @warning This operation is relatively slow. Avoid using in hot loops.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param m The original mask
+ * @param index Element index (0 <= index < size(t))
+ * @param x The new boolean value
+ * @return Mask with the element at index set to x
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE

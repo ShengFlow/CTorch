@@ -7,12 +7,41 @@
 
 #include "tl/cpu/VecBase.h"
 
+/**
+ * @file Scalar.h
+ * @brief Scalar (fallback) implementation of vector operations.
+ * 
+ * This file provides the default implementation of all vector operations
+ * using scalar loops. It is used when:
+ * - No SIMD implementation is available for the target architecture
+ * - The architecture is unrecognized
+ * - The SIMD width is not supported
+ * 
+ * The scalar implementation serves as:
+ * 1. A reference implementation for correctness verification
+ * 2. A portable fallback for unsupported platforms
+ * 3. A baseline for performance comparison
+ * 
+ * All functions in this file operate on ScalarArray and ScalarBitSet,
+ * which are defined in VecBase.h.
+ */
+
 namespace ct::tl::vec {
 namespace word {
 /* ************************************************************************** */
 //                               Constructors                                 //
 /* ************************************************************************** */
 
+/**
+ * @brief Fill a vector with a single value (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param value The value to fill
+ * @return Vector with all elements set to value
+ */
 template <typename T, nint_t N, int P>
 auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -22,6 +51,16 @@ auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
   return v;
 }
 
+/**
+ * @brief Fill a mask with a single boolean value (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param value The boolean value
+ * @return Mask with all elements set to value
+ */
 template <typename T, nint_t N, int P>
 auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
   static_assert(is_word_vec(t));
@@ -30,16 +69,38 @@ auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
   return m;
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) < b (scalar implementation).
+ * 
+ * This implementation uses either:
+ * - Bit manipulation (fast path) for masks up to 64 bits
+ * - Loop-based setting for larger masks
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Upper bound (exclusive)
+ * @return Mask where lanes [a, b-a) are true
+ * 
+ * @example
+ *   Tag<float32_t, 8> t;
+ *   auto m = mwhilelt(t, 0, 5);  // m = [T, T, T, T, T, F, F, F]
+ */
 template <typename T, nint_t N, int P>
 auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) -> MaskOf(t) {
   static_assert(is_word_vec(t));
-  // Fast path
+  // Fast path for masks that fit in a machine word
   if constexpr (size(t) <= sizeof(unsigned long long) * CHAR_BIT) {
-    nint_t end = std::max(b - a, nint_t(0));
-    // 64 = (0 - 1) -> 0xffffffff_ffffffffuLL
+    nint_t end = std::clamp(b - a, nint_t(0), nint_t(sizeof(unsigned long long) * CHAR_BIT));
+    // Create a bitmask with 'end' bits set
+    // Note: (1 << 64) - 1 correctly produces all ones when end = 64
     auto bits = ((1uLL) << end) - 1;
     return { bits };
   } else {
+    // Slow path for large masks: set bits individually
+    // TODO should can be made optimal by custom bitset type that exposes underlying nuint_t storage
     nint_t end = std::min(b - a, size(t));
     MaskOf(t) m;
     for (nint_t i = 0; i < end; ++i) {
@@ -49,16 +110,28 @@ auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) -> MaskOf(t) {
   }
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) >= b (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param a Starting index
+ * @param b Lower bound (inclusive)
+ * @return Mask where lanes [b-a, N) are true
+ */
 template <typename T, nint_t N, int P>
 auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) -> MaskOf(t) {
   static_assert(is_word_vec(t));
-  // Fast path
+  // Fast path for masks that fit in a machine word
   if constexpr (size(t) <= sizeof(unsigned long long) * CHAR_BIT) {
-    nint_t end = std::max(b - a, nint_t(0));
-    // 64 = (0 - 1) -> 0xffffffff_ffffffffuLL
+    nint_t end = std::clamp(b - a, nint_t(0), nint_t(sizeof(unsigned long long) * CHAR_BIT));
+    // Create a bitmask with 'end' bits clear (upper bits set)
     auto bits = (1uLL << end) - 1;
     return { ~bits };
   } else {
+    // Slow path for large masks
     MaskOf(t) m;
     nint_t start = std::max(b - a, nint_t(0));
     for (nint_t i = start; i < size(t); ++i) {
@@ -72,6 +145,18 @@ auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) -> MaskOf(t) {
 //                          Consecutive load & store                          //
 /* ************************************************************************** */
 
+/**
+ * @brief Load a vector from unaligned memory (scalar implementation).
+ * 
+ * Copies elements one by one from memory to the vector.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @return Loaded vector
+ */
 template <typename T, nint_t N, int P>
 auto loadu(Tag<T, N, P> t, const T* p) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -83,12 +168,36 @@ auto loadu(Tag<T, N, P> t, const T* p) -> VecOf(t) {
   return v;
 }
 
+/**
+ * @brief Load a vector from aligned memory (scalar implementation).
+ * 
+ * Asserts that the pointer is properly aligned, then calls loadu.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @return Loaded vector
+ */
 template <typename T, nint_t N, int P>
 auto load(Tag<T, N, P> t, const T* p) -> VecOf(t) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
   return word::loadu(t, p);
 }
 
+/**
+ * @brief Load first n elements, with default for rest (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @param n Number of elements to load
+ * @param default_v Default values for elements beyond n
+ * @return Vector with loaded and default elements
+ */
 template <typename T, nint_t N, int P>
 auto loadu(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) {
   static_assert(is_default_impl(t));
@@ -96,21 +205,50 @@ auto loadu(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   VecOf(t) v;
   nint_t i;
+  // Load n elements from memory
   for (i = 0; i < n; ++i) {
     v[i] = p[i];
   }
+  // Fill remaining elements from default
   for (; i < size(t); ++i) {
     v[i] = default_v[i];
   }
   return v;
 }
 
+/**
+ * @brief Aligned load of first n elements (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @param n Number of elements to load
+ * @param default_v Default values for elements beyond n
+ * @return Vector with loaded and default elements
+ */
 template <typename T, nint_t N, int P>
 auto load(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
   return word::loadu(t, p, n, default_v);
 }
 
+/**
+ * @brief Masked load (scalar implementation).
+ * 
+ * For each lane i where mask[i] is true, loads from p[i].
+ * For masked-out lanes, takes the value from default_v[i].
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory
+ * @param m Mask indicating which lanes to load
+ * @param default_v Default values for masked-out lanes
+ * @return Vector with masked-loaded elements
+ */
 template <typename T, nint_t N, int P>
 auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) {
   static_assert(is_default_impl(t));
@@ -122,12 +260,34 @@ auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) {
   return v;
 }
 
+/**
+ * @brief Aligned masked load (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to source memory (must be aligned)
+ * @param m Mask indicating which lanes to load
+ * @param default_v Default values for masked-out lanes
+ * @return Vector with masked-loaded elements
+ */
 template <typename T, nint_t N, int P>
 auto load(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
   return word::loadu(t, p, m, default_v);
 }
 
+/**
+ * @brief Store a vector to unaligned memory (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void storeu(Tag<T, N, P> t, T* p, VecOf(t) v) {
   static_assert(is_default_impl(t));
@@ -137,12 +297,33 @@ void storeu(Tag<T, N, P> t, T* p, VecOf(t) v) {
   }
 }
 
+/**
+ * @brief Store a vector to aligned memory (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void store(Tag<T, N, P> t, T* p, VecOf(t) v) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
   return word::storeu(t, p, v);
 }
 
+/**
+ * @brief Store first n elements (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param n Number of elements to store
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void storeu(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
   static_assert(is_default_impl(t));
@@ -153,12 +334,34 @@ void storeu(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
   }
 }
 
+/**
+ * @brief Aligned store of first n elements (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param n Number of elements to store
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void store(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
   return word::storeu(t, p, n, v);
 }
 
+/**
+ * @brief Masked store (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory
+ * @param m Mask indicating which lanes to store
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void storeu(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
   static_assert(is_default_impl(t));
@@ -168,6 +371,17 @@ void storeu(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
   }
 }
 
+/**
+ * @brief Aligned masked store (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Pointer to destination memory (must be aligned)
+ * @param m Mask indicating which lanes to store
+ * @param v The vector to store
+ */
 template <typename T, nint_t N, int P>
 void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
   CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
@@ -177,6 +391,20 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 /* ************************************************************************** */
 //                         Indexed gather & scatter                           //
 /* ************************************************************************** */
+
+/**
+ * @brief Gather elements using an index vector (scalar implementation).
+ * 
+ * For each lane j, loads from p[i[j]].
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @return Gathered vector
+ */
 template <typename T, nint_t N, int P>
 auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -190,6 +418,19 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) 
   return v;
 }
 
+/**
+ * @brief Gather first n elements (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param n Number of elements to gather
+ * @param default_v Default values for elements beyond n
+ * @return Gathered vector
+ */
 template <typename T, nint_t N, int P>
 auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -199,15 +440,30 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, Ve
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   VecOf(t) v;
   nint_t j;
+  // Gather n elements
   for (j = 0; j < n; ++j) {
     v[j] = p[(nint_t) i[j]];
   }
+  // Fill remaining from default
   for(; j < size(t); ++j) {
     v[j] = default_v[j];
   }
   return v;
 }
 
+/**
+ * @brief Masked gather (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for gather
+ * @param i Index vector
+ * @param m Mask indicating which lanes to gather
+ * @param default_v Default values for masked-out lanes
+ * @return Gathered vector
+ */
 template <typename T, nint_t N, int P>
 auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -221,6 +477,19 @@ auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m,
   return v;
 }
 
+/**
+ * @brief Scatter elements using an index vector (scalar implementation).
+ * 
+ * For each lane j, stores v[j] to p[i[j]].
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ */
 template <typename T, nint_t N, int P>
 void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
   static_assert(is_default_impl(t));
@@ -232,6 +501,18 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
   }
 }
 
+/**
+ * @brief Scatter first n elements (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param n Number of elements to scatter
+ */
 template <typename T, nint_t N, int P>
 void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_t n) {
   static_assert(is_default_impl(t));
@@ -244,6 +525,18 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_
   }
 }
 
+/**
+ * @brief Masked scatter (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param m Mask indicating which lanes to scatter
+ */
 template <typename T, nint_t N, int P>
 void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskOf(t) m) {
   static_assert(is_default_impl(t));
@@ -259,6 +552,17 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskO
 //                             Get / set element                              //
 /* ************************************************************************** */
 
+/**
+ * @brief Get a single element from a vector (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The vector
+ * @param index Element index
+ * @return The element at the specified index
+ */
 template <typename T, nint_t N, int P>
 T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
   static_assert(is_default_impl(t));
@@ -267,6 +571,17 @@ T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
   return v[index];
 }
 
+/**
+ * @brief Get a single element from a mask (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The mask
+ * @param index Element index
+ * @return The boolean value at the specified index
+ */
 template <typename T, nint_t N, int P>
 bool get(Tag<T, N, P> t, MaskOf(t) v, nint_t index) {
   static_assert(is_word_vec(t));
@@ -274,6 +589,18 @@ bool get(Tag<T, N, P> t, MaskOf(t) v, nint_t index) {
   return v[index];
 }
 
+/**
+ * @brief Set a single element in a vector (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The original vector
+ * @param index Element index
+ * @param x The new value
+ * @return Vector with the element at index set to x
+ */
 template <typename T, nint_t N, int P>
 auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
   static_assert(is_default_impl(t));
@@ -284,6 +611,18 @@ auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
   return u;
 }
 
+/**
+ * @brief Set a single element in a mask (scalar implementation).
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param v The original mask
+ * @param index Element index
+ * @param x The new boolean value
+ * @return Mask with the element at index set to x
+ */
 template <typename T, nint_t N, int P>
 auto set(Tag<T, N, P> t, MaskOf(t) v, nint_t index, bool x) -> MaskOf(t) {
   static_assert(is_default_impl(t));
