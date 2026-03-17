@@ -47,10 +47,10 @@ static constexpr auto ellipse = details::Ellipse(); // TODO currently not suppor
  * @brief Creates a marker for inserting a new axis (dimension) during slicing.
  *
  * This is used to expand the dimensionality of an array view by adding
- * a new axis with size 1 (or repeated multiple times).
+ * a new axis with _size 1 (or repeated multiple times).
  *
  * @param repeat Number of times to repeat the new axis. Default is 1.
- *               Setting repeat > 1 creates multiple consecutive dimensions of size 1.
+ *               Setting repeat > 1 creates multiple consecutive dimensions of _size 1.
  * @return A NewAxis marker object for use in slicing operations.
  *
  * @pre repeat >= 0 (assertion failure if negative)
@@ -76,7 +76,7 @@ static constexpr auto new_axis(int64_t repeat = 1) {
  *
  * @param start Starting index of the range (inclusive).
  * @param end Ending index of the range (exclusive).
- * @param step Step size for the slice. Default is 1.
+ * @param step Step _size for the slice. Default is 1.
  *             Can be negative to reverse the slice order.
  * @return A Range marker object for use in slicing operations.
  *
@@ -124,7 +124,7 @@ enum ArrayFlags : int {
    *
    * This means:
    *   - stride[N-1] == 1
-   *   - stride[N-2] == size[N-1]
+   *   - stride[N-2] == _size[N-1]
    *
    * Enables optimized 2D operations like matrix access patterns.
    * Note: This is a bitmask value of 3 (AF_LAST_CONTIGUOUS | additional flag).
@@ -136,8 +136,8 @@ enum ArrayFlags : int {
    *
    * This means the array has a dense row-major layout where:
    *   - stride[N-1] == 1
-   *   - stride[N-2] == size[N-1]
-   *   - stride[N-3] == size[N-1] * size[N-2]
+   *   - stride[N-2] == _size[N-1]
+   *   - stride[N-3] == _size[N-1] * size[N-2]
    *   - ... and so on
    *
    * This is the most restrictive guarantee but enables maximum optimization.
@@ -205,6 +205,7 @@ public:
   /** Type alias for Array<int64_t, 1> used for metadata (sizes/strides) */
   using IntsMetaRef = Array<int64_t, 1, AF_CONTIGUOUS>;
 
+  /** The element type T */
   using ElementType = T;
 
   /**
@@ -254,8 +255,8 @@ public:
    * Creates a view assuming row-major contiguous memory layout.
    * Strides are computed automatically from sizes in row-major order:
    *   stride[N-1] = 1
-   *   stride[N-2] = size[N-1]
-   *   stride[N-3] = size[N-1] * size[N-2]
+   *   stride[N-2] = _size[N-1]
+   *   stride[N-3] = size[N-1] * _size[N-2]
    *   ... etc
    *
    * @param data Pointer to the underlying data.
@@ -295,8 +296,8 @@ public:
    * @param sizes Initializer list of N dimension sizes.
    * @param strides Initializer list of N dimension strides.
    *
-   * @pre sizes.size() == N (assertion failure otherwise)
-   * @pre strides.size() == N (assertion failure otherwise)
+   * @pre sizes._size() == N (assertion failure otherwise)
+   * @pre strides._size() == N (assertion failure otherwise)
    *
    * @example
    *   float data[24];
@@ -307,7 +308,7 @@ public:
       const T* data,
       std::initializer_list<int64_t> sizes,
       std::initializer_list<int64_t> strides
-  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes.size()"), _get_ints_meta_size_checked(strides, "strides.size()")) {}
+  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes._size()"), _get_ints_meta_size_checked(strides, "strides._size()")) {}
 
   /**
    * @brief Constructs a contiguous Array from an initializer list of sizes.
@@ -317,7 +318,7 @@ public:
    * @param data Pointer to the underlying data.
    * @param sizes Initializer list of N dimension sizes.
    *
-   * @pre sizes.size() == N (assertion failure otherwise)
+   * @pre sizes._size() == N (assertion failure otherwise)
    *
    * @example
    *   float data[24];
@@ -327,12 +328,12 @@ public:
   constexpr Array(
       const T* data,
       std::initializer_list<int64_t> sizes
-  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes.size()")) {}
+  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes._size()")) {}
 
   /**
    * @brief Constructs an Array from std::array for sizes and strides.
    *
-   * Type-safe constructor that ensures correct array size at compile time.
+   * Type-safe constructor that ensures correct array _size at compile time.
    *
    * @param data Pointer to the underlying data.
    * @param sizes std::array of N dimension sizes.
@@ -348,7 +349,7 @@ public:
   /**
    * @brief Constructs a contiguous Array from std::array of sizes.
    *
-   * Type-safe constructor that ensures correct array size at compile time.
+   * Type-safe constructor that ensures correct array _size at compile time.
    *
    * @param data Pointer to the underlying data.
    * @param sizes std::array of N dimension sizes.
@@ -368,15 +369,15 @@ public:
    * @param sizes Array view containing N dimension sizes.
    * @param strides Array view containing N dimension strides.
    *
-   * @pre sizes.size(0) == N (assertion failure otherwise)
-   * @pre strides.size(0) == N (assertion failure otherwise)
+   * @pre sizes._size(0) == N (assertion failure otherwise)
+   * @pre strides._size(0) == N (assertion failure otherwise)
    */
   CT_ALWAYS_FORCEINLINE
   constexpr Array(
       const T* data,
       IntsMetaRef sizes,
       IntsMetaRef strides
-  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes.size(0)"), _get_ints_meta_size_checked(strides, "strides.size(0)")) {}
+  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes._size(0)"), _get_ints_meta_size_checked(strides, "strides._size(0)")) {}
 
   /**
    * @brief Constructs a contiguous Array from IntsMetaRef of sizes.
@@ -386,13 +387,13 @@ public:
    * @param data Pointer to the underlying data.
    * @param sizes Array view containing N dimension sizes.
    *
-   * @pre sizes.size(0) == N (assertion failure otherwise)
+   * @pre sizes._size(0) == N (assertion failure otherwise)
    */
   CT_ALWAYS_FORCEINLINE
   constexpr Array(
       const T* data,
       IntsMetaRef sizes
-  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes.size(0)")) {}
+  ) : Array(data, _get_ints_meta_size_checked(sizes, "sizes._size(0)")) {}
 
   /**
    * @brief Copy constructor.
@@ -410,7 +411,7 @@ public:
   ) : Array(other._data, other._sizes, other._strides) {}
 
   /**
-   * @brief Returns the size of a specific dimension.
+   * @brief Returns the _size of a specific dimension.
    *
    * @param i Dimension index (0-based).
    * @return The number of elements along dimension i.
@@ -547,7 +548,7 @@ public:
    *
    * The last two axes are contiguous if:
    *   - stride[N-1] == 1
-   *   - stride[N-2] == size[N-1]
+   *   - stride[N-2] == _size[N-1]
    *
    * @return true if the last two dimensions are contiguous, false otherwise.
    *
@@ -588,8 +589,8 @@ public:
    *
    * Supports multiple indexing modes:
    *   1. Integer index: Selects a single element along that axis, reducing dimensionality
-   *   2. reserve: Keeps the axis in the result with size 1
-   *   3. new_axis(): Adds a new dimension of size 1
+   *   2. reserve: Keeps the axis in the result with _size 1
+   *   3. new_axis(): Adds a new dimension of _size 1
    *   4. range(start, end, step): Selects a slice of elements along an axis
    *
    * @tparam TIndices Variadic template for index types.
@@ -600,9 +601,9 @@ public:
    *
    * @section behavior Behavior Details
    *   - Integer indices reduce dimensionality (N -> N-1)
-   *   - reserve preserves dimension (N -> N, with size 1 at indexed position)
+   *   - reserve preserves dimension (N -> N, with _size 1 at indexed position)
    *   - new_axis() increases dimensionality (N -> N+1)
-   *   - range preserves dimension with modified size
+   *   - range preserves dimension with modified _size
    *
    * @section contiguity Contiguity Preservation
    *   - Integer indexing may preserve contiguity flags
@@ -722,7 +723,7 @@ private:
   void _check_meta_sanity() const {
     #ifdef CT_DEBUG
     for (int64_t i = 0; i < N; ++i) {
-      CT_ASSERT(_sizes[i] >= 0, "dim %lld of array have negative size", i);
+      CT_ASSERT(_sizes[i] >= 0, "dim %lld of array have negative _size", i);
     }
     _check_stride_for_contiguity();
     #endif

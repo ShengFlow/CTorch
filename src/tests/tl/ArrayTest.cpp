@@ -241,7 +241,7 @@ TEST_F(ArrayTest, Constructor1DNullStridesPtr) {
 TEST_F(ArrayTest, Constructor1DInitializerListWrongSize) {
   using IntArray = Array<int64_t, 1>;
 // Should fail: initializer list size != N
-  EXPECT_DEATH(IntArray(data_1d_.data(), {10, 20}), "sizes.size()");
+  EXPECT_DEATH(IntArray(data_1d_.data(), {10, 20}), "sizes._size()");
 }
 
 // ============================================================================

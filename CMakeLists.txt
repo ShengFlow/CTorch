@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.31)
 project(CTorch)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -60,6 +60,7 @@ target_include_directories(CTorch
         PUBLIC
          ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+add_compile_options(-march=native)
 
 add_executable(PerformanceTest src/tests/performance_test.cpp)
 add_executable(StdTest src/tests/test.cpp)
@@ -67,9 +68,36 @@ add_executable(ActivationLossTest src/tests/test_activation_loss.cpp)
 add_executable(TensorGradTest src/tests/test_tensor_grad.cpp)
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 
+# Ignore warnings
+add_compile_options(-Wno-ignored-attributes)
+
+# tl-ArrayTest
 add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
 target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
 gtest_discover_tests(tl-ArrayTest)
+
+# tl-VecTest
+add_executable(tl-VecTest src/tests/tl/VecTest.cpp)
+target_compile_options(tl-VecTest PRIVATE -O3)
+target_link_libraries(tl-VecTest PRIVATE CTorch gtest gtest_main)
+gtest_discover_tests(tl-VecTest)
+
+# tl-VecBaseTest
+add_executable(tl-VecBaseTest src/tests/tl/vec/VecBaseTest.cpp)
+target_link_libraries(tl-VecBaseTest PRIVATE CTorch gtest gtest_main)
+gtest_discover_tests(tl-VecBaseTest)
+
+# tl-VecScalarTest
+add_executable(tl-VecScalarTest src/tests/tl/vec/VecScalarTest.cpp)
+target_compile_options(tl-VecScalarTest PRIVATE -O3)
+target_link_libraries(tl-VecScalarTest PRIVATE CTorch gtest gtest_main)
+gtest_discover_tests(tl-VecScalarTest)
+
+# tl-VecX86_128Test
+add_executable(tl-VecX86_128Test src/tests/tl/vec/VecX86_128Test.cpp)
+target_compile_options(tl-VecX86_128Test PRIVATE -O3 -march=native)
+target_link_libraries(tl-VecX86_128Test PRIVATE CTorch gtest gtest_main)
+gtest_discover_tests(tl-VecX86_128Test)
 
 target_link_libraries(PerformanceTest PRIVATE CTorch)
 target_link_libraries(StdTest PRIVATE CTorch)
@@ -84,6 +112,7 @@ target_compile_options(CTorch PRIVATE
         -Wpedantic
         -O3
 )
+
 
 # 检测平台并添加相应的编译选项
 if(APPLE)
