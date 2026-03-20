@@ -5,6 +5,8 @@
 #ifndef CTORCH_SCALAR_H
 #define CTORCH_SCALAR_H
 
+#include <cmath>
+
 #include "tl/cpu/VecBase.h"
 
 /**
@@ -48,6 +50,33 @@ auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
   static_assert(is_word_vec(t));
   VecOf(t) v;
   v.fill(value);
+  return v;
+}
+
+template <typename T, nint_t N, int P>
+auto fill(Tag<T, N, P> t, T value, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
+  VecOf(t) v;
+  nint_t i;
+  for (i = 0; i < n; ++i) {
+    v[i] = value;
+  }
+  for (; i < size(t); ++i) {
+    v[i] = default_v[i];
+  }
+  return v;
+}
+
+template <typename T, nint_t N, int P>
+auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  VecOf(t) v;
+  for (nint_t i = 0; i < size(t); ++i) {
+    v[i] = m[i] ? value : default_v[i];
+  }
   return v;
 }
 
@@ -632,6 +661,74 @@ auto set(Tag<T, N, P> t, MaskOf(t) v, nint_t index, bool x) -> MaskOf(t) {
   u[index] = x;
   return u;
 }
+
+/* ************************************************************************** */
+//                       Basic arithmetic operations                          //
+/* ************************************************************************** */
+#define _CT_SCALAR_VECTORIZED_BINARY_V(name, ...) \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) a, VecOf(t) b) -> VecOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  VecOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = (__VA_ARGS__); \
+  } \
+  return r; \
+} \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) a, VecOf(t) b, MaskOf(t) m) -> VecOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  VecOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = m[i] ? (__VA_ARGS__) : a[i]; \
+  } \
+  return r; \
+} \
+
+_CT_SCALAR_VECTORIZED_BINARY_V(add, a[i] + b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(sub, a[i] - b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(mul, a[i] * b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(div, a[i] / b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(rem, a[i] % b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(max, (T)std::max(a[i], b[i]))
+_CT_SCALAR_VECTORIZED_BINARY_V(min, (T)std::min(a[i], b[i]))
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_and, a[i] & b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_or, a[i] & b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_xor, a[i] & b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_andnot, ~a[i] & b[i])
+
+#undef _CT_SCALAR_VECTORIZED_BINARY_V
+
+#define _CT_SCALAR_VECTORIZED_UNARY_V(name, ...) \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) v) -> VecOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  VecOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = (__VA_ARGS__); \
+  } \
+  return r; \
+} \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) v, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  VecOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = m[i] ? (__VA_ARGS__) : default_v[i]; \
+  } \
+  return r; \
+} \
+
+_CT_SCALAR_VECTORIZED_UNARY_V(bit_not, ~v[i])
+_CT_SCALAR_VECTORIZED_UNARY_V(neg, -v[i])
+_CT_SCALAR_VECTORIZED_UNARY_V(abs, (T) std::abs(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_V(sqrt, (T) std::sqrt(v[i]))
+
+#undef _CT_SCALAR_VECTORIZED_UNARY_V
 
 } // namespace word
 } // namespace ct::tl::vec

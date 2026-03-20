@@ -5,7 +5,8 @@
 #ifndef CTORCH_VEC_H
 #define CTORCH_VEC_H
 
-#include "VecBase.h"
+#include "tl/cpu/VecBase.h"
+#include "tl/cpu/impl/VectorizedUtil.h"
 
 /**
  * @file Vec.h
@@ -79,572 +80,11 @@
 #endif
 #else
 #warning "Unrecognized architecture, falling back to scalar implementation."
-
+#endif
+// Always include scalar impl for fallback option
 #include "tl/cpu/impl/Scalar.h"
 
-#endif
-
 namespace ct::tl::vec {
-namespace details {
-
-/**
- * @brief Wrapper for a vector that should be split into words.
- * 
- * Used internally to pass vectors to vectorized_map functions where
- * each word should be processed separately.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- */
-template <typename T, nint_t N, int P>
-struct ShardVec {
-  Tag<T, N, P> tag;
-  Vec<Tag<T, N, P>>& v;
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr ShardVec(Tag<T, N, P> t, Vec<Tag<T, N, P>>& v) : tag(t), v(v) {}
-};
-
-/**
- * @brief Wrapper for a mask that should be split into words.
- * 
- * Used internally to pass masks to vectorized_map functions where
- * each word should be processed separately.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- */
-template <typename T, nint_t N, int P>
-struct ShardMask {
-  Tag<T, N, P> tag;
-  Mask<Tag<T, N, P>>& m;
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr ShardMask(Tag<T, N, P> t, Mask<Tag<T, N, P>>& m) : tag(t), m(m) {}
-};
-
-/**
- * @brief A pointer with a non-contiguous stride.
- * 
- * Used internally for operations that need to access data at fixed intervals,
- * such as when processing multiple words of a multi-word vector.
- * 
- * @tparam T Element type
- */
-template <typename T>
-struct StepPointer {
-  T* p;
-  nint_t step;
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr StepPointer(const T* p, nint_t step) : p(const_cast<T*>(p)), step(step) {}
-
-  template <nint_t N, int P>
-  CT_ALWAYS_FORCEINLINE
-  constexpr StepPointer(Tag<T, N, P> t, const T* p) : StepPointer(p, word_size(t)) {}
-};
-
-/**
- * @brief Default argument transformer that passes arguments through unchanged.
- * 
- * Used by the vectorized_map infrastructure to transform arguments based on
- * their type. This base case does no transformation.
- * 
- * @tparam Index The iteration index (unused in this case)
- * @tparam T The argument type
- */
-template <nint_t Index, typename T>
-struct ArgTransform {
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(T&& a) {
-    return std::forward<T>(a);
-  }
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(T&& a, nint_t index) {
-    return this->operator()(std::forward<T>(a));
-  }
-};
-
-/**
- * @brief Argument transformer that extracts a word from a ShardVec.
- * 
- * When a ShardVec is passed to a vectorized operation, this transformer
- * extracts the Index-th word from the wrapped vector.
- * 
- * @tparam Index The word index to extract
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- */
-template <nint_t Index, typename T, nint_t N, int P>
-struct ArgTransform<Index, ShardVec<T, N, P>> {
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(ShardVec<T, N, P>&& a) {
-    return get_word<Index>(a.tag, a.v);
-  }
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(ShardVec<T, N, P>&& a, nint_t index) {
-    return get_word(a.tag, a.v, index);
-  }
-};
-
-/**
- * @brief Argument transformer that extracts a word from a ShardMask.
- * 
- * Similar to the ShardVec transformer, but for masks.
- * 
- * @tparam Index The word index to extract
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- */
-template <nint_t Index, typename T, nint_t N, int P>
-struct ArgTransform<Index, ShardMask<T, N, P>> {
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(ShardMask<T, N, P>&& a) {
-    return get_word_mask<Index>(a.tag, a.m);
-  }
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(ShardMask<T, N, P>&& a, nint_t index) {
-    return get_word_mask(a.tag, a.m, index);
-  }
-};
-
-/**
- * @brief Argument transformer for StepPointer that computes the actual address.
- * 
- * Transforms a StepPointer by computing: p + Index * step
- * This is used when processing multi-word vectors where each word's data
- * is at a different offset.
- * 
- * @tparam Index The iteration index
- * @tparam T Element type
- */
-template <nint_t Index, typename T>
-struct ArgTransform<Index, StepPointer<T>> {
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(StepPointer<T>&& a) {
-    return this->operator()(std::forward<StepPointer<T>>(a), Index);
-  }
-
-  CT_ALWAYS_FORCEINLINE
-  constexpr decltype(auto) operator()(StepPointer<T>&& a, nint_t index) {
-    return a.p + index * a.step;
-  }
-};
-
-/**
- * @brief Compile-time loop for applying operations to transformed arguments.
- * 
- * This template implements a loop unrolling mechanism that iterates from I
- * to NLoop with the given Step, transforming arguments at each iteration
- * and applying the user's function.
- * 
- * @tparam NLoop Loop bound (exclusive)
- * @tparam Step Loop step (must be positive)
- * @tparam I Current iteration (starts at 0)
- */
-template <nint_t NLoop, nint_t Step = 1, nint_t I = 0, typename = void /* SFINAE*/>
-struct ForEachTransformed {
-  static_assert((Step > 0 && I < NLoop) || (Step < 0 && I > NLoop));
-
-  /**
-   * @brief Iterate from I to NLoop, calling f with transformed arguments.
-   * 
-   * @tparam F Function type (must have template operator()<Index>)
-   * @tparam TArgs Argument types
-   * @param f The function to call at each iteration
-   * @param args Arguments to transform and pass to f
-   */
-  template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
-  constexpr void operator()(F&& f, TArgs&& ... args) {
-    f.template operator()<I>(ArgTransform<I, std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...);
-    ForEachTransformed<NLoop, Step, I + Step>()(std::forward<F>(f), std::forward<TArgs>(args)...);
-  }
-
-  /**
-   * @brief Iterate from I to n (runtime bound), calling f with transformed arguments.
-   * 
-   * @tparam F Function type
-   * @tparam TArgs Argument types
-   * @param n The runtime loop bound
-   * @param f The function to call
-   * @param args Arguments to transform and pass to f
-   */
-  template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
-  constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {
-    if (I >= n - (Step - 1)) return;
-    f.template operator()<I>(ArgTransform<I, std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...);
-    ForEachTransformed<NLoop, Step, I + Step>()(n, std::forward<F>(f), std::forward<TArgs>(args)...);
-  }
-};
-
-/**
- * @brief Base case for ForEachTransformed when iteration is complete.
- */
-template <nint_t NLoop, nint_t Step, nint_t I>
-struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
-  template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
-  constexpr void operator()(F&& f, TArgs&& ... args) {}
-
-  template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
-  constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
-};
-
-/**
- * @brief Apply a word-level operation to produce a vector result.
- * 
- * This is the core infrastructure for vector operations. It:
- * 1. Checks if the vector is a single word (fast path)
- * 2. If multi-word, iterates over all words, applying f to each
- * 3. Collects results into the output vector
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type that takes (word_tag, word_args...) and returns a word
- * @tparam TArgs Argument types (may include ShardVec, ShardMask, StepPointer)
- * @param t The vector tag
- * @param f The operation to apply to each word
- * @param args Arguments to pass (will be transformed per-word)
- * @return The result vector
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    return std::forward<Fn>(f)(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    Vec<TTag> r;
-    ForEachTransformed<nloop>()(
-        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    return r;
-  }
-} // vectorized_map_v
-
-/**
- * @brief Apply a word-level operation to produce a mask result.
- * 
- * Similar to vectorized_map_v, but for operations that return masks.
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param f The operation to apply to each word
- * @param args Arguments to pass
- * @return The result mask
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    return std::forward<Fn>(f)(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    Mask<TTag> r;
-    ForEachTransformed<nloop>()(
-        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word_mask<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    return r;
-  }
-} // vectorized_map_m
-
-
-/**
- * @brief Apply a word-level operation with index awareness to produce a vector result.
- * 
- * Similar to vectorized_map_v, but the function f receives the word index
- * as a template parameter. Useful for operations that need to know which
- * word they're processing (e.g., mwhilelt for generating sequential masks).
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type with template operator()<Index>(word_tag, args...)
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param f The operation to apply (receives word index as template param)
- * @param args Arguments to pass
- * @return The result vector
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    return std::forward<Fn>(f).template operator()<nint_t(0)>(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    Vec<TTag> r;
-    ForEachTransformed<nloop>()(
-        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    return r;
-  }
-} // vectorized_map_v_indexed
-
-/**
- * @brief Apply a word-level operation with index awareness to produce a mask result.
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type with template operator()<Index>
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param f The operation to apply
- * @param args Arguments to pass
- * @return The result mask
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    return std::forward<Fn>(f).template operator()<nint_t(0)>(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    Mask<TTag> r;
-    ForEachTransformed<nloop>()(
-        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word_mask<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    return r;
-  }
-} // vectorized_map_m_indexed
-
-
-/**
- * @brief Apply word-level operations with a partial (tail) handling.
- * 
- * This variant handles operations that may only process n elements,
- * where n <= size(t). It uses f_complete for full words and f_tail
- * for the partial last word.
- * 
- * @tparam TTag The vector tag type
- * @tparam FnC Function type for complete words
- * @tparam FnT Function type for tail (partial) word
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param n Number of elements to process (0 <= n <= size(t))
- * @param f_complete Function for full words: f(word_tag, args...)
- * @param f_tail Function for tail: f(word_tag, remaining, args...)
- * @param args Arguments to pass
- * @return The result vector
- */
-template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  nint_t L = size(t);
-  CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
-
-  if constexpr (is_word_vec(t)) {
-    return std::forward<FnT>(f_tail)(
-        wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    nint_t ws = word_size(t);
-    nint_t full_nloop = n / ws;
-    nint_t rem = n % ws;
-    Vec<TTag> r;
-    ForEachTransformed<nloop>()(
-        full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    if (rem > 0) {
-      r = set_word(
-          t, r, full_nloop,
-          f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
-      );
-    }
-    return r;
-  }
-} // vectorized_map_v
-
-/**
- * @brief Apply word-level operations with partial handling for mask results.
- * 
- * @tparam TTag The vector tag type
- * @tparam FnC Function type for complete words
- * @tparam FnT Function type for tail word
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param n Number of elements to process
- * @param f_complete Function for full words
- * @param f_tail Function for tail word
- * @param args Arguments to pass
- * @return The result mask
- */
-template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  nint_t L = size(t);
-  CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
-
-  if constexpr (is_word_vec(t)) {
-    return std::forward<FnT>(f_tail)(
-        wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    nint_t ws = word_size(t);
-    nint_t full_nloop = n / ws;
-    nint_t rem = n % ws;
-    Mask<TTag> r;
-    ForEachTransformed<nloop>()(
-        full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
-          r = set_word_mask<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-        }, std::forward<TArgs>(args)...
-    );
-    if (rem > 0) {
-      r = set_word_mask(
-          t, r, full_nloop,
-          f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
-      );
-    }
-    return r;
-  }
-} // vectorized_map_m
-
-/**
- * @brief Apply a word-level operation without returning a result.
- * 
- * Used for operations like store that don't produce a value.
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param f The operation to apply
- * @param args Arguments to pass
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-void vectorized_foreach(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    std::forward<Fn>(f)(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-    return;
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    ForEachTransformed<nloop>()(
-        [&f, wt] <nint_t I>(auto&& ... args) {
-          f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...);
-        }, std::forward<TArgs>(args)...
-    );
-    return;
-  }
-} // vectorized_foreach
-
-
-/**
- * @brief Apply a word-level operation with index awareness, without returning a result.
- * 
- * @tparam TTag The vector tag type
- * @tparam Fn Function type with template operator()<Index>
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param f The operation to apply
- * @param args Arguments to pass
- */
-template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-void vectorized_foreach_indexed(TTag t, Fn&& f, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  if constexpr (is_word_vec(t)) {
-    std::forward<Fn>(f).template operator()<nint_t(0)>(
-        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-    return;
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    ForEachTransformed<nloop>()(
-        [&f, wt] <nint_t I>(auto&& ... args) {
-          f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...);
-        }, std::forward<TArgs>(args)...
-    );
-    return;
-  }
-} // vectorized_foreach
-
-
-/**
- * @brief Apply word-level operations with partial handling, without returning a result.
- * 
- * Used for store operations with partial element counts.
- * 
- * @tparam TTag The vector tag type
- * @tparam FnC Function type for complete words
- * @tparam FnT Function type for tail word
- * @tparam TArgs Argument types
- * @param t The vector tag
- * @param n Number of elements to process
- * @param f_complete Function for full words
- * @param f_tail Function for tail word
- * @param args Arguments to pass
- */
-template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-void vectorized_foreach(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
-  constexpr auto wt = word_tag(t);
-  nint_t L = size(t);
-  CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
-
-  if constexpr (is_word_vec(t)) {
-    std::forward<FnT>(f_tail)(
-        wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-    );
-    return;
-  } else {
-    constexpr nint_t nloop = num_words(t);
-    nint_t ws = word_size(t);
-    nint_t full_nloop = n / ws;
-    nint_t rem = n % ws;
-    ForEachTransformed<nloop>()(
-        full_nloop, [&f_complete, t, wt] <nint_t I>(auto&& ... args) {
-          f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...);
-        }, std::forward<TArgs>(args)...
-    );
-    if (rem > 0) {
-      f_tail(
-          wt, rem,
-          ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...
-      );
-    }
-    return;
-  }
-} // vectorized_foreach
-} // namespace details
-
 /* ************************************************************************** */
 //                               Constructors                                 //
 /* ************************************************************************** */
@@ -673,6 +113,46 @@ auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
       t, [=](auto tt) { return word::fill(tt, value); }
   );
 }
+
+/**
+ * Create a vector with first n elements filled with a single value. other sets to default_v
+ */
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto fill(Tag<T, N, P> t, T value, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+  using namespace details;
+  return vectorized_map_v(
+      t, n, [=](auto tt, auto&& dd) { return word::fill(tt, value); },
+      [=](auto tt, nint_t rem, auto&& dd) { return word::fill(tt, value, rem, dd); },
+      ShardVec(t, default_v)
+  );
+}
+
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto fill(Tag<T, N, P> t, T value, nint_t n, T default_v = T()) -> VecOf(t) {
+  return fill(t, value, n, fill(t, default_v));
+}
+
+/**
+ * Create a vector where masked lanes set to single value, other sets to default_v
+ */
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+  using namespace details;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& mm, auto&& dd) { return word::fill(tt, value, mm, dd); },
+      ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+
+template <typename T, nint_t N, int P>
+CT_ALWAYS_FORCEINLINE
+auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
+  return fill(t, value, m, fill(t, default_v));
+}
+
 
 /**
  * @brief Create a vector filled with zeros (default-constructed values).
@@ -1456,7 +936,7 @@ T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
  */
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
-T get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
+bool get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word_mask(t, m, ord);
@@ -1484,7 +964,7 @@ auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word(t, v, ord);
-  return set_word(word_tag(t), v, ord, word::set(t, word, off, x));
+  return set_word(t, v, ord, word::set(word_tag(t), word, off, x));
 }
 
 /**
@@ -1507,8 +987,77 @@ auto set(Tag<T, N, P> t, MaskOf(t) m, nint_t index, bool x) -> MaskOf(t) {
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word_mask(t, m, ord);
-  return set_word_mask(word_tag(t), m, ord, word::set(t, word, off, x));
+  return set_word_mask(t, m, ord, word::set(word_tag(t), word, off, x));
 }
+
+/* ************************************************************************** */
+//                       Basic arithmetic operations                          //
+/* ************************************************************************** */
+#define _CT_VECTORIZED_BINARY_V(name) \
+template <typename TVec> CT_ALWAYS_FORCEINLINE \
+auto name(TVec a, TVec b) -> TVec { \
+  using namespace details; \
+  auto t = tag_from_vec(a); \
+  return vectorized_map_v( \
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
+      ShardVec(t, a), ShardVec(t, b) \
+  ); \
+} \
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
+auto name(TVec a, TVec b, TMask m) -> TVec { \
+  using namespace details; \
+  auto t = tag_from_vec(a); \
+  return vectorized_map_v( \
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
+  ); \
+} \
+
+_CT_VECTORIZED_BINARY_V(add)
+_CT_VECTORIZED_BINARY_V(sub)
+_CT_VECTORIZED_BINARY_V(mul)
+_CT_VECTORIZED_BINARY_V(div)
+_CT_VECTORIZED_BINARY_V(rem)
+_CT_VECTORIZED_BINARY_V(max)
+_CT_VECTORIZED_BINARY_V(min)
+
+// bitwise
+_CT_VECTORIZED_BINARY_V(bit_and)
+_CT_VECTORIZED_BINARY_V(bit_or)
+_CT_VECTORIZED_BINARY_V(bit_xor)
+// not(a) and (b)
+_CT_VECTORIZED_BINARY_V(bit_andnot)
+
+#undef _CT_VECTORIZED_V
+
+#define _CT_VECTORIZED_UNARY_V(name) \
+template <typename TVec> CT_ALWAYS_FORCEINLINE \
+auto name(TVec v) -> TVec { \
+  using namespace details; \
+  auto t = tag_from_vec(v); \
+  return vectorized_map_v( \
+      t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
+      ShardVec(t, v) \
+  ); \
+} \
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
+auto name(TVec v, TMask m, TVec default_v) -> TVec { \
+  using namespace details; \
+  auto t = tag_from_vec(v); \
+  return vectorized_map_v( \
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::name(tt, vv, mm, dd); }, \
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v) \
+  ); \
+} \
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
+auto name(TVec v, TMask m) -> TVec { return name(v, m, v); } \
+
+_CT_VECTORIZED_UNARY_V(bit_not)
+_CT_VECTORIZED_UNARY_V(neg)
+_CT_VECTORIZED_UNARY_V(abs)
+_CT_VECTORIZED_UNARY_V(sqrt)
+
+#undef _CT_VECTORIZED_UNARY_V
 
 } // namespace ct::tl::vec
 

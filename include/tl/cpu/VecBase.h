@@ -10,6 +10,7 @@
 
 #include "Assertion.h"
 #include "CoreDefs.h"
+#include "tl/util/Math.h"
 
 /**
  * @file VecBase.h
@@ -78,7 +79,31 @@ static constexpr nint_t adjusted_size(nint_t scalable_size = -1) {
       return N >> (-POW2);
   }
 }
+
+/**
+ * Check if type T is supported element type for vector
+ */
+template <typename T>
+struct IsElementType {
+  static constexpr bool value = false;
+};
+
+template <> struct IsElementType<bfloat16_t> { static constexpr bool value = true; };
+template <> struct IsElementType<float16_t> { static constexpr bool value = true; };
+template <> struct IsElementType<float32_t> { static constexpr bool value = true; };
+template <> struct IsElementType<float64_t> { static constexpr bool value = true; };
+template <> struct IsElementType<int8_t> { static constexpr bool value = true; };
+template <> struct IsElementType<uint8_t> { static constexpr bool value = true; };
+template <> struct IsElementType<int16_t> { static constexpr bool value = true; };
+template <> struct IsElementType<uint16_t> { static constexpr bool value = true; };
+template <> struct IsElementType<int32_t> { static constexpr bool value = true; };
+template <> struct IsElementType<uint32_t> { static constexpr bool value = true; };
+template <> struct IsElementType<int64_t> { static constexpr bool value = true; };
+template <> struct IsElementType<uint64_t> { static constexpr bool value = true; };
 } // namespace details
+
+template <typename T>
+static constexpr bool is_element_type = details::IsElementType<T>::value;
 
 /**
  * @brief Type tag that describes vector properties.
@@ -109,6 +134,7 @@ struct Tag {
   static constexpr bool is_runtime_size = N_ < 0;
 
   static_assert(N_ < 0 || ((N_ & (N_ - 1)) == 0 && N_ != 0), "Not 2^x");
+  static_assert(is_element_type<T>, "Unsupported element type");
 };
 
 /**
@@ -132,6 +158,21 @@ using ScalableTag = Tag<T, _VEC_SIZE(T), POW2>;
  */
 template <typename T, nint_t N>
 using FixedTag = Tag<T, N, 0>;
+
+namespace details {
+template <typename T>
+struct IsTag {
+  static constexpr bool value = false;
+};
+
+template <typename T, nint_t N, int POW2>
+struct IsTag<Tag<T, N, POW2>> {
+  static constexpr bool value = true;
+};
+} // namespace details
+
+template <typename T>
+static constexpr bool is_tag = details::IsTag<T>::value;
 
 /**
  * @brief Default memory alignment for vector types (16 bytes).
@@ -926,6 +967,33 @@ template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE CT_PURE
 static constexpr auto word_tag(Tag<T, N, P> t) {
   return typename VecDefs<T, N, P>::WordDefs::TagType();
+}
+
+/**
+ * Helper struct getting (word or vector of word) Tag type from a vec type
+ * The value returned may not be same to original Tag, which may not be used for
+ * scenario where a precise number of elements is required (load & store).
+ */
+template <typename TVec, typename = void/* SFINAE*/>
+struct Vec2Tag {
+  using Type = void;
+};
+
+template <typename T, nint_t N>
+struct Vec2Tag<ScalarArray<T, N>, std::enable_if_t<!is_element_type<T> && sizeof(typename Vec2Tag<T>::Type) != -1>> {
+  static_assert((N & (N - 1)) == 0, "N not power of 2");
+  using Type = Tag<typename Vec2Tag<T>::Type::Type, Vec2Tag<T>::Type::N, (Vec2Tag<T>::Type::POW2 + log2_floor(N))>;
+};
+
+template <typename T, nint_t N>
+struct Vec2Tag<ScalarArray<T, N>, std::enable_if_t<is_element_type<T>>> {
+  using Type = Tag<T, N, 0>;
+};
+
+template <typename TVec>
+CT_ALWAYS_FORCEINLINE CT_PURE
+static constexpr auto tag_from_vec(TVec v) {
+  return typename Vec2Tag<TVec>::Type();
 }
 
 } // namespace ct::tl::vec

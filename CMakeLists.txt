@@ -71,6 +71,26 @@ add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_load
 # Ignore warnings
 add_compile_options(-Wno-ignored-attributes)
 
+function(add_x86_multiarch_executable NAME)
+    set(options "")
+    set(oneValueArgs "")
+    set(multiValueArgs FILES ARCH)
+    cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+    # Default to native architecture
+    if(NOT ARG_ARCH)
+        set(ARG_ARCH "native")
+    endif()
+
+    foreach(ARCH ${ARG_ARCH})
+        set(TARGET_NAME "${NAME}-${ARCH}")
+        add_executable(${TARGET_NAME} ${ARG_FILES})
+        target_compile_options(${TARGET_NAME} PRIVATE -march=${ARCH})
+        target_link_libraries(${TARGET_NAME} PRIVATE CTorch gtest gtest_main)
+        gtest_discover_tests(${TARGET_NAME})
+    endforeach()
+endfunction()
+
 # tl-ArrayTest
 add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
 target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
@@ -93,11 +113,11 @@ target_compile_options(tl-VecScalarTest PRIVATE -O3)
 target_link_libraries(tl-VecScalarTest PRIVATE CTorch gtest gtest_main)
 gtest_discover_tests(tl-VecScalarTest)
 
-# tl-VecX86_128Test
-add_executable(tl-VecX86_128Test src/tests/tl/vec/VecX86_128Test.cpp)
-target_compile_options(tl-VecX86_128Test PRIVATE -O3 -march=native)
-target_link_libraries(tl-VecX86_128Test PRIVATE CTorch gtest gtest_main)
-gtest_discover_tests(tl-VecX86_128Test)
+# tl-X86_128Test
+add_x86_multiarch_executable(tl-X86_128Test
+        FILES src/tests/tl/vec/X86_128Test.cpp
+        ARCH core-avx-i core-avx2 native
+)
 
 target_link_libraries(PerformanceTest PRIVATE CTorch)
 target_link_libraries(StdTest PRIVATE CTorch)

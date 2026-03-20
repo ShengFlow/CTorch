@@ -43,6 +43,9 @@ TEST(VecTest, CopyTest) {
   delete[] out;
 }
 
+TEST(VecTest, Playground) {
+}
+
 TEST(VecTest, TagTest) {
   Tag<float32_t, 8, 1> d;
   // 添加更多测试...
