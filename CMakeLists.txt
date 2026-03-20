@@ -114,8 +114,13 @@ target_link_libraries(tl-VecScalarTest PRIVATE CTorch gtest gtest_main)
 gtest_discover_tests(tl-VecScalarTest)
 
 # tl-X86_128Test
-add_x86_multiarch_executable(tl-X86_128Test
-        FILES src/tests/tl/vec/X86_128Test.cpp
+add_x86_multiarch_executable(tl-X86_128LoadStoreTest
+        FILES src/tests/tl/vec/X86_128LoadStoreTest.cpp
+        ARCH core-avx-i core-avx2 native
+)
+# tl-X86_128ArithTest
+add_x86_multiarch_executable(tl-X86_128ArithTest
+        FILES src/tests/tl/vec/X86_128ArithTest.cpp
         ARCH core-avx-i core-avx2 native
 )
 

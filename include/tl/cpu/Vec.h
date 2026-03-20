@@ -1011,7 +1011,7 @@ auto name(TVec a, TVec b, TMask m) -> TVec { \
       t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
       ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
   ); \
-} \
+}
 
 _CT_VECTORIZED_BINARY_V(add)
 _CT_VECTORIZED_BINARY_V(sub)
@@ -1025,10 +1025,49 @@ _CT_VECTORIZED_BINARY_V(min)
 _CT_VECTORIZED_BINARY_V(bit_and)
 _CT_VECTORIZED_BINARY_V(bit_or)
 _CT_VECTORIZED_BINARY_V(bit_xor)
-// not(a) and (b)
-_CT_VECTORIZED_BINARY_V(bit_andnot)
+_CT_VECTORIZED_BINARY_V(bit_andnot) // not(a) and (b)
+#undef _CT_VECTORIZED_BINARY_V
 
-#undef _CT_VECTORIZED_V
+template <typename TVec> CT_ALWAYS_FORCEINLINE
+auto bit_shl(TVec v, int count) -> TVec {
+  using namespace details;
+  auto t = tag_from_vec(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::bit_shl(tt, vv, count); },
+      ShardVec(t, v)
+  );
+}
+
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
+auto bit_shl(TVec v, int count, TMask m) -> TVec {
+  using namespace details;
+  auto t = tag_from_vec(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shl(tt, vv, count, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
+
+template <typename TVec> CT_ALWAYS_FORCEINLINE
+auto bit_shr(TVec v, int count) -> TVec {
+  using namespace details;
+  auto t = tag_from_vec(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::bit_shr(tt, vv, count); },
+      ShardVec(t, v)
+  );
+}
+
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
+auto bit_shr(TVec v, int count, TMask m) -> TVec {
+  using namespace details;
+  auto t = tag_from_vec(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shr(tt, vv, count, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
+
 
 #define _CT_VECTORIZED_UNARY_V(name) \
 template <typename TVec> CT_ALWAYS_FORCEINLINE \
@@ -1050,15 +1089,70 @@ auto name(TVec v, TMask m, TVec default_v) -> TVec { \
   ); \
 } \
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v, TMask m) -> TVec { return name(v, m, v); } \
+auto name(TVec v, TMask m) -> TVec { return name(v, m, v); }
 
 _CT_VECTORIZED_UNARY_V(bit_not)
 _CT_VECTORIZED_UNARY_V(neg)
 _CT_VECTORIZED_UNARY_V(abs)
 _CT_VECTORIZED_UNARY_V(sqrt)
-
+_CT_VECTORIZED_UNARY_V(rcp) // reciprocal: 1 / x
+_CT_VECTORIZED_UNARY_V(rsqrt) // reciprocal of sqrt(x)
 #undef _CT_VECTORIZED_UNARY_V
 
+#define _CT_VECTORIZED_BINARY_M(name) \
+template <typename TVec> CT_ALWAYS_FORCEINLINE \
+auto name(TVec a, TVec b) -> auto { \
+  using namespace details; \
+  auto t = tag_from_vec(a); \
+  return vectorized_map_m( \
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
+      ShardVec(t, a), ShardVec(t, b) \
+  ); \
+} \
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
+auto name(TVec a, TVec b, TMask m) -> TMask { \
+  using namespace details; \
+  auto t = tag_from_vec(a); \
+  return vectorized_map_m( \
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
+  ); \
+}
+
+_CT_VECTORIZED_BINARY_M(cmpeq) // equals
+_CT_VECTORIZED_BINARY_M(cmpne) // not equals
+_CT_VECTORIZED_BINARY_M(cmplt) // less than
+_CT_VECTORIZED_BINARY_M(cmple) // less than or equals
+_CT_VECTORIZED_BINARY_M(cmpgt) // greater than
+_CT_VECTORIZED_BINARY_M(cmpge) // greater than or equals
+
+#undef _CT_VECTORIZED_BINARY_M
+
+#define _CT_VECTORIZED_UNARY_M(name) \
+template <typename TVec> CT_ALWAYS_FORCEINLINE \
+auto name(TVec v) -> auto { \
+  using namespace details; \
+  auto t = tag_from_vec(v); \
+  return vectorized_map_m( \
+      t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
+      ShardVec(t, v) \
+  ); \
+} \
+template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
+auto name(TVec v, TMask m) -> TMask { \
+  using namespace details; \
+  auto t = tag_from_vec(v); \
+  return vectorized_map_m( \
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::name(tt, vv, mm); }, \
+      ShardVec(t, v), ShardMask(t, m) \
+  ); \
+}
+
+_CT_VECTORIZED_UNARY_M(isnan)
+_CT_VECTORIZED_UNARY_M(isposinf)
+_CT_VECTORIZED_UNARY_M(isneginf)
+_CT_VECTORIZED_UNARY_M(isinf)
+#undef _CT_VECTORIZED_UNARY_M
 } // namespace ct::tl::vec
 
 #endif //CTORCH_VEC_H

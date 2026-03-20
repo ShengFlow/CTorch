@@ -214,13 +214,13 @@ struct ForEachTransformed {
  */
 template <nint_t NLoop, nint_t Step, nint_t I>
 struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
-template <typename F, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-constexpr void operator()(F&& f, TArgs&& ... args) {}
+  template <typename F, typename... TArgs>
+  CT_ALWAYS_FORCEINLINE
+  constexpr void operator()(F&& f, TArgs&& ... args) {}
 
-template <typename F, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
-constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
+  template <typename F, typename... TArgs>
+  CT_ALWAYS_FORCEINLINE
+  constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
 };
 
 /**
@@ -241,22 +241,22 @@ constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
  */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-if constexpr (is_word_vec(t)) {
-return std::forward<Fn>(f)(
-    wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-Vec<TTag> r;
-ForEachTransformed<nloop>()(
-[&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-return r;
-}
+Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  if constexpr (is_word_vec(t)) {
+    return std::forward<Fn>(f)(
+        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    Vec<TTag> r;
+    ForEachTransformed<nloop>()(
+        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    return r;
+  }
 } // vectorized_map_v
 
 /**
@@ -274,22 +274,22 @@ return r;
  */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-if constexpr (is_word_vec(t)) {
-return std::forward<Fn>(f)(
-    wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-Mask<TTag> r;
-ForEachTransformed<nloop>()(
-[&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word_mask<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-return r;
-}
+Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  if constexpr (is_word_vec(t)) {
+    return std::forward<Fn>(f)(
+        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    Mask<TTag> r;
+    ForEachTransformed<nloop>()(
+        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word_mask<I>(t, r, f(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    return r;
+  }
 } // vectorized_map_m
 
 
@@ -310,22 +310,22 @@ return r;
  */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-if constexpr (is_word_vec(t)) {
-return std::forward<Fn>(f).template operator()<nint_t(0)>(
-    wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-Vec<TTag> r;
-ForEachTransformed<nloop>()(
-[&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-return r;
-}
+Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  if constexpr (is_word_vec(t)) {
+    return std::forward<Fn>(f).template operator()<nint_t(0)>(
+        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    Vec<TTag> r;
+    ForEachTransformed<nloop>()(
+        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    return r;
+  }
 } // vectorized_map_v_indexed
 
 /**
@@ -341,22 +341,22 @@ return r;
  */
 template <typename TTag, typename Fn, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-if constexpr (is_word_vec(t)) {
-return std::forward<Fn>(f).template operator()<nint_t(0)>(
-    wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-Mask<TTag> r;
-ForEachTransformed<nloop>()(
-[&r, &f, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word_mask<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-return r;
-}
+Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  if constexpr (is_word_vec(t)) {
+    return std::forward<Fn>(f).template operator()<nint_t(0)>(
+        wt, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    Mask<TTag> r;
+    ForEachTransformed<nloop>()(
+        [&r, &f, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word_mask<I>(t, r, f.template operator()<I>(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    return r;
+  }
 } // vectorized_map_m_indexed
 
 
@@ -380,34 +380,34 @@ return r;
  */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-nint_t L = size(t);
-CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
+Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  nint_t L = size(t);
+  CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
 
-if constexpr (is_word_vec(t)) {
-return std::forward<FnT>(f_tail)(
-    wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-nint_t ws = word_size(t);
-nint_t full_nloop = n / ws;
-nint_t rem = n % ws;
-Vec<TTag> r;
-ForEachTransformed<nloop>()(
-full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-if (rem > 0) {
-r = set_word(
-    t, r, full_nloop,
-    f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
-);
-}
-return r;
-}
+  if constexpr (is_word_vec(t)) {
+    return std::forward<FnT>(f_tail)(
+        wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    nint_t ws = word_size(t);
+    nint_t full_nloop = n / ws;
+    nint_t rem = n % ws;
+    Vec<TTag> r;
+    ForEachTransformed<nloop>()(
+        full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    if (rem > 0) {
+      r = set_word(
+          t, r, full_nloop,
+          f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
+      );
+    }
+    return r;
+  }
 } // vectorized_map_v
 
 /**
@@ -426,34 +426,34 @@ return r;
  */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
 CT_ALWAYS_FORCEINLINE
-    Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
-constexpr auto wt = word_tag(t);
-nint_t L = size(t);
-CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
+Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
+  constexpr auto wt = word_tag(t);
+  nint_t L = size(t);
+  CT_ASSERT(0 <= n && n <= L, "%zd !in 0..%zd", n, L);
 
-if constexpr (is_word_vec(t)) {
-return std::forward<FnT>(f_tail)(
-    wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
-);
-} else {
-constexpr nint_t nloop = num_words(t);
-nint_t ws = word_size(t);
-nint_t full_nloop = n / ws;
-nint_t rem = n % ws;
-Mask<TTag> r;
-ForEachTransformed<nloop>()(
-full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
-r = set_word_mask<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
-}, std::forward<TArgs>(args)...
-);
-if (rem > 0) {
-r = set_word_mask(
-    t, r, full_nloop,
-    f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
-);
-}
-return r;
-}
+  if constexpr (is_word_vec(t)) {
+    return std::forward<FnT>(f_tail)(
+        wt, n, ArgTransform<nint_t(0), std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...
+    );
+  } else {
+    constexpr nint_t nloop = num_words(t);
+    nint_t ws = word_size(t);
+    nint_t full_nloop = n / ws;
+    nint_t rem = n % ws;
+    Mask<TTag> r;
+    ForEachTransformed<nloop>()(
+        full_nloop, [&r, &f_complete, t, wt] <nint_t I>(auto&& ... args) {
+          r = set_word_mask<I>(t, r, f_complete(wt, std::forward<std::remove_cvref_t<decltype(args)>>(args)...));
+        }, std::forward<TArgs>(args)...
+    );
+    if (rem > 0) {
+      r = set_word_mask(
+          t, r, full_nloop,
+          f_tail(wt, rem, ArgTransform<-1, std::remove_cvref_t<TArgs>>()(std::forward<std::remove_cvref_t<TArgs>>(args), full_nloop)...)
+      );
+    }
+    return r;
+  }
 } // vectorized_map_m
 
 /**

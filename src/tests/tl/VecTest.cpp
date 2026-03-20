@@ -5,6 +5,8 @@
 //
 
 #include <gtest/gtest.h>
+#include "Features.h"
+#undef ARCH_X86_FAMILY
 #include "tl/cpu/Vec.h"
 
 using namespace ct;

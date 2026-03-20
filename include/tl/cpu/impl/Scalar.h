@@ -685,7 +685,7 @@ auto name(Tag<T, N, P> t, VecOf(t) a, VecOf(t) b, MaskOf(t) m) -> VecOf(t) { \
     r[i] = m[i] ? (__VA_ARGS__) : a[i]; \
   } \
   return r; \
-} \
+}
 
 _CT_SCALAR_VECTORIZED_BINARY_V(add, a[i] + b[i])
 _CT_SCALAR_VECTORIZED_BINARY_V(sub, a[i] - b[i])
@@ -695,11 +695,74 @@ _CT_SCALAR_VECTORIZED_BINARY_V(rem, a[i] % b[i])
 _CT_SCALAR_VECTORIZED_BINARY_V(max, (T)std::max(a[i], b[i]))
 _CT_SCALAR_VECTORIZED_BINARY_V(min, (T)std::min(a[i], b[i]))
 _CT_SCALAR_VECTORIZED_BINARY_V(bit_and, a[i] & b[i])
-_CT_SCALAR_VECTORIZED_BINARY_V(bit_or, a[i] & b[i])
-_CT_SCALAR_VECTORIZED_BINARY_V(bit_xor, a[i] & b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_or, a[i] | b[i])
+_CT_SCALAR_VECTORIZED_BINARY_V(bit_xor, a[i] ^ b[i])
 _CT_SCALAR_VECTORIZED_BINARY_V(bit_andnot, ~a[i] & b[i])
-
 #undef _CT_SCALAR_VECTORIZED_BINARY_V
+
+template <typename T>
+static CT_ALWAYS_FORCEINLINE T _safe_shl(T v, int count) {
+  if (count >= int(sizeof(T) * 8)) return T();
+  if (count < 0) return v;
+  return v << count;
+}
+
+template <typename T>
+static CT_ALWAYS_FORCEINLINE T _safe_shr(T v, int count) {
+  if (count >= int(sizeof(T) * 8)) {
+    if constexpr (std::is_signed_v<T>) {
+      return (v < 0) ? T(-1) : T();
+    } else {
+      return T();
+    }
+  }
+  if (count < 0) return v;
+  return v >> count;
+}
+
+template <typename T, nint_t N, int P>
+auto bit_shl(Tag<T, N, P> t, VecOf(t) v, int count) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  VecOf(t) r;
+  for (nint_t i = 0; i < size(t); ++i) {
+    r[i] = _safe_shl(v[i], count);
+  }
+  return r;
+}
+
+template <typename T, nint_t N, int P>
+auto bit_shl(Tag<T, N, P> t, VecOf(t) v, int count, MaskOf(t) m) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  VecOf(t) r;
+  for (nint_t i = 0; i < size(t); ++i) {
+    r[i] = m[i] ? _safe_shl(v[i], count) : v[i];
+  }
+  return r;
+}
+
+template <typename T, nint_t N, int P>
+auto bit_shr(Tag<T, N, P> t, VecOf(t) v, int count) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  VecOf(t) r;
+  for (nint_t i = 0; i < size(t); ++i) {
+    r[i] = _safe_shr(v[i], count);
+  }
+  return r;
+}
+
+template <typename T, nint_t N, int P>
+auto bit_shr(Tag<T, N, P> t, VecOf(t) v, int count, MaskOf(t) m) -> VecOf(t) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  VecOf(t) r;
+  for (nint_t i = 0; i < size(t); ++i) {
+    r[i] = m[i] ? _safe_shr(v[i], count) : v[i];
+  }
+  return r;
+}
 
 #define _CT_SCALAR_VECTORIZED_UNARY_V(name, ...) \
 template <typename T, nint_t N, int P> \
@@ -721,15 +784,83 @@ auto name(Tag<T, N, P> t, VecOf(t) v, MaskOf(t) m, VecOf(t) default_v) -> VecOf(
     r[i] = m[i] ? (__VA_ARGS__) : default_v[i]; \
   } \
   return r; \
-} \
+}
+
+template <typename T>
+static CT_ALWAYS_FORCEINLINE T _safe_abs(T v) {
+  if constexpr (std::is_unsigned_v<T>) {
+    return v;
+  } else {
+    return std::abs(v);
+  }
+}
 
 _CT_SCALAR_VECTORIZED_UNARY_V(bit_not, ~v[i])
 _CT_SCALAR_VECTORIZED_UNARY_V(neg, -v[i])
-_CT_SCALAR_VECTORIZED_UNARY_V(abs, (T) std::abs(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_V(abs, _safe_abs<T>(v[i]))
 _CT_SCALAR_VECTORIZED_UNARY_V(sqrt, (T) std::sqrt(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_V(rcp, (T) T(1) / v[i])
+_CT_SCALAR_VECTORIZED_UNARY_V(rsqrt, T(1) / (T) std::sqrt(v[i]))
 
 #undef _CT_SCALAR_VECTORIZED_UNARY_V
 
+#define _CT_SCALAR_VECTORIZED_BINARY_M(name, ...) \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) a, VecOf(t) b) -> MaskOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  MaskOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = (__VA_ARGS__); \
+  } \
+  return r; \
+} \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) a, VecOf(t) b, MaskOf(t) m) -> MaskOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  MaskOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = m[i] ? (__VA_ARGS__) : false; \
+  } \
+  return r; \
+}
+
+_CT_SCALAR_VECTORIZED_BINARY_M(cmpeq, a[i] == b[i])
+_CT_SCALAR_VECTORIZED_BINARY_M(cmpne, a[i] != b[i])
+_CT_SCALAR_VECTORIZED_BINARY_M(cmplt, a[i] < b[i])
+_CT_SCALAR_VECTORIZED_BINARY_M(cmple, a[i] <= b[i])
+_CT_SCALAR_VECTORIZED_BINARY_M(cmpgt, a[i] > b[i])
+_CT_SCALAR_VECTORIZED_BINARY_M(cmpge, a[i] >= b[i])
+#undef _CT_SCALAR_VECTORIZED_BINARY_M
+
+#define _CT_SCALAR_VECTORIZED_UNARY_M(name, ...) \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) v) -> MaskOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  MaskOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = (__VA_ARGS__); \
+  } \
+  return r; \
+} \
+template <typename T, nint_t N, int P> \
+auto name(Tag<T, N, P> t, VecOf(t) v, MaskOf(t) m) -> MaskOf(t) { \
+  static_assert(is_default_impl(t)); \
+  static_assert(is_word_vec(t)); \
+  MaskOf(t) r; \
+  for (nint_t i = 0; i < size(t); ++i) { \
+    r[i] = m[i] ? (__VA_ARGS__) : false; \
+  } \
+  return r; \
+}
+
+_CT_SCALAR_VECTORIZED_UNARY_M(isnan, std::isnan(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_M(isposinf, v[i] > 0 && std::isinf(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_M(isneginf, v[i] < 0 && std::isinf(v[i]))
+_CT_SCALAR_VECTORIZED_UNARY_M(isinf, std::isinf(v[i]))
+#undef _CT_SCALAR_VECTORIZED_UNARY_M
 } // namespace word
 } // namespace ct::tl::vec
 

@@ -127,7 +127,7 @@ T* alloc_aligned(size_t count) {
 // ============================================================================
 
 template <typename T>
-class X86_128WordTest : public ::testing::Test {
+class X86_128LoadStoreTest : public ::testing::Test {
 protected:
   using Type = T;
   static constexpr nint_t FULL_SIZE = test_utils::full_vec_size<T>();
@@ -160,13 +160,13 @@ using TestedTypes = ::testing::Types<
     int32_t, uint32_t, int64_t, uint64_t
 >;
 
-TYPED_TEST_SUITE(X86_128WordTest, TestedTypes);
+TYPED_TEST_SUITE(X86_128LoadStoreTest, TestedTypes);
 
 // ============================================================================
 // Size Verification Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, VerifySize) {
+TYPED_TEST(X86_128LoadStoreTest, VerifySize) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -178,7 +178,7 @@ TYPED_TEST(X86_128WordTest, VerifySize) {
   EXPECT_FALSE(is_default_impl(t));
 }
 
-TYPED_TEST(X86_128WordTest, VerifyHalfSize) {
+TYPED_TEST(X86_128LoadStoreTest, VerifyHalfSize) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF_SIZE = TestFixture::FULL_SIZE / 2;
   
@@ -194,7 +194,7 @@ TYPED_TEST(X86_128WordTest, VerifyHalfSize) {
 // fill / zeros Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, FillBasic) {
+TYPED_TEST(X86_128LoadStoreTest, FillBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -208,7 +208,7 @@ TYPED_TEST(X86_128WordTest, FillBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillZero) {
+TYPED_TEST(X86_128LoadStoreTest, FillZero) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -222,7 +222,7 @@ TYPED_TEST(X86_128WordTest, FillZero) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, ZerosBasic) {
+TYPED_TEST(X86_128LoadStoreTest, ZerosBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -235,7 +235,7 @@ TYPED_TEST(X86_128WordTest, ZerosBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithMask) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -257,7 +257,7 @@ TYPED_TEST(X86_128WordTest, FillWithMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithMaskAll) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithMaskAll) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -274,7 +274,7 @@ TYPED_TEST(X86_128WordTest, FillWithMaskAll) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithMaskNone) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithMaskNone) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -291,7 +291,7 @@ TYPED_TEST(X86_128WordTest, FillWithMaskNone) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithN) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -311,7 +311,7 @@ TYPED_TEST(X86_128WordTest, FillWithN) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithNZero) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithNZero) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -327,7 +327,7 @@ TYPED_TEST(X86_128WordTest, FillWithNZero) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, FillWithNFull) {
+TYPED_TEST(X86_128LoadStoreTest, FillWithNFull) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -347,7 +347,7 @@ TYPED_TEST(X86_128WordTest, FillWithNFull) {
 // mfill / mtrue / mfalse Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, MfillTrue) {
+TYPED_TEST(X86_128LoadStoreTest, MfillTrue) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -360,7 +360,7 @@ TYPED_TEST(X86_128WordTest, MfillTrue) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MfillFalse) {
+TYPED_TEST(X86_128LoadStoreTest, MfillFalse) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -373,7 +373,7 @@ TYPED_TEST(X86_128WordTest, MfillFalse) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MtrueMfalse) {
+TYPED_TEST(X86_128LoadStoreTest, MtrueMfalse) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -392,7 +392,7 @@ TYPED_TEST(X86_128WordTest, MtrueMfalse) {
 // mwhilelt / mwhilege Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, MwhileltBasic) {
+TYPED_TEST(X86_128LoadStoreTest, MwhileltBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -409,7 +409,7 @@ TYPED_TEST(X86_128WordTest, MwhileltBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhileltAll) {
+TYPED_TEST(X86_128LoadStoreTest, MwhileltAll) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -422,7 +422,7 @@ TYPED_TEST(X86_128WordTest, MwhileltAll) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhileltNone) {
+TYPED_TEST(X86_128LoadStoreTest, MwhileltNone) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -435,7 +435,7 @@ TYPED_TEST(X86_128WordTest, MwhileltNone) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhileltVariousRanges) {
+TYPED_TEST(X86_128LoadStoreTest, MwhileltVariousRanges) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -452,7 +452,7 @@ TYPED_TEST(X86_128WordTest, MwhileltVariousRanges) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhilegeBasic) {
+TYPED_TEST(X86_128LoadStoreTest, MwhilegeBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -469,7 +469,7 @@ TYPED_TEST(X86_128WordTest, MwhilegeBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhilegeAll) {
+TYPED_TEST(X86_128LoadStoreTest, MwhilegeAll) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -482,7 +482,7 @@ TYPED_TEST(X86_128WordTest, MwhilegeAll) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhilegeNone) {
+TYPED_TEST(X86_128LoadStoreTest, MwhilegeNone) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -495,7 +495,7 @@ TYPED_TEST(X86_128WordTest, MwhilegeNone) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhilegeVariousRanges) {
+TYPED_TEST(X86_128LoadStoreTest, MwhilegeVariousRanges) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -512,7 +512,7 @@ TYPED_TEST(X86_128WordTest, MwhilegeVariousRanges) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MwhileleMwhilegt) {
+TYPED_TEST(X86_128LoadStoreTest, MwhileleMwhilegt) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -543,7 +543,7 @@ TYPED_TEST(X86_128WordTest, MwhileleMwhilegt) {
 // loadu / storeu Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, LoaduBasic) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -557,7 +557,7 @@ TYPED_TEST(X86_128WordTest, LoaduBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreuBasic) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -572,7 +572,7 @@ TYPED_TEST(X86_128WordTest, StoreuBasic) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoaduStoreuRoundTrip) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduStoreuRoundTrip) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -589,7 +589,7 @@ TYPED_TEST(X86_128WordTest, LoaduStoreuRoundTrip) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoaduWithN) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -610,7 +610,7 @@ TYPED_TEST(X86_128WordTest, LoaduWithN) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoaduWithNZero) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduWithNZero) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -626,7 +626,7 @@ TYPED_TEST(X86_128WordTest, LoaduWithNZero) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoaduWithNFull) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduWithNFull) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -643,7 +643,7 @@ TYPED_TEST(X86_128WordTest, LoaduWithNFull) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreuWithN) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -666,7 +666,7 @@ TYPED_TEST(X86_128WordTest, StoreuWithN) {
   // Rest should be unchanged (not the fill_val)
 }
 
-TYPED_TEST(X86_128WordTest, StoreuWithNZero) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuWithNZero) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -692,7 +692,7 @@ TYPED_TEST(X86_128WordTest, StoreuWithNZero) {
 // load / store (aligned) Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, LoadAligned) {
+TYPED_TEST(X86_128LoadStoreTest, LoadAligned) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -706,7 +706,7 @@ TYPED_TEST(X86_128WordTest, LoadAligned) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreAligned) {
+TYPED_TEST(X86_128LoadStoreTest, StoreAligned) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -721,7 +721,7 @@ TYPED_TEST(X86_128WordTest, StoreAligned) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoadWithN) {
+TYPED_TEST(X86_128LoadStoreTest, LoadWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -742,7 +742,7 @@ TYPED_TEST(X86_128WordTest, LoadWithN) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreWithN) {
+TYPED_TEST(X86_128LoadStoreTest, StoreWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -768,7 +768,7 @@ TYPED_TEST(X86_128WordTest, StoreWithN) {
 // Masked load/store Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, LoaduWithMask) {
+TYPED_TEST(X86_128LoadStoreTest, LoaduWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -789,7 +789,7 @@ TYPED_TEST(X86_128WordTest, LoaduWithMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoadWithMask) {
+TYPED_TEST(X86_128LoadStoreTest, LoadWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -810,7 +810,7 @@ TYPED_TEST(X86_128WordTest, LoadWithMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreuWithMask) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -835,7 +835,7 @@ TYPED_TEST(X86_128WordTest, StoreuWithMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreWithMask) {
+TYPED_TEST(X86_128LoadStoreTest, StoreWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -860,7 +860,7 @@ TYPED_TEST(X86_128WordTest, StoreWithMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreuWithMaskAll) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuWithMaskAll) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -877,7 +877,7 @@ TYPED_TEST(X86_128WordTest, StoreuWithMaskAll) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, StoreuWithMaskNone) {
+TYPED_TEST(X86_128LoadStoreTest, StoreuWithMaskNone) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -904,7 +904,7 @@ TYPED_TEST(X86_128WordTest, StoreuWithMaskNone) {
 // get / set element Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, GetElement) {
+TYPED_TEST(X86_128LoadStoreTest, GetElement) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -918,7 +918,7 @@ TYPED_TEST(X86_128WordTest, GetElement) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, SetElement) {
+TYPED_TEST(X86_128LoadStoreTest, SetElement) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -938,7 +938,7 @@ TYPED_TEST(X86_128WordTest, SetElement) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, SetElementIndividual) {
+TYPED_TEST(X86_128LoadStoreTest, SetElementIndividual) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -959,7 +959,7 @@ TYPED_TEST(X86_128WordTest, SetElementIndividual) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, GetMaskElement) {
+TYPED_TEST(X86_128LoadStoreTest, GetMaskElement) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -975,7 +975,7 @@ TYPED_TEST(X86_128WordTest, GetMaskElement) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, SetMaskElement) {
+TYPED_TEST(X86_128LoadStoreTest, SetMaskElement) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -994,7 +994,7 @@ TYPED_TEST(X86_128WordTest, SetMaskElement) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, SetMaskElementToggle) {
+TYPED_TEST(X86_128LoadStoreTest, SetMaskElementToggle) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1017,7 +1017,7 @@ TYPED_TEST(X86_128WordTest, SetMaskElementToggle) {
 // Half-size vector Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, HalfSizeFill) {
+TYPED_TEST(X86_128LoadStoreTest, HalfSizeFill) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF_SIZE = TestFixture::FULL_SIZE / 2;
   
@@ -1033,7 +1033,7 @@ TYPED_TEST(X86_128WordTest, HalfSizeFill) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, HalfSizeLoadStore) {
+TYPED_TEST(X86_128LoadStoreTest, HalfSizeLoadStore) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF_SIZE = TestFixture::FULL_SIZE / 2;
   
@@ -1056,7 +1056,7 @@ TYPED_TEST(X86_128WordTest, HalfSizeLoadStore) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, HalfSizeMwhilelt) {
+TYPED_TEST(X86_128LoadStoreTest, HalfSizeMwhilelt) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF_SIZE = TestFixture::FULL_SIZE / 2;
   
@@ -1074,7 +1074,7 @@ TYPED_TEST(X86_128WordTest, HalfSizeMwhilelt) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, HalfSizeLoadWithN) {
+TYPED_TEST(X86_128LoadStoreTest, HalfSizeLoadWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF_SIZE = TestFixture::FULL_SIZE / 2;
   
@@ -1101,7 +1101,7 @@ TYPED_TEST(X86_128WordTest, HalfSizeLoadWithN) {
 // Edge Cases
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, VariousMaskPatterns) {
+TYPED_TEST(X86_128LoadStoreTest, VariousMaskPatterns) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1118,7 +1118,7 @@ TYPED_TEST(X86_128WordTest, VariousMaskPatterns) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, LoadStoreSequential) {
+TYPED_TEST(X86_128LoadStoreTest, LoadStoreSequential) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1136,7 +1136,7 @@ TYPED_TEST(X86_128WordTest, LoadStoreSequential) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, ExtremeValues) {
+TYPED_TEST(X86_128LoadStoreTest, ExtremeValues) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1157,7 +1157,7 @@ TYPED_TEST(X86_128WordTest, ExtremeValues) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, InitializerListLoad) {
+TYPED_TEST(X86_128LoadStoreTest, InitializerListLoad) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1181,7 +1181,7 @@ TYPED_TEST(X86_128WordTest, InitializerListLoad) {
 // Multi-word Vector Tests (N > FULL_SIZE)
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, MultiWordSize) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordSize) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1194,7 +1194,7 @@ TYPED_TEST(X86_128WordTest, MultiWordSize) {
   EXPECT_FALSE(is_word_vec(t));
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordFill) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordFill) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1209,7 +1209,7 @@ TYPED_TEST(X86_128WordTest, MultiWordFill) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordLoadStore) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordLoadStore) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1225,7 +1225,7 @@ TYPED_TEST(X86_128WordTest, MultiWordLoadStore) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordMask) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1242,7 +1242,7 @@ TYPED_TEST(X86_128WordTest, MultiWordMask) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordLoadWithN) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordLoadWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1264,7 +1264,7 @@ TYPED_TEST(X86_128WordTest, MultiWordLoadWithN) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordStoreWithN) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordStoreWithN) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 2;
@@ -1291,7 +1291,7 @@ TYPED_TEST(X86_128WordTest, MultiWordStoreWithN) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, MultiWordSetElement) {
+TYPED_TEST(X86_128LoadStoreTest, MultiWordSetElement) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI_SIZE = FULL_SIZE * 4;
@@ -1315,7 +1315,7 @@ TYPED_TEST(X86_128WordTest, MultiWordSetElement) {
 // ScalableTag Tests
 // ============================================================================
 
-TYPED_TEST(X86_128WordTest, ScalableTagTest) {
+TYPED_TEST(X86_128LoadStoreTest, ScalableTagTest) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
@@ -1326,7 +1326,7 @@ TYPED_TEST(X86_128WordTest, ScalableTagTest) {
   EXPECT_FALSE(is_scalable(t));  // Fixed-size for x86
 }
 
-TYPED_TEST(X86_128WordTest, ScalableTagFill) {
+TYPED_TEST(X86_128LoadStoreTest, ScalableTagFill) {
   using T = typename TestFixture::Type;
   
   ScalableTag<T> t;
@@ -1363,7 +1363,7 @@ static void vectorized_copy(const T* from, T* to, nint_t len) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, VectorizedCopyFunction) {
+TYPED_TEST(X86_128LoadStoreTest, VectorizedCopyFunction) {
   using T = typename TestFixture::Type;
   
   vectorized_copy(this->aligned_data_, this->aligned_out_, 100);
@@ -1374,7 +1374,7 @@ TYPED_TEST(X86_128WordTest, VectorizedCopyFunction) {
   }
 }
 
-TYPED_TEST(X86_128WordTest, VectorizedCopyOddLength) {
+TYPED_TEST(X86_128LoadStoreTest, VectorizedCopyOddLength) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
   
