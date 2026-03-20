@@ -233,7 +233,7 @@ struct has_add<T, std::enable_if_t<std::is_same_v<T, bfloat16_t> || std::is_same
 // ============================================================================
 
 template <typename T>
-class X86_128ArithTest : public ::testing::Test {
+class VecArithTest : public ::testing::Test {
 protected:
   using Type = T;
   static constexpr nint_t FULL_SIZE = test_utils::full_vec_size<T>();
@@ -264,13 +264,13 @@ using AllTypes = ::testing::Types<
     int32_t, uint32_t, int64_t, uint64_t
 >;
 
-TYPED_TEST_SUITE(X86_128ArithTest, AllTypes);
+TYPED_TEST_SUITE(VecArithTest, AllTypes);
 
 // ============================================================================
 // add
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, AddBasic) {
+TYPED_TEST(VecArithTest, AddBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -286,7 +286,7 @@ TYPED_TEST(X86_128ArithTest, AddBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, AddWithMask) {
+TYPED_TEST(VecArithTest, AddWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -311,7 +311,7 @@ TYPED_TEST(X86_128ArithTest, AddWithMask) {
 // sub
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, SubBasic) {
+TYPED_TEST(VecArithTest, SubBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -327,7 +327,7 @@ TYPED_TEST(X86_128ArithTest, SubBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, SubWithMask) {
+TYPED_TEST(VecArithTest, SubWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -351,7 +351,7 @@ TYPED_TEST(X86_128ArithTest, SubWithMask) {
 // mul
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, MulBasic) {
+TYPED_TEST(VecArithTest, MulBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -374,7 +374,7 @@ TYPED_TEST(X86_128ArithTest, MulBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MulWithMask) {
+TYPED_TEST(VecArithTest, MulWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -405,7 +405,7 @@ TYPED_TEST(X86_128ArithTest, MulWithMask) {
 // div (float32/64 only)
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, DivBasic) {
+TYPED_TEST(VecArithTest, DivBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T>) {
@@ -429,7 +429,7 @@ TYPED_TEST(X86_128ArithTest, DivBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, DivWithMask) {
+TYPED_TEST(VecArithTest, DivWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T> && N >= 2) {
@@ -460,7 +460,7 @@ TYPED_TEST(X86_128ArithTest, DivWithMask) {
 // rcp (float32/64 only)
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, RcpBasic) {
+TYPED_TEST(VecArithTest, RcpBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T>) {
@@ -484,7 +484,7 @@ TYPED_TEST(X86_128ArithTest, RcpBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, RcpWithMask) {
+TYPED_TEST(VecArithTest, RcpWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T> && N >= 2) {
@@ -517,7 +517,7 @@ TYPED_TEST(X86_128ArithTest, RcpWithMask) {
 // max / min
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, MaxBasic) {
+TYPED_TEST(VecArithTest, MaxBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -533,7 +533,7 @@ TYPED_TEST(X86_128ArithTest, MaxBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MaxWithMask) {
+TYPED_TEST(VecArithTest, MaxWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -554,7 +554,7 @@ TYPED_TEST(X86_128ArithTest, MaxWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MinBasic) {
+TYPED_TEST(VecArithTest, MinBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -570,7 +570,7 @@ TYPED_TEST(X86_128ArithTest, MinBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MinWithMask) {
+TYPED_TEST(VecArithTest, MinWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -595,7 +595,7 @@ TYPED_TEST(X86_128ArithTest, MinWithMask) {
 // neg / abs
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, NegBasic) {
+TYPED_TEST(VecArithTest, NegBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -610,7 +610,7 @@ TYPED_TEST(X86_128ArithTest, NegBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, NegWithMask) {
+TYPED_TEST(VecArithTest, NegWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -631,7 +631,7 @@ TYPED_TEST(X86_128ArithTest, NegWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, AbsBasic) {
+TYPED_TEST(VecArithTest, AbsBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -646,7 +646,7 @@ TYPED_TEST(X86_128ArithTest, AbsBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, AbsWithMask) {
+TYPED_TEST(VecArithTest, AbsWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -671,7 +671,7 @@ TYPED_TEST(X86_128ArithTest, AbsWithMask) {
 // sqrt / rsqrt (float only)
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, SqrtBasic) {
+TYPED_TEST(VecArithTest, SqrtBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T>) {
@@ -693,7 +693,7 @@ TYPED_TEST(X86_128ArithTest, SqrtBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, SqrtWithMask) {
+TYPED_TEST(VecArithTest, SqrtWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T> && N >= 2) {
@@ -719,7 +719,7 @@ TYPED_TEST(X86_128ArithTest, SqrtWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, RsqrtBasic) {
+TYPED_TEST(VecArithTest, RsqrtBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T>) {
@@ -743,7 +743,7 @@ TYPED_TEST(X86_128ArithTest, RsqrtBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, RsqrtWithMask) {
+TYPED_TEST(VecArithTest, RsqrtWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_floating_point_v<T> && N >= 2) {
@@ -774,7 +774,7 @@ TYPED_TEST(X86_128ArithTest, RsqrtWithMask) {
 // Bitwise operations (integral types only)
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, BitAndBasic) {
+TYPED_TEST(VecArithTest, BitAndBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -792,7 +792,7 @@ TYPED_TEST(X86_128ArithTest, BitAndBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitAndWithMask) {
+TYPED_TEST(VecArithTest, BitAndWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -813,7 +813,7 @@ TYPED_TEST(X86_128ArithTest, BitAndWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitOrBasic) {
+TYPED_TEST(VecArithTest, BitOrBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -831,7 +831,7 @@ TYPED_TEST(X86_128ArithTest, BitOrBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitOrWithMask) {
+TYPED_TEST(VecArithTest, BitOrWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -852,7 +852,7 @@ TYPED_TEST(X86_128ArithTest, BitOrWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitXorBasic) {
+TYPED_TEST(VecArithTest, BitXorBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -870,7 +870,7 @@ TYPED_TEST(X86_128ArithTest, BitXorBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitXorWithMask) {
+TYPED_TEST(VecArithTest, BitXorWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -891,7 +891,7 @@ TYPED_TEST(X86_128ArithTest, BitXorWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitAndnotBasic) {
+TYPED_TEST(VecArithTest, BitAndnotBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -909,7 +909,7 @@ TYPED_TEST(X86_128ArithTest, BitAndnotBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitAndnotWithMask) {
+TYPED_TEST(VecArithTest, BitAndnotWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -930,7 +930,7 @@ TYPED_TEST(X86_128ArithTest, BitAndnotWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitNotBasic) {
+TYPED_TEST(VecArithTest, BitNotBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -947,7 +947,7 @@ TYPED_TEST(X86_128ArithTest, BitNotBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitNotWithMask) {
+TYPED_TEST(VecArithTest, BitNotWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -972,7 +972,7 @@ TYPED_TEST(X86_128ArithTest, BitNotWithMask) {
 // Bitwise shift operations (integral types only)
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, BitShlBasic) {
+TYPED_TEST(VecArithTest, BitShlBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -997,7 +997,7 @@ TYPED_TEST(X86_128ArithTest, BitShlBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShlWithMask) {
+TYPED_TEST(VecArithTest, BitShlWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -1019,7 +1019,7 @@ TYPED_TEST(X86_128ArithTest, BitShlWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShlLargeShift) {
+TYPED_TEST(VecArithTest, BitShlLargeShift) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -1039,7 +1039,7 @@ TYPED_TEST(X86_128ArithTest, BitShlLargeShift) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShrBasic) {
+TYPED_TEST(VecArithTest, BitShrBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -1064,7 +1064,7 @@ TYPED_TEST(X86_128ArithTest, BitShrBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShrWithMask) {
+TYPED_TEST(VecArithTest, BitShrWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && N >= 2) {
@@ -1087,7 +1087,7 @@ TYPED_TEST(X86_128ArithTest, BitShrWithMask) {
 }
 
 // Test arithmetic right shift for signed types (sign extension)
-TYPED_TEST(X86_128ArithTest, BitShrArithmeticSignExtension) {
+TYPED_TEST(VecArithTest, BitShrArithmeticSignExtension) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
@@ -1125,7 +1125,7 @@ TYPED_TEST(X86_128ArithTest, BitShrArithmeticSignExtension) {
 }
 
 // Test logical right shift for unsigned types (zero fill)
-TYPED_TEST(X86_128ArithTest, BitShrLogicalZeroFill) {
+TYPED_TEST(VecArithTest, BitShrLogicalZeroFill) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T>) {
@@ -1151,7 +1151,7 @@ TYPED_TEST(X86_128ArithTest, BitShrLogicalZeroFill) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShrLargeShift) {
+TYPED_TEST(VecArithTest, BitShrLargeShift) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -1182,7 +1182,7 @@ TYPED_TEST(X86_128ArithTest, BitShrLargeShift) {
 }
 
 // Test shift with various patterns to ensure correctness
-TYPED_TEST(X86_128ArithTest, BitShlPattern) {
+TYPED_TEST(VecArithTest, BitShlPattern) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -1209,7 +1209,7 @@ TYPED_TEST(X86_128ArithTest, BitShlPattern) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, BitShrPattern) {
+TYPED_TEST(VecArithTest, BitShrPattern) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (std::is_integral_v<T>) {
@@ -1239,7 +1239,7 @@ TYPED_TEST(X86_128ArithTest, BitShrPattern) {
 }
 
 // Half-size vector shift tests
-TYPED_TEST(X86_128ArithTest, HalfSizeBitShl) {
+TYPED_TEST(VecArithTest, HalfSizeBitShl) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
   if constexpr (std::is_integral_v<T> && HALF >= 1) {
@@ -1256,7 +1256,7 @@ TYPED_TEST(X86_128ArithTest, HalfSizeBitShl) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, HalfSizeBitShr) {
+TYPED_TEST(VecArithTest, HalfSizeBitShr) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
   if constexpr (std::is_integral_v<T> && HALF >= 1) {
@@ -1274,7 +1274,7 @@ TYPED_TEST(X86_128ArithTest, HalfSizeBitShr) {
 }
 
 // Multi-word vector shift tests
-TYPED_TEST(X86_128ArithTest, MultiWordBitShl) {
+TYPED_TEST(VecArithTest, MultiWordBitShl) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI = FULL * 2;
@@ -1293,7 +1293,7 @@ TYPED_TEST(X86_128ArithTest, MultiWordBitShl) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MultiWordBitShr) {
+TYPED_TEST(VecArithTest, MultiWordBitShr) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI = FULL * 2;
@@ -1331,7 +1331,7 @@ void verify_cmp_mask(FixedTag<T, 16 / sizeof(T)> t, nint_t N,
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpeqBasic) {
+TYPED_TEST(VecArithTest, CmpeqBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1352,7 +1352,7 @@ TYPED_TEST(X86_128ArithTest, CmpeqBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpeqWithMask) {
+TYPED_TEST(VecArithTest, CmpeqWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1370,7 +1370,7 @@ TYPED_TEST(X86_128ArithTest, CmpeqWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpneBasic) {
+TYPED_TEST(VecArithTest, CmpneBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1390,7 +1390,7 @@ TYPED_TEST(X86_128ArithTest, CmpneBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpneWithMask) {
+TYPED_TEST(VecArithTest, CmpneWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1408,7 +1408,7 @@ TYPED_TEST(X86_128ArithTest, CmpneWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpltBasic) {
+TYPED_TEST(VecArithTest, CmpltBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1430,7 +1430,7 @@ TYPED_TEST(X86_128ArithTest, CmpltBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpltWithMask) {
+TYPED_TEST(VecArithTest, CmpltWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1453,7 +1453,7 @@ TYPED_TEST(X86_128ArithTest, CmpltWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpgtBasic) {
+TYPED_TEST(VecArithTest, CmpgtBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1470,7 +1470,7 @@ TYPED_TEST(X86_128ArithTest, CmpgtBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpgtWithMask) {
+TYPED_TEST(VecArithTest, CmpgtWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1491,7 +1491,7 @@ TYPED_TEST(X86_128ArithTest, CmpgtWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpleBasic) {
+TYPED_TEST(VecArithTest, CmpleBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1507,7 +1507,7 @@ TYPED_TEST(X86_128ArithTest, CmpleBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpleWithMask) {
+TYPED_TEST(VecArithTest, CmpleWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1528,7 +1528,7 @@ TYPED_TEST(X86_128ArithTest, CmpleWithMask) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpgeBasic) {
+TYPED_TEST(VecArithTest, CmpgeBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1544,7 +1544,7 @@ TYPED_TEST(X86_128ArithTest, CmpgeBasic) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, CmpgeWithMask) {
+TYPED_TEST(VecArithTest, CmpgeWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1573,15 +1573,15 @@ TYPED_TEST(X86_128ArithTest, CmpgeWithMask) {
 using FloatTypes = ::testing::Types<float32_t, float64_t>;
 
 template <typename T>
-class X86_128FloatClassifyTest : public ::testing::Test {
+class VecFloatClassifyTest : public ::testing::Test {
 protected:
   using Type = T;
   static constexpr nint_t FULL_SIZE = test_utils::full_vec_size<T>();
 };
 
-TYPED_TEST_SUITE(X86_128FloatClassifyTest, FloatTypes);
+TYPED_TEST_SUITE(VecFloatClassifyTest, FloatTypes);
 
-TYPED_TEST(X86_128FloatClassifyTest, IsNanBasic) {
+TYPED_TEST(VecFloatClassifyTest, IsNanBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1609,7 +1609,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsNanBasic) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsNanWithMask) {
+TYPED_TEST(VecFloatClassifyTest, IsNanWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1634,7 +1634,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsNanWithMask) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsPosInfBasic) {
+TYPED_TEST(VecFloatClassifyTest, IsPosInfBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1654,7 +1654,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsPosInfBasic) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsPosInfWithMask) {
+TYPED_TEST(VecFloatClassifyTest, IsPosInfWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1674,7 +1674,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsPosInfWithMask) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsNegInfBasic) {
+TYPED_TEST(VecFloatClassifyTest, IsNegInfBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1694,7 +1694,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsNegInfBasic) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsNegInfWithMask) {
+TYPED_TEST(VecFloatClassifyTest, IsNegInfWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 2) {
@@ -1714,7 +1714,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsNegInfWithMask) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsInfBasic) {
+TYPED_TEST(VecFloatClassifyTest, IsInfBasic) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   FixedTag<T, N> t;
@@ -1738,7 +1738,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsInfBasic) {
   }
 }
 
-TYPED_TEST(X86_128FloatClassifyTest, IsInfWithMask) {
+TYPED_TEST(VecFloatClassifyTest, IsInfWithMask) {
   using T = typename TestFixture::Type;
   constexpr nint_t N = TestFixture::FULL_SIZE;
   if constexpr (N >= 4) {
@@ -1762,7 +1762,7 @@ TYPED_TEST(X86_128FloatClassifyTest, IsInfWithMask) {
 // Half-size vector arithmetic
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, HalfSizeAdd) {
+TYPED_TEST(VecArithTest, HalfSizeAdd) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
   if constexpr (HALF >= 1) {
@@ -1780,7 +1780,7 @@ TYPED_TEST(X86_128ArithTest, HalfSizeAdd) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, HalfSizeSub) {
+TYPED_TEST(VecArithTest, HalfSizeSub) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
   if constexpr (HALF >= 1) {
@@ -1798,7 +1798,7 @@ TYPED_TEST(X86_128ArithTest, HalfSizeSub) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, HalfSizeMul) {
+TYPED_TEST(VecArithTest, HalfSizeMul) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
   if constexpr (HALF >= 1) {
@@ -1826,7 +1826,7 @@ TYPED_TEST(X86_128ArithTest, HalfSizeMul) {
 // Multi-word vector arithmetic
 // ============================================================================
 
-TYPED_TEST(X86_128ArithTest, MultiWordAdd) {
+TYPED_TEST(VecArithTest, MultiWordAdd) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI = FULL * 2;
@@ -1844,7 +1844,7 @@ TYPED_TEST(X86_128ArithTest, MultiWordAdd) {
   }
 }
 
-TYPED_TEST(X86_128ArithTest, MultiWordSub) {
+TYPED_TEST(VecArithTest, MultiWordSub) {
   using T = typename TestFixture::Type;
   constexpr nint_t FULL = TestFixture::FULL_SIZE;
   constexpr nint_t MULTI = FULL * 2;

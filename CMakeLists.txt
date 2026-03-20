@@ -71,7 +71,7 @@ add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_load
 # Ignore warnings
 add_compile_options(-Wno-ignored-attributes)
 
-function(add_x86_multiarch_executable NAME)
+function(add_multiarch_executable NAME)
     set(options "")
     set(oneValueArgs "")
     set(multiValueArgs FILES ARCH)
@@ -96,31 +96,25 @@ add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
 target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
 gtest_discover_tests(tl-ArrayTest)
 
-# tl-VecTest
-add_executable(tl-VecTest src/tests/tl/VecTest.cpp)
-target_compile_options(tl-VecTest PRIVATE -O3)
-target_link_libraries(tl-VecTest PRIVATE CTorch gtest gtest_main)
-gtest_discover_tests(tl-VecTest)
-
 # tl-VecBaseTest
-add_x86_multiarch_executable(tl-VecBaseTest
+add_multiarch_executable(tl-VecBaseTest
         FILES src/tests/tl/vec/VecBaseTest.cpp
         ARCH x86-64
 )
 
 # tl-VecScalarTest
-add_x86_multiarch_executable(tl-VecScalarTest
+add_multiarch_executable(tl-VecScalarTest
         FILES src/tests/tl/vec/VecScalarTest.cpp
         ARCH x86-64
 )
 
 # tl-VecLoadStoreTest
-add_x86_multiarch_executable(tl-VecLoadStoreTest
+add_multiarch_executable(tl-VecLoadStoreTest
         FILES src/tests/tl/vec/VecLoadStoreTest.cpp
         ARCH x86-64 corei7-avx core-avx2 native
 )
 # tl-VecArithTest
-add_x86_multiarch_executable(tl-VecArithTest
+add_multiarch_executable(tl-VecArithTest
         FILES src/tests/tl/vec/VecArithTest.cpp
         ARCH x86-64 corei7-avx core-avx2 native
 )
