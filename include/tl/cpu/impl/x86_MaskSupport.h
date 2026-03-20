@@ -9,7 +9,7 @@
 #include "tl/cpu/VecBase.h"
 
 #ifndef ARCH_X86_FAMILY
-#error "Not x86 family"
+  #error "Not x86 family"
 #endif
 #include <immintrin.h>
 #include <x86intrin.h>

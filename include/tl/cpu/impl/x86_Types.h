@@ -13,8 +13,7 @@
 #endif
 
 #include <immintrin.h>
-
-#define SIMD_NUMEL(dtype) (SIMD_WIDTH / 8 / sizeof(dtype))
+#define VEC_NUMEL(dtype) (VEC_WIDTH / 8 / sizeof(dtype))
 
 namespace ct::tl::vec {
 inline namespace x86 {
@@ -43,7 +42,7 @@ template <> struct RegType<name##_t, N> : public WrapperType<raw_type> { \
 }; \
 using v##name##x##N##_t = RegType<name##_t, N>
 
-#if SIMD_WIDTH >= 128
+#if defined(CPU_CAPABILITY_AVX512) || defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_AVX)
 TL_DEFINE_MMREG(bfloat16, 8, __m128i);
 TL_DEFINE_MMREG(float16, 8, __m128i);
 TL_DEFINE_MMREG(float32, 4, __m128);
@@ -57,7 +56,7 @@ TL_DEFINE_MMREG(uint32, 4, __m128i);
 TL_DEFINE_MMREG(int64, 2, __m128i);
 TL_DEFINE_MMREG(uint64, 2, __m128i);
 #endif
-#if SIMD_WIDTH >= 256
+#if defined(CPU_CAPABILITY_AVX512) || defined(CPU_CAPABILITY_AVX2)
 TL_DEFINE_MMREG(bfloat16, 16, __m256i);
 TL_DEFINE_MMREG(float16, 16, __m256i);
 TL_DEFINE_MMREG(float32, 8, __m256);
@@ -71,7 +70,7 @@ TL_DEFINE_MMREG(uint32, 8, __m256i);
 TL_DEFINE_MMREG(int64, 4, __m256i);
 TL_DEFINE_MMREG(uint64, 4, __m256i);
 #endif
-#if SIMD_WIDTH >= 512
+#if defined(CPU_CAPABILITY_AVX512)
 TL_DEFINE_MMREG(bfloat16, 32, __m512i);
 TL_DEFINE_MMREG(float16, 32, __m512i);
 TL_DEFINE_MMREG(float32, 16, __m512);
@@ -98,7 +97,7 @@ struct RegMask : public WrapperType<T> {
 };
 
 // Mask specialization for CPU feature AVX512DQ
-#if defined(HAS_AVX512DQ)
+#if defined(CPU_CAPABILITY_AVX512)
 template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 1> { using Type = RegMask<ELSIZE, __mmask8>; };
 template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 2> { using Type = RegMask<ELSIZE, __mmask8>; };
 template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 4> { using Type = RegMask<ELSIZE, __mmask8>; };
@@ -107,7 +106,7 @@ template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 16> { using Type = RegMask<EL
 template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 32> { using Type = RegMask<ELSIZE, __mmask32>; };
 template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 64> { using Type = RegMask<ELSIZE, __mmask64>; };
 #else
-#if SIMD_WIDTH >= 128
+#if defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_AVX)
 template <> struct MMMaskType<1, 1> { using Type = RegMask<1, __m128i>; };
 template <> struct MMMaskType<2, 1> { using Type = RegMask<1, __m128i>; };
 template <> struct MMMaskType<4, 1> { using Type = RegMask<1, __m128i>; };
@@ -123,17 +122,17 @@ template <> struct MMMaskType<4, 4> { using Type = RegMask<1, __m128i>; };
 template <> struct MMMaskType<1, 8> { using Type = RegMask<1, __m128i>; };
 template <> struct MMMaskType<2, 8> { using Type = RegMask<1, __m128i>; };
 template <> struct MMMaskType<1, 16> { using Type = RegMask<1, __m128i>; };
-#endif
+#endif // defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_AVX)
 
-#if SIMD_WIDTH >= 256
+#if defined(CPU_CAPABILITY_AVX2)
 template <> struct MMMaskType<32, 1> { using Type = RegMask<1, __m256i>; };
 template <> struct MMMaskType<16, 2> { using Type = RegMask<1, __m256i>; };
 template <> struct MMMaskType<8, 4> { using Type = RegMask<1, __m256i>; };
 template <> struct MMMaskType<4, 8> { using Type = RegMask<1, __m256i>; };
 template <> struct MMMaskType<2, 16> { using Type = RegMask<1, __m256i>; };
 template <> struct MMMaskType<1, 32> { using Type = RegMask<1, __m256i>; };
-#endif
-#endif
+#endif // CPU_CAPABILITY_AVX2
+#endif // CPU_CAPABILITY_AVX512
 
 template <typename T, nint_t N>
 using MaskType = MMMaskType<sizeof(T), N>::Type;
@@ -160,18 +159,18 @@ template <> struct VecDefs<dtype, (S) / sizeof(dtype)> : public ScalarVecDefs<dt
 }; \
 template <> struct Vec2Tag<x86::RegType<dtype, (S) / sizeof(dtype)>> { using Type = Tag<dtype, (S) / sizeof(dtype)>; } \
 
-#if SIMD_WIDTH >= 512
-#define TL_DEFINE_VEC_ALL(dtype) \
-  TL_DEFINE_VEC(dtype, 16); \
-  TL_DEFINE_VEC(dtype, 32); \
-  TL_DEFINE_VEC(dtype, 64);
-#elif SIMD_WIDTH >= 256
-#define TL_DEFINE_VEC_ALL(dtype) \
-  TL_DEFINE_VEC(dtype, 16); \
-  TL_DEFINE_VEC(dtype, 32);
-#elif SIMD_WIDTH >= 128
-#define TL_DEFINE_VEC_ALL(dtype) \
-  TL_DEFINE_VEC(dtype, 16);
+#if defined(CPU_CAPABILITY_AVX512)
+  #define TL_DEFINE_VEC_ALL(dtype) \
+    TL_DEFINE_VEC(dtype, 16); \
+    TL_DEFINE_VEC(dtype, 32); \
+    TL_DEFINE_VEC(dtype, 64);
+#elif defined(CPU_CAPABILITY_AVX2)
+  #define TL_DEFINE_VEC_ALL(dtype) \
+    TL_DEFINE_VEC(dtype, 16); \
+    TL_DEFINE_VEC(dtype, 32);
+#elif defined(CPU_CAPABILITY_AVX)
+  #define TL_DEFINE_VEC_ALL(dtype) \
+    TL_DEFINE_VEC(dtype, 16);
 #endif
 
 TL_DEFINE_VEC_ALL(bfloat16_t);
@@ -239,14 +238,14 @@ TL_XMM_APPLY_TO_ALL_HALVES(uint32_t, TL_XMM_DEFINE_VEC_HALF, uint32_t)
 #undef TL_XMM_DEFINE_VEC_HALF
 
 /**
- * @brief VecDefs specialization for N > SIMD_NUMEL(dtype) x dtype (multi-word vectors).
+ * @brief VecDefs specialization for N > VEC_NUMEL(dtype) x dtype (multi-word vectors).
  * 
  * Inherits from the appropriate multi-word base class, which handles
- * concatenation of multiple SIMD_WIDTH-bit registers.
+ * concatenation of multiple VEC_WIDTH-bit registers.
  */
 #define TL_DEFINE_BATCH_VEC(dtype) \
-template <nint_t N> struct VecDefs<dtype, N, 0, std::enable_if_t<(N > SIMD_NUMEL(dtype))>>  \
-    : public VecDefs<dtype, SIMD_NUMEL(dtype), log2_floor(N / SIMD_NUMEL(dtype))> {} \
+template <nint_t N> struct VecDefs<dtype, N, 0, std::enable_if_t<(N > VEC_NUMEL(dtype))>>  \
+    : public VecDefs<dtype, VEC_NUMEL(dtype), log2_floor(N / VEC_NUMEL(dtype))> {} \
 
 TL_DEFINE_BATCH_VEC(bfloat16_t);
 TL_DEFINE_BATCH_VEC(float16_t);

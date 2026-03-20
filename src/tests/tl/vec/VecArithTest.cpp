@@ -1,6 +1,6 @@
 //
-// X86_128ArithTest.cpp
-// Comprehensive test for x86_128.h Basic arithmetic operations
+// VecArithTest.cpp
+// Comprehensive test for basic arithmetic operations
 // Covers: add, sub, mul, div, rcp, max, min,
 //         bit_and, bit_or, bit_xor, bit_andnot, bit_not,
 //         bit_shl, bit_shr,
@@ -14,14 +14,6 @@
 #include <cmath>
 #include <limits>
 #include <type_traits>
-
-#include "Features.h"
-
-#if !defined(ARCH_X86_FAMILY)
-  #define ARCH_X86_FAMILY 1
-#endif
-
-#define SIMD_WIDTH 128
 
 #include "tl/cpu/Vec.h"
 

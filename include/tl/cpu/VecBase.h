@@ -11,6 +11,7 @@
 #include "Assertion.h"
 #include "CoreDefs.h"
 #include "tl/util/Math.h"
+#include "tl/cpu/Capabilities.h"
 
 /**
  * @file VecBase.h
@@ -28,9 +29,9 @@
  */
 
 #if defined(HAS_SVE)
-#define _VEC_SIZE(type) SIMD_WIDTH
+  #define _VEC_SIZE(type) VEC_WIDTH
 #else
-#define _VEC_SIZE(type) (SIMD_WIDTH / 8 / sizeof(type))
+  #define _VEC_SIZE(type) (VEC_WIDTH / 8 / sizeof(type))
 #endif
 
 namespace ct::tl::vec {
@@ -175,14 +176,20 @@ template <typename T>
 static constexpr bool is_tag = details::IsTag<T>::value;
 
 /**
- * @brief Default memory alignment for vector types (16 bytes).
+ * @brief Default memory alignment for vector types (16 bytes if is scalable).
+ * Note: VEC_WIDTH always smaller than SIMD_WIDTH, to ensure best compatibility
+ *   we intentionally use SIMD_WIDTH here.
  */
+#if SIMD_WIDTH < 0
 static constexpr nint_t DEFAULT_ALIGNMENT = 16;
+#else
+static constexpr nint_t DEFAULT_ALIGNMENT = std::max<nint_t>(8, SIMD_WIDTH / 8);
+#endif
 
 /**
  * @brief Default vector length in bytes for scalar fallback implementation.
  */
-static constexpr nint_t DEFAULT_LENGTH = 64;
+static constexpr nint_t DEFAULT_LENGTH = VEC_WIDTH / 8;
 
 /**
  * @brief Default number of elements for scalar vectors of type T.

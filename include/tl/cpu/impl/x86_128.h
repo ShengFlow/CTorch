@@ -11,14 +11,14 @@
 #include "tl/util/Math.h"
 
 #ifndef ARCH_X86_FAMILY
-#error "Not x86 platform"
+  #error "Not x86 platform"
 #endif
 
 #include <immintrin.h>
 #include "tl/cpu/impl/x86_Types.h"
 
 #ifndef HAS_AVX512DQ
-#include "tl/cpu/impl/x86_MaskSupport.h"
+  #include "tl/cpu/impl/x86_MaskSupport.h"
 #endif
 
 namespace ct::tl::vec {
@@ -33,33 +33,33 @@ namespace word {
 #define X(...) __VA_ARGS__
 
 #define _TL_XMM_DEFINE_HALVES(N, check, name, dtype, ret, params, args) \
-auto name(Tag<dtype, N> t  X params) -> ret { \
+CT_ALWAYS_FORCEINLINE auto name(Tag<dtype, N> t  X params) -> ret { \
     check; return word::name(Tag<dtype, 16 / sizeof(dtype)>()  X args); \
 }
 
 #define TL_CHECK_COUNT(varname) CT_ASSERT(0 <= (varname) && (varname) <= size(t), "%zd !in 0..%zd", (varname), size(t))
 #define TL_CHECK_INDEX(varname) CT_ASSERT(0 <= (varname) && (varname) < size(t), "%zd !in 0..%zd", (varname), size(t))
-#define TL_CHECK_ALIGN CT_ASSERT(((nuint_t)(p) & (DEFAULT_ALIGNMENT - 1)) == 0, "Not aligned");
+#define TL_CHECK_ALIGN CT_ASSERT(((nuint_t)(p) & (16 - 1)) == 0, "Not aligned");
 
 #define TL_XMM_DEFINE_WITH_ALL_HALVES(name, dtype, ret, params, args) \
 auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret; /*forward declaration*/ \
 TL_XMM_APPLY_TO_ALL_HALVES(dtype, _TL_XMM_DEFINE_HALVES, , name, dtype, ret, (, X params), (, X args)) \
-auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
+CT_ALWAYS_FORCEINLINE auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
 
 #define TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(name, dtype, ret, params, args) \
 auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret; /*forward declaration*/ \
 TL_XMM_APPLY_TO_ALL_HALVES(dtype, _TL_XMM_DEFINE_HALVES, TL_CHECK_COUNT(n), name, dtype, ret, (, X params), (, X args)) \
-auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
+CT_ALWAYS_FORCEINLINE auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
 
 #define TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_INDEX(name, dtype, ret, params, args) \
 auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret; /*forward declaration*/ \
 TL_XMM_APPLY_TO_ALL_HALVES(dtype, _TL_XMM_DEFINE_HALVES, TL_CHECK_INDEX(index), name, dtype, ret, (, X params), (, X args)) \
-auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
+CT_ALWAYS_FORCEINLINE auto name(Tag<dtype, (16 / sizeof(dtype))> t, X params) -> ret
 
 #define TL_XMM_DEFINE_WITH_ALL_HALVES_V(name, dtype, ret) \
 auto name(Tag<dtype, (16 / sizeof(dtype))> t) -> ret; /*forward declaration*/ \
 TL_XMM_APPLY_TO_ALL_HALVES(dtype, _TL_XMM_DEFINE_HALVES, , name, dtype, ret, (), ()) \
-auto name(Tag<dtype, (16 / sizeof(dtype))> t) -> ret
+CT_ALWAYS_FORCEINLINE auto name(Tag<dtype, (16 / sizeof(dtype))> t) -> ret
 
 
 
@@ -249,26 +249,26 @@ TL_XMM_DEFINE_FILL(uint64_t) { return _mm_blendv_epi8(default_v.v, fill(t, v).v,
 #undef TL_XMM_DEFINE_FILL
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _fill_forward_mask(Tag<T, N, P> t, T v, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+CT_ALWAYS_FORCEINLINE auto _fill_fwd_mask_128(Tag<T, N, P> t, T v, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
-  auto m = mwhilelt(t, 0, n);
+  auto m = word::mwhilelt(t, 0, n);
   return word::fill(t, v, m, default_v);
 }
 
 // fill(T v, nint_t n, Vec<T> default_v)
 #define TL_XMM_DEFINE_FILL(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(fill, dtype, VecOf(t), (dtype v, nint_t n, VecOf(t) default_v), (v, n, default_v))
-TL_XMM_DEFINE_FILL(bfloat16_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(float16_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(float32_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(float64_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(int8_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(uint8_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(int16_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(uint16_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(int32_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(uint32_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(int64_t) { return _fill_forward_mask(t, v, n, default_v); }
-TL_XMM_DEFINE_FILL(uint64_t) { return _fill_forward_mask(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(bfloat16_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(float16_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(float32_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(float64_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(int8_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(uint8_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(int16_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(uint16_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(int32_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(uint32_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(int64_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
+TL_XMM_DEFINE_FILL(uint64_t) { return _fill_fwd_mask_128(t, v, n, default_v); }
 #undef TL_XMM_DEFINE_FILL
 
 // zeros()
@@ -382,7 +382,7 @@ TL_XMM_DEFINE_LOAD(uint64_t, 2) { TL_CHECK_ALIGN return _mm_load_si128((const __
 #undef TL_XMM_DEFINE_LOAD
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _ensure_mask_range(Tag<T, N, P> t, MaskOf(t) m) -> MaskOf(t) {
+CT_ALWAYS_FORCEINLINE auto _ensure_mask_range_128(Tag<T, N, P> t, MaskOf(t) m) -> MaskOf(t) {
   if constexpr (N * sizeof(T) < 16) {
     #ifdef HAS_AVX512DQ
     uint32_t x = _cvtmask8_u32(m);
@@ -410,89 +410,87 @@ CT_ALWAYS_FORCEINLINE auto _ensure_mask_range(Tag<T, N, P> t, MaskOf(t) m) -> Ma
 
 #ifdef HAS_AVX512DQ
 // loadu(const T* p, Mask<T> m, Vec<T> default_v)
-TL_XMM_DEFINE_LOADU(bfloat16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(float16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(float32_t) { return _mm_mask_loadu_ps(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(float64_t) { return _mm_mask_loadu_pd(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(int8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(uint8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(int16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(uint16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(int32_t) { return _mm_mask_loadu_epi32(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(uint32_t) { return _mm_mask_loadu_epi32(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(int64_t) { return _mm_mask_loadu_epi64(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOADU(uint64_t) { return _mm_mask_loadu_epi64(default_v.v, _ensure_mask_range(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(bfloat16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(float16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(float32_t) { return _mm_mask_loadu_ps(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(float64_t) { return _mm_mask_loadu_pd(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(int8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(uint8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(int16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(uint16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(int32_t) { return _mm_mask_loadu_epi32(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(uint32_t) { return _mm_mask_loadu_epi32(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(int64_t) { return _mm_mask_loadu_epi64(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOADU(uint64_t) { return _mm_mask_loadu_epi64(default_v.v, _ensure_mask_range_128(t, m).v, p); }
 
 // load(const T* p, Mask<T> m, Vec<T> default_v)
-TL_XMM_DEFINE_LOAD(bfloat16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(float16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(float32_t) { return _mm_mask_load_ps(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(float64_t) { return _mm_mask_load_pd(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(int8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(uint8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(int16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(uint16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(int32_t) { return _mm_mask_load_epi32(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(uint32_t) { return _mm_mask_load_epi32(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(int64_t) { return _mm_mask_load_epi64(default_v.v, _ensure_mask_range(t, m).v, p); }
-TL_XMM_DEFINE_LOAD(uint64_t) { return _mm_mask_load_epi64(default_v.v, _ensure_mask_range(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(bfloat16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(float16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(float32_t) { return _mm_mask_load_ps(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(float64_t) { return _mm_mask_load_pd(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(int8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(uint8_t) { return _mm_mask_loadu_epi8(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(int16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(uint16_t) { return _mm_mask_loadu_epi16(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(int32_t) { return _mm_mask_load_epi32(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(uint32_t) { return _mm_mask_load_epi32(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(int64_t) { return _mm_mask_load_epi64(default_v.v, _ensure_mask_range_128(t, m).v, p); }
+TL_XMM_DEFINE_LOAD(uint64_t) { return _mm_mask_load_epi64(default_v.v, _ensure_mask_range_128(t, m).v, p); }
 #else // HAS_AVX512DQ
 // Note: it's pretty hard to ensure memory boundary safety without hardware maskload for int8 and int16
 // So we instead checks for page boundary to determine if a full 16-byte load is available
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE auto _loadu_16(Tag<T, N, POW2> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
-  auto mask = _ensure_mask_range(t, m).v;
+CT_ALWAYS_FORCEINLINE auto _loadu_8_128(Tag<T, N, POW2> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+  auto mask = _ensure_mask_range_128(t, m).v;
   // if p + 15 still in the same page as p
-  if (((nuint_t(p) & 0xfff) + 15) & 0xfff) {
+  if (((nuint_t(p) & 0xfff) + 15) <= 0xfff) {
     return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_loadu_ps((const float32_t*) p)), mask);
   } else {
-    // TODO replace with word::gather call
-    // Note: fallback scalar impl,
-    union { int16_t i[8]; __m128i m; } V{.m = default_v.v}, M{.m = mask};
-    alignas(DEFAULT_ALIGNMENT) int16_t S[8];
-    auto P = (const int16_t*) p;
-#pragma nounroll
-    for (int i = 0; i < 8; ++i) S[i] = M.i[i] ? P[i] : V.i[i];
+    // TODO slow
+    // Fallback to scalar implementation
+    union { int8_t i[16]; __m128i m; } V{.m = default_v.v}, M{.m = mask};
+    alignas(16) int8_t S[16];
+    auto P = (const int8_t*) p;
+    for (int i = 0; i < 16; ++i) S[i] = M.i[i] ? P[i] : V.i[i];
     return _mm_load_si128((const __m128i *)S);
   }
 }
 
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE auto _loadu_8(Tag<T, N, POW2> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
-  auto mask = _ensure_mask_range(t, m).v;
+CT_ALWAYS_FORCEINLINE auto _loadu_16_128(Tag<T, N, POW2> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+  auto mask = _ensure_mask_range_128(t, m).v;
   // if p + 15 still in the same page as p
-  if (((nuint_t(p) & 0xfff) + 15) & 0xfff) {
+  if (((nuint_t(p) & 0xfff) + 15) <= 0xfff) {
     return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_loadu_ps((const float32_t*) p)), mask);
   } else {
-    // TODO replace with word::gather call
-    // Note: fallback scalar impl,
-    union { int8_t i[16]; __m128i m; } V{.m = default_v.v}, M{.m = mask};
-    alignas(DEFAULT_ALIGNMENT) int8_t S[16];
-    auto P = (const int8_t*) p;
-#pragma nounroll
-    for (int i = 0; i < 16; ++i) S[i] = M.i[i] ? P[i] : V.i[i];
+    // TODO slow
+    // Fallback to scalar implementation
+    union { int16_t i[8]; __m128i m; } V{.m = default_v.v}, M{.m = mask};
+    alignas(16) int16_t S[8];
+    auto P = (const int16_t*) p;
+    for (int i = 0; i < 8; ++i) S[i] = M.i[i] ? P[i] : V.i[i];
     return _mm_load_si128((const __m128i *)S);
   }
 }
 // loadu(const T* p, Mask<T> m, Vec<T> default_v)
-TL_XMM_DEFINE_LOADU(bfloat16_t) { return _loadu_16(t, p, m, default_v); }
-TL_XMM_DEFINE_LOADU(float16_t) { return _loadu_16(t, p, m, default_v); }
-TL_XMM_DEFINE_LOADU(float32_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_ps(default_v.v, _mm_maskload_ps(p, mask), _mm_castsi128_ps(mask)); }
-TL_XMM_DEFINE_LOADU(float64_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_pd(default_v.v, _mm_maskload_pd(p, mask), _mm_castsi128_pd(mask)); }
-TL_XMM_DEFINE_LOADU(int8_t) { auto mask = _ensure_mask_range(t, m).v; return _loadu_8(t, p, m, default_v); }
-TL_XMM_DEFINE_LOADU(uint8_t) { auto mask = _ensure_mask_range(t, m).v; return _loadu_8(t, p, m, default_v); }
-TL_XMM_DEFINE_LOADU(int16_t) { auto mask = _ensure_mask_range(t, m).v; return _loadu_16(t, p, m, default_v); }
-TL_XMM_DEFINE_LOADU(uint16_t) { auto mask = _ensure_mask_range(t, m).v; return _loadu_16(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(bfloat16_t) { return _loadu_16_128(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(float16_t) { return _loadu_16_128(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(float32_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_ps(default_v.v, _mm_maskload_ps(p, mask), _mm_castsi128_ps(mask)); }
+TL_XMM_DEFINE_LOADU(float64_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_pd(default_v.v, _mm_maskload_pd(p, mask), _mm_castsi128_pd(mask)); }
+TL_XMM_DEFINE_LOADU(int8_t) { return _loadu_8_128(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(uint8_t) { return _loadu_8_128(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(int16_t) { return _loadu_16_128(t, p, m, default_v); }
+TL_XMM_DEFINE_LOADU(uint16_t) { return _loadu_16_128(t, p, m, default_v); }
 #ifdef HAS_AVX2
-TL_XMM_DEFINE_LOADU(int32_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi32(p, mask), mask); }
-TL_XMM_DEFINE_LOADU(uint32_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi32((const int *)p, mask), mask); }
-TL_XMM_DEFINE_LOADU(int64_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi64((const long long *)p, mask), mask); }
-TL_XMM_DEFINE_LOADU(uint64_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi64((const long long *)p, mask), mask); }
+TL_XMM_DEFINE_LOADU(int32_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi32(p, mask), mask); }
+TL_XMM_DEFINE_LOADU(uint32_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi32((const int *)p, mask), mask); }
+TL_XMM_DEFINE_LOADU(int64_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi64((const long long *)p, mask), mask); }
+TL_XMM_DEFINE_LOADU(uint64_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_maskload_epi64((const long long *)p, mask), mask); }
 #else // HAS_AVX2
-TL_XMM_DEFINE_LOADU(int32_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_maskload_ps((const float32_t*)p, mask)), mask); }
-TL_XMM_DEFINE_LOADU(uint32_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_maskload_ps((const float32_t*)p, mask)), mask); }
-TL_XMM_DEFINE_LOADU(int64_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castpd_si128(_mm_maskload_pd((const float64_t*)p, mask)), mask); }
-TL_XMM_DEFINE_LOADU(uint64_t) { auto mask = _ensure_mask_range(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castpd_si128(_mm_maskload_pd((const float64_t*)p, mask)), mask); }
+TL_XMM_DEFINE_LOADU(int32_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_maskload_ps((const float32_t*)p, mask)), mask); }
+TL_XMM_DEFINE_LOADU(uint32_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castps_si128(_mm_maskload_ps((const float32_t*)p, mask)), mask); }
+TL_XMM_DEFINE_LOADU(int64_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castpd_si128(_mm_maskload_pd((const float64_t*)p, mask)), mask); }
+TL_XMM_DEFINE_LOADU(uint64_t) { auto mask = _ensure_mask_range_128(t, m).v; return _mm_blendv_epi8(default_v.v, _mm_castpd_si128(_mm_maskload_pd((const float64_t*)p, mask)), mask); }
 #endif // HAS_AVX2
 
 // load(const T* p, Mask<T> m, Vec<T> default_v)
@@ -514,7 +512,7 @@ TL_XMM_DEFINE_LOAD(uint64_t) { TL_CHECK_ALIGN return word::loadu(t, p, m, defaul
 #undef TL_XMM_DEFINE_LOAD
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _loadu_forward_mask(Tag<T, N, P> t, const T * p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+CT_ALWAYS_FORCEINLINE auto _loadu_fwd_mask_128(Tag<T, N, P> t, const T * p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   auto m = mwhilelt(t, 0, n);
   return word::loadu(t, p, m, default_v);
@@ -522,22 +520,22 @@ CT_ALWAYS_FORCEINLINE auto _loadu_forward_mask(Tag<T, N, P> t, const T * p, nint
 
 // loadu(const float32_t* p, nint_t n, Vec<T> default_v)
 #define TL_XMM_DEFINE_LOADU(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(loadu, dtype, VecOf(t), (const dtype* p, nint_t n, VecOf(t) default_v), (p, n, default_v))
-TL_XMM_DEFINE_LOADU(bfloat16_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(float16_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(float32_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(float64_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(int8_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(uint8_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(int16_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(uint16_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(int32_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(uint32_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(int64_t) { return _loadu_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOADU(uint64_t) { return _loadu_forward_mask(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(bfloat16_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(float16_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(float32_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(float64_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(int8_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(uint8_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(int16_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(uint16_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(int32_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(uint32_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(int64_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOADU(uint64_t) { return _loadu_fwd_mask_128(t, p, n, default_v); }
 #undef TL_XMM_DEFINE_LOADU
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _load_forward_mask(Tag<T, N, P> t, const T * p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+CT_ALWAYS_FORCEINLINE auto _load_fwd_mask_128(Tag<T, N, P> t, const T * p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   auto m = mwhilelt(t, 0, n);
   return word::load(t, p, m, default_v);
@@ -545,18 +543,18 @@ CT_ALWAYS_FORCEINLINE auto _load_forward_mask(Tag<T, N, P> t, const T * p, nint_
 
 // load(const float32_t* p, nint_t n, Vec<T> default_v)
 #define TL_XMM_DEFINE_LOAD(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(load, dtype, VecOf(t), (const dtype* p, nint_t n, VecOf(t) default_v), (p, n, default_v))
-TL_XMM_DEFINE_LOAD(bfloat16_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(float16_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(float32_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(float64_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(int8_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(uint8_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(int16_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(uint16_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(int32_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(uint32_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(int64_t) { return _load_forward_mask(t, p, n, default_v); }
-TL_XMM_DEFINE_LOAD(uint64_t) { return _load_forward_mask(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(bfloat16_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(float16_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(float32_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(float64_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(int8_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(uint8_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(int16_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(uint16_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(int32_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(uint32_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(int64_t) { return _load_fwd_mask_128(t, p, n, default_v); }
+TL_XMM_DEFINE_LOAD(uint64_t) { return _load_fwd_mask_128(t, p, n, default_v); }
 #undef TL_XMM_DEFINE_LOAD
 
 
@@ -612,44 +610,44 @@ TL_XMM_DEFINE_STORE(uint64_t) { TL_CHECK_ALIGN _mm_store_si128((__m128i*)p, v.v)
 
 #ifdef HAS_AVX512DQ
 // storeu(T* p, Mask<T> m, Vec<T> v)
-TL_XMM_DEFINE_STOREU(bfloat16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(float16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(float32_t) { _mm_mask_storeu_ps(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(float64_t) { _mm_mask_storeu_pd(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(int8_t) { _mm_mask_storeu_epi8(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(uint8_t) { _mm_mask_storeu_epi8(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(int16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(uint16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(int32_t) { _mm_mask_storeu_epi32(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(uint32_t) { _mm_mask_storeu_epi32(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(int64_t) { _mm_mask_storeu_epi64(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STOREU(uint64_t) { _mm_mask_storeu_epi64(p, _ensure_mask_range(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(bfloat16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(float16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(float32_t) { _mm_mask_storeu_ps(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(float64_t) { _mm_mask_storeu_pd(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(int8_t) { _mm_mask_storeu_epi8(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(uint8_t) { _mm_mask_storeu_epi8(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(int16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(uint16_t) { _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(int32_t) { _mm_mask_storeu_epi32(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(uint32_t) { _mm_mask_storeu_epi32(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(int64_t) { _mm_mask_storeu_epi64(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STOREU(uint64_t) { _mm_mask_storeu_epi64(p, _ensure_mask_range_128(t, m).v, v.v); }
 
 // store(T* p, Mask<T> m, Vec<T> v)
-TL_XMM_DEFINE_STORE(bfloat16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(float16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(float32_t) { TL_CHECK_ALIGN _mm_mask_store_ps(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(float64_t) { TL_CHECK_ALIGN _mm_mask_store_pd(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(int8_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi8(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(uint8_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi8(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(int16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(uint16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(int32_t) { TL_CHECK_ALIGN _mm_mask_store_epi32(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(uint32_t) { TL_CHECK_ALIGN _mm_mask_store_epi32(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(int64_t) { TL_CHECK_ALIGN _mm_mask_store_epi64(p, _ensure_mask_range(t, m).v, v.v); }
-TL_XMM_DEFINE_STORE(uint64_t) { TL_CHECK_ALIGN _mm_mask_store_epi64(p, _ensure_mask_range(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(bfloat16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(float16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(float32_t) { TL_CHECK_ALIGN _mm_mask_store_ps(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(float64_t) { TL_CHECK_ALIGN _mm_mask_store_pd(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(int8_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi8(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(uint8_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi8(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(int16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(uint16_t) { TL_CHECK_ALIGN _mm_mask_storeu_epi16(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(int32_t) { TL_CHECK_ALIGN _mm_mask_store_epi32(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(uint32_t) { TL_CHECK_ALIGN _mm_mask_store_epi32(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(int64_t) { TL_CHECK_ALIGN _mm_mask_store_epi64(p, _ensure_mask_range_128(t, m).v, v.v); }
+TL_XMM_DEFINE_STORE(uint64_t) { TL_CHECK_ALIGN _mm_mask_store_epi64(p, _ensure_mask_range_128(t, m).v, v.v); }
 #else // HAS_AVX512DQ
 // storeu(T* p, Mask<T> m, Vec<T> v)
-TL_XMM_DEFINE_STOREU(bfloat16_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
-TL_XMM_DEFINE_STOREU(float16_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
-TL_XMM_DEFINE_STOREU(float32_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskstore_ps(p, mask, v.v); }
-TL_XMM_DEFINE_STOREU(float64_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskstore_pd(p, mask, v.v); }
-TL_XMM_DEFINE_STOREU(int8_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
-TL_XMM_DEFINE_STOREU(uint8_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
-TL_XMM_DEFINE_STOREU(int16_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
-TL_XMM_DEFINE_STOREU(uint16_t) { auto mask = _ensure_mask_range(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(bfloat16_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(float16_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(float32_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskstore_ps(p, mask, v.v); }
+TL_XMM_DEFINE_STOREU(float64_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskstore_pd(p, mask, v.v); }
+TL_XMM_DEFINE_STOREU(int8_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(uint8_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(int16_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
+TL_XMM_DEFINE_STOREU(uint16_t) { auto mask = _ensure_mask_range_128(t, m).v; _mm_maskmoveu_si128(v.v, mask, (char*)p); }
 TL_XMM_DEFINE_STOREU(int32_t) {
-  auto mask = _ensure_mask_range(t, m).v;
+  auto mask = _ensure_mask_range_128(t, m).v;
   #ifdef HAS_AVX2
   _mm_maskstore_epi32(p, mask, v.v);
   #else
@@ -657,7 +655,7 @@ TL_XMM_DEFINE_STOREU(int32_t) {
   #endif
 }
 TL_XMM_DEFINE_STOREU(uint32_t) {
-  auto mask = _ensure_mask_range(t, m).v;
+  auto mask = _ensure_mask_range_128(t, m).v;
   #ifdef HAS_AVX2
   _mm_maskstore_epi32((int*)p, mask, v.v);
   #else
@@ -665,7 +663,7 @@ TL_XMM_DEFINE_STOREU(uint32_t) {
   #endif
 }
 TL_XMM_DEFINE_STOREU(int64_t) {
-  auto mask = _ensure_mask_range(t, m).v;
+  auto mask = _ensure_mask_range_128(t, m).v;
   #ifdef HAS_AVX2
   _mm_maskstore_epi64((long long*)p, mask, v.v);
   #else
@@ -673,7 +671,7 @@ TL_XMM_DEFINE_STOREU(int64_t) {
   #endif
 }
 TL_XMM_DEFINE_STOREU(uint64_t) {
-  auto mask = _ensure_mask_range(t, m).v;
+  auto mask = _ensure_mask_range_128(t, m).v;
   #ifdef HAS_AVX2
   _mm_maskstore_epi64((long long*)p, mask, v.v);
   #else
@@ -700,7 +698,7 @@ TL_XMM_DEFINE_STORE(uint64_t) { TL_CHECK_ALIGN word::storeu(t, p, m, v); }
 #undef TL_XMM_DEFINE_STORE
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _storeu_forward_mask(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) -> void {
+CT_ALWAYS_FORCEINLINE auto _storeu_fwd_mask_128(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) -> void {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   auto m = mwhilelt(t, 0, n);
   word::storeu(t, p, m, v);
@@ -708,22 +706,22 @@ CT_ALWAYS_FORCEINLINE auto _storeu_forward_mask(Tag<T, N, P> t, T* p, nint_t n, 
 
 // storeu(T* p, nint_t n, Vec<T> v)
 #define TL_XMM_DEFINE_STOREU(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(storeu, dtype, void, (dtype* p, nint_t n, VecOf(t) v), (p, n, v))
-TL_XMM_DEFINE_STOREU(bfloat16_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(float16_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(float32_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(float64_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(int8_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(uint8_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(int16_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(uint16_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(int32_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(uint32_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(int64_t) { _storeu_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STOREU(uint64_t) { _storeu_forward_mask(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(bfloat16_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(float16_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(float32_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(float64_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(int8_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(uint8_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(int16_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(uint16_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(int32_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(uint32_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(int64_t) { _storeu_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STOREU(uint64_t) { _storeu_fwd_mask_128(t, p, n, v); }
 #undef TL_XMM_DEFINE_STOREU
 
 template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE auto _store_forward_mask(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) -> void {
+CT_ALWAYS_FORCEINLINE auto _store_fwd_mask_128(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) -> void {
   CT_ASSERT(0 <= n && n <= size(t), "%zd !in 0..%zd", n, size(t));
   auto m = mwhilelt(t, 0, n);
   word::store(t, p, m, v);
@@ -731,18 +729,18 @@ CT_ALWAYS_FORCEINLINE auto _store_forward_mask(Tag<T, N, P> t, T* p, nint_t n, V
 
 // store(T* p, nint_t n, Vec<T> v)
 #define TL_XMM_DEFINE_STORE(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_COUNT(store, dtype, void, (dtype* p, nint_t n, VecOf(t) v), (p, n, v))
-TL_XMM_DEFINE_STORE(bfloat16_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(float16_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(float32_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(float64_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(int8_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(uint8_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(int16_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(uint16_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(int32_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(uint32_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(int64_t) { _store_forward_mask(t, p, n, v); }
-TL_XMM_DEFINE_STORE(uint64_t) { _store_forward_mask(t, p, n, v); }
+TL_XMM_DEFINE_STORE(bfloat16_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(float16_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(float32_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(float64_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(int8_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(uint8_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(int16_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(uint16_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(int32_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(uint32_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(int64_t) { _store_fwd_mask_128(t, p, n, v); }
+TL_XMM_DEFINE_STORE(uint64_t) { _store_fwd_mask_128(t, p, n, v); }
 #undef TL_XMM_DEFINE_STORE
 
 
@@ -752,42 +750,61 @@ TL_XMM_DEFINE_STORE(uint64_t) { _store_forward_mask(t, p, n, v); }
 /* ************************************************************************** */
 
 // Helper: extract element from __m128i
-#define TL_DEFINE_EXTRACT(dtype, postfix) static CT_ALWAYS_FORCEINLINE dtype _extract_##postfix(__m128i v, int index)
-TL_DEFINE_EXTRACT(int8_t, i8) {
+#define TL_DEFINE_EXTRACT_128(dtype, postfix) static CT_ALWAYS_FORCEINLINE dtype _extract128_##postfix(__m128i v, int index)
+#ifdef HAS_AVX512F
+TL_DEFINE_EXTRACT_128(int8_t, i8) {
+return (int8_t)_mm_cvtsi128_si32(_mm_permutex2var_epi8(v, _mm_cvtsi32_si128(int(index)), v)) & 0xff;
+}
+TL_DEFINE_EXTRACT_128(uint8_t, u8) { return (uint8_t) _extract128_i8(v, index); }
+TL_DEFINE_EXTRACT_128(int16_t, i16) {
+return (int16_t)_mm_cvtsi128_si32(_mm_permutex2var_epi16(v, _mm_cvtsi32_si128(int(index)), v));
+}
+TL_DEFINE_EXTRACT_128(uint16_t, u16) { return (uint16_t) _extract128_i16(v, index); }
+TL_DEFINE_EXTRACT_128(int32_t, i32) {
+return _mm_cvtsi128_si32(_mm_permutex2var_epi32(v, _mm_cvtsi32_si128(int(index)), v));
+}
+TL_DEFINE_EXTRACT_128(uint32_t, u32) { return (uint32_t) _extract128_i32(v, index); }
+TL_DEFINE_EXTRACT_128(int64_t, i64) {
+return _mm_cvtsi128_si64(_mm_permutex2var_epi64(v, _mm_cvtsi32_si128(int(index)), v));
+}
+TL_DEFINE_EXTRACT_128(uint64_t, u64) { return (uint64_t) _extract128_i64(v, index); }
+#else // HAS_AVX512F
+TL_DEFINE_EXTRACT_128(int8_t, i8) {
   alignas(16) int8_t data[16];
   _mm_store_si128((__m128i*) data, v);
   return data[index];
 }
-TL_DEFINE_EXTRACT(uint8_t, u8) { return (uint8_t) _extract_i8(v, index); }
-TL_DEFINE_EXTRACT(int16_t, i16) {
+TL_DEFINE_EXTRACT_128(uint8_t, u8) { return (uint8_t) _extract128_i8(v, index); }
+TL_DEFINE_EXTRACT_128(int16_t, i16) {
   alignas(16) int16_t data[8];
   _mm_store_si128((__m128i*) data, v);
   return data[index];
 }
-TL_DEFINE_EXTRACT(uint16_t, u16) { return (uint16_t) _extract_i16(v, index); }
-TL_DEFINE_EXTRACT(int32_t, i32) {
+TL_DEFINE_EXTRACT_128(uint16_t, u16) { return (uint16_t) _extract128_i16(v, index); }
+TL_DEFINE_EXTRACT_128(int32_t, i32) {
   alignas(16) int32_t data[4];
   _mm_store_si128((__m128i*) data, v);
   return data[index];
 }
-TL_DEFINE_EXTRACT(uint32_t, u32) { return (uint32_t) _extract_i32(v, index); }
-TL_DEFINE_EXTRACT(int64_t, i64) {
+TL_DEFINE_EXTRACT_128(uint32_t, u32) { return (uint32_t) _extract128_i32(v, index); }
+TL_DEFINE_EXTRACT_128(int64_t, i64) {
   alignas(16) int64_t data[2];
   _mm_store_si128((__m128i*) data, v);
   return data[index];
 }
-TL_DEFINE_EXTRACT(uint64_t, u64) { return (uint64_t) _extract_i64(v, index); }
-#undef TL_DEFINE_EXTRACT
+TL_DEFINE_EXTRACT_128(uint64_t, u64) { return (uint64_t) _extract128_i64(v, index); }
+#endif // HAS_AVX512F
+#undef TL_DEFINE_EXTRACT_128
 
 // Helper: get element from mask
 #ifdef HAS_AVX512DQ
 static CT_ALWAYS_FORCEINLINE bool _get_mask_bit(__mmask8 m, int index) { return (_cvtmask8_u32(m) >> index) & 1; }
 static CT_ALWAYS_FORCEINLINE bool _get_mask_bit(__mmask16 m, int index) { return (_cvtmask16_u32(m) >> index) & 1; }
 #else
-static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi8(__m128i m, int index) { return !!_extract_i8(m, index); }
-static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi16(__m128i m, int index) { return !!_extract_i16(m, index); }
-static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi32(__m128i m, int index) { return !!_extract_i32(m, index); }
-static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi64(__m128i m, int index) { return !!_extract_i64(m, index); }
+static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi8(__m128i m, int index) { return !!_extract128_i8(m, index); }
+static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi16(__m128i m, int index) { return !!_extract128_i16(m, index); }
+static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi32(__m128i m, int index) { return !!_extract128_i32(m, index); }
+static CT_ALWAYS_FORCEINLINE bool _get_mask_bit_epi64(__m128i m, int index) { return !!_extract128_i64(m, index); }
 #endif
 
 // Helper: set element in mask
@@ -833,19 +850,19 @@ static CT_ALWAYS_FORCEINLINE __m128i _set_mask_bit_epi64(__m128i m, int index, b
 
 // get(Vec<T> v, nint_t index)
 #define TL_XMM_DEFINE_GET(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES_CHECK_INDEX(get, dtype, dtype, (VecOf(t) v, nint_t index), (v, index))
-TL_XMM_DEFINE_GET(bfloat16_t) { TL_CHECK_INDEX(index); union { bfloat16_t b; int16_t i; } u; u.i = _extract_i16(v.v, (int) index); return u.b; }
-TL_XMM_DEFINE_GET(float16_t) { TL_CHECK_INDEX(index); union { float16_t h; int16_t i; } u; u.i = _extract_i16(v.v, (int) index); return u.h; }
+TL_XMM_DEFINE_GET(bfloat16_t) { TL_CHECK_INDEX(index); union { bfloat16_t b; int16_t i; } u; u.i = _extract128_i16(v.v, (int) index); return u.b; }
+TL_XMM_DEFINE_GET(float16_t) { TL_CHECK_INDEX(index); union { float16_t h; int16_t i; } u; u.i = _extract128_i16(v.v, (int) index); return u.h; }
 TL_XMM_DEFINE_GET(float32_t) { TL_CHECK_INDEX(index); return _mm_cvtss_f32(_mm_permutevar_ps(v.v, _mm_cvtsi32_si128((int)index))); }
 // Note: weird permutevar_pd requires second-to-the-last bit.
 TL_XMM_DEFINE_GET(float64_t) { TL_CHECK_INDEX(index); return _mm_cvtsd_f64(_mm_permutevar_pd(v.v, _mm_cvtsi64_si128((int) (index << 1)))); }
-TL_XMM_DEFINE_GET(int8_t) { TL_CHECK_INDEX(index); return _extract_i8(v.v, (int) index); }
-TL_XMM_DEFINE_GET(uint8_t) { TL_CHECK_INDEX(index); return _extract_u8(v.v, (int) index); }
-TL_XMM_DEFINE_GET(int16_t) { TL_CHECK_INDEX(index); return _extract_i16(v.v, (int) index); }
-TL_XMM_DEFINE_GET(uint16_t) { TL_CHECK_INDEX(index); return _extract_u16(v.v, (int) index); }
-TL_XMM_DEFINE_GET(int32_t) { TL_CHECK_INDEX(index); return _extract_i32(v.v, (int) index); }
-TL_XMM_DEFINE_GET(uint32_t) { TL_CHECK_INDEX(index); return _extract_u32(v.v, (int) index); }
-TL_XMM_DEFINE_GET(int64_t) { TL_CHECK_INDEX(index); return _extract_i64(v.v, (int) index); }
-TL_XMM_DEFINE_GET(uint64_t) { TL_CHECK_INDEX(index); return _extract_u64(v.v, (int) index); }
+TL_XMM_DEFINE_GET(int8_t) { TL_CHECK_INDEX(index); return _extract128_i8(v.v, (int) index); }
+TL_XMM_DEFINE_GET(uint8_t) { TL_CHECK_INDEX(index); return _extract128_u8(v.v, (int) index); }
+TL_XMM_DEFINE_GET(int16_t) { TL_CHECK_INDEX(index); return _extract128_i16(v.v, (int) index); }
+TL_XMM_DEFINE_GET(uint16_t) { TL_CHECK_INDEX(index); return _extract128_u16(v.v, (int) index); }
+TL_XMM_DEFINE_GET(int32_t) { TL_CHECK_INDEX(index); return _extract128_i32(v.v, (int) index); }
+TL_XMM_DEFINE_GET(uint32_t) { TL_CHECK_INDEX(index); return _extract128_u32(v.v, (int) index); }
+TL_XMM_DEFINE_GET(int64_t) { TL_CHECK_INDEX(index); return _extract128_i64(v.v, (int) index); }
+TL_XMM_DEFINE_GET(uint64_t) { TL_CHECK_INDEX(index); return _extract128_u64(v.v, (int) index); }
 #undef TL_XMM_DEFINE_GET
 
 // get(Mask<T> m, nint_t index)
@@ -2116,7 +2133,7 @@ TL_XMM_DEFINE_ISINF(float64_t) { return _mm_and_si128(isinf(t, v.v).v, m.v); }
 /* ************************************************************************** */
 
 // Helper for 8-bit left shift (no native _mm_sll_epi8)
-static CT_ALWAYS_FORCEINLINE __m128i _bit_shl_epi8(__m128i v, int count) {
+static CT_ALWAYS_FORCEINLINE __m128i _bit_shl_epi8_128(__m128i v, int count) {
   // Expand 8-bit values to 16-bit with zero extension for proper shift behavior
   auto zero = _mm_setzero_si128();
   auto lo = _mm_unpacklo_epi8(v, zero);
@@ -2135,7 +2152,7 @@ static CT_ALWAYS_FORCEINLINE __m128i _bit_shl_epi8(__m128i v, int count) {
 }
 
 // Helper for 8-bit logical right shift (no native _mm_srl_epi8)
-static CT_ALWAYS_FORCEINLINE __m128i _bit_srl_epi8(__m128i v, int count) {
+static CT_ALWAYS_FORCEINLINE __m128i _bit_srl_epi8_128(__m128i v, int count) {
   auto zero = _mm_setzero_si128();
   auto lo = _mm_unpacklo_epi8(zero, v);  // high byte = 0, low byte = original
   auto hi = _mm_unpackhi_epi8(zero, v);
@@ -2148,7 +2165,7 @@ static CT_ALWAYS_FORCEINLINE __m128i _bit_srl_epi8(__m128i v, int count) {
 }
 
 // Helper for 8-bit arithmetic right shift (no native _mm_sra_epi8)
-static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi8(__m128i v, int count) {
+static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi8_128(__m128i v, int count) {
   // Sign extend to 16-bit, shift, then saturate pack back
   auto zero = _mm_setzero_si128();
   auto signs = _mm_cmplt_epi8(v, zero);
@@ -2161,7 +2178,7 @@ static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi8(__m128i v, int count) {
 }
 
 // Helper for 64-bit arithmetic right shift (no native _mm_sra_epi64)
-static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi64(__m128i v, int count) {
+static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi64_128(__m128i v, int count) {
   // Emulate using sign extension and 32-bit shifts
   // Get sign bits
   auto signs = _mm_srai_epi32(v, 31);
@@ -2211,8 +2228,8 @@ static CT_ALWAYS_FORCEINLINE __m128i _bit_sra_epi64(__m128i v, int count) {
 
 // bit_shl(Vec<T> v, int count) -> Vec<T>
 #define TL_XMM_DEFINE_BIT_SHL(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES(bit_shl, dtype, VecOf(t), (VecOf(t) v, int count), (v, count))
-TL_XMM_DEFINE_BIT_SHL(int8_t) { return _bit_shl_epi8(v.v, count); }
-TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _bit_shl_epi8(v.v, count); }
+TL_XMM_DEFINE_BIT_SHL(int8_t) { return _bit_shl_epi8_128(v.v, count); }
+TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _bit_shl_epi8_128(v.v, count); }
 TL_XMM_DEFINE_BIT_SHL(int16_t) { return _mm_sll_epi16(v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHL(uint16_t) { return _mm_sll_epi16(v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHL(int32_t) { return _mm_sll_epi32(v.v, _mm_cvtsi32_si128(count)); }
@@ -2224,8 +2241,8 @@ TL_XMM_DEFINE_BIT_SHL(uint64_t) { return _mm_sll_epi64(v.v, _mm_cvtsi32_si128(co
 // bit_shl(Vec<T> v, int count, Mask<T> m) -> Vec<T>
 #define TL_XMM_DEFINE_BIT_SHL(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES(bit_shl, dtype, VecOf(t), (VecOf(t) v, int count, MaskOf(t) m), (v, count, m))
 #ifdef HAS_AVX512DQ
-TL_XMM_DEFINE_BIT_SHL(int8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_shl_epi8(v.v, count)); }
-TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_shl_epi8(v.v, count)); }
+TL_XMM_DEFINE_BIT_SHL(int8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_shl_epi8_128(v.v, count)); }
+TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_shl_epi8_128(v.v, count)); }
 TL_XMM_DEFINE_BIT_SHL(int16_t) { return _mm_mask_sll_epi16(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHL(uint16_t) { return _mm_mask_sll_epi16(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHL(int32_t) { return _mm_mask_sll_epi32(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
@@ -2233,8 +2250,8 @@ TL_XMM_DEFINE_BIT_SHL(uint32_t) { return _mm_mask_sll_epi32(v.v, m.v, v.v, _mm_c
 TL_XMM_DEFINE_BIT_SHL(int64_t) { return _mm_mask_sll_epi64(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHL(uint64_t) { return _mm_mask_sll_epi64(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 #else // HAS_AVX512DQ
-TL_XMM_DEFINE_BIT_SHL(int8_t) { return _mm_blendv_epi8(v.v, _bit_shl_epi8(v.v, count), m.v); }
-TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _mm_blendv_epi8(v.v, _bit_shl_epi8(v.v, count), m.v); }
+TL_XMM_DEFINE_BIT_SHL(int8_t) { return _mm_blendv_epi8(v.v, _bit_shl_epi8_128(v.v, count), m.v); }
+TL_XMM_DEFINE_BIT_SHL(uint8_t) { return _mm_blendv_epi8(v.v, _bit_shl_epi8_128(v.v, count), m.v); }
 TL_XMM_DEFINE_BIT_SHL(int16_t) { return _mm_blendv_epi8(v.v, _mm_sll_epi16(v.v, _mm_cvtsi32_si128(count)), m.v); }
 TL_XMM_DEFINE_BIT_SHL(uint16_t) { return _mm_blendv_epi8(v.v, _mm_sll_epi16(v.v, _mm_cvtsi32_si128(count)), m.v); }
 TL_XMM_DEFINE_BIT_SHL(int32_t) { return _mm_blendv_epi8(v.v, _mm_sll_epi32(v.v, _mm_cvtsi32_si128(count)), m.v); }
@@ -2250,16 +2267,16 @@ TL_XMM_DEFINE_BIT_SHL(uint64_t) { return _mm_blendv_epi8(v.v, _mm_sll_epi64(v.v,
 // Signed: arithmetic shift (sign extension), Unsigned: logical shift (zero fill)
 #define TL_XMM_DEFINE_BIT_SHR(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES(bit_shr, dtype, VecOf(t), (VecOf(t) v, int count), (v, count))
 // Signed types - arithmetic right shift
-TL_XMM_DEFINE_BIT_SHR(int8_t) { return _bit_sra_epi8(v.v, count); }
+TL_XMM_DEFINE_BIT_SHR(int8_t) { return _bit_sra_epi8_128(v.v, count); }
 TL_XMM_DEFINE_BIT_SHR(int16_t) { return _mm_sra_epi16(v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(int32_t) { return _mm_sra_epi32(v.v, _mm_cvtsi32_si128(count)); }
 #ifdef HAS_AVX512VL
 TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_sra_epi64(v.v, _mm_cvtsi32_si128(count)); }
 #else
-TL_XMM_DEFINE_BIT_SHR(int64_t) { return _bit_sra_epi64(v.v, count); }
+TL_XMM_DEFINE_BIT_SHR(int64_t) { return _bit_sra_epi64_128(v.v, count); }
 #endif
 // Unsigned types - logical right shift
-TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _bit_srl_epi8(v.v, count); }
+TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _bit_srl_epi8_128(v.v, count); }
 TL_XMM_DEFINE_BIT_SHR(uint16_t) { return _mm_srl_epi16(v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(uint32_t) { return _mm_srl_epi32(v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(uint64_t) { return _mm_srl_epi64(v.v, _mm_cvtsi32_si128(count)); }
@@ -2269,27 +2286,27 @@ TL_XMM_DEFINE_BIT_SHR(uint64_t) { return _mm_srl_epi64(v.v, _mm_cvtsi32_si128(co
 #define TL_XMM_DEFINE_BIT_SHR(dtype) TL_XMM_DEFINE_WITH_ALL_HALVES(bit_shr, dtype, VecOf(t), (VecOf(t) v, int count, MaskOf(t) m), (v, count, m))
 #ifdef HAS_AVX512DQ
 // Signed types - arithmetic right shift
-TL_XMM_DEFINE_BIT_SHR(int8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_sra_epi8(v.v, count)); }
+TL_XMM_DEFINE_BIT_SHR(int8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_sra_epi8_128(v.v, count)); }
 TL_XMM_DEFINE_BIT_SHR(int16_t) { return _mm_mask_sra_epi16(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(int32_t) { return _mm_mask_sra_epi32(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 #ifdef HAS_AVX512VL
 TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_mask_sra_epi64(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 #else
-TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_sra_epi64(v.v, count)); }
+TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_sra_epi64_128(v.v, count)); }
 #endif
 // Unsigned types - logical right shift
-TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_srl_epi8(v.v, count)); }
+TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _mm_mask_blend_epi8(m.v, v.v, _bit_srl_epi8_128(v.v, count)); }
 TL_XMM_DEFINE_BIT_SHR(uint16_t) { return _mm_mask_srl_epi16(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(uint32_t) { return _mm_mask_srl_epi32(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 TL_XMM_DEFINE_BIT_SHR(uint64_t) { return _mm_mask_srl_epi64(v.v, m.v, v.v, _mm_cvtsi32_si128(count)); }
 #else // HAS_AVX512DQ
 // Signed types - arithmetic right shift
-TL_XMM_DEFINE_BIT_SHR(int8_t) { return _mm_blendv_epi8(v.v, _bit_sra_epi8(v.v, count), m.v); }
+TL_XMM_DEFINE_BIT_SHR(int8_t) { return _mm_blendv_epi8(v.v, _bit_sra_epi8_128(v.v, count), m.v); }
 TL_XMM_DEFINE_BIT_SHR(int16_t) { return _mm_blendv_epi8(v.v, _mm_sra_epi16(v.v, _mm_cvtsi32_si128(count)), m.v); }
 TL_XMM_DEFINE_BIT_SHR(int32_t) { return _mm_blendv_epi8(v.v, _mm_sra_epi32(v.v, _mm_cvtsi32_si128(count)), m.v); }
-TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_blendv_epi8(v.v, _bit_sra_epi64(v.v, count), m.v); }
+TL_XMM_DEFINE_BIT_SHR(int64_t) { return _mm_blendv_epi8(v.v, _bit_sra_epi64_128(v.v, count), m.v); }
 // Unsigned types - logical right shift
-TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _mm_blendv_epi8(v.v, _bit_srl_epi8(v.v, count), m.v); }
+TL_XMM_DEFINE_BIT_SHR(uint8_t) { return _mm_blendv_epi8(v.v, _bit_srl_epi8_128(v.v, count), m.v); }
 TL_XMM_DEFINE_BIT_SHR(uint16_t) { return _mm_blendv_epi8(v.v, _mm_srl_epi16(v.v, _mm_cvtsi32_si128(count)), m.v); }
 TL_XMM_DEFINE_BIT_SHR(uint32_t) { return _mm_blendv_epi8(v.v, _mm_srl_epi32(v.v, _mm_cvtsi32_si128(count)), m.v); }
 TL_XMM_DEFINE_BIT_SHR(uint64_t) { return _mm_blendv_epi8(v.v, _mm_srl_epi64(v.v, _mm_cvtsi32_si128(count)), m.v); }
@@ -2307,6 +2324,7 @@ TL_XMM_DEFINE_BIT_SHR(uint64_t) { return _mm_blendv_epi8(v.v, _mm_srl_epi64(v.v,
 #undef TL_CHECK_COUNT
 #undef TL_CHECK_INDEX
 #undef TL_CHECK_ALIGN
+#undef X
 } // namespace word
 } // namespace ct::tl::vec
 //@formatter:on

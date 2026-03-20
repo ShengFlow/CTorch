@@ -7,6 +7,7 @@
 
 #include "tl/cpu/VecBase.h"
 #include "tl/cpu/impl/VectorizedUtil.h"
+#include "tl/cpu/Capabilities.h"
 
 /**
  * @file Vec.h
@@ -53,35 +54,18 @@
  * The internal `vectorized_map_*` functions handle this transparently.
  */
 
-#if defined(ARCH_X86_FAMILY)
-#if SIMD_WIDTH == 128
-#include "tl/cpu/impl/x86_128.h"
+#if defined(CPU_CAPABILITY_AVX)
+  #include "tl/cpu/impl/x86_128.h"
+#elif defined(CPU_CAPABILITY_AVX2)
+  #include "tl/cpu/impl/x86_256.h"
+#elif defined(CPU_CAPABILITY_AVX512)
+  #include "tl/cpu/impl/x86_512.h"
+#elif defined(CPU_CAPABILITY_NEON)
+  #include "tl/cpu/impl/arm_neon.h"
+#elif defined(CPU_CAPABILITY_SVE)
+  #include "tl/cpu/impl/arm_sve.h"
 #endif
-#if SIMD_WIDTH == 256
-#include "tl/cpu/impl/x86_128.h"
-//    #include "tl/cpu/impl/x86_256.h"  // TODO implement it
-#endif
-#if SIMD_WIDTH == 512
-#include "tl/cpu/impl/x86_128.h"
-//    #include "tl/cpu/impl/x86_256.h"
-//    #include "tl/cpu/impl/x86_512.h"
-#endif
-#if SIMD_WIDTH != 128 && SIMD_WIDTH != 256 && SIMD_WIDTH != 512
-#warning "Unsupported SIMD width, falling back to scalar implementation."
-#endif
-#elif defined(ARCH_ARM_FAMILY)
-// TODO untested
-#if SIMD_WIDTH == 128
-#include "tl/cpu/impl/arm_neon.h"
-#endif
-#if SSIMD_WIDTH == (-1)
-#include "tl/cpu/impl/arm_neon.h"
-#include "tl/cpu/impl/arm_sve.h"
-#endif
-#else
-#warning "Unrecognized architecture, falling back to scalar implementation."
-#endif
-// Always include scalar impl for fallback option
+// Always include scalar impl as fallback option
 #include "tl/cpu/impl/Scalar.h"
 
 namespace ct::tl::vec {

@@ -10,12 +10,6 @@
 
 // Force Scalar implementation
 #include "Features.h"
-
-#undef ARCH_X86_FAMILY
-#undef ARCH_ARM_FAMILY
-#undef SIMD_WIDTH
-#define SIMD_WIDTH 0
-
 #include "tl/cpu/Vec.h"
 
 using namespace ct;

@@ -103,25 +103,26 @@ target_link_libraries(tl-VecTest PRIVATE CTorch gtest gtest_main)
 gtest_discover_tests(tl-VecTest)
 
 # tl-VecBaseTest
-add_executable(tl-VecBaseTest src/tests/tl/vec/VecBaseTest.cpp)
-target_link_libraries(tl-VecBaseTest PRIVATE CTorch gtest gtest_main)
-gtest_discover_tests(tl-VecBaseTest)
+add_x86_multiarch_executable(tl-VecBaseTest
+        FILES src/tests/tl/vec/VecBaseTest.cpp
+        ARCH x86-64
+)
 
 # tl-VecScalarTest
-add_executable(tl-VecScalarTest src/tests/tl/vec/VecScalarTest.cpp)
-target_compile_options(tl-VecScalarTest PRIVATE -O3)
-target_link_libraries(tl-VecScalarTest PRIVATE CTorch gtest gtest_main)
-gtest_discover_tests(tl-VecScalarTest)
-
-# tl-X86_128Test
-add_x86_multiarch_executable(tl-X86_128LoadStoreTest
-        FILES src/tests/tl/vec/X86_128LoadStoreTest.cpp
-        ARCH core-avx-i core-avx2 native
+add_x86_multiarch_executable(tl-VecScalarTest
+        FILES src/tests/tl/vec/VecScalarTest.cpp
+        ARCH x86-64
 )
-# tl-X86_128ArithTest
-add_x86_multiarch_executable(tl-X86_128ArithTest
-        FILES src/tests/tl/vec/X86_128ArithTest.cpp
-        ARCH core-avx-i core-avx2 native
+
+# tl-VecLoadStoreTest
+add_x86_multiarch_executable(tl-VecLoadStoreTest
+        FILES src/tests/tl/vec/VecLoadStoreTest.cpp
+        ARCH x86-64 corei7-avx core-avx2 native
+)
+# tl-VecArithTest
+add_x86_multiarch_executable(tl-VecArithTest
+        FILES src/tests/tl/vec/VecArithTest.cpp
+        ARCH x86-64 corei7-avx core-avx2 native
 )
 
 target_link_libraries(PerformanceTest PRIVATE CTorch)
