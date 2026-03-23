@@ -14,6 +14,10 @@
   #error "Not x86 platform"
 #endif
 
+#ifndef HAS_CPU_CAPABILITY_AVX
+  #error "AVX instruction set required"
+#endif
+
 #include <immintrin.h>
 #include "tl/cpu/impl/x86_Types.h"
 

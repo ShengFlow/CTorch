@@ -15,24 +15,8 @@
 #error "Not x86 platform"
 #endif
 
-#ifndef HAS_AVX512F
-#error "AVX512F instruction set required"
-#endif
-
-#ifndef HAS_AVX512VL
-#error "AVX512VL instruction set required"
-#endif
-
-#ifndef HAS_AVX512DQ
-#error "AVX512DQ instruction set required"
-#endif
-
-#ifndef HAS_AVX512BW
-#error "AVX512BW instruction set required"
-#endif
-
-#ifndef HAS_AVX512CD
-#error "AVX512CD instruction set required"
+#ifndef HAS_CPU_CAPABILITY_AVX512
+  #error "AVX512F, AVX512CD, AVX512BW, AVX512DQ instruction set required"
 #endif
 
 #include <immintrin.h>

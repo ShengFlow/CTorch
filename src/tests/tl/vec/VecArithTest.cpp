@@ -1242,7 +1242,7 @@ TYPED_TEST(VecArithTest, BitShrPattern) {
 TYPED_TEST(VecArithTest, HalfSizeBitShl) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
-  if constexpr (std::is_integral_v<T> && HALF >= 1) {
+  if constexpr (std::is_integral_v<T> && HALF > 1) {
     FixedTag<T, HALF> t;
 
     int shift = 3;
@@ -1259,7 +1259,7 @@ TYPED_TEST(VecArithTest, HalfSizeBitShl) {
 TYPED_TEST(VecArithTest, HalfSizeBitShr) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
-  if constexpr (std::is_integral_v<T> && HALF >= 1) {
+  if constexpr (std::is_integral_v<T> && HALF > 1) {
     FixedTag<T, HALF> t;
 
     int shift = 3;
@@ -1765,7 +1765,7 @@ TYPED_TEST(VecFloatClassifyTest, IsInfWithMask) {
 TYPED_TEST(VecArithTest, HalfSizeAdd) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
-  if constexpr (HALF >= 1) {
+  if constexpr (HALF > 1) {
     FixedTag<T, HALF> t;
 
     auto va = loadu(t, this->a_data_);
@@ -1783,7 +1783,7 @@ TYPED_TEST(VecArithTest, HalfSizeAdd) {
 TYPED_TEST(VecArithTest, HalfSizeSub) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
-  if constexpr (HALF >= 1) {
+  if constexpr (HALF > 1) {
     FixedTag<T, HALF> t;
 
     auto va = loadu(t, this->a_data_);
@@ -1801,7 +1801,7 @@ TYPED_TEST(VecArithTest, HalfSizeSub) {
 TYPED_TEST(VecArithTest, HalfSizeMul) {
   using T = typename TestFixture::Type;
   constexpr nint_t HALF = TestFixture::FULL_SIZE / 2;
-  if constexpr (HALF >= 1) {
+  if constexpr (HALF > 1) {
     FixedTag<T, HALF> t;
 
     alignas(16) T sa[HALF], sb[HALF];

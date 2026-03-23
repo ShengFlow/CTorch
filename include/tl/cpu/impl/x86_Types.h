@@ -157,7 +157,7 @@ template <> struct VecDefs<dtype, (S) / sizeof(dtype)> : public ScalarVecDefs<dt
   using MaskType = x86::MaskType<dtype, (S) / sizeof(dtype)>; \
   using WordDefs = VecDefs; \
 }; \
-template <> struct Vec2Tag<x86::RegType<dtype, (S) / sizeof(dtype)>> { using Type = Tag<dtype, (S) / sizeof(dtype)>; } \
+template <> struct Vec2TagDefs<x86::RegType<dtype, (S) / sizeof(dtype)>> { using Type = Tag<dtype, (S) / sizeof(dtype)>; } \
 
 #if defined(CPU_CAPABILITY_AVX512)
   #define TL_DEFINE_VEC_ALL(dtype) \
@@ -188,21 +188,22 @@ TL_DEFINE_VEC_ALL(uint64_t);
 #undef TL_DEFINE_VEC_ALL
 
 
-#define _TL_XMM_APPLY_2(FN, ...) FN(2, __VA_ARGS__);
+#define _TL_XMM_APPLY_1(FN, ...) FN(1, __VA_ARGS__);
+#define _TL_XMM_APPLY_2(FN, ...) FN(2, __VA_ARGS__); _TL_XMM_APPLY_1(FN, __VA_ARGS__)
 #define _TL_XMM_APPLY_4(FN, ...) FN(4, __VA_ARGS__); _TL_XMM_APPLY_2(FN, __VA_ARGS__)
 #define _TL_XMM_APPLY_8(FN, ...) FN(8, __VA_ARGS__); _TL_XMM_APPLY_4(FN, __VA_ARGS__)
 #define _TL_XMM_APPLY_bfloat16_t _TL_XMM_APPLY_4
 #define _TL_XMM_APPLY_float16_t _TL_XMM_APPLY_4
 #define _TL_XMM_APPLY_float32_t _TL_XMM_APPLY_2
-#define _TL_XMM_APPLY_float64_t(...)
+#define _TL_XMM_APPLY_float64_t _TL_XMM_APPLY_1
 #define _TL_XMM_APPLY_int8_t _TL_XMM_APPLY_8
 #define _TL_XMM_APPLY_uint8_t _TL_XMM_APPLY_8
 #define _TL_XMM_APPLY_int16_t _TL_XMM_APPLY_4
 #define _TL_XMM_APPLY_uint16_t _TL_XMM_APPLY_4
 #define _TL_XMM_APPLY_int32_t _TL_XMM_APPLY_2
 #define _TL_XMM_APPLY_uint32_t _TL_XMM_APPLY_2
-#define _TL_XMM_APPLY_int64_t(...)
-#define _TL_XMM_APPLY_uint64_t(...)
+#define _TL_XMM_APPLY_int64_t _TL_XMM_APPLY_1
+#define _TL_XMM_APPLY_uint64_t _TL_XMM_APPLY_1
 #define TL_XMM_APPLY_TO_ALL_HALVES(dtype, FN, ...) _TL_XMM_APPLY_##dtype(FN, __VA_ARGS__)
 
 
@@ -229,12 +230,15 @@ template <> struct VecDefs<dtype, (N)> : public VecDefs<dtype, 2 * (N)> { \
 TL_XMM_APPLY_TO_ALL_HALVES(bfloat16_t, TL_XMM_DEFINE_VEC_HALF, bfloat16_t)
 TL_XMM_APPLY_TO_ALL_HALVES(float16_t, TL_XMM_DEFINE_VEC_HALF, float16_t)
 TL_XMM_APPLY_TO_ALL_HALVES(float32_t, TL_XMM_DEFINE_VEC_HALF, float32_t)
+TL_XMM_APPLY_TO_ALL_HALVES(float64_t, TL_XMM_DEFINE_VEC_HALF, float64_t)
 TL_XMM_APPLY_TO_ALL_HALVES(int8_t, TL_XMM_DEFINE_VEC_HALF, int8_t)
 TL_XMM_APPLY_TO_ALL_HALVES(uint8_t, TL_XMM_DEFINE_VEC_HALF, uint8_t)
 TL_XMM_APPLY_TO_ALL_HALVES(int16_t, TL_XMM_DEFINE_VEC_HALF, int16_t)
 TL_XMM_APPLY_TO_ALL_HALVES(uint16_t, TL_XMM_DEFINE_VEC_HALF, uint16_t)
 TL_XMM_APPLY_TO_ALL_HALVES(int32_t, TL_XMM_DEFINE_VEC_HALF, int32_t)
 TL_XMM_APPLY_TO_ALL_HALVES(uint32_t, TL_XMM_DEFINE_VEC_HALF, uint32_t)
+TL_XMM_APPLY_TO_ALL_HALVES(int64_t, TL_XMM_DEFINE_VEC_HALF, int64_t)
+TL_XMM_APPLY_TO_ALL_HALVES(uint64_t, TL_XMM_DEFINE_VEC_HALF, uint64_t)
 #undef TL_XMM_DEFINE_VEC_HALF
 
 /**

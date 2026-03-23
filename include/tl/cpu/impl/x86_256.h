@@ -15,8 +15,8 @@
 #error "Not x86 platform"
 #endif
 
-#ifndef HAS_AVX2
-#error "AVX2 instruction set required"
+#ifndef HAS_CPU_CAPABILITY_AVX2
+  #error "AVX2 instruction set required"
 #endif
 
 #include <immintrin.h>

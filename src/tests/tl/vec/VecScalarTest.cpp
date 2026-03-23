@@ -8,9 +8,9 @@
 #include <cstring>
 #include <memory>
 
-// Force Scalar implementation
 #include "Features.h"
 #include "tl/cpu/Vec.h"
+#include "tl/cpu/VecConverts.h"
 
 using namespace ct;
 using namespace ct::tl::vec;

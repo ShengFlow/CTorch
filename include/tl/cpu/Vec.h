@@ -61,9 +61,9 @@
 #elif defined(CPU_CAPABILITY_AVX512)
   #include "tl/cpu/impl/x86_512.h"
 #elif defined(CPU_CAPABILITY_NEON)
-  #include "tl/cpu/impl/arm_neon.h"
+  #include "tl/cpu/impl/ARM_NEON.h"
 #elif defined(CPU_CAPABILITY_SVE)
-  #include "tl/cpu/impl/arm_sve.h"
+  #include "tl/cpu/impl/ARM_SVE.h"
 #endif
 // Always include scalar impl as fallback option
 #include "tl/cpu/impl/Scalar.h"
@@ -304,6 +304,8 @@ auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
       t, [=] <nint_t I>(auto tt) { return word::mwhilege(tt, a + I * ws, b); }
   );
 }
+
+
 
 /* ************************************************************************** */
 //                          Consecutive load & store                          //
@@ -662,6 +664,7 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 }
 
 
+
 /* ************************************************************************** */
 //                         Indexed gather & scatter                           //
 /* ************************************************************************** */
@@ -877,6 +880,8 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskO
   );
 }
 
+
+
 /* ************************************************************************** */
 //                             Get / set element                              //
 /* ************************************************************************** */
@@ -974,14 +979,17 @@ auto set(Tag<T, N, P> t, MaskOf(t) m, nint_t index, bool x) -> MaskOf(t) {
   return set_word_mask(t, m, ord, word::set(word_tag(t), word, off, x));
 }
 
+
+
 /* ************************************************************************** */
 //                       Basic arithmetic operations                          //
 /* ************************************************************************** */
+
 #define _CT_VECTORIZED_BINARY_V(name) \
 template <typename TVec> CT_ALWAYS_FORCEINLINE \
 auto name(TVec a, TVec b) -> TVec { \
   using namespace details; \
-  auto t = tag_from_vec(a); \
+  auto t = vec_to_tag(a); \
   return vectorized_map_v( \
       t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
       ShardVec(t, a), ShardVec(t, b) \
@@ -990,7 +998,7 @@ auto name(TVec a, TVec b) -> TVec { \
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
 auto name(TVec a, TVec b, TMask m) -> TVec { \
   using namespace details; \
-  auto t = tag_from_vec(a); \
+  auto t = vec_to_tag(a); \
   return vectorized_map_v( \
       t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
       ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
@@ -1015,7 +1023,7 @@ _CT_VECTORIZED_BINARY_V(bit_andnot) // not(a) and (b)
 template <typename TVec> CT_ALWAYS_FORCEINLINE
 auto bit_shl(TVec v, int count) -> TVec {
   using namespace details;
-  auto t = tag_from_vec(v);
+  auto t = vec_to_tag(v);
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::bit_shl(tt, vv, count); },
       ShardVec(t, v)
@@ -1025,7 +1033,7 @@ auto bit_shl(TVec v, int count) -> TVec {
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
 auto bit_shl(TVec v, int count, TMask m) -> TVec {
   using namespace details;
-  auto t = tag_from_vec(v);
+  auto t = vec_to_tag(v);
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shl(tt, vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
@@ -1035,7 +1043,7 @@ auto bit_shl(TVec v, int count, TMask m) -> TVec {
 template <typename TVec> CT_ALWAYS_FORCEINLINE
 auto bit_shr(TVec v, int count) -> TVec {
   using namespace details;
-  auto t = tag_from_vec(v);
+  auto t = vec_to_tag(v);
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::bit_shr(tt, vv, count); },
       ShardVec(t, v)
@@ -1045,7 +1053,7 @@ auto bit_shr(TVec v, int count) -> TVec {
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
 auto bit_shr(TVec v, int count, TMask m) -> TVec {
   using namespace details;
-  auto t = tag_from_vec(v);
+  auto t = vec_to_tag(v);
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shr(tt, vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
@@ -1057,7 +1065,7 @@ auto bit_shr(TVec v, int count, TMask m) -> TVec {
 template <typename TVec> CT_ALWAYS_FORCEINLINE \
 auto name(TVec v) -> TVec { \
   using namespace details; \
-  auto t = tag_from_vec(v); \
+  auto t = vec_to_tag(v); \
   return vectorized_map_v( \
       t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
       ShardVec(t, v) \
@@ -1066,7 +1074,7 @@ auto name(TVec v) -> TVec { \
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
 auto name(TVec v, TMask m, TVec default_v) -> TVec { \
   using namespace details; \
-  auto t = tag_from_vec(v); \
+  auto t = vec_to_tag(v); \
   return vectorized_map_v( \
       t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::name(tt, vv, mm, dd); }, \
       ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v) \
@@ -1087,7 +1095,7 @@ _CT_VECTORIZED_UNARY_V(rsqrt) // reciprocal of sqrt(x)
 template <typename TVec> CT_ALWAYS_FORCEINLINE \
 auto name(TVec a, TVec b) -> auto { \
   using namespace details; \
-  auto t = tag_from_vec(a); \
+  auto t = vec_to_tag(a); \
   return vectorized_map_m( \
       t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
       ShardVec(t, a), ShardVec(t, b) \
@@ -1096,7 +1104,7 @@ auto name(TVec a, TVec b) -> auto { \
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
 auto name(TVec a, TVec b, TMask m) -> TMask { \
   using namespace details; \
-  auto t = tag_from_vec(a); \
+  auto t = vec_to_tag(a); \
   return vectorized_map_m( \
       t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
       ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
@@ -1116,7 +1124,7 @@ _CT_VECTORIZED_BINARY_M(cmpge) // greater than or equals
 template <typename TVec> CT_ALWAYS_FORCEINLINE \
 auto name(TVec v) -> auto { \
   using namespace details; \
-  auto t = tag_from_vec(v); \
+  auto t = vec_to_tag(v); \
   return vectorized_map_m( \
       t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
       ShardVec(t, v) \
@@ -1125,7 +1133,7 @@ auto name(TVec v) -> auto { \
 template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
 auto name(TVec v, TMask m) -> TMask { \
   using namespace details; \
-  auto t = tag_from_vec(v); \
+  auto t = vec_to_tag(v); \
   return vectorized_map_m( \
       t, [=](auto tt, auto&& vv, auto&& mm) { return word::name(tt, vv, mm); }, \
       ShardVec(t, v), ShardMask(t, m) \
@@ -1137,6 +1145,13 @@ _CT_VECTORIZED_UNARY_M(isposinf)
 _CT_VECTORIZED_UNARY_M(isneginf)
 _CT_VECTORIZED_UNARY_M(isinf)
 #undef _CT_VECTORIZED_UNARY_M
+
+
+
+/* ************************************************************************** */
+//                          Permutation & shuffle                             //
+/* ************************************************************************** */
+
 } // namespace ct::tl::vec
 
 #endif //CTORCH_VEC_H

@@ -133,6 +133,7 @@ struct Tag {
   static constexpr nint_t AdjustedN = details::adjusted_size<N_, POW2_>();
   static constexpr int POW2 = POW2_;
   static constexpr bool is_runtime_size = N_ < 0;
+  static constexpr nint_t Bytes = is_runtime_size ? (-1) : AdjustedN * sizeof(T);
 
   static_assert(N_ < 0 || ((N_ & (N_ - 1)) == 0 && N_ != 0), "Not 2^x");
   static_assert(is_element_type<T>, "Unsupported element type");
@@ -982,26 +983,92 @@ static constexpr auto word_tag(Tag<T, N, P> t) {
  * scenario where a precise number of elements is required (load & store).
  */
 template <typename TVec, typename = void/* SFINAE*/>
-struct Vec2Tag {
+struct Vec2TagDefs {
   using Type = void;
 };
 
 template <typename T, nint_t N>
-struct Vec2Tag<ScalarArray<T, N>, std::enable_if_t<!is_element_type<T> && sizeof(typename Vec2Tag<T>::Type) != -1>> {
+struct Vec2TagDefs<ScalarArray<T, N>, std::enable_if_t<!is_element_type<T> && sizeof(typename Vec2TagDefs<T>::Type) != -1>> {
   static_assert((N & (N - 1)) == 0, "N not power of 2");
-  using Type = Tag<typename Vec2Tag<T>::Type::Type, Vec2Tag<T>::Type::N, (Vec2Tag<T>::Type::POW2 + log2_floor(N))>;
+  using Type = Tag<typename Vec2TagDefs<T>::Type::Type, Vec2TagDefs<T>::Type::N, (Vec2TagDefs<T>::Type::POW2 + log2_floor(N))>;
 };
 
 template <typename T, nint_t N>
-struct Vec2Tag<ScalarArray<T, N>, std::enable_if_t<is_element_type<T>>> {
+struct Vec2TagDefs<ScalarArray<T, N>, std::enable_if_t<is_element_type<T>>> {
   using Type = Tag<T, N, 0>;
 };
 
 template <typename TVec>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static constexpr auto tag_from_vec(TVec v) {
-  return typename Vec2Tag<TVec>::Type();
+using Vec2Tag = typename Vec2TagDefs<TVec>::Type;
+
+template <typename TTag>
+using TypeOf = typename TTag::Type;
+
+namespace details {
+constexpr nint_t size_shift(nuint_t from_size, nuint_t to_size) {
+  if (from_size > to_size) {
+    return -log2_floor(from_size / to_size);
+  } else {
+    return log2_floor(to_size / from_size);
+  }
 }
+} // namespace details
+
+template <typename TFrom, typename TTo>
+static constexpr nint_t SizeShift = details::size_shift(sizeof(TFrom), sizeof(TTo));
+
+/**
+ * Keep number of elements unchanged but with a new dtype.
+ * The power factor might change in scalable vector.
+ */
+template <typename TNew, typename TTag>
+using Rebind = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2 + SizeShift<TypeOf<TTag>, TNew>>, Tag<TNew, TTag::N, TTag::POW2>>;
+
+/**
+ * Keep number of bytes (vector width) unchanged but with a new dtype.
+ * The power factor might change in non-scalable vector.
+ */
+template <typename TNew, typename TTag>
+using ViewAs = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2>, Tag<TNew, TTag::N, TTag::POW2 + SizeShift<TypeOf<TTag>, TNew>>>;
+
+template <typename TVec>
+CT_ALWAYS_FORCEINLINE CT_PURE
+static constexpr auto vec_to_tag(TVec v) {
+  return Vec2Tag<TVec>();
+}
+
+#define TL_IF(...) std::enable_if_t<(__VA_ARGS__), bool> = true
+#define TL_IF_TAG_N_EQ(tag_type, size) TL_IF(!tag_type::is_runtime_size && tag_type::N == (size))
+#define TL_IF_TAG_N_LE(tag_type, size) TL_IF(!tag_type::is_runtime_size && tag_type::N <= (size))
+#define TL_IF_TAG_DTYPE(tag_type, dtype) TL_IF(std::is_same_v<typename tag_type::Type, dtype>)
+#define TL_IF_TAG_IS_INT(tag_type) TL_IF(std::is_integral_v<typename tag_type::Type>)
+#define TL_IF_TAG_IS_FLOAT(tag_type) TL_IF(std::is_floating_point_v<typename tag_type::Type>)
+
+
+// Forward declaration for vector conversion API
+template <typename TOut, typename TIn, nint_t NOut>
+struct VecConvert {
+  template <typename TTag>
+  Vec<Tag < TOut, NOut>> convert(TTag t, Vec<TTag> v) const;
+};
+
+template <typename T, nint_t NOut, int POut, nint_t NIn, int PIn>
+struct VecReshape {
+  static_assert(details::adjusted_size<NOut, POut>() == details::adjusted_size<NOut, POut>());
+  Vec<Tag<T, NOut, POut>> reshape(Tag<T, NIn, PIn> t, Vec<Tag<T, NIn, PIn>> v) const;
+};
+
+//template <typename TOut, typename TIn, nint_t NOut>
+//struct VecBitCast {
+//  template <typename TVec>
+//  Vec<Tag < TOut, NOut>> cast(TVec v) const;
+//};
+//
+//template <typename TOut, typename TIn, nint_t NOut>
+//struct VecZeroExtendBitCast {
+//  template <typename TVec>
+//  Vec<Tag < TOut, NOut>> cast(TVec v) const;
+//};
 
 } // namespace ct::tl::vec
 

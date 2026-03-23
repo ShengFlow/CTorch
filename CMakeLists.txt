@@ -118,6 +118,11 @@ add_multiarch_executable(tl-VecArithTest
         FILES src/tests/tl/vec/VecArithTest.cpp
         ARCH x86-64 corei7-avx core-avx2 native
 )
+# tl-VecConversionTest
+add_multiarch_executable(tl-VecConversionTest
+        FILES src/tests/tl/vec/VecConversionTest.cpp
+        ARCH x86-64 corei7-avx core-avx2 native
+)
 
 target_link_libraries(PerformanceTest PRIVATE CTorch)
 target_link_libraries(StdTest PRIVATE CTorch)
