@@ -9,6 +9,14 @@
 
 #include "CoreDefs.h"
 
+/**
+ * Alias macro defining an constraint for a function, used as template parameter.
+ * Used like:
+ *   template <typename T, TL_IF(sizeof(T) == 4)>
+ *   void something(T t, int a) { ... }
+ */
+#define TL_IF(...) std::enable_if_t<(__VA_ARGS__), bool> = true
+
 namespace ct::tl {
 namespace details {
 

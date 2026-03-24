@@ -71,6 +71,10 @@ add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_load
 # Ignore warnings
 add_compile_options(-Wno-ignored-attributes)
 
+# Discover all GDB pretty-printer Python modules in scripts/
+# (evaluated at configure time — re-run cmake if you add new .py files)
+file(GLOB _CT_GDB_SCRIPTS "${CMAKE_SOURCE_DIR}/scripts/*.py")
+
 function(add_multiarch_executable NAME)
     set(options "")
     set(oneValueArgs "")
@@ -88,6 +92,33 @@ function(add_multiarch_executable NAME)
         target_compile_options(${TARGET_NAME} PRIVATE -march=${ARCH})
         target_link_libraries(${TARGET_NAME} PRIVATE CTorch gtest gtest_main)
         gtest_discover_tests(${TARGET_NAME})
+
+        # --- GDB pretty-printer auto-load: generate <target>-gdb.py ---
+        list(LENGTH _CT_GDB_SCRIPTS _CT_NUM_SCRIPTS)
+        if(_CT_NUM_SCRIPTS GREATER 0)
+            set(_CT_IMPORTS "")
+            foreach(_CT_MOD ${_CT_GDB_SCRIPTS})
+                get_filename_component(_CT_MNAME "${_CT_MOD}" NAME_WE)
+                string(APPEND _CT_IMPORTS "try:\n    import ${_CT_MNAME}\nexcept Exception:\n    pass\n")
+            endforeach()
+
+            # Write a loader script that imports every module in scripts/
+            set(_CT_LOADER "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}-gdb.py")
+            file(WRITE "${_CT_LOADER}"
+"import sys
+sys.path.insert(0, '${CMAKE_SOURCE_DIR}/scripts')
+
+${_CT_IMPORTS}")
+
+            # Copy the loader next to the executable after each build
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_CT_LOADER}"
+                    "$<TARGET_FILE_DIR:${TARGET_NAME}>/${TARGET_NAME}-gdb.py"
+                COMMENT "Installing GDB pretty-printer for ${TARGET_NAME}"
+            )
+        endif()
+
     endforeach()
 endfunction()
 
@@ -121,6 +152,11 @@ add_multiarch_executable(tl-VecArithTest
 # tl-VecConversionTest
 add_multiarch_executable(tl-VecConversionTest
         FILES src/tests/tl/vec/VecConversionTest.cpp
+        ARCH x86-64 corei7-avx core-avx2 native
+)
+# tl-VecShuffleTest
+add_multiarch_executable(tl-VecShuffleTest
+        FILES src/tests/tl/vec/VecShuffleTest.cpp
         ARCH x86-64 corei7-avx core-avx2 native
 )
 

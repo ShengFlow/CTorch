@@ -7,6 +7,7 @@
 
 #include "tl/cpu/Vec.h"
 #include "tl/util/ScalarConvert.h"
+#include "tl/util/TypeTraits.h"
 
 namespace ct::tl::vec {
 namespace word {

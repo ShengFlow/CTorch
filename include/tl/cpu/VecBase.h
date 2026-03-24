@@ -1037,39 +1037,12 @@ static constexpr auto vec_to_tag(TVec v) {
   return Vec2Tag<TVec>();
 }
 
-#define TL_IF(...) std::enable_if_t<(__VA_ARGS__), bool> = true
-#define TL_IF_TAG_N_EQ(tag_type, size) TL_IF(!tag_type::is_runtime_size && tag_type::N == (size))
-#define TL_IF_TAG_N_LE(tag_type, size) TL_IF(!tag_type::is_runtime_size && tag_type::N <= (size))
-#define TL_IF_TAG_DTYPE(tag_type, dtype) TL_IF(std::is_same_v<typename tag_type::Type, dtype>)
-#define TL_IF_TAG_IS_INT(tag_type) TL_IF(std::is_integral_v<typename tag_type::Type>)
-#define TL_IF_TAG_IS_FLOAT(tag_type) TL_IF(std::is_floating_point_v<typename tag_type::Type>)
-
-
 // Forward declaration for vector conversion API
-template <typename TOut, typename TIn, nint_t NOut>
-struct VecConvert {
-  template <typename TTag>
-  Vec<Tag < TOut, NOut>> convert(TTag t, Vec<TTag> v) const;
-};
-
 template <typename T, nint_t NOut, int POut, nint_t NIn, int PIn>
 struct VecReshape {
   static_assert(details::adjusted_size<NOut, POut>() == details::adjusted_size<NOut, POut>());
   Vec<Tag<T, NOut, POut>> reshape(Tag<T, NIn, PIn> t, Vec<Tag<T, NIn, PIn>> v) const;
 };
-
-//template <typename TOut, typename TIn, nint_t NOut>
-//struct VecBitCast {
-//  template <typename TVec>
-//  Vec<Tag < TOut, NOut>> cast(TVec v) const;
-//};
-//
-//template <typename TOut, typename TIn, nint_t NOut>
-//struct VecZeroExtendBitCast {
-//  template <typename TVec>
-//  Vec<Tag < TOut, NOut>> cast(TVec v) const;
-//};
-
 } // namespace ct::tl::vec
 
 #endif //CTORCH_VECBASE_H

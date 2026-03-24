@@ -20,6 +20,106 @@
 
 namespace ct::tl::vec {
 /* ************************************************************************** */
+//                           Shuffle & Permutation                            //
+/* ************************************************************************** */
+/**
+ * 使用固定下标Is对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。下标数量与块内元素数量对应。
+ * 即float32_t下块内4个元素，则下标长度应为4，下标应属于范围[0, 3].
+ * 在此函数下所有的块均会应用相同的下标进行重排。
+ * 小于一个字长(word_size)的向量会按照一个字长的向量进行处理，因此如果字长为16，Vec<Tag<float32_t, 2>>也会要求有4个下标。
+ * 重排结果:
+ *      result[j] = v[Is[j % M] + floor(j / M)]
+ *      where j = 0...N;
+ *            M = 16 / sizeof(element type of V).
+ */
+template <int... Is, typename V>
+V local_shuf(V v) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::local_shuf<Is...>(vv); },
+      ShardVec(t, v)
+  );
+}
+
+/**
+ * 使用i中对应位置的下标对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。下标数量与块内元素数量对应。
+ * 即下标向量i元素类型应为与v元素类型宽度相同的有符号整数，且i的位宽与v完全相同。
+ * 在此函数下不同的块内应用的下标可以不同。
+ * 重排结果：
+ *      result[j] = v[i[j] + floor(j / M)]
+ *      where j = 0...N;
+ *            M = 16 / sizeof(element type of V);
+ *            i[j] in [0, M), 否则result[j]未定义.
+ */
+template <typename V, typename Vi>
+V local_shuf(V v, Vi i) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  auto ti = vec_to_tag(i);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& ii) { return word::local_shuf(vv, ii); },
+      ShardVec(t, v), ShardVec(ti, i)
+  );
+}
+
+/**
+ * 使用运行时下标is对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。要求和个规则与使用固定下标的版本完全相同。
+ */
+template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
+V local_shuf(V v, Is... is) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::local_shuf(vv, is...); },
+      ShardVec(t, v)
+  );
+}
+
+//template <int... Is, typename V>
+//V block_shuf(V v) {
+//  using namespace details;
+//  auto t = vec_to_tag(v);
+//  return vectorized_map_v(
+//      t, [=](auto tt, auto&& vv) { return word::block_shuf<Is...>(vv); },
+//      ShardVec(t, v)
+//  );
+//}
+//
+//template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
+//V block_shuf(V v, Is... is) {
+//  using namespace details;
+//  auto t = vec_to_tag(v);
+//  return vectorized_map_v(
+//      t, [=](auto tt, auto&& vv) { return word::block_shuf(vv, is...); },
+//      ShardVec(t, v)
+//  );
+//}
+
+/**
+ * 使用i中对应位置的下标对v中每一个元素在字(word)内进行重排。下标数量与块内元素数量对应。
+ * 即下标向量i元素类型应为与v元素类型宽度相同的有符号整数，且i的位宽与v完全相同。
+ * 在此函数下不同的字内应用的下标可以不同（如果向量是多字的）。
+ * 重排结果：
+ *      result[j] = v[i[j]]
+ *      where j = 0...N;
+ *      i[j] in [0, N), 否则result[j]未定义.
+ * 注：x86 AVX2往上（存在多块向量）下此操作涉及块间数据传递，比块内重排慢。同时，如果没有
+ * AVX512，则此操作会更慢。而如果元素类型为int8_t/uint8_t，且没有AVX512_VBMI特性，
+ * 则即是有AVX512，此操作会慢于其他更宽的数据类型。
+ */
+template <typename V, typename Vi>
+V shuf(V v, Vi i) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  auto ti = vec_to_tag(i);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& ii) { return word::shuf(vv, ii); },
+      ShardVec(t, v), ShardVec(ti, i)
+  );
+}
+
+/* ************************************************************************** */
 //                       Data type & size conversions                         //
 /* ************************************************************************** */
 
