@@ -7,13 +7,9 @@
 //
 
 #include <gtest/gtest.h>
-#include <cstring>
 #include <cmath>
-#include <limits>
-#include <type_traits>
 
 #include "tl/cpu/Vec.h"
-#include "tl/cpu/VecConversions.h"
 
 using namespace ct;
 using namespace ct::tl;

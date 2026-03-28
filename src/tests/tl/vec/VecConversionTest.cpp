@@ -11,7 +11,7 @@
 #include <type_traits>
 
 #include "tl/cpu/Vec.h"
-#include "tl/cpu/VecConversions.h"
+#include "tl/util/ScalarConvert.h"
 
 using namespace ct;
 using namespace ct::tl;

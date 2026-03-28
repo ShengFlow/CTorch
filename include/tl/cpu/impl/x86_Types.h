@@ -91,46 +91,58 @@ struct MMMaskType {
   using Type = ScalarBitSet<ELSIZE, N>;
 };
 
-template <nint_t ELSIZE, typename T>
+template <nint_t ELSIZE, nint_t N_, typename T>
 struct RegMask : public WrapperType<T> {
+  static constexpr nint_t N = N_;
+  static constexpr nint_t ElSize = ELSIZE;
+  static constexpr nint_t Bytes = N * ElSize;
   using WrapperType<T>::WrapperType;
 };
 
+template <typename T>
+struct IsRegMask { static constexpr bool value = false; };
+
+template <nint_t ELSIZE, nint_t N_, typename T>
+struct IsRegMask<RegMask<ELSIZE, N_, T>> { static constexpr bool value = true; };
+
+template <typename T>
+static constexpr bool is_reg_mask = IsRegMask<T>::value;
+
 // Mask specialization for CPU feature AVX512DQ
 #if defined(CPU_CAPABILITY_AVX512)
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 1> { using Type = RegMask<ELSIZE, __mmask8>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 2> { using Type = RegMask<ELSIZE, __mmask8>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 4> { using Type = RegMask<ELSIZE, __mmask8>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 8> { using Type = RegMask<ELSIZE, __mmask8>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 16> { using Type = RegMask<ELSIZE, __mmask16>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 32> { using Type = RegMask<ELSIZE, __mmask32>; };
-template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 64> { using Type = RegMask<ELSIZE, __mmask64>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 1> { using Type = RegMask<ELSIZE, 1, __mmask8>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 2> { using Type = RegMask<ELSIZE, 2, __mmask8>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 4> { using Type = RegMask<ELSIZE, 4, __mmask8>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 8> { using Type = RegMask<ELSIZE, 8, __mmask8>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 16> { using Type = RegMask<ELSIZE, 16, __mmask16>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 32> { using Type = RegMask<ELSIZE, 32, __mmask32>; };
+template <nint_t ELSIZE> struct MMMaskType<ELSIZE, 64> { using Type = RegMask<ELSIZE, 64, __mmask64>; };
 #else
 #if defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_AVX)
-template <> struct MMMaskType<1, 1> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<2, 1> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<4, 1> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<8, 1> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<16, 1> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<1, 2> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<2, 2> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<4, 2> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<8, 2> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<1, 4> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<2, 4> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<4, 4> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<1, 8> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<2, 8> { using Type = RegMask<1, __m128i>; };
-template <> struct MMMaskType<1, 16> { using Type = RegMask<1, __m128i>; };
+template <> struct MMMaskType<1, 1> { using Type = RegMask<1, 1, __m128i>; };
+template <> struct MMMaskType<2, 1> { using Type = RegMask<2, 1, __m128i>; };
+template <> struct MMMaskType<4, 1> { using Type = RegMask<4, 1, __m128i>; };
+template <> struct MMMaskType<8, 1> { using Type = RegMask<8, 1, __m128i>; };
+template <> struct MMMaskType<16, 1> { using Type = RegMask<16, 1, __m128i>; };
+template <> struct MMMaskType<1, 2> { using Type = RegMask<1, 2, __m128i>; };
+template <> struct MMMaskType<2, 2> { using Type = RegMask<2, 2, __m128i>; };
+template <> struct MMMaskType<4, 2> { using Type = RegMask<4, 2, __m128i>; };
+template <> struct MMMaskType<8, 2> { using Type = RegMask<8, 2, __m128i>; };
+template <> struct MMMaskType<1, 4> { using Type = RegMask<1, 4, __m128i>; };
+template <> struct MMMaskType<2, 4> { using Type = RegMask<2, 4, __m128i>; };
+template <> struct MMMaskType<4, 4> { using Type = RegMask<4, 4, __m128i>; };
+template <> struct MMMaskType<1, 8> { using Type = RegMask<1, 8, __m128i>; };
+template <> struct MMMaskType<2, 8> { using Type = RegMask<2, 8, __m128i>; };
+template <> struct MMMaskType<1, 16> { using Type = RegMask<1, 16, __m128i>; };
 #endif // defined(CPU_CAPABILITY_AVX2) || defined(CPU_CAPABILITY_AVX)
 
 #if defined(CPU_CAPABILITY_AVX2)
-template <> struct MMMaskType<32, 1> { using Type = RegMask<1, __m256i>; };
-template <> struct MMMaskType<16, 2> { using Type = RegMask<1, __m256i>; };
-template <> struct MMMaskType<8, 4> { using Type = RegMask<1, __m256i>; };
-template <> struct MMMaskType<4, 8> { using Type = RegMask<1, __m256i>; };
-template <> struct MMMaskType<2, 16> { using Type = RegMask<1, __m256i>; };
-template <> struct MMMaskType<1, 32> { using Type = RegMask<1, __m256i>; };
+template <> struct MMMaskType<32, 1> { using Type = RegMask<32, 1, __m256i>; };
+template <> struct MMMaskType<16, 2> { using Type = RegMask<16, 2, __m256i>; };
+template <> struct MMMaskType<8, 4> { using Type = RegMask<8, 4, __m256i>; };
+template <> struct MMMaskType<4, 8> { using Type = RegMask<4, 8, __m256i>; };
+template <> struct MMMaskType<2, 16> { using Type = RegMask<2, 16, __m256i>; };
+template <> struct MMMaskType<1, 32> { using Type = RegMask<1, 32, __m256i>; };
 #endif // CPU_CAPABILITY_AVX2
 #endif // CPU_CAPABILITY_AVX512
 

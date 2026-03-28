@@ -28,7 +28,7 @@
  * which are defined in VecBase.h.
  */
 
-namespace ct::tl::vec {
+namespace ct::tl::vec::CPU_CAPABILITY {
 namespace word {
 /* ************************************************************************** */
 //                               Constructors                                 //
@@ -862,6 +862,6 @@ _CT_SCALAR_VECTORIZED_UNARY_M(isneginf, v[i] < 0 && std::isinf(v[i]))
 _CT_SCALAR_VECTORIZED_UNARY_M(isinf, std::isinf(v[i]))
 #undef _CT_SCALAR_VECTORIZED_UNARY_M
 } // namespace word
-} // namespace ct::tl::vec
+} // namespace ct::tl::vec::CPU_CAPABILITY
 
 #endif //CTORCH_SCALAR_H

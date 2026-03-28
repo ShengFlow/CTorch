@@ -42,6 +42,15 @@ static constexpr bool is_any = details::IsAnyHelper<T, TArgs...>::value;
 template <typename T, typename ... TArgs>
 static constexpr bool is_none = !is_any<T, TArgs...> || sizeof...(TArgs) == 0;
 
+template <typename T>
+static constexpr bool is_int = is_any<T, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, int64_t, uint64_t>;
+
+template <typename T>
+static constexpr bool is_small_float = is_any<T, float16_t, bfloat16_t>;
+
+template <typename T>
+static constexpr bool is_float = is_any<T, float32_t, float64_t> || is_small_float<T>;
+
 } // namespace ct::tl
 
 #endif //CTORCH_TYPETRAITS_H

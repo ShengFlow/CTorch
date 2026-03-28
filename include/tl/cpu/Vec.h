@@ -54,21 +54,23 @@
  * The internal `vectorized_map_*` functions handle this transparently.
  */
 
-#if defined(CPU_CAPABILITY_AVX)
-  #include "tl/cpu/impl/x86_128.h"
-#elif defined(CPU_CAPABILITY_AVX2)
-  #include "tl/cpu/impl/x86_256.h"
-#elif defined(CPU_CAPABILITY_AVX512)
-  #include "tl/cpu/impl/x86_512.h"
-#elif defined(CPU_CAPABILITY_NEON)
-  #include "tl/cpu/impl/ARM_NEON.h"
-#elif defined(CPU_CAPABILITY_SVE)
-  #include "tl/cpu/impl/ARM_SVE.h"
+#if defined(ARCH_X86_FAMILY)
+  #include "tl/cpu/impl/x86_Basic.h"
+  #include "tl/cpu/impl/x86_Bit.h"
+  #include "tl/cpu/impl/x86_Conversions.h"
+  #include "tl/cpu/impl/x86_LoadStore.h"
+  #include "tl/cpu/impl/x86_Arithmetic.h"
+#elif defined(ARCH_ARM_FAMILY)
+#else
+  #include "tl/cpu/impl/Scalar.h"
+  #include "tl/cpu/impl/Scalar_Conversions.h"
 #endif
-// Always include scalar impl as fallback option
-#include "tl/cpu/impl/Scalar.h"
+
+#include "tl/cpu/impl/Common.h"
 
 namespace ct::tl::vec {
+using namespace CPU_CAPABILITY;
+
 /* ************************************************************************** */
 //                               Constructors                                 //
 /* ************************************************************************** */
@@ -665,220 +667,220 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 
 
 
-/* ************************************************************************** */
-//                         Indexed gather & scatter                           //
-/* ************************************************************************** */
-
-/**
- * @brief Gather elements from memory using an index vector.
- * 
- * For each lane i, loads from p[i[i]] and returns the result.
- * This is the vectorized equivalent of:
- *   result[i] = p[index[i]]
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for gather
- * @param i Index vector (indices are signed integers of same size as T)
- * @return Gathered vector
- * 
- * @note Gather operations can be significantly slower than consecutive loads
- *       due to memory access patterns. Use consecutive loads when possible.
- * 
- * @example
- *   Tag<float32_t, 4> t;
- *   float data[100] = {...};
- *   int32_t indices[4] = {10, 20, 5, 15};
- *   auto idx = loadu(Tag<int32_t, 4>(), indices);
- *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_map_v(
-      t, [=](auto tt, T* pp, auto&& ii) { return word::gather(tt, pp, ii); },
-      StepPointer(t, p), ShardVec(it, i)
-  );
-}
-
-/**
- * @brief Gather first n elements using an index vector, with default for rest.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for gather
- * @param i Index vector
- * @param n Number of elements to gather (0 <= n <= size(t))
- * @param default_v Default values for elements beyond n
- * @return Gathered vector
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, VecOf(t) default_v) -> VecOf(t) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_map_v(
-      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
-      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
-      StepPointer(t, p), ShardVec(it, i), ShardVec(t, default_v)
-  );
-}
-
-/**
- * @brief Gather first n elements using an index vector, with scalar default.
- * 
- * Convenience overload that broadcasts a scalar default value.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for gather
- * @param i Index vector
- * @param n Number of elements to gather
- * @param default_v Scalar default value for elements beyond n
- * @return Gathered vector
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) -> VecOf(t) {
-  return gather(t, p, i, n, fill(t, default_v));
-}
-
-/**
- * @brief Masked gather from memory using an index vector.
- * 
- * For each lane i where mask[i] is true, loads from p[index[i]].
- * For masked-out lanes, takes the value from default_v[i].
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for gather
- * @param i Index vector
- * @param m Mask indicating which lanes to gather
- * @param default_v Default values for masked-out lanes
- * @return Gathered vector
- * 
- * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_map_v(
-      t, [=](auto tt, T* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
-      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, default_v)
-  );
-}
-
-/**
- * @brief Masked gather with scalar default.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for gather
- * @param i Index vector
- * @param m Mask indicating which lanes to gather
- * @param default_v Scalar default value for masked-out lanes
- * @return Gathered vector
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, T default_v) -> VecOf(t) {
-  return gather(t, p, i, m, fill(t, default_v));
-}
-
-/**
- * @brief Scatter elements to memory using an index vector.
- * 
- * For each lane i, stores v[i] to p[index[i]].
- * This is the vectorized equivalent of:
- *   p[index[i]] = v[i]
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for scatter
- * @param i Index vector
- * @param v The vector to scatter
- * 
- * @warning If indices are not unique, the result depends on execution order.
- *          Multiple writes to the same location may race.
- * 
- * @note Scatter operations can be significantly slower than consecutive stores.
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
-      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
-  );
-}
-
-/**
- * @brief Scatter first n elements to memory using an index vector.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for scatter
- * @param i Index vector
- * @param v The vector to scatter
- * @param n Number of elements to scatter (0 <= n <= size(t))
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_t n) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_foreach(
-      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
-      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv, rem); },
-      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
-  );
-}
-
-/**
- * @brief Masked scatter to memory using an index vector.
- * 
- * For each lane i where mask[i] is true, stores v[i] to p[index[i]].
- * Masked-out lanes are not written.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Base pointer for scatter
- * @param i Index vector
- * @param v The vector to scatter
- * @param m Mask indicating which lanes to scatter
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskOf(t) m) {
-  using namespace details;
-  Tag<Index<T>, N, P> it;
-  return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& ii, auto&& vv, auto&& mm) { word::scatter(tt, pp, ii, vv, mm); },
-      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v), ShardMask(t, m)
-  );
-}
+///* ************************************************************************** */
+////                         Indexed gather & scatter                           //
+///* ************************************************************************** */
+//
+///**
+// * @brief Gather elements from memory using an index vector.
+// *
+// * For each lane i, loads from p[i[i]] and returns the result.
+// * This is the vectorized equivalent of:
+// *   result[i] = p[index[i]]
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for gather
+// * @param i Index vector (indices are signed integers of same size as T)
+// * @return Gathered vector
+// *
+// * @note Gather operations can be significantly slower than consecutive loads
+// *       due to memory access patterns. Use consecutive loads when possible.
+// *
+// * @example
+// *   Tag<float32_t, 4> t;
+// *   float data[100] = {...};
+// *   int32_t indices[4] = {10, 20, 5, 15};
+// *   auto idx = loadu(Tag<int32_t, 4>(), indices);
+// *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_map_v(
+//      t, [=](auto tt, T* pp, auto&& ii) { return word::gather(tt, pp, ii); },
+//      StepPointer(t, p), ShardVec(it, i)
+//  );
+//}
+//
+///**
+// * @brief Gather first n elements using an index vector, with default for rest.
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for gather
+// * @param i Index vector
+// * @param n Number of elements to gather (0 <= n <= size(t))
+// * @param default_v Default values for elements beyond n
+// * @return Gathered vector
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_map_v(
+//      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
+//      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
+//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, default_v)
+//  );
+//}
+//
+///**
+// * @brief Gather first n elements using an index vector, with scalar default.
+// *
+// * Convenience overload that broadcasts a scalar default value.
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for gather
+// * @param i Index vector
+// * @param n Number of elements to gather
+// * @param default_v Scalar default value for elements beyond n
+// * @return Gathered vector
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) -> VecOf(t) {
+//  return gather(t, p, i, n, fill(t, default_v));
+//}
+//
+///**
+// * @brief Masked gather from memory using an index vector.
+// *
+// * For each lane i where mask[i] is true, loads from p[index[i]].
+// * For masked-out lanes, takes the value from default_v[i].
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for gather
+// * @param i Index vector
+// * @param m Mask indicating which lanes to gather
+// * @param default_v Default values for masked-out lanes
+// * @return Gathered vector
+// *
+// * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_map_v(
+//      t, [=](auto tt, T* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
+//      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, default_v)
+//  );
+//}
+//
+///**
+// * @brief Masked gather with scalar default.
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for gather
+// * @param i Index vector
+// * @param m Mask indicating which lanes to gather
+// * @param default_v Scalar default value for masked-out lanes
+// * @return Gathered vector
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, T default_v) -> VecOf(t) {
+//  return gather(t, p, i, m, fill(t, default_v));
+//}
+//
+///**
+// * @brief Scatter elements to memory using an index vector.
+// *
+// * For each lane i, stores v[i] to p[index[i]].
+// * This is the vectorized equivalent of:
+// *   p[index[i]] = v[i]
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for scatter
+// * @param i Index vector
+// * @param v The vector to scatter
+// *
+// * @warning If indices are not unique, the result depends on execution order.
+// *          Multiple writes to the same location may race.
+// *
+// * @note Scatter operations can be significantly slower than consecutive stores.
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_foreach(
+//      t, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
+//  );
+//}
+//
+///**
+// * @brief Scatter first n elements to memory using an index vector.
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for scatter
+// * @param i Index vector
+// * @param v The vector to scatter
+// * @param n Number of elements to scatter (0 <= n <= size(t))
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_t n) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_foreach(
+//      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+//      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv, rem); },
+//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
+//  );
+//}
+//
+///**
+// * @brief Masked scatter to memory using an index vector.
+// *
+// * For each lane i where mask[i] is true, stores v[i] to p[index[i]].
+// * Masked-out lanes are not written.
+// *
+// * @tparam T Element type
+// * @tparam N Nominal size
+// * @tparam P Size multiplier
+// * @param t The vector tag
+// * @param p Base pointer for scatter
+// * @param i Index vector
+// * @param v The vector to scatter
+// * @param m Mask indicating which lanes to scatter
+// */
+//template <typename T, nint_t N, int P>
+//CT_ALWAYS_FORCEINLINE
+//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskOf(t) m) {
+//  using namespace details;
+//  Tag<Index<T>, N, P> it;
+//  return vectorized_foreach(
+//      t, [=](auto tt, T* pp, auto&& ii, auto&& vv, auto&& mm) { word::scatter(tt, pp, ii, vv, mm); },
+//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v), ShardMask(t, m)
+//  );
+//}
 
 
 
@@ -904,10 +906,11 @@ void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskO
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word(t, v, ord);
-  return word::get(word_tag(t), word, off);
+  return word::get(word, off);
 }
 
 /**
@@ -926,10 +929,11 @@ T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 bool get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word_mask(t, m, ord);
-  return word::get(word_tag(t), word, off);
+  return word::get(word, off);
 }
 
 /**
@@ -950,10 +954,11 @@ bool get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word(t, v, ord);
-  return set_word(t, v, ord, word::set(word_tag(t), word, off, x));
+  return set_word(t, v, ord, word::set(word, off, x));
 }
 
 /**
@@ -973,10 +978,11 @@ auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
 template <typename T, nint_t N, int P>
 CT_ALWAYS_FORCEINLINE
 auto set(Tag<T, N, P> t, MaskOf(t) m, nint_t index, bool x) -> MaskOf(t) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word_mask(t, m, ord);
-  return set_word_mask(t, m, ord, word::set(word_tag(t), word, off, x));
+  return set_word_mask(t, m, ord, word::set(word, off, x));
 }
 
 
@@ -991,7 +997,7 @@ auto name(TVec a, TVec b) -> TVec { \
   using namespace details; \
   auto t = vec_to_tag(a); \
   return vectorized_map_v( \
-      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(aa, bb); }, \
       ShardVec(t, a), ShardVec(t, b) \
   ); \
 } \
@@ -1000,7 +1006,7 @@ auto name(TVec a, TVec b, TMask m) -> TVec { \
   using namespace details; \
   auto t = vec_to_tag(a); \
   return vectorized_map_v( \
-      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(aa, bb, mm); }, \
       ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
   ); \
 }
@@ -1009,7 +1015,6 @@ _CT_VECTORIZED_BINARY_V(add)
 _CT_VECTORIZED_BINARY_V(sub)
 _CT_VECTORIZED_BINARY_V(mul)
 _CT_VECTORIZED_BINARY_V(div)
-_CT_VECTORIZED_BINARY_V(rem)
 _CT_VECTORIZED_BINARY_V(max)
 _CT_VECTORIZED_BINARY_V(min)
 
@@ -1025,7 +1030,7 @@ auto bit_shl(TVec v, int count) -> TVec {
   using namespace details;
   auto t = vec_to_tag(v);
   return vectorized_map_v(
-      t, [=](auto tt, auto&& vv) { return word::bit_shl(tt, vv, count); },
+      t, [=](auto tt, auto&& vv) { return word::bit_shl(vv, count); },
       ShardVec(t, v)
   );
 }
@@ -1035,7 +1040,7 @@ auto bit_shl(TVec v, int count, TMask m) -> TVec {
   using namespace details;
   auto t = vec_to_tag(v);
   return vectorized_map_v(
-      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shl(tt, vv, count, mm); },
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shl(vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
   );
 }
@@ -1045,7 +1050,7 @@ auto bit_shr(TVec v, int count) -> TVec {
   using namespace details;
   auto t = vec_to_tag(v);
   return vectorized_map_v(
-      t, [=](auto tt, auto&& vv) { return word::bit_shr(tt, vv, count); },
+      t, [=](auto tt, auto&& vv) { return word::bit_shr(vv, count); },
       ShardVec(t, v)
   );
 }
@@ -1055,7 +1060,7 @@ auto bit_shr(TVec v, int count, TMask m) -> TVec {
   using namespace details;
   auto t = vec_to_tag(v);
   return vectorized_map_v(
-      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shr(tt, vv, count, mm); },
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shr(vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
   );
 }
@@ -1067,7 +1072,7 @@ auto name(TVec v) -> TVec { \
   using namespace details; \
   auto t = vec_to_tag(v); \
   return vectorized_map_v( \
-      t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
+      t, [=](auto tt, auto&& vv) { return word::name(vv); }, \
       ShardVec(t, v) \
   ); \
 } \
@@ -1076,7 +1081,7 @@ auto name(TVec v, TMask m, TVec default_v) -> TVec { \
   using namespace details; \
   auto t = vec_to_tag(v); \
   return vectorized_map_v( \
-      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::name(tt, vv, mm, dd); }, \
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::name(vv, mm, dd); }, \
       ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v) \
   ); \
 } \
@@ -1097,7 +1102,7 @@ auto name(TVec a, TVec b) -> auto { \
   using namespace details; \
   auto t = vec_to_tag(a); \
   return vectorized_map_m( \
-      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(tt, aa, bb); }, \
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(aa, bb); }, \
       ShardVec(t, a), ShardVec(t, b) \
   ); \
 } \
@@ -1106,7 +1111,7 @@ auto name(TVec a, TVec b, TMask m) -> TMask { \
   using namespace details; \
   auto t = vec_to_tag(a); \
   return vectorized_map_m( \
-      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(tt, aa, bb, mm); }, \
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(aa, bb, mm); }, \
       ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
   ); \
 }
@@ -1126,7 +1131,7 @@ auto name(TVec v) -> auto { \
   using namespace details; \
   auto t = vec_to_tag(v); \
   return vectorized_map_m( \
-      t, [=](auto tt, auto&& vv) { return word::name(tt, vv); }, \
+      t, [=](auto tt, auto&& vv) { return word::name(vv); }, \
       ShardVec(t, v) \
   ); \
 } \
@@ -1135,7 +1140,7 @@ auto name(TVec v, TMask m) -> TMask { \
   using namespace details; \
   auto t = vec_to_tag(v); \
   return vectorized_map_m( \
-      t, [=](auto tt, auto&& vv, auto&& mm) { return word::name(tt, vv, mm); }, \
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::name(vv, mm); }, \
       ShardVec(t, v), ShardMask(t, m) \
   ); \
 }
@@ -1149,8 +1154,286 @@ _CT_VECTORIZED_UNARY_M(isinf)
 
 
 /* ************************************************************************** */
-//                          Permutation & shuffle                             //
+//                           Shuffle & Permutation                            //
 /* ************************************************************************** */
+/**
+ * 使用固定下标Is对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。下标数量与块内元素数量对应。
+ * 即float32_t下块内4个元素，则下标长度应为4，下标应属于范围[0, 3].
+ * 在此函数下所有的块均会应用相同的下标进行重排。
+ * 小于一个字长(word_size)的向量会按照一个字长的向量进行处理，因此如果字长为16，Vec<Tag<float32_t, 2>>也会要求有4个下标。
+ * 重排结果:
+ *      result[j] = v[Is[j % M] + floor(j / M)]
+ *      where j = 0...N;
+ *            M = 16 / sizeof(element type of V).
+ */
+template <int... Is, typename V>
+V local_shuf(V v) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::local_shuf<Is...>(vv); },
+      ShardVec(t, v)
+  );
+}
+
+/**
+ * 使用i中对应位置的下标对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。下标数量与块内元素数量对应。
+ * 即下标向量i元素类型应为与v元素类型宽度相同的有符号整数，且i的位宽与v完全相同。
+ * 在此函数下不同的块内应用的下标可以不同。
+ * 重排结果：
+ *      result[j] = v[i[j] + floor(j / M)]
+ *      where j = 0...N;
+ *            M = 16 / sizeof(element type of V);
+ *            i[j] in [0, M), 否则result[j]未定义.
+ */
+template <typename V, typename Vi>
+V local_shuf(V v, Vi i) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  auto ti = vec_to_tag(i);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& ii) { return word::local_shuf(vv, ii); },
+      ShardVec(t, v), ShardVec(ti, i)
+  );
+}
+
+/**
+ * 使用运行时下标is对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。要求和个规则与使用固定下标的版本完全相同。
+ */
+template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
+V local_shuf(V v, Is... is) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::local_shuf(vv, is...); },
+      ShardVec(t, v)
+  );
+}
+
+//template <int... Is, typename V>
+//V block_shuf(V v) {
+//  using namespace details;
+//  auto t = vec_to_tag(v);
+//  return vectorized_map_v(
+//      t, [=](auto tt, auto&& vv) { return word::block_shuf<Is...>(vv); },
+//      ShardVec(t, v)
+//  );
+//}
+//
+//template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
+//V block_shuf(V v, Is... is) {
+//  using namespace details;
+//  auto t = vec_to_tag(v);
+//  return vectorized_map_v(
+//      t, [=](auto tt, auto&& vv) { return word::block_shuf(vv, is...); },
+//      ShardVec(t, v)
+//  );
+//}
+
+/**
+ * 使用i中对应位置的下标对v中每一个元素在字(word)内进行重排。下标数量与块内元素数量对应。
+ * 即下标向量i元素类型应为与v元素类型宽度相同的有符号整数，且i的位宽与v完全相同。
+ * 在此函数下不同的字内应用的下标可以不同（如果向量是多字的）。
+ * 重排结果：
+ *      result[j] = v[i[j]]
+ *      where j = 0...N;
+ *      i[j] in [0, N), 否则result[j]未定义.
+ * 注：x86 AVX2往上（存在多块向量）下此操作涉及块间数据传递，比块内重排慢。同时，如果没有
+ * AVX512，则此操作会更慢。而如果元素类型为int8_t/uint8_t，且没有AVX512_VBMI特性，
+ * 则即是有AVX512，此操作会慢于其他更宽的数据类型。
+ */
+template <typename V, typename Vi>
+V shuf(V v, Vi i) {
+  using namespace details;
+  auto t = vec_to_tag(v);
+  auto ti = vec_to_tag(i);
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& ii) { return word::shuf(vv, ii); },
+      ShardVec(t, v), ShardVec(ti, i)
+  );
+}
+
+/* ************************************************************************** */
+//                       Data type & size conversions                         //
+/* ************************************************************************** */
+
+/**
+ * We assume that byte size of a word in input vector v and output vector is consistent.
+ */
+/**
+ * Size of input vector must not smaller than requested output
+ * Size of output dtype must be larger than size of input dtype.
+ * Promotion rules:
+ *   - all type conversions conform C++ standard.
+ */
+template <typename TTag, typename TVec>
+Vec<TTag> promote(TTag t, TVec v) {
+  constexpr auto t_in = Vec2Tag<TVec>();
+  constexpr auto t_out= t;
+  constexpr nint_t nw_in = num_words(t_in);
+  constexpr nint_t nw_out = num_words(t_out);
+  constexpr auto wt_in = word_tag(t_in);
+  constexpr auto wt_out = word_tag(t_out);
+  using TIn = typename decltype(t_in)::Type;
+  constexpr nint_t WNIn = decltype(wt_in)::N;
+  using TOut = typename decltype(t_out)::Type;
+  constexpr nint_t ANOut = decltype(t_out)::AdjustedN;
+  constexpr nint_t WNOut = decltype(wt_out)::N;
+
+  static_assert(sizeof(TIn) < sizeof(TOut));
+  static_assert(!(is_scalable(t_in) ^ is_scalable(t_out)));
+
+  constexpr nint_t factor = sizeof(TOut) / sizeof(TIn);
+  constexpr nint_t nw_in_required = is_scalable(t_in)
+                                    ? (nw_out + factor - 1) / factor
+                                    : (ANOut + WNIn - 1) / WNIn;
+  static_assert(nw_in_required <= nw_in, "Insufficient elements");
+  using BatchTag = Tag<TOut, WNOut, log2_floor(factor)>;
+  static_assert(num_words(BatchTag()) == factor, "Output element count mismatch");
+
+  Vec<TTag> out;
+  if constexpr (nw_out > 1) {
+    details::ForEachTransformed<nw_in_required>()(
+        [&]<nint_t I>() {
+          auto v_in = get_word<I>(t_in, v);
+          auto u0 = word::promote(Tag<TOut, WNIn>(), v_in);
+          auto u = word::reshape(BatchTag(), u0);
+
+          details::ForEachTransformed<factor>()(
+              [&]<nint_t J>() {
+                out = set_word<I * factor + J>(t_out, out, get_word<J>(BatchTag(), u));
+              }
+          );
+        }
+    );
+  } else {
+    static_assert(nw_in_required == 1);
+    auto batch_v = get_word<0>(t_in, v);
+    auto u = word::promote(Tag<TOut, ANOut>(), batch_v);
+    out = set_word<0>(t, out, u);
+  }
+  return out;
+}
+
+/**
+ * Size of input vector must not smaller than requested output
+ * Size of output dtype must be smaller than size of input dtype.
+ * Demotion rules:
+ *   - larger int -> smaller int (whether signed or unsigned): value will be clamped to target range.
+ *   - int -> float: standard int/float conversion
+ *   - float -> signed int: standard float/int conversion
+ *   - float -> unsigned int: standard float/int conversion (result for negative input undefined)
+ */
+template <typename TTag, typename TVec>
+Vec<TTag> demote(TTag t, TVec v) {
+  constexpr auto t_in = Vec2Tag<TVec>();
+  constexpr auto t_out= t;
+  constexpr nint_t nw_in = num_words(t_in);
+  constexpr nint_t nw_out = num_words(t_out);
+  constexpr auto wt_in = word_tag(t_in);
+  constexpr auto wt_out = word_tag(t_out);
+  using TIn = typename decltype(t_in)::Type;
+  constexpr nint_t WNIn = decltype(wt_in)::N;
+  using TOut = typename decltype(t_out)::Type;
+  constexpr nint_t ANOut = decltype(t_out)::AdjustedN;
+  constexpr nint_t WNOut = decltype(wt_out)::N;
+
+  static_assert(sizeof(TIn) > sizeof(TOut));
+  static_assert(!(is_scalable(t_in) ^ is_scalable(t_out)));
+
+  constexpr nint_t factor = sizeof(TIn) / sizeof(TOut);
+  constexpr nint_t nw_in_required = is_scalable(t_in)
+                                    ? (nw_out + factor - 1) / factor
+                                    : (ANOut + WNIn - 1) / WNIn;
+  static_assert(nw_in_required <= nw_in, "Insufficient elements");
+  using BatchTag = Tag<TIn, WNIn, log2_floor(factor)>;
+
+  Vec<TTag> out;
+  if constexpr (nw_out > 1) {
+    static_assert (nw_in_required == nw_out * factor);
+    details::ForEachTransformed<nw_out>()(
+        [&]<nint_t I>() {
+          Vec<BatchTag> batch_v;
+          details::ForEachTransformed<factor>()(
+              [&]<nint_t J>() {
+                batch_v = set_word<J>(BatchTag(), batch_v, get_word<I * factor + J>(t_in, v));
+              }
+          );
+          auto u = word::demote(Tag<TOut, WNOut>(), batch_v);
+          out = set_word<I>(t_out, out, u);
+        }
+    );
+  } else {
+    static_assert(nw_in_required <= factor);
+    using MinibatchTag = Tag<TIn, WNIn, log2_floor(nw_in_required)>;
+    Vec<MinibatchTag> batch_v;
+    details::ForEachTransformed<nw_in_required>()(
+        [&]<nint_t I>() {
+          batch_v = set_word<I>(MinibatchTag(), batch_v, get_word<I>(t_in, v));
+        }
+    );
+    auto u = word::demote(Tag<TOut, ANOut>(), batch_v);
+    out = set_word<0>(t, out, u);
+  }
+  return out;
+}
+
+/**
+ * Size of input vector must not smaller than requested output
+ * Size of output dtype must be equals to size of input dtype.
+ * Conversion rules:
+ *   - all type conversions conform C++ standard.
+ */
+template <typename TTag, typename TVec>
+Vec<TTag> convert(TTag t, TVec v) {
+  constexpr auto t_in = Vec2Tag<TVec>();
+  constexpr auto t_out= t;
+  constexpr nint_t nw_in = num_words(t_in);
+  constexpr nint_t nw_out = num_words(t_out);
+  constexpr auto wt_in = word_tag(t_in);
+  constexpr auto wt_out = word_tag(t_out);
+  using TIn = typename decltype(t_in)::Type;
+  constexpr nint_t WNIn = decltype(wt_in)::N;
+  using TOut = typename decltype(t_out)::Type;
+  constexpr nint_t ANOut = decltype(t_out)::AdjustedN;
+  constexpr nint_t WNOut = decltype(wt_out)::N;
+
+  static_assert(sizeof(TIn) == sizeof(TOut));
+  static_assert(nw_in == nw_out);
+  static_assert(!(is_scalable(t_in) ^ is_scalable(t_out)));
+
+  Vec<TTag> out;
+  if constexpr (nw_in > 1) {
+    details::ForEachTransformed<nw_in>()(
+        [&]<nint_t I>() {
+          auto v_in = get_word<I>(t_in, v);
+          auto u = word::convert(Tag<TOut, WNOut>(), v_in);
+          out = set_word<I>(t_out, out, u);
+        }
+    );
+  } else {
+    auto v_in = get_word<0>(t_in, v);
+    auto u = word::convert(Tag<TOut, ANOut>(), v_in);
+    out = set_word<0>(t_out, out, u);
+  }
+  return out;
+}
+
+//template <typename TTag, typename TVec>
+//Vec<TTag> bitcast(TTag t, TVec v) {
+//  return {};
+//}
+//
+//template <typename TTag, typename TVec>
+//Vec<TTag> resize_bitcast(TTag t, TVec v) {
+//  return {};
+//}
+//
+//
+//template <typename TTagTo, typename TTagFrom, typename TVec>
+//Vec<TTagTo> zero_extend_resize_bitcast(TTagTo t_to, TTagFrom t_from, TVec v) {
+//  return {};
+//}
 
 } // namespace ct::tl::vec
 

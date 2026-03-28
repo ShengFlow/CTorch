@@ -983,9 +983,7 @@ static constexpr auto word_tag(Tag<T, N, P> t) {
  * scenario where a precise number of elements is required (load & store).
  */
 template <typename TVec, typename = void/* SFINAE*/>
-struct Vec2TagDefs {
-  using Type = void;
-};
+struct Vec2TagDefs {};
 
 template <typename T, nint_t N>
 struct Vec2TagDefs<ScalarArray<T, N>, std::enable_if_t<!is_element_type<T> && sizeof(typename Vec2TagDefs<T>::Type) != -1>> {
@@ -1029,20 +1027,13 @@ using Rebind = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag
  * The power factor might change in non-scalable vector.
  */
 template <typename TNew, typename TTag>
-using ViewAs = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2>, Tag<TNew, TTag::N, TTag::POW2 + SizeShift<TypeOf<TTag>, TNew>>>;
+using ViewAs = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2>, Tag<TNew, TTag::N * sizeof(TypeOf<TTag>) / sizeof(TNew), TTag::POW2>>;
 
 template <typename TVec>
 CT_ALWAYS_FORCEINLINE CT_PURE
 static constexpr auto vec_to_tag(TVec v) {
   return Vec2Tag<TVec>();
 }
-
-// Forward declaration for vector conversion API
-template <typename T, nint_t NOut, int POut, nint_t NIn, int PIn>
-struct VecReshape {
-  static_assert(details::adjusted_size<NOut, POut>() == details::adjusted_size<NOut, POut>());
-  Vec<Tag<T, NOut, POut>> reshape(Tag<T, NIn, PIn> t, Vec<Tag<T, NIn, PIn>> v) const;
-};
 } // namespace ct::tl::vec
 
 #endif //CTORCH_VECBASE_H
