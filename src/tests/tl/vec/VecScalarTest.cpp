@@ -553,7 +553,7 @@ TEST_F(VecScalarTest, ScatterWithN) {
     indices[i] = i;
   }
 
-  scatter(t, aligned_out_, indices, values, 5);
+  scatter(t, aligned_out_, indices, 5, values);
 
   for (int i = 0; i < 5; ++i) {
     EXPECT_FLOAT_EQ(aligned_out_[i], 42.0f);
@@ -578,7 +578,7 @@ TEST_F(VecScalarTest, ScatterWithMask) {
 
   auto m = mwhilelt(t, 0, 5);
 
-  scatter(t, aligned_out_, indices, values, m);
+  scatter(t, aligned_out_, indices, m, values);
 
   for (int i = 0; i < 5; ++i) {
     EXPECT_FLOAT_EQ(aligned_out_[i], 42.0f);

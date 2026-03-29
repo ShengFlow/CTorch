@@ -764,6 +764,347 @@ TLV_INLINE void store(T t, TypeOf<T> * p, nint_t n, Vec<T> v) {
   word::store(t, p, m, v);
 }
 
+
+/* ************************************************************************** */
+//                                  Gather                                    //
+/* ************************************************************************** */
+template <TLV_DECL_TAG(T)>
+static TLV_INLINE Vec<T> _gather_scalar(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  alignas(T::Bytes) TypeOf<T> data[T::N];
+  CT_UNROLL for (int j = 0; j < T::N; ++j) {
+    data[j] = p[nint_t(word::get(i, j))];
+  }
+  return word::load(t, data);
+}
+
+template <TLV_DECL_TAG(T)>
+static TLV_INLINE Vec<T> _mask_gather_scalar(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  alignas(T::Bytes) TypeOf<T> data[T::N];
+  CT_UNROLL for (int j = 0; j < T::N; ++j) {
+    data[j] = word::get(m, j) ? p[nint_t(word::get(i, j))] : word::get(default_v, j);
+  }
+  return word::load(t, data);
+}
+
+#ifdef HAS_AVX2
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm_i32gather_ps(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm_i64gather_pd(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm_i32gather_epi32(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm_i64gather_epi64(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+#if VEC_WIDTH >= 256
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm256_i32gather_ps(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm256_i64gather_pd(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm256_i32gather_epi32(p, i.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm256_i64gather_epi64(p, i.v, (int)sizeof(TypeOf<T>));
+}
+#endif // VEC_WIDTH >= 256
+
+#if VEC_WIDTH >= 512
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm512_i32gather_ps(i.v, p, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm512_i64gather_pd(i.v, p, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm512_i32gather_epi32(i.v, p, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return _mm512_i64gather_epi64(i.v, p, (int)sizeof(TypeOf<T>));
+}
+#endif // VEC_WIDTH >= 512
+
+#ifdef HAS_AVX512DQ
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mmask_i32gather_ps(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+  }
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mmask_i64gather_pd(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mmask_i32gather_epi32(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mmask_i64gather_epi64(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mmask_i32gather_ps(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+  }
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mmask_i64gather_pd(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mmask_i32gather_epi32(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mmask_i64gather_epi64(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm512_mask_i32gather_ps(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+  }
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm512_mask_i64gather_pd(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm512_mask_i32gather_epi32(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm512_mask_i64gather_epi64(default_v.v, m.v, i.v, p, (int)sizeof(TypeOf<T>));
+}
+#else // HAS_AVX512DQ
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mask_i32gather_ps(default_v.v, p, i.v, _mm_castsi128_ps(m.v), (int)sizeof(TypeOf<T>));
+  }
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mask_i64gather_pd(default_v.v, p, i.v, _mm_castsi128_pd(m.v), (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mask_i32gather_epi32(default_v.v, p, i.v, m.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm_mask_i64gather_epi64(default_v.v, p, i.v, m.v, (int)sizeof(TypeOf<T>));
+}
+
+#if VEC_WIDTH >= 256
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mask_i32gather_ps(default_v.v, p, i.v, _mm256_castsi256_ps(m.v), (int)sizeof(TypeOf<T>));
+  }
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mask_i64gather_pd(default_v.v, p, i.v, _mm256_castsi256_pd(m.v), (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mask_i32gather_epi32(default_v.v, p, i.v, m.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return _mm256_mask_i64gather_epi64(default_v.v, p, i.v, m.v, (int)sizeof(TypeOf<T>));
+}
+#endif // VEC_WIDTH >= 256
+
+#if VEC_WIDTH >= 512
+  #error "Unreachable"
+#endif // VEC_WIDTH >= 512
+#endif // HAS_AVX512DQ
+#else
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  return word::_gather_scalar(t, p, i);
+}
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  return word::_mask_gather_scalar(t, p, i, m, default_v);
+}
+#endif // HAS_AVX2
+
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> gather(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, Vec<T> default_v) {
+  CT_ASSERT(0 <= n && n <= T::N, "%zd !in 0..%zd", n, T::N);
+  auto m = word::mwhilelt(t, 0, n);
+  return word::gather(t, p, i, m, default_v);
+}
+
+
+/* ************************************************************************** */
+//                                  Scatter                                   //
+/* ************************************************************************** */
+template <TLV_DECL_TAG(T)>
+static TLV_INLINE void _scatter_scalar(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  CT_UNROLL for (int j = 0; j < T::N; ++j) {
+    p[nint_t(word::get(i, j))] = word::get(v, j);
+  }
+}
+
+template <TLV_DECL_TAG(T)>
+static TLV_INLINE void _mask_scatter_scalar(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  CT_UNROLL for (int j = 0; j < T::N; ++j) {
+    if (word::get(m, j)) {
+      p[nint_t(word::get(i, j))] = word::get(v, j);
+    }
+  }
+}
+
+#ifdef HAS_AVX512F
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm_i32scatter_ps(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm_i64scatter_pd(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm_i32scatter_epi32(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm_i64scatter_epi64(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+
+#if VEC_WIDTH >= 256
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm256_i32scatter_ps(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm256_i64scatter_pd(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm256_i32scatter_epi32(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm256_i64scatter_epi64(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+#endif
+
+#if VEC_WIDTH >= 512
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm512_i32scatter_ps(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm512_i64scatter_pd(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm512_i32scatter_epi32(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  _mm512_i64scatter_epi64(p, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+#endif
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm_mask_i32scatter_ps(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm_mask_i64scatter_pd(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm_mask_i32scatter_epi32(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm_mask_i64scatter_epi64(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm256_mask_i32scatter_ps(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm256_mask_i64scatter_pd(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm256_mask_i32scatter_epi32(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm256_mask_i64scatter_epi64(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm512_mask_i32scatter_ps(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm512_mask_i64scatter_pd(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm512_mask_i32scatter_epi32(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  _mm512_mask_i64scatter_epi64(p, m.v, i.v, v.v, (int)sizeof(TypeOf<T>));
+}
+#else // HAS_AVX512F
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  word::_scatter_scalar(t, p, i, v);
+}
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  word::_mask_scatter_scalar(t, p, i, m, v);
+}
+#endif // HAS_AVX512F
+
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void scatter(T t, TypeOf<T> * p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, Vec<T> v) {
+  CT_ASSERT(0 <= n && n <= T::N, "%zd !in 0..%zd", n, T::N);
+  auto m = word::mwhilelt(t, 0, n);
+  word::scatter(t, p, i, m, v);
+}
+
 } // namespace word
 } // namespace ct::tl::vec::CPU_CAPABILITY
 //@formatter:on

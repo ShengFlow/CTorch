@@ -1300,6 +1300,491 @@ TYPED_TEST(VecLoadStoreTest, MultiWordSetElement) {
 }
 
 // ============================================================================
+// Gather / Scatter Tests
+// ============================================================================
+
+
+template <typename T>
+class VecGatherScatterTest : public ::testing::Test {
+protected:
+  using Type = T;
+  static constexpr nint_t FULL_SIZE = test_utils::full_vec_size<T>();
+
+  void SetUp() override {
+    // Allocate aligned memory for testing
+    aligned_data_ = test_utils::alloc_aligned<T>(256);
+    aligned_out_ = test_utils::alloc_aligned<T>(256);
+
+    // Initialize with test values
+    for (size_t i = 0; i < 256; ++i) {
+      aligned_data_[i] = test_utils::get_test_value<T>(i);
+      aligned_out_[i] = T{};
+    }
+  }
+
+  void TearDown() override {
+    std::free(aligned_data_);
+    std::free(aligned_out_);
+  }
+
+  T* aligned_data_{};
+  T* aligned_out_{};
+};
+
+// List of all tested types
+using GatherScatterTypes = ::testing::Types<
+    float32_t, float64_t, int32_t, uint32_t, int64_t, uint64_t
+>;
+
+TYPED_TEST_SUITE(VecGatherScatterTest, GatherScatterTypes);
+
+TYPED_TEST(VecGatherScatterTest, GatherBasic) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+  
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+  
+  // Create index vector: indices = [0, 2, 4, 6, ...]
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i * 2);
+  }
+  
+  auto idx = loadu(it, indices);
+  auto v = gather(t, this->aligned_data_, idx);
+  
+  // Verify: v[i] should equal aligned_data_[indices[i]] = aligned_data_[i * 2]
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    T expected = this->aligned_data_[i * 2];
+    EXPECT_TRUE(test_utils::values_equal(expected, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithN) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+  
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+  
+  // Create index vector
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>((i * 3) % 128);  // Keep indices in bounds
+  }
+  
+  auto idx = loadu(it, indices);
+  T default_val = test_utils::get_test_value<T>(999);
+  
+  nint_t n = FULL_SIZE / 2;
+  auto v = gather(t, this->aligned_data_, idx, n, default_val);
+  
+  // First n elements should be gathered
+  for (nint_t i = 0; i < n; ++i) {
+    T expected = this->aligned_data_[indices[i]];
+    EXPECT_TRUE(test_utils::values_equal(expected, get(t, v, i)));
+  }
+  // Rest should be default
+  for (nint_t i = n; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(default_val, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithNZero) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  T default_val = test_utils::get_test_value<T>(999);
+
+  auto v = gather(t, this->aligned_data_, idx, 0, default_val);
+
+  // All elements should be default
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(default_val, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithNFull) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  T default_val = test_utils::get_test_value<T>(999);
+
+  auto v = gather(t, this->aligned_data_, idx, FULL_SIZE, default_val);
+
+  // All elements should be gathered
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    T expected = this->aligned_data_[i];
+    EXPECT_TRUE(test_utils::values_equal(expected, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithMask) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>((i * 5 + 10) % 128);
+  }
+
+  auto idx = loadu(it, indices);
+  auto m = mwhilelt(t, 0, FULL_SIZE / 2);
+  T default_val = test_utils::get_test_value<T>(777);
+
+  auto v = gather(t, this->aligned_data_, idx, m, default_val);
+
+  // First half should be gathered
+  for (nint_t i = 0; i < FULL_SIZE / 2; ++i) {
+    T expected = this->aligned_data_[indices[i]];
+    EXPECT_TRUE(test_utils::values_equal(expected, get(t, v, i)));
+  }
+  // Second half should be default
+  for (nint_t i = FULL_SIZE / 2; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(default_val, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithMaskAll) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  auto m = mtrue(t);
+  T default_val = test_utils::get_test_value<T>(777);
+
+  auto v = gather(t, this->aligned_data_, idx, m, default_val);
+
+  // All elements should be gathered
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    T expected = this->aligned_data_[i];
+    EXPECT_TRUE(test_utils::values_equal(expected, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherWithMaskNone) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  auto m = mfalse(t);
+  T default_val = test_utils::get_test_value<T>(777);
+
+  auto v = gather(t, this->aligned_data_, idx, m, default_val);
+
+  // All elements should be default
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(default_val, get(t, v, i)));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterBasic) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  // Create index vector: scatter to positions [0, 2, 4, 6, ...]
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i * 2);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+
+  scatter(t, this->aligned_out_, idx, v);
+
+  // Verify: aligned_out_[indices[i]] should equal aligned_data_[i]
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(this->aligned_data_[i], this->aligned_out_[indices[i]]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithN) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>((i * 3) % 128);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+
+  nint_t n = FULL_SIZE / 2;
+  scatter(t, this->aligned_out_, idx, n, v);
+
+  // Only first n elements should be scattered
+  for (nint_t i = 0; i < n; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(this->aligned_data_[i], this->aligned_out_[indices[i]]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithNZero) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+
+  scatter(t, this->aligned_out_, idx, 0, v);
+
+  // Nothing should be scattered
+  for (int i = 0; i < 256; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(sentinel, this->aligned_out_[i]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithNFull) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i + 50);  // Offset to avoid overlap
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+
+  scatter(t, this->aligned_out_, idx, FULL_SIZE, v);
+
+  // All elements should be scattered
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(this->aligned_data_[i], this->aligned_out_[indices[i]]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithMask) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>((i * 5 + 10) % 128);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+  auto m = mwhilelt(t, 0, FULL_SIZE / 2);
+
+  scatter(t, this->aligned_out_, idx, m, v);
+
+  // Only first half should be scattered
+  for (nint_t i = 0; i < FULL_SIZE / 2; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(this->aligned_data_[i], this->aligned_out_[indices[i]]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithMaskAll) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i + 100);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+  auto m = mtrue(t);
+
+  scatter(t, this->aligned_out_, idx, m, v);
+
+  // All elements should be scattered
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(this->aligned_data_[i], this->aligned_out_[indices[i]]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, ScatterWithMaskNone) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Initialize output with sentinel values
+  T sentinel = test_utils::get_test_value<T>(-1);
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = sentinel;
+  }
+
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i);
+  }
+
+  auto idx = loadu(it, indices);
+  auto v = loadu(t, this->aligned_data_);
+  auto m = mfalse(t);
+
+  scatter(t, this->aligned_out_, idx, m, v);
+
+  // Nothing should be scattered
+  for (int i = 0; i < 256; ++i) {
+    EXPECT_TRUE(test_utils::values_equal(sentinel, this->aligned_out_[i]));
+  }
+}
+
+TYPED_TEST(VecGatherScatterTest, GatherScatterRoundTrip) {
+  using T = typename TestFixture::Type;
+  constexpr nint_t FULL_SIZE = TestFixture::FULL_SIZE;
+
+  FixedTag<T, FULL_SIZE> t;
+  using IndexT = Index<T>;
+  constexpr FixedTag<IndexT, FULL_SIZE> it;
+
+  // Use identity indices for round-trip
+  alignas(16) IndexT indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    indices[i] = static_cast<IndexT>(i + 128);  // Offset to different region
+  }
+
+  auto idx = loadu(it, indices);
+
+  // Initialize source regionw
+  for (int i = 128; i < 128 + FULL_SIZE; ++i) {
+    this->aligned_data_[i] = test_utils::get_test_value<T>(i);
+  }
+
+  // Clear output
+  for (int i = 0; i < 256; ++i) {
+    this->aligned_out_[i] = T{};
+  }
+
+  // Gather from source
+  auto v = gather(t, this->aligned_data_, idx);
+
+  // Create new indices for scatter (back to beginning)
+  alignas(16) IndexT scatter_indices[FULL_SIZE];
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    scatter_indices[i] = static_cast<IndexT>(i);
+  }
+  auto scatter_idx = loadu(it, scatter_indices);
+
+  // Scatter to output
+  scatter(t, this->aligned_out_, scatter_idx, v);
+
+  // Verify round-trip
+  for (nint_t i = 0; i < FULL_SIZE; ++i) {
+    T expected = test_utils::get_test_value<T>(static_cast<int>(indices[i]));
+    EXPECT_TRUE(test_utils::values_equal(expected, this->aligned_out_[i]));
+  }
+}
+
+// ============================================================================
 // ScalableTag Tests
 // ============================================================================
 

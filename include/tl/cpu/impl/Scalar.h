@@ -175,7 +175,8 @@ CT_ALWAYS_FORCEINLINE V local_shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
   static_assert(size(t) >= group_el && size(t) % group_el == 0);
   V u;
   for (nint_t i = 0; i < size(t); i += group_el) {
-    CT_UNROLL for (nint_t j = 0; j < group_el; ++j) {
+    #pragma unroll
+    for (nint_t j = 0; j < group_el; ++j) {
       u[i + j] = v[nint_t(vi[i + j]) + i];
     }
   }
@@ -457,7 +458,7 @@ void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
  * @brief Scatter first n elements (scalar implementation).
  */
 template <TLV_DECL_TAG(T)>
-void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v, nint_t n) {
+void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, Vec<T> v) {
   static_assert(is_default_impl(t));
   static_assert(is_default_impl(Rebind<Index<TypeOf<T>>, T>()));
   static_assert(is_word_vec(t));
@@ -472,7 +473,7 @@ void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v, ni
  * @brief Masked scatter (scalar implementation).
  */
 template <TLV_DECL_TAG(T)>
-void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v, Mask<T> m) {
+void scatter(T t, TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
   static_assert(is_default_impl(t));
   static_assert(is_default_impl(Rebind<Index<TypeOf<T>>, T>()));
   static_assert(is_word_vec(t));

@@ -494,214 +494,166 @@ TLV_INLINE void store(T t, TypeOf<T>* p, Mask<T> m, Vec<T> v) {
 }
 
 
+/* ************************************************************************** */
+//                         Indexed gather & scatter                           //
+/* ************************************************************************** */
 
-///* ************************************************************************** */
-////                         Indexed gather & scatter                           //
-///* ************************************************************************** */
-//
-///**
-// * @brief Gather elements from memory using an index vector.
-// *
-// * For each lane i, loads from p[i[i]] and returns the result.
-// * This is the vectorized equivalent of:
-// *   result[i] = p[index[i]]
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for gather
-// * @param i Index vector (indices are signed integers of same size as T)
-// * @return Gathered vector
-// *
-// * @note Gather operations can be significantly slower than consecutive loads
-// *       due to memory access patterns. Use consecutive loads when possible.
-// *
-// * @example
-// *   Tag<float32_t, 4> t;
-// *   float data[100] = {...};
-// *   int32_t indices[4] = {10, 20, 5, 15};
-// *   auto idx = loadu(Tag<int32_t, 4>(), indices);
-// *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_map_v(
-//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii) { return word::gather(tt, pp, ii); },
-//      StepPointer(t, p), ShardVec(it, i)
-//  );
-//}
-//
-///**
-// * @brief Gather first n elements using an index vector, with default for rest.
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for gather
-// * @param i Index vector
-// * @param n Number of elements to gather (0 <= n <= size(t))
-// * @param default_v Default values for elements beyond n
-// * @return Gathered vector
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, Vec<T> default_v) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_map_v(
-//      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
-//      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
-//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, default_v)
-//  );
-//}
-//
-///**
-// * @brief Gather first n elements using an index vector, with scalar default.
-// *
-// * Convenience overload that broadcasts a scalar default value.
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for gather
-// * @param i Index vector
-// * @param n Number of elements to gather
-// * @param default_v Scalar default value for elements beyond n
-// * @return Gathered vector
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) {
-//  return gather(t, p, i, n, fill(t, default_v));
-//}
-//
-///**
-// * @brief Masked gather from memory using an index vector.
-// *
-// * For each lane i where mask[i] is true, loads from p[index[i]].
-// * For masked-out lanes, takes the value from default_v[i].
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for gather
-// * @param i Index vector
-// * @param m Mask indicating which lanes to gather
-// * @param default_v Default values for masked-out lanes
-// * @return Gathered vector
-// *
-// * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Mask<T> m, Vec<T> default_v) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_map_v(
-//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
-//      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, default_v)
-//  );
-//}
-//
-///**
-// * @brief Masked gather with scalar default.
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for gather
-// * @param i Index vector
-// * @param m Mask indicating which lanes to gather
-// * @param default_v Scalar default value for masked-out lanes
-// * @return Gathered vector
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Mask<T> m, T default_v) {
-//  return gather(t, p, i, m, fill(t, default_v));
-//}
-//
-///**
-// * @brief Scatter elements to memory using an index vector.
-// *
-// * For each lane i, stores v[i] to p[index[i]].
-// * This is the vectorized equivalent of:
-// *   p[index[i]] = v[i]
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for scatter
-// * @param i Index vector
-// * @param v The vector to scatter
-// *
-// * @warning If indices are not unique, the result depends on execution order.
-// *          Multiple writes to the same location may race.
-// *
-// * @note Scatter operations can be significantly slower than consecutive stores.
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_foreach(
-//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
-//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
-//  );
-//}
-//
-///**
-// * @brief Scatter first n elements to memory using an index vector.
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for scatter
-// * @param i Index vector
-// * @param v The vector to scatter
-// * @param n Number of elements to scatter (0 <= n <= size(t))
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v, nint_t n) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_foreach(
-//      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
-//      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv, rem); },
-//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
-//  );
-//}
-//
-///**
-// * @brief Masked scatter to memory using an index vector.
-// *
-// * For each lane i where mask[i] is true, stores v[i] to p[index[i]].
-// * Masked-out lanes are not written.
-// *
-// * @tparam T Element type
-// * @tparam N Nominal size
-// * @tparam P Size multiplier
-// * @param t The vector tag
-// * @param p Base pointer for scatter
-// * @param i Index vector
-// * @param v The vector to scatter
-// * @param m Mask indicating which lanes to scatter
-// */
-//template <TLV_DECL_TAG(T)>
-//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v, Mask<T> m) {
-//  using namespace details;
-//  Tag<Index<T>, N, P> it;
-//  return vectorized_foreach(
-//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv, auto&& mm) { word::scatter(tt, pp, ii, vv, mm); },
-//      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v), ShardMask(t, m)
-//  );
-//}
+/**
+ * @brief Gather elements from memory using an index vector.
+ *
+ * For each lane i, loads from p[i[i]] and returns the result.
+ * This is the vectorized equivalent of:
+ *   result[i] = p[index[i]]
+ *
+ * @return Gathered vector
+ *
+ * @note Gather operations can be significantly slower than consecutive loads
+ *       due to memory access patterns. Use consecutive loads when possible.
+ *
+ * @example
+ *   Tag<float32_t, 4> t;
+ *   float data[100] = {...};
+ *   int32_t indices[4] = {10, 20, 5, 15};
+ *   auto idx = loadu(Tag<int32_t, 4>(), indices);
+ *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_map_v(
+      t, [=](auto tt, TypeOf<T>* pp, auto&& ii) { return word::gather(tt, pp, ii); },
+      StepPointer(t, p), ShardVec(it, i)
+  );
+}
 
+/**
+ * @brief Gather first n elements using an index vector, with default for rest.
+ *
+ * @return Gathered vector
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, Vec<T> default_v) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_map_v(
+      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
+      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
+      StepPointer(t, p), ShardVec(it, i), ShardVec(t, default_v)
+  );
+}
+
+/**
+ * @brief Gather first n elements using an index vector, with scalar default.
+ *
+ * Convenience overload that broadcasts a scalar default value.
+ *
+ * @return Gathered vector
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, TypeOf<T> default_v) {
+  return vec::gather(t, p, i, n, vec::fill(t, default_v));
+}
+
+/**
+ * @brief Masked gather from memory using an index vector.
+ *
+ * For each lane i where mask[i] is true, loads from p[index[i]].
+ * For masked-out lanes, takes the value from default_v[i].
+ *
+ * @return Gathered vector
+ *
+ * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> default_v) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_map_v(
+      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
+      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+
+/**
+ * @brief Masked gather with scalar default.
+ *
+ * @return Gathered vector
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE Vec<T> gather(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, TypeOf<T> default_v) {
+  return vec::gather(t, p, i, m, vec::fill(t, default_v));
+}
+
+/**
+ * @brief Scatter elements to memory using an index vector.
+ *
+ * For each lane i, stores v[i] to p[index[i]].
+ * This is the vectorized equivalent of:
+ *   p[index[i]] = v[i]
+ *
+ * @warning If indices are not unique, the result depends on execution order.
+ *          Multiple writes to the same location may race.
+ *
+ * @note Scatter operations can be significantly slower than consecutive stores.
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE void scatter(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Vec<T> v) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_foreach(
+      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
+  );
+}
+
+/**
+ * @brief Scatter first n elements to memory using an index vector.
+ *
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param n Number of elements to scatter (0 <= n <= size(t))
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE void scatter(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, nint_t n, Vec<T> v) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_foreach(
+      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, rem, vv); },
+      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
+  );
+}
+
+/**
+ * @brief Masked scatter to memory using an index vector.
+ *
+ * For each lane i where mask[i] is true, stores v[i] to p[index[i]].
+ * Masked-out lanes are not written.
+ *
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @param p Base pointer for scatter
+ * @param i Index vector
+ * @param v The vector to scatter
+ * @param m Mask indicating which lanes to scatter
+ */
+template <TLV_DECL_TAG(T), TL_IF(sizeof(TypeOf<T>) >= 4)>
+TLV_INLINE void scatter(T t, const TypeOf<T>* p, Vec<Rebind<Index<TypeOf<T>>, T>> i, Mask<T> m, Vec<T> v) {
+  using namespace details;
+  constexpr Rebind<Index<TypeOf<T>>, T> it;
+  return vectorized_foreach(
+      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& mm, auto&& vv) { word::scatter(tt, pp, ii, mm, vv); },
+      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, v)
+  );
+}
 
 
 /* ************************************************************************** */
