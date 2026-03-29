@@ -11,8 +11,8 @@
 namespace ct::tl::vec::CPU_CAPABILITY {
 namespace word {
 
-template <typename To, typename Vi, typename Ti = Vec2Tag<Vi>>
-CT_ALWAYS_FORCEINLINE Vec<To> reshape(To t_out, Vi v_in) {
+template <TLV_DECL_TAG(To), TLV_DECL_VEC(Vi), typename Ti = Vec2Tag<Vi>>
+TLV_INLINE Vec<To> reshape(To t_out, Vi v_in) {
   static_assert(std::is_same_v<TypeOf<To>, TypeOf<Ti>>, "Not same type");
   static_assert(std::is_same_v<Vec<To>, Vi>, "What");
   return v_in;
@@ -21,21 +21,21 @@ CT_ALWAYS_FORCEINLINE Vec<To> reshape(To t_out, Vi v_in) {
 /* ************************************************************************** */
 //                           Generic Conversions                              //
 /* ************************************************************************** */
-template <typename T>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<T> v) { return v; }
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> convert(T t, Vec<T> v) { return v; }
 
-template <typename T>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<T> v) { return v; }
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> promote(T t, Vec<T> v) { return v; }
 
-template <typename T>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<T> v) { return v; }
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> demote(T t, Vec<T> v) { return v; }
 
 
 /* ************************************************************************** */
 //                          int64_t <=> float64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttpd_epi64(v.v);
   #else
@@ -47,8 +47,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepi64_pd(v.v);
   #else
@@ -61,8 +61,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttpd_epi64(v.v);
   #elif VEC_WIDTH >= 256
@@ -80,8 +80,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepi64_pd(v.v);
   #elif VEC_WIDTH >= 256
@@ -101,8 +101,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttpd_epi64(v.v);
   #else
@@ -114,8 +114,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi64_pd(v.v);
   #else
@@ -131,8 +131,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
 /* ************************************************************************** */
 //                          uint64_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttpd_epu64(v.v);
   #else
@@ -144,8 +144,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepu64_pd(v.v);
   #else
@@ -158,8 +158,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttpd_epu64(v.v);
   #elif VEC_WIDTH >= 256
@@ -177,8 +177,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepu64_pd(v.v);
   #elif VEC_WIDTH >= 256
@@ -198,8 +198,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttpd_epu64(v.v);
   #else
@@ -211,8 +211,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu64_pd(v.v);
   #else
@@ -229,13 +229,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
 /* ************************************************************************** */
 //                           int64_t <=> uint64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint64_t, T>> v) {
   return v.v;
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
   return v.v;
 }
 
@@ -243,18 +243,18 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int64_t, T>> v) {
 /* ************************************************************************** */
 //                         float32_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   return _mm_cvtpd_ps(v.v);
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   return _mm_cvtps_pd(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtpd_ps(v.v);
   #else
@@ -266,8 +266,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtps_pd(v.v);
   #else
@@ -280,8 +280,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtpd_ps(v.v);
   #else
@@ -293,8 +293,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtps_pd(v.v);
   #else
@@ -308,8 +308,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Tag<float32_t, 8> t1;
   Rebind<float64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -317,8 +317,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   Tag<float64_t, 8> t1;
   Rebind<float32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -331,8 +331,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 /* ************************************************************************** */
 //                          float32_t <=> int64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepi64_ps(v.v);
   #else
@@ -344,8 +344,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttps_epi64(v.v);
   #else
@@ -357,8 +357,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepi64_ps(v.v);
   #elif VEC_WIDTH >= 256
@@ -376,8 +376,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttps_epi64(v.v);
   #elif VEC_WIDTH >= 256
@@ -396,8 +396,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #if HAS_AVX512DQ
   return _mm512_cvtepi64_ps(v.v);
   #else
@@ -409,8 +409,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttps_epi64(v.v);
   #else
@@ -424,8 +424,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Tag<float32_t, 8> t1;
   Rebind<int64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -433,8 +433,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<float32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -447,8 +447,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 /* ************************************************************************** */
 //                          float32_t <=> uint64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepu64_ps(v.v);
   #else
@@ -460,8 +460,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttps_epu64(v.v);
   #else
@@ -473,8 +473,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepu64_ps(v.v);
   #elif VEC_WIDTH >= 256
@@ -492,8 +492,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttps_epu64(v.v);
   #elif VEC_WIDTH >= 256
@@ -512,8 +512,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #if HAS_AVX512DQ
   return _mm512_cvtepu64_ps(v.v);
   #else
@@ -525,8 +525,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttps_epu64(v.v);
   #else
@@ -540,8 +540,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Tag<float32_t, 8> t1;
   Rebind<uint64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -549,8 +549,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
   Tag<uint64_t, 8> t1;
   Rebind<float32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -563,18 +563,18 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<float32_t, T>> v) {
 /* ************************************************************************** */
 //                         int32_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   return _mm_cvttpd_epi32(v.v);
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm_cvtepi32_pd(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvttpd_epi32(v.v);
   #else
@@ -586,8 +586,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi32_pd(v.v);
   #else
@@ -600,8 +600,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttpd_epi32(v.v);
   #else
@@ -613,8 +613,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi32_pd(v.v);
   #else
@@ -628,8 +628,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Tag<int32_t, 8> t1;
   Rebind<float64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -637,8 +637,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   Tag<float64_t, 8> t1;
   Rebind<int32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -651,8 +651,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
 /* ************************************************************************** */
 //                          int32_t <=> int64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = INT32_MIN;
   static constexpr int64_t max_val = INT32_MAX;
   #ifdef HAS_AVX512DQ
@@ -667,13 +667,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm_cvtepi32_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = INT32_MIN;
   static constexpr int64_t max_val = INT32_MAX;
   #ifdef HAS_AVX512DQ
@@ -694,14 +694,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm256_cvtepi32_epi64(v.v);
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = INT32_MIN;
   static constexpr int64_t max_val = INT32_MAX;
   #if HAS_AVX512DQ
@@ -716,8 +716,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi32_epi64(v.v);
   #else
@@ -731,8 +731,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Tag<int32_t, 8> t1;
   Rebind<int64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -740,8 +740,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<int32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -754,8 +754,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
 /* ************************************************************************** */
 //                          int32_t <=> uint64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = INT32_MAX;
   #ifdef HAS_AVX512DQ
   auto u = _mm_min_epu64(v.v, _mm_set1_epi64x(max_val));
@@ -769,14 +769,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int64_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = INT32_MAX;
   #ifdef HAS_AVX512DQ
   auto u = _mm256_min_epu64(v.v, _mm256_set1_epi64x(max_val));
@@ -797,8 +797,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = INT32_MAX;
   #if HAS_AVX512DQ
   auto u = _mm512_min_epu64(v.v, _mm512_set1_epi64(max_val));
@@ -814,8 +814,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Tag<int32_t, 8> t1;
   Rebind<uint64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -828,8 +828,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
 /* ************************************************************************** */
 //                         uint32_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttpd_epu32(v.v);
   #else
@@ -841,8 +841,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepu32_pd(v.v);
   #else
@@ -854,8 +854,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttpd_epu32(v.v);
   #elif VEC_WIDTH >= 256
@@ -873,8 +873,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepi32_pd(v.v);
   #elif VEC_WIDTH >= 256
@@ -893,8 +893,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvttpd_epu32(v.v);
   #else
@@ -906,8 +906,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu32_pd(v.v);
   #else
@@ -921,8 +921,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Tag<uint32_t, 8> t1;
   Rebind<float64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -930,8 +930,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   Tag<float64_t, 8> t1;
   Rebind<uint32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -944,8 +944,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 /* ************************************************************************** */
 //                          uint32_t <=> int64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = 0;
   static constexpr int64_t max_val = UINT32_MAX;
   #ifdef HAS_AVX512DQ
@@ -960,13 +960,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   return _mm_cvtepu32_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = 0;
   static constexpr int64_t max_val = UINT32_MAX;
   #ifdef HAS_AVX512DQ
@@ -987,14 +987,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   return _mm256_cvtepu32_epi64(v.v);
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   static constexpr int64_t min_val = 0;
   static constexpr int64_t max_val = UINT32_MAX;
   #if HAS_AVX512DQ
@@ -1009,8 +1009,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu32_epi64(v.v);
   #else
@@ -1024,8 +1024,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Tag<uint32_t, 8> t1;
   Rebind<int64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -1033,8 +1033,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<uint32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1047,8 +1047,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 /* ************************************************************************** */
 //                          uint32_t <=> uint64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = UINT32_MAX;
   #ifdef HAS_AVX512DQ
   auto u = _mm_min_epu64(v.v, _mm_set1_epi64x(max_val));
@@ -1062,13 +1062,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   return _mm_cvtepu32_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = UINT32_MAX;
   #ifdef HAS_AVX512DQ
   auto u = _mm256_min_epu64(v.v, _mm256_set1_epi64x(max_val));
@@ -1088,14 +1088,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   return _mm256_cvtepu32_epi64(v.v);
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   static constexpr uint64_t max_val = UINT32_MAX;
   #if HAS_AVX512DQ
   auto u = _mm512_min_epu64(v.v, _mm512_set1_epi64(max_val));
@@ -1109,8 +1109,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu32_epi64(v.v);
   #else
@@ -1124,8 +1124,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Tag<uint32_t, 8> t1;
   Rebind<uint64_t, T> t2;
   auto lo = word::demote(t1, word::lower(t2, v));
@@ -1133,8 +1133,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   return word::concat(t, lo, hi);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
   Tag<uint64_t, 8> t1;
   Rebind<uint32_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1147,36 +1147,36 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint32_t, T>> v) {
 /* ************************************************************************** */
 //                          float32_t <=> int32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm_cvtepi32_ps(v.v);
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   return _mm_cvttps_epi32(v.v);
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm256_cvtepi32_ps(v.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   return _mm256_cvttps_epi32(v.v);
 }
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm512_cvtepi32_ps(v.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   return _mm512_cvttps_epi32(v.v);
 }
 #endif // VEC_WIDTH >= 512
@@ -1185,8 +1185,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
 /* ************************************************************************** */
 //                          float32_t <=> uint32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvtepu32_ps(v.v);
   #else
@@ -1200,8 +1200,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm_cvttps_epu32(v.v);
   #else
@@ -1215,8 +1215,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvtepu32_ps(v.v);
   #else
@@ -1230,8 +1230,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   #endif
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   #ifdef HAS_AVX512DQ
   return _mm256_cvttps_epu32(v.v);
   #else
@@ -1246,13 +1246,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   return _mm512_cvtepu32_ps(v.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
   return _mm512_cvttps_epu32(v.v);
 }
 #endif // VEC_WIDTH >= 512
@@ -1262,13 +1262,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<float32_t, T>> v) {
 //                          int32_t <=> uint32_t                             //
 /* ************************************************************************** */
 
-template <typename T, TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint32_t, T>> v) {
   return v.v;
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
   return v.v;
 }
 
@@ -1276,26 +1276,26 @@ CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int32_t, T>> v) {
 /* ************************************************************************** */
 //                           int16_t <=> int32_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm_packs_epi32(v.v, v.v);
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm_cvtepi16_epi32(v.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
   return _mm_packs_epi32(lo.v, hi.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi16_epi32(v.v);
   #else
@@ -1308,8 +1308,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1317,8 +1317,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi16_epi32(v.v);
   #else
@@ -1332,8 +1332,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1342,8 +1342,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm512_permutexvar_epi64(u, idx);
 }
 
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Tag<int32_t, 8> t1;
   Rebind<int16_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1356,21 +1356,21 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 /* ************************************************************************** */
 //                           int16_t <=> uint32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   static constexpr uint32_t max_val = INT32_MAX;
   auto u = _mm_min_epu32(v.v, _mm_set1_epi32(max_val));
   return _mm_packs_epi32(u, u);
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<uint32_t, T> t1;
   static constexpr uint32_t max_val = INT32_MAX;
   Vec<decltype(t1)> u = _mm256_min_epu32(v.v, _mm256_set1_epi32(max_val));
@@ -1380,8 +1380,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   static constexpr uint32_t max_val = INT32_MAX;
   #if VEC_WIDTH >= 512
   Rebind<uint32_t, T> t1;
@@ -1399,8 +1399,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<uint32_t, T> t1;
   static constexpr uint32_t max_val = INT32_MAX;
   auto lo = _mm512_min_epu32(word::lower(t1, v).v, _mm512_set1_epi32(max_val));
@@ -1415,14 +1415,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 /* ************************************************************************** */
 //                          int16_t <=> float32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -1431,26 +1431,26 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 /* ************************************************************************** */
 //                           uint16_t <=> int32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm_packus_epi32(v.v, v.v);
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   return _mm_cvtepu16_epi32(v.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
   return _mm_packus_epi32(lo.v, hi.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepu16_epi32(v.v);
   #else
@@ -1463,8 +1463,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1472,8 +1472,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu16_epi32(v.v);
   #else
@@ -1487,8 +1487,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int32_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1497,8 +1497,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   return _mm512_permutexvar_epi64(u, idx);
 }
 
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Tag<int32_t, 8> t1;
   Rebind<uint16_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1511,21 +1511,21 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                          uint16_t <=> uint32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   static constexpr uint32_t max_val = INT32_MAX;
   auto u = _mm_min_epu32(v.v, _mm_set1_epi32(max_val));
   return _mm_packus_epi32(u, u);
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<uint32_t, T> t1;
   static constexpr uint32_t max_val = INT32_MAX;
   Vec<decltype(t1)> u = _mm256_min_epu32(v.v, _mm256_set1_epi32(max_val));
@@ -1535,8 +1535,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   static constexpr uint32_t max_val = INT32_MAX;
   #if VEC_WIDTH >= 512
   Rebind<uint32_t, T> t1;
@@ -1554,8 +1554,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<uint32_t, T> t1;
   static constexpr uint32_t max_val = INT32_MAX;
   auto lo = _mm512_min_epu32(word::lower(t1, v).v, _mm512_set1_epi32(max_val));
@@ -1570,14 +1570,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
 /* ************************************************************************** */
 //                          uint16_t <=> float32_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -1586,14 +1586,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                           int16_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -1602,19 +1602,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 /* ************************************************************************** */
 //                           int16_t <=> int64_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm_cvtepi16_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi16_epi64(v.v);
   #else
@@ -1627,8 +1627,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi16_epi64(v.v);
   #else
@@ -1642,8 +1642,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<int16_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1656,14 +1656,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 /* ************************************************************************** */
 //                           int16_t <=> uint64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int64_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -1672,14 +1672,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int16_t, T>> v) {
 /* ************************************************************************** */
 //                          uint16_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return demote(t, convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<int32_t, T> t1;
   return convert(t, promote(t1, v));
 }
@@ -1688,19 +1688,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                           uint16_t <=> int64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   return _mm_cvtepu16_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepu16_epi64(v.v);
   #else
@@ -1713,8 +1713,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu16_epi64(v.v);
   #else
@@ -1728,8 +1728,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<uint16_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1742,14 +1742,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                          uint16_t <=> uint64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<int64_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -1758,26 +1758,26 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                            int8_t <=> int16_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm_packs_epi16(v.v, v.v);
 }
 
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   return _mm_cvtepi8_epi16(v.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
   return _mm_packs_epi16(lo.v, hi.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi8_epi16(v.v);
   #else
@@ -1790,8 +1790,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1799,8 +1799,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
 }
 
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi8_epi16(v.v);
   #else
@@ -1814,8 +1814,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1824,8 +1824,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm512_permutexvar_epi64(u, idx);
 }
 
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Tag<int16_t, 32> t1;
   Rebind<int8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1839,34 +1839,34 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 //                          int16_t <=> uint16_t                             //
 /* ************************************************************************** */
 
-template <typename T, TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint16_t, T>> v) {
   return v.v;
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int16_t, T>> v) {
   return v.v;
 }
 
 /* ************************************************************************** */
 //                           int8_t <=> uint16_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   static constexpr uint16_t max_val = INT16_MAX;
   auto u = _mm_min_epu16(v.v, _mm_set1_epi16(max_val));
   return _mm_packs_epi16(u, u);
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Rebind<int16_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<uint16_t, T> t1;
   static constexpr uint16_t max_val = INT16_MAX;
   Vec<decltype(t1)> u = _mm256_min_epu16(v.v, _mm256_set1_epi16(max_val));
@@ -1876,8 +1876,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   static constexpr uint16_t max_val = INT16_MAX;
   #if VEC_WIDTH >= 512
   Rebind<uint16_t, T> t1;
@@ -1895,8 +1895,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<uint16_t, T> t1;
   static constexpr uint16_t max_val = INT16_MAX;
   auto lo = _mm512_min_epu16(word::lower(t1, v).v, _mm512_set1_epi16(max_val));
@@ -1911,26 +1911,26 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> int16_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm_packus_epi16(v.v, v.v);
 }
 
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   return _mm_cvtepu8_epi16(v.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
   return _mm_packus_epi16(lo.v, hi.v);
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepu8_epi16(v.v);
   #else
@@ -1943,8 +1943,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1952,8 +1952,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
 }
 
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu8_epi16(v.v);
   #else
@@ -1967,8 +1967,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   Rebind<int16_t, T> t1;
   auto lo = word::lower(t1, v);
   auto hi = word::upper(t1, v);
@@ -1977,8 +1977,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int16_t, T>> v) {
   return _mm512_permutexvar_epi64(u, idx);
 }
 
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, int16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Tag<int16_t, 32> t1;
   Rebind<uint8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -1991,21 +1991,21 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> uint16_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 8), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   static constexpr uint16_t max_val = INT16_MAX;
   auto u = _mm_min_epu16(v.v, _mm_set1_epi16(max_val));
   return _mm_packus_epi16(u, u);
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint16_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint16_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Rebind<int16_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
 
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<uint16_t, T> t1;
   static constexpr uint16_t max_val = INT16_MAX;
   Vec<decltype(t1)> u = _mm256_min_epu16(v.v, _mm256_set1_epi16(max_val));
@@ -2015,8 +2015,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   static constexpr uint16_t max_val = INT16_MAX;
   #if VEC_WIDTH >= 512
   Rebind<uint16_t, T> t1;
@@ -2034,8 +2034,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 64), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
   Rebind<uint16_t, T> t1;
   static constexpr uint16_t max_val = INT16_MAX;
   auto lo = _mm512_min_epu16(word::lower(t1, v).v, _mm512_set1_epi16(max_val));
@@ -2050,14 +2050,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint16_t, T>> v) {
 /* ************************************************************************** */
 //                           int8_t <=> float32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -2066,19 +2066,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                            int8_t <=> int32_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int16_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   return _mm_cvtepi8_epi32(v.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi8_epi32(v.v);
   #else
@@ -2091,8 +2091,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi8_epi32(v.v);
   #else
@@ -2106,8 +2106,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Tag<int32_t, 16> t1;
   Rebind<int8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -2120,14 +2120,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                           int8_t <=> uint32_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<int16_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -2136,14 +2136,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> float32_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float32_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -2152,19 +2152,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> int32_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int32_t, T>> v) {
   Rebind<int16_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 4), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   return _mm_cvtepu8_epi32(v.v);
 }
 
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepu8_epi32(v.v);
   #else
@@ -2177,8 +2177,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu8_epi32(v.v);
   #else
@@ -2192,8 +2192,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 32), TL_IF(is_any<TypeOf<T>, int32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Tag<int32_t, 16> t1;
   Rebind<uint8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -2206,14 +2206,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> uint32_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint32_t, T>> v) {
   Rebind<uint16_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint32_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint32_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -2222,14 +2222,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           int8_t <=> float64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -2238,19 +2238,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                            int8_t <=> int64_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   return _mm_cvtepi8_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepi8_epi64(v.v);
   #else
@@ -2263,8 +2263,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepi8_epi64(v.v);
   #else
@@ -2278,8 +2278,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<int8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -2292,14 +2292,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                           int8_t <=> uint64_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
   Rebind<int64_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -2308,14 +2308,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<int8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> float64_t                            //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<float64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::convert(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, float64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::convert(t, word::promote(t1, v));
 }
@@ -2324,19 +2324,19 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> int64_t                              //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<int64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N <= 2), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   return _mm_cvtepu8_epi64(v.v);
 }
 
-template <typename T, TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 4), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 256
   return _mm256_cvtepu8_epi64(v.v);
   #else
@@ -2349,8 +2349,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 }
 
 #if VEC_WIDTH >= 256
-template <typename T, TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 8), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   #if VEC_WIDTH >= 512
   return _mm512_cvtepu8_epi64(v.v);
   #else
@@ -2364,8 +2364,8 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <typename T, TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::N == 16), TL_IF(is_any<TypeOf<T>, int64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Tag<int64_t, 8> t1;
   Rebind<uint8_t, T> t2;
   auto lo = word::promote(t1, word::lower(t2, v));
@@ -2378,14 +2378,14 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 /* ************************************************************************** */
 //                           uint8_t <=> uint64_t                             //
 /* ************************************************************************** */
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> demote(T t, Vec<Rebind<uint64_t, T>> v) {
   Rebind<int32_t, T> t1;
   return word::demote(t, word::demote(t1, v));
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint64_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint64_t>)>
+TLV_INLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
   Rebind<int64_t, T> t1;
   return word::bitcast(t, word::promote(t1, v));
 }
@@ -2395,13 +2395,13 @@ CT_ALWAYS_FORCEINLINE Vec<T> promote(T t, Vec<Rebind<uint8_t, T>> v) {
 //                            int8_t <=> uint8_t                              //
 /* ************************************************************************** */
 
-template <typename T, TL_IF(is_any<TypeOf<T>, int8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<uint8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, int8_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<uint8_t, T>> v) {
   return v.v;
 }
 
-template <typename T, TL_IF(is_any<TypeOf<T>, uint8_t>)>
-CT_ALWAYS_FORCEINLINE Vec<T> convert(T t, Vec<Rebind<int8_t, T>> v) {
+template <TLV_DECL_TAG(T), TL_IF(is_any<TypeOf<T>, uint8_t>)>
+TLV_INLINE Vec<T> convert(T t, Vec<Rebind<int8_t, T>> v) {
   return v.v;
 }
 

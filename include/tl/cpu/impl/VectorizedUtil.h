@@ -25,7 +25,7 @@ struct ShardVec {
   Tag<T, N, P> tag;
   Vec<Tag<T, N, P>>& v;
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr ShardVec(Tag<T, N, P> t, Vec<Tag<T, N, P>>& v) : tag(t), v(v) {}
 };
 
@@ -44,7 +44,7 @@ struct ShardMask {
   Tag<T, N, P> tag;
   Mask<Tag<T, N, P>>& m;
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr ShardMask(Tag<T, N, P> t, Mask<Tag<T, N, P>>& m) : tag(t), m(m) {}
 };
 
@@ -61,11 +61,11 @@ struct StepPointer {
   T* p;
   nint_t step;
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr StepPointer(const T* p, nint_t step) : p(const_cast<T*>(p)), step(step) {}
 
   template <nint_t N, int P>
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr StepPointer(Tag<T, N, P> t, const T* p) : StepPointer(p, word_size(t)) {}
 };
 
@@ -80,12 +80,12 @@ struct StepPointer {
  */
 template <nint_t Index, typename T>
 struct ArgTransform {
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(T&& a) {
     return std::forward<T>(a);
   }
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(T&& a, nint_t index) {
     return this->operator()(std::forward<T>(a));
   }
@@ -104,12 +104,12 @@ struct ArgTransform {
  */
 template <nint_t Index, typename T, nint_t N, int P>
 struct ArgTransform<Index, ShardVec<T, N, P>> {
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(ShardVec<T, N, P>&& a) {
     return get_word<Index>(a.tag, a.v);
   }
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(ShardVec<T, N, P>&& a, nint_t index) {
     return get_word(a.tag, a.v, index);
   }
@@ -127,12 +127,12 @@ struct ArgTransform<Index, ShardVec<T, N, P>> {
  */
 template <nint_t Index, typename T, nint_t N, int P>
 struct ArgTransform<Index, ShardMask<T, N, P>> {
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(ShardMask<T, N, P>&& a) {
     return get_word_mask<Index>(a.tag, a.m);
   }
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(ShardMask<T, N, P>&& a, nint_t index) {
     return get_word_mask(a.tag, a.m, index);
   }
@@ -150,12 +150,12 @@ struct ArgTransform<Index, ShardMask<T, N, P>> {
  */
 template <nint_t Index, typename T>
 struct ArgTransform<Index, StepPointer<T>> {
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(StepPointer<T>&& a) {
     return this->operator()(std::forward<StepPointer<T>>(a), Index);
   }
 
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr decltype(auto) operator()(StepPointer<T>&& a, nint_t index) {
     return a.p + index * a.step;
   }
@@ -185,7 +185,7 @@ struct ForEachTransformed {
    * @param args Arguments to transform and pass to f
    */
   template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr void operator()(F&& f, TArgs&& ... args) {
     f.template operator()<I>(ArgTransform<I, std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...);
     ForEachTransformed<NLoop, Step, I + Step>()(std::forward<F>(f), std::forward<TArgs>(args)...);
@@ -201,7 +201,7 @@ struct ForEachTransformed {
    * @param args Arguments to transform and pass to f
    */
   template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {
     if (I >= n - (Step - 1)) return;
     f.template operator()<I>(ArgTransform<I, std::remove_cvref_t<TArgs>>()(std::forward<TArgs>(args))...);
@@ -215,11 +215,11 @@ struct ForEachTransformed {
 template <nint_t NLoop, nint_t Step, nint_t I>
 struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
   template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr void operator()(F&& f, TArgs&& ... args) {}
 
   template <typename F, typename... TArgs>
-  CT_ALWAYS_FORCEINLINE
+  TLV_INLINE
   constexpr void operator()(nint_t n, F&& f, TArgs&& ... args) {}
 };
 
@@ -240,7 +240,7 @@ struct ForEachTransformed<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
  * @return The result vector
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -273,7 +273,7 @@ Vec<TTag> vectorized_map_v(TTag t, Fn&& f, TArgs&& ... args) {
  * @return The result mask
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -309,7 +309,7 @@ Mask<TTag> vectorized_map_m(TTag t, Fn&& f, TArgs&& ... args) {
  * @return The result vector
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -340,7 +340,7 @@ Vec<TTag> vectorized_map_v_indexed(TTag t, Fn&& f, TArgs&& ... args) {
  * @return The result mask
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -379,7 +379,7 @@ Mask<TTag> vectorized_map_m_indexed(TTag t, Fn&& f, TArgs&& ... args) {
  * @return The result vector
  */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   nint_t L = size(t);
@@ -425,7 +425,7 @@ Vec<TTag> vectorized_map_v(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TAr
  * @return The result mask
  */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   nint_t L = size(t);
@@ -469,7 +469,7 @@ Mask<TTag> vectorized_map_m(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TA
  * @param args Arguments to pass
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 void vectorized_foreach(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -500,7 +500,7 @@ void vectorized_foreach(TTag t, Fn&& f, TArgs&& ... args) {
  * @param args Arguments to pass
  */
 template <typename TTag, typename Fn, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 void vectorized_foreach_indexed(TTag t, Fn&& f, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   if constexpr (is_word_vec(t)) {
@@ -536,7 +536,7 @@ void vectorized_foreach_indexed(TTag t, Fn&& f, TArgs&& ... args) {
  * @param args Arguments to pass
  */
 template <typename TTag, typename FnC, typename FnT, typename... TArgs>
-CT_ALWAYS_FORCEINLINE
+TLV_INLINE
 void vectorized_foreach(TTag t, nint_t n, FnC&& f_complete, FnT&& f_tail, TArgs&& ... args) {
   constexpr auto wt = word_tag(t);
   nint_t L = size(t);

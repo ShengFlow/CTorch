@@ -16,7 +16,7 @@
 #define VEC_NUMEL(dtype) (VEC_WIDTH / 8 / sizeof(dtype))
 
 namespace ct::tl::vec {
-inline namespace x86 {
+namespace x86 {
 /**
  * Simple wrapper for intrinsic vector type that contains type for
  * overload dispatching.
@@ -29,16 +29,16 @@ struct RegType {
 template <typename T>
 struct WrapperType {
   T v;
-  CT_ALWAYS_FORCEINLINE constexpr WrapperType() = default;
-  CT_ALWAYS_FORCEINLINE constexpr WrapperType(const T& v) : v(v) {}
-  CT_ALWAYS_FORCEINLINE constexpr WrapperType(T&& v) : v(std::move(v)) {}
-  CT_ALWAYS_FORCEINLINE explicit constexpr operator T() { return this->v; }
+  TLV_INLINE constexpr WrapperType() = default;
+  TLV_INLINE constexpr WrapperType(const T& v) : v(v) {}
+  TLV_INLINE constexpr WrapperType(T&& v) : v(std::move(v)) {}
+  TLV_INLINE explicit constexpr operator T() { return this->v; }
 };
 
 #define TL_DEFINE_MMREG(name, N, raw_type) \
 template <> struct RegType<name##_t, N> : public WrapperType<raw_type> { \
   using WrapperType<raw_type>::WrapperType; \
-  CT_ALWAYS_FORCEINLINE constexpr name##_t operator[](nuint_t i) { return v[i]; } \
+  TLV_INLINE constexpr name##_t operator[](nuint_t i) { return v[i]; } \
 }; \
 using v##name##x##N##_t = RegType<name##_t, N>
 
@@ -98,15 +98,6 @@ struct RegMask : public WrapperType<T> {
   static constexpr nint_t Bytes = N * ElSize;
   using WrapperType<T>::WrapperType;
 };
-
-template <typename T>
-struct IsRegMask { static constexpr bool value = false; };
-
-template <nint_t ELSIZE, nint_t N_, typename T>
-struct IsRegMask<RegMask<ELSIZE, N_, T>> { static constexpr bool value = true; };
-
-template <typename T>
-static constexpr bool is_reg_mask = IsRegMask<T>::value;
 
 // Mask specialization for CPU feature AVX512DQ
 #if defined(CPU_CAPABILITY_AVX512)
@@ -277,6 +268,9 @@ TL_DEFINE_BATCH_VEC(int64_t);
 TL_DEFINE_BATCH_VEC(uint64_t);
 #undef TL_DEFINE_BATCH_VEC
 
-} // namespace ct::tl::vec
+template <nint_t ELSIZE, nint_t N, typename T>
+struct IsMask<x86::RegMask<ELSIZE, N, T>> : public std::true_type {};
+
+}; // namespace ct::tl::vec
 
 #endif //CTORCH_X86_TYPES_H

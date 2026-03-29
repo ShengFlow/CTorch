@@ -11,6 +11,7 @@
 #include "Assertion.h"
 #include "CoreDefs.h"
 #include "tl/util/Math.h"
+#include "tl/util/TypeTraits.h"
 #include "tl/cpu/Capabilities.h"
 
 /**
@@ -33,6 +34,8 @@
 #else
   #define _VEC_SIZE(type) (VEC_WIDTH / 8 / sizeof(type))
 #endif
+
+#define TLV_INLINE CT_ALWAYS_FORCEINLINE
 
 namespace ct::tl::vec {
 namespace details {
@@ -161,20 +164,6 @@ using ScalableTag = Tag<T, _VEC_SIZE(T), POW2>;
 template <typename T, nint_t N>
 using FixedTag = Tag<T, N, 0>;
 
-namespace details {
-template <typename T>
-struct IsTag {
-  static constexpr bool value = false;
-};
-
-template <typename T, nint_t N, int POW2>
-struct IsTag<Tag<T, N, POW2>> {
-  static constexpr bool value = true;
-};
-} // namespace details
-
-template <typename T>
-static constexpr bool is_tag = details::IsTag<T>::value;
 
 /**
  * @brief Default memory alignment for vector types (16 bytes if is scalable).
@@ -434,52 +423,52 @@ public:
   static_assert(std::is_same_v<VecType, typename WordDefs::VecType>);
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v) {
     static_assert(Index == 0, "Static index out of range");
     return v;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v, nint_t index) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return v;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, auto u) {
     static_assert(Index == 0, "Static index out of range");
     return u;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, nint_t index, auto u) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return u;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m) {
     static_assert(Index == 0, "Static index out of range");
     return m;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m, nint_t index) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return m;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, auto u) {
     static_assert(Index == 0, "Static index out of range");
     return u;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, nint_t index, auto u) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return u;
@@ -508,20 +497,20 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 > 0)>> : BaseVecDefs<T, 
   using MaskType = ScalarArray<typename WordDefs::MaskType, num_words>;
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v) {
     static_assert(0 <= Index && Index < num_words, "Static index out of range");
     return v[Index];
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v, nint_t index) {
     CT_ASSERT(0 <= index && index < num_words, "%lld !in 0..%lld", index, num_words);
     return v[index];
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, auto u) {
     static_assert(0 <= Index && Index < num_words, "Static index out of range");
     auto r = v;
@@ -529,7 +518,7 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 > 0)>> : BaseVecDefs<T, 
     return r;
   };
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, nint_t index, auto u) {
     CT_ASSERT(0 <= index && index < num_words, "%lld !in 0..%lld", index, num_words);
     auto r = v;
@@ -538,20 +527,20 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 > 0)>> : BaseVecDefs<T, 
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m) {
     static_assert(0 <= Index && Index < num_words, "Static index out of range");
     return m[Index];
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m, nint_t index) {
     CT_ASSERT(0 <= index && index < num_words, "%lld !in 0..%lld", index, num_words);
     return m[index];
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, auto u) {
     static_assert(0 <= Index && Index < num_words, "Static index out of range");
     auto r = m;
@@ -559,7 +548,7 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 > 0)>> : BaseVecDefs<T, 
     return r;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, nint_t index, auto u) {
     CT_ASSERT(0 <= index && index < num_words, "%lld !in 0..%lld", index, num_words);
     auto r = m;
@@ -597,52 +586,52 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 < 0)>> : BaseVecDefs<T, 
   using MaskType = typename WordDefs::MaskType;
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v) {
     static_assert(Index == 0, "Static index out of range");
     return v;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get(auto v, nint_t index) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return v;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, auto u) {
     static_assert(Index == 0, "Static index out of range");
     return u;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set(auto v, nint_t index, auto u) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return u;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m) {
     static_assert(Index == 0, "Static index out of range");
     return m;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto get_mask(auto m, nint_t index) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return m;
   };
 
   template <nint_t Index>
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, auto u) {
     static_assert(Index == 0, "Static index out of range");
     return u;
   }
 
-  CT_ALWAYS_FORCEINLINE CT_PURE
+  TLV_INLINE CT_PURE
   static auto set_mask(auto m, nint_t index, auto u) {
     CT_ASSERT(index == 0, "%lld !in 0..1", index);
     return u;
@@ -659,7 +648,7 @@ struct ScalarVecDefs<T, N, POW2, std::enable_if_t<(POW2 < 0)>> : BaseVecDefs<T, 
  * @return Number of words
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr nint_t num_words(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::num_words;
 }
@@ -676,7 +665,7 @@ static constexpr nint_t num_words(Tag<T, N, POW2> t = {}) {
  * @return Number of elements per word
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr nint_t word_size(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::word_size();
 }
@@ -691,7 +680,7 @@ static constexpr nint_t word_size(Tag<T, N, POW2> t = {}) {
  * @return Maximum elements per word
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr nint_t max_word_size(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::max_word_size;
 }
@@ -708,7 +697,7 @@ static constexpr nint_t max_word_size(Tag<T, N, POW2> t = {}) {
  * @return Total number of elements
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr nint_t size(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::size();
 }
@@ -723,7 +712,7 @@ static constexpr nint_t size(Tag<T, N, POW2> t = {}) {
  * @return true if scalable, false if fixed-size
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr bool is_scalable(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::is_scalable;
 }
@@ -738,7 +727,7 @@ static constexpr bool is_scalable(Tag<T, N, POW2> t = {}) {
  * @return true if using scalar implementation, false if using SIMD
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr bool is_default_impl(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::is_default_impl;
 }
@@ -753,7 +742,7 @@ static constexpr bool is_default_impl(Tag<T, N, POW2> t = {}) {
  * @return true if single-word, false if multi-word
  */
 template <typename T, nint_t N, int POW2>
-CT_ALWAYS_FORCEINLINE CT_PURE
+TLV_INLINE CT_PURE
 static constexpr bool is_word_vec(Tag<T, N, POW2> t = {}) {
   return VecDefs<T, N, POW2>::is_word_vec;
 }
@@ -822,168 +811,31 @@ using Mask = typename VecDefs<typename Tag::Type, Tag::N, Tag::POW2>::MaskType;
 template <typename T>
 using Index = typename details::IndexType<T>::Type;
 
-/**
- * @brief Get a specific word from a vector by compile-time index.
- * 
- * @tparam Index The word index (0 to num_words-1)
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The vector
- * @return The specified word
- */
-template <nint_t Index, typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static typename VecDefs<T, N, P>::WordDefs::VecType get_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v) {
-  return VecDefs<T, N, P>::template get<Index>(v);
-}
 
-/**
- * @brief Get a specific word from a vector by runtime index.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The vector
- * @param index The word index (0 to num_words-1)
- * @return The specified word
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static typename VecDefs<T, N, P>::WordDefs::VecType get_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, nint_t index) {
-  return VecDefs<T, N, P>::get(v, index);
-}
+namespace details {
+template <typename T>
+struct IsTag {
+  static constexpr bool value = false;
+};
 
-/**
- * @brief Set a specific word in a vector by compile-time index.
- * 
- * @tparam Index The word index (0 to num_words-1)
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The original vector
- * @param u The new word value
- * @return Vector with the word updated
- */
-template <nint_t Index, typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static Vec<Tag<T, N, P>> set_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, typename VecDefs<T, N, P>::WordDefs::VecType u) {
-  return VecDefs<T, N, P>::template set<Index>(v, u);
-}
+template <typename T, nint_t N, int POW2>
+struct IsTag<Tag<T, N, POW2>> {
+  static constexpr bool value = true;
+};
+} // namespace details
 
-/**
- * @brief Set a specific word in a vector by runtime index.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The original vector
- * @param index The word index
- * @param u The new word value
- * @return Vector with the word updated
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static Vec<Tag<T, N, P>> set_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, nint_t index, typename VecDefs<T, N, P>::WordDefs::VecType u) {
-  return VecDefs<T, N, P>::set(v, index, u);
-}
-
-/**
- * @brief Get a specific mask word from a mask by compile-time index.
- * 
- * @tparam Index The word index (0 to num_words-1)
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The mask
- * @return The specified mask word
- */
-template <nint_t Index, typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static typename VecDefs<T, N, P>::WordDefs::MaskType get_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v) {
-  return VecDefs<T, N, P>::template get_mask<Index>(v);
-}
-
-/**
- * @brief Get a specific mask word from a mask by runtime index.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The mask
- * @param index The word index
- * @return The specified mask word
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static typename VecDefs<T, N, P>::WordDefs::MaskType get_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, nint_t index) {
-  return VecDefs<T, N, P>::get_mask(v, index);
-}
-
-/**
- * @brief Set a specific mask word in a mask by compile-time index.
- * 
- * @tparam Index The word index (0 to num_words-1)
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The original mask
- * @param u The new mask word value
- * @return Mask with the word updated
- */
-template <nint_t Index, typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static Mask<Tag<T, N, P>> set_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, typename VecDefs<T, N, P>::WordDefs::MaskType u) {
-  return VecDefs<T, N, P>::template set_mask<Index>(v, u);
-}
-
-/**
- * @brief Set a specific mask word in a mask by runtime index.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The tag
- * @param v The original mask
- * @param index The word index
- * @param u The new mask word value
- * @return Mask with the word updated
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static Mask<Tag<T, N, P>> set_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, nint_t index, typename VecDefs<T, N, P>::WordDefs::MaskType u) {
-  return VecDefs<T, N, P>::set_mask(v, index, u);
-}
-
-/**
- * @brief Returns the tag for a single word of this vector type.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @return Tag for a single hardware word
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static constexpr auto word_tag(Tag<T, N, P> t) {
-  return typename VecDefs<T, N, P>::WordDefs::TagType();
-}
+template <typename T>
+static constexpr bool is_tag = details::IsTag<T>::value;
 
 /**
  * Helper struct getting (word or vector of word) Tag type from a vec type
  * The value returned may not be same to original Tag, which may not be used for
  * scenario where a precise number of elements is required (load & store).
  */
-template <typename TVec, typename = void/* SFINAE*/>
-struct Vec2TagDefs {};
+template <typename V, typename = void/*SFINAE*/>
+struct Vec2TagDefs {
+  using Type = void;
+};
 
 template <typename T, nint_t N>
 struct Vec2TagDefs<ScalarArray<T, N>, std::enable_if_t<!is_element_type<T> && sizeof(typename Vec2TagDefs<T>::Type) != -1>> {
@@ -996,11 +848,64 @@ struct Vec2TagDefs<ScalarArray<T, N>, std::enable_if_t<is_element_type<T>>> {
   using Type = Tag<T, N, 0>;
 };
 
-template <typename TVec>
-using Vec2Tag = typename Vec2TagDefs<TVec>::Type;
+template <typename V>
+using Vec2Tag = typename Vec2TagDefs<V>::Type;
 
-template <typename TTag>
-using TypeOf = typename TTag::Type;
+template <typename V, typename = void/*SFINAE*/>
+struct IsVec : public std::false_type {};
+
+template <typename V>
+struct IsVec<V, std::enable_if_t<!std::is_void_v<Vec2Tag<V>>>> : public std::true_type {};
+
+template <typename V>
+static constexpr bool is_vec = IsVec<V>::value;
+
+
+template <typename T, typename = void/*SFINAE*/>
+struct IsMask : public std::false_type {};
+
+template <nint_t ELSIZE, nint_t N>
+struct IsMask<ScalarBitSet<ELSIZE, N>> : public std::true_type {};
+
+template <nint_t ELSIZE, nint_t N, nint_t M>
+struct IsMask<ScalarArray<ScalarBitSet<ELSIZE, N>, M>> : public std::true_type {};
+
+template <typename M>
+static constexpr bool is_mask = IsMask<M>::value;
+
+#if __cplusplus >= 202000
+template <typename T>
+concept TagType = is_tag<T>;
+template <typename V>
+concept VecType = is_vec<V>;
+template <typename M>
+concept MaskType = is_mask<M>;
+#define TLV_DECL_TAG(x) tl::vec::TagType x
+#define TLV_DECL_VEC(x) tl::vec::VecType x
+#define TLV_DECL_MASK(x) tl::vec::MaskType x
+#else
+#define TLV_DECL_TAG(x) typename x, TL_IF(is_tag<x>)
+  #define TLV_DECL_VEC(x) typename x, TL_IF(is_vec<x>)
+  #define TLV_DECL_MASK(x) typename x, TL_IF(is_mask<x>)
+#endif
+
+namespace details {
+template <typename, typename = void/*SFINAE*/>
+struct TypeOfHelper {};
+
+template <typename T>
+struct TypeOfHelper<T, std::enable_if_t<is_tag<T>>> {
+  using Type = typename T::Type;
+};
+
+template <typename V>
+struct TypeOfHelper<V, std::enable_if_t<is_vec<V>>> {
+  using Type = typename Vec2Tag<V>::Type;
+};
+} // namespace details
+
+template <typename TorV>
+using TypeOf = typename details::TypeOfHelper<TorV>::Type;
 
 namespace details {
 constexpr nint_t size_shift(nuint_t from_size, nuint_t to_size) {
@@ -1020,19 +925,176 @@ static constexpr nint_t SizeShift = details::size_shift(sizeof(TFrom), sizeof(TT
  * The power factor might change in scalable vector.
  */
 template <typename TNew, typename TTag>
-using Rebind = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2 + SizeShift<TypeOf<TTag>, TNew>>, Tag<TNew, TTag::N, TTag::POW2>>;
+using Rebind = std::conditional_t<TTag::is_runtime_size,
+    Tag<TNew, TTag::N, TTag::POW2 + SizeShift<TypeOf<TTag>, TNew>>,
+    Tag<TNew, TTag::N, TTag::POW2>
+>;
 
 /**
  * Keep number of bytes (vector width) unchanged but with a new dtype.
  * The power factor might change in non-scalable vector.
  */
 template <typename TNew, typename TTag>
-using ViewAs = std::conditional_t<TTag::is_runtime_size, Tag<TNew, TTag::N, TTag::POW2>, Tag<TNew, TTag::N * sizeof(TypeOf<TTag>) / sizeof(TNew), TTag::POW2>>;
+using ViewAs = std::conditional_t<TTag::is_runtime_size,
+    Tag<TNew, TTag::N, TTag::POW2>,
+    Tag<TNew, TTag::N * sizeof(TypeOf<TTag>) / sizeof(TNew), TTag::POW2>
+>;
 
-template <typename TVec>
-CT_ALWAYS_FORCEINLINE CT_PURE
-static constexpr auto vec_to_tag(TVec v) {
-  return Vec2Tag<TVec>();
+
+
+/**
+ * @brief Get a specific word from a vector by compile-time index.
+ * 
+ * @tparam Index The word index (0 to num_words-1)
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The vector
+ * @return The specified word
+ */
+template <nint_t Index, typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static typename VecDefs<T, N, P>::WordDefs::VecType get_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v) {
+  return VecDefs<T, N, P>::template get<Index>(v);
+}
+
+/**
+ * @brief Get a specific word from a vector by runtime index.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The vector
+ * @param index The word index (0 to num_words-1)
+ * @return The specified word
+ */
+template <typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static typename VecDefs<T, N, P>::WordDefs::VecType get_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, nint_t index) {
+  return VecDefs<T, N, P>::get(v, index);
+}
+
+/**
+ * @brief Set a specific word in a vector by compile-time index.
+ * 
+ * @tparam Index The word index (0 to num_words-1)
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The original vector
+ * @param u The new word value
+ * @return Vector with the word updated
+ */
+template <nint_t Index, typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static Vec<Tag<T, N, P>> set_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, typename VecDefs<T, N, P>::WordDefs::VecType u) {
+  return VecDefs<T, N, P>::template set<Index>(v, u);
+}
+
+/**
+ * @brief Set a specific word in a vector by runtime index.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The original vector
+ * @param index The word index
+ * @param u The new word value
+ * @return Vector with the word updated
+ */
+template <typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static Vec<Tag<T, N, P>> set_word(Tag<T, N, P> t, Vec<Tag<T, N, P>> v, nint_t index, typename VecDefs<T, N, P>::WordDefs::VecType u) {
+  return VecDefs<T, N, P>::set(v, index, u);
+}
+
+/**
+ * @brief Get a specific mask word from a mask by compile-time index.
+ * 
+ * @tparam Index The word index (0 to num_words-1)
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The mask
+ * @return The specified mask word
+ */
+template <nint_t Index, typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static typename VecDefs<T, N, P>::WordDefs::MaskType get_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v) {
+  return VecDefs<T, N, P>::template get_mask<Index>(v);
+}
+
+/**
+ * @brief Get a specific mask word from a mask by runtime index.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The mask
+ * @param index The word index
+ * @return The specified mask word
+ */
+template <typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static typename VecDefs<T, N, P>::WordDefs::MaskType get_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, nint_t index) {
+  return VecDefs<T, N, P>::get_mask(v, index);
+}
+
+/**
+ * @brief Set a specific mask word in a mask by compile-time index.
+ * 
+ * @tparam Index The word index (0 to num_words-1)
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The original mask
+ * @param u The new mask word value
+ * @return Mask with the word updated
+ */
+template <nint_t Index, typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static Mask<Tag<T, N, P>> set_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, typename VecDefs<T, N, P>::WordDefs::MaskType u) {
+  return VecDefs<T, N, P>::template set_mask<Index>(v, u);
+}
+
+/**
+ * @brief Set a specific mask word in a mask by runtime index.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The tag
+ * @param v The original mask
+ * @param index The word index
+ * @param u The new mask word value
+ * @return Mask with the word updated
+ */
+template <typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static Mask<Tag<T, N, P>> set_word_mask(Tag<T, N, P> t, Mask<Tag<T, N, P>> v, nint_t index, typename VecDefs<T, N, P>::WordDefs::MaskType u) {
+  return VecDefs<T, N, P>::set_mask(v, index, u);
+}
+
+/**
+ * @brief Returns the tag for a single word of this vector type.
+ * 
+ * @tparam T Element type
+ * @tparam N Nominal size
+ * @tparam P Size multiplier
+ * @param t The vector tag
+ * @return Tag for a single hardware word
+ */
+template <typename T, nint_t N, int P>
+TLV_INLINE CT_PURE
+static constexpr auto word_tag(Tag<T, N, P> t) {
+  return typename VecDefs<T, N, P>::WordDefs::TagType();
 }
 } // namespace ct::tl::vec
 

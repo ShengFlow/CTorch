@@ -54,7 +54,7 @@
  * The internal `vectorized_map_*` functions handle this transparently.
  */
 
-#if defined(ARCH_X86_FAMILY)
+#if defined(ARCH_X86_FAMILY) && defined(HAS_AVX)
   #include "tl/cpu/impl/x86_Basic.h"
   #include "tl/cpu/impl/x86_Bit.h"
   #include "tl/cpu/impl/x86_Conversions.h"
@@ -63,7 +63,6 @@
 #elif defined(ARCH_ARM_FAMILY)
 #else
   #include "tl/cpu/impl/Scalar.h"
-  #include "tl/cpu/impl/Scalar_Conversions.h"
 #endif
 
 #include "tl/cpu/impl/Common.h"
@@ -80,20 +79,12 @@ using namespace CPU_CAPABILITY;
  * 
  * All elements of the result vector are set to `value`.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param value The value to fill with
- * @return Vector with all elements set to `value`
- * 
  * @example
  *   Tag<float32_t, 4> t;
  *   auto v = fill(t, 3.14f);  // v = [3.14, 3.14, 3.14, 3.14]
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> fill(T t, TypeOf<T> value) {
   using namespace details;
   return vectorized_map_v(
       t, [=](auto tt) { return word::fill(tt, value); }
@@ -103,9 +94,8 @@ auto fill(Tag<T, N, P> t, T value) -> VecOf(t) {
 /**
  * Create a vector with first n elements filled with a single value. other sets to default_v
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto fill(Tag<T, N, P> t, T value, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> fill(T t, TypeOf<T> value, nint_t n, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
       t, n, [=](auto tt, auto&& dd) { return word::fill(tt, value); },
@@ -114,18 +104,16 @@ auto fill(Tag<T, N, P> t, T value, nint_t n, VecOf(t) default_v) -> VecOf(t) {
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto fill(Tag<T, N, P> t, T value, nint_t n, T default_v = T()) -> VecOf(t) {
-  return fill(t, value, n, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> fill(T t, TypeOf<T> value, nint_t n, TypeOf<T> default_v = T()) {
+  return vec::fill(t, value, n, vec::fill(t, default_v));
 }
 
 /**
  * Create a vector where masked lanes set to single value, other sets to default_v
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> fill(T t, TypeOf<T> value, Mask<T> m, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
       t, [=](auto tt, auto&& mm, auto&& dd) { return word::fill(tt, value, mm, dd); },
@@ -133,10 +121,9 @@ auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) 
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
-  return fill(t, value, m, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> fill(T t, TypeOf<T> value, Mask<T> m, TypeOf<T> default_v = TypeOf<T>()) {
+  return vec::fill(t, value, m, vec::fill(t, default_v));
 }
 
 
@@ -144,36 +131,28 @@ auto fill(Tag<T, N, P> t, T value, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
  * @brief Create a vector filled with zeros (default-constructed values).
  * 
  * Equivalent to fill(t, T()) where T is default-constructible.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
+ *
  * @return Vector with all elements zero-initialized
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto zeros(Tag<T, N, P> t) -> VecOf(t) {
-  return fill(t, T());
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> zeros(T t) {
+  using namespace details;
+  return vectorized_map_v(
+      t, [=](auto tt) { return word::zeros(tt); }
+  );
 }
 
 /**
  * @brief Create a mask filled with a single boolean value.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param value The boolean value (true or false)
+ *
  * @return Mask with all elements set to `value`
  * 
  * @example
  *   Tag<float32_t, 4> t;
  *   auto m = mfill(t, true);  // All lanes active
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mfill(T t, bool value) {
   using namespace details;
   return vectorized_map_m(
       t, [=](auto tt) { return word::mfill(tt, value); }
@@ -182,32 +161,22 @@ auto mfill(Tag<T, N, P> t, bool value) -> MaskOf(t) {
 
 /**
  * @brief Create a mask with all lanes active (all true).
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
+ *
  * @return Mask with all elements true
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mtrue(Tag<T, N, P> t) -> MaskOf(t) {
-  return mfill(t, true);
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mtrue(T t) {
+  return vec::mfill(t, true);
 }
 
 /**
  * @brief Create a mask with all lanes inactive (all false).
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
+ *
  * @return Mask with all elements false
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mfalse(Tag<T, N, P> t) -> MaskOf(t) {
-  return mfill(t, false);
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mfalse(T t) {
+  return vec::mfill(t, false);
 }
 
 /**
@@ -219,13 +188,7 @@ auto mfalse(Tag<T, N, P> t) -> MaskOf(t) {
  * 
  * For multi-word vectors, each word's mask is computed independently
  * with appropriate offsets.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param a Starting index
- * @param b Upper bound (exclusive)
+ *
  * @return Mask where lanes [a, b) are true
  * 
  * @example
@@ -235,9 +198,8 @@ auto mfalse(Tag<T, N, P> t) -> MaskOf(t) {
  *   // Useful for processing partial data:
  *   auto m = mwhilelt(t, 0, n);  // Process n elements
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mwhilelt(T t, nint_t a, nint_t b) {
   using namespace details;
   nint_t ws = word_size(t);
   return vectorized_map_m_indexed(
@@ -249,38 +211,12 @@ auto mwhilelt(Tag<T, N, P> t, nint_t a, nint_t b) {
  * @brief Create a mask where lanes i are true if (a + i) <= b.
  * 
  * Equivalent to mwhilelt(t, a, b + 1).
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param a Starting index
- * @param b Upper bound (inclusive)
+ *
  * @return Mask where lanes [a, b] are true
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mwhilele(Tag<T, N, P> t, nint_t a, nint_t b) {
-  return mwhilelt(t, a, b + 1);
-}
-
-/**
- * @brief Create a mask where lanes i are true if (a + i) > b.
- * 
- * Equivalent to mwhilege(t, a, b + 1).
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param a Starting index
- * @param b Lower bound (exclusive)
- * @return Mask where lanes > b are true
- */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mwhilegt(Tag<T, N, P> t, nint_t a, nint_t b) {
-  return mwhilege(t, a, b + 1);
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mwhilele(T t, nint_t a, nint_t b) {
+  return vec::mwhilelt(t, a, b + 1);
 }
 
 /**
@@ -288,18 +224,11 @@ auto mwhilegt(Tag<T, N, P> t, nint_t a, nint_t b) {
  * 
  * For a vector of size N:
  *   result[i] = (a + i) >= b
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param a Starting index
- * @param b Lower bound (inclusive)
+ *
  * @return Mask where lanes >= b are true
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mwhilege(T t, nint_t a, nint_t b) {
   using namespace details;
   nint_t ws = word_size(t);
   return vectorized_map_m_indexed(
@@ -307,6 +236,17 @@ auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
   );
 }
 
+/**
+ * @brief Create a mask where lanes i are true if (a + i) > b.
+ *
+ * Equivalent to mwhilege(t, a, b + 1).
+ *
+ * @return Mask where lanes > b are true
+ */
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Mask<T> mwhilegt(T t, nint_t a, nint_t b) {
+  return vec::mwhilege(t, a, b + 1);
+}
 
 
 /* ************************************************************************** */
@@ -318,23 +258,17 @@ auto mwhilege(Tag<T, N, P> t, nint_t a, nint_t b) {
  * 
  * Loads size(t) consecutive elements from memory starting at address p.
  * The pointer p does not need to be aligned.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory
+ *
  * @return Loaded vector
  * 
  * @note For multi-word vectors, each word is loaded from consecutive addresses
  *       (p, p + word_size, p + 2*word_size, etc.)
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, const T* p) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, const TypeOf<T>* p) {
   using namespace details;
   return vectorized_map_v(
-      t, [=](auto tt, const T* pp) { return word::loadu(tt, pp); },
+      t, [=](auto tt, const TypeOf<T>* pp) { return word::loadu(tt, pp); },
       StepPointer(t, p)
   );
 }
@@ -343,23 +277,17 @@ auto loadu(Tag<T, N, P> t, const T* p) -> VecOf(t) {
  * @brief Load a vector from an initializer list.
  * 
  * Convenience overload for creating vectors from brace-enclosed values.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param list Initializer list with at least size(t) elements
+ *
  * @return Loaded vector
  * 
  * @example
  *   Tag<float32_t, 4> t;
  *   auto v = loadu(t, {1.0f, 2.0f, 3.0f, 4.0f});
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, std::initializer_list<TypeOf<T>> list) {
   CT_ASSERT(list.size() >= size(t), "insufficient elements: %zd v.s. %zd", (nint_t) list.size(), size(t));
-  return loadu(t, (const T*) list.begin());
+  return vec::loadu(t, (const TypeOf<T>*) list.begin());
 }
 
 /**
@@ -367,22 +295,16 @@ auto loadu(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
  * 
  * Loads size(t) consecutive elements from memory starting at address p.
  * The pointer p must be aligned to DEFAULT_ALIGNMENT bytes.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory (must be aligned)
+ *
  * @return Loaded vector
  * 
  * @warning Passing an unaligned pointer may cause crashes or performance issues.
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, const T* p) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> load(T t, const TypeOf<T>* p) {
   using namespace details;
   return vectorized_map_v(
-      t, [=](auto tt, const T* pp) { return word::load(tt, pp); },
+      t, [=](auto tt, const TypeOf<T>* pp) { return word::load(tt, pp); },
       StepPointer(t, p)
   );
 }
@@ -390,17 +312,11 @@ auto load(Tag<T, N, P> t, const T* p) -> VecOf(t) {
 /**
  * @brief Load a vector from an aligned initializer list.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param list Initializer list
  * @return Loaded vector
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
-  return load(t, (const T*) list.begin());
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> load(T t, std::initializer_list<T> list) {
+  return vec::load(t, (const TypeOf<T>*) list.begin());
 }
 
 /**
@@ -410,13 +326,6 @@ auto load(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
  * from default_v. This is useful for processing partial data at the end
  * of an array.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory
- * @param n Number of elements to load (0 <= n <= size(t))
- * @param default_v Default values for elements beyond n
  * @return Vector with first n elements from memory, rest from default_v
  * 
  * @example
@@ -424,50 +333,39 @@ auto load(Tag<T, N, P> t, std::initializer_list<T> list) -> VecOf(t) {
  *   float data[4] = {1, 2, 3, 4};
  *   auto v = loadu(t, data, 2, zeros(t));  // v = [1, 2, 0, 0]
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, const TypeOf<T>* p, nint_t n, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
-      t, n, [=](auto tt, const T* p, auto v_d) { return word::loadu(tt, p); },
-      [=](auto tt, nint_t rem, const T* p, auto v_d) { return word::loadu(tt, p, rem, v_d); },
+      t, n, [=](auto tt, const TypeOf<T>* p, auto v_d) { return word::loadu(tt, p); },
+      [=](auto tt, nint_t rem, const TypeOf<T>* p, auto v_d) { return word::loadu(tt, p, rem, v_d); },
       StepPointer(t, p), ShardVec(t, default_v)
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, const T* p, nint_t n, T default_v = T()) -> VecOf(t) {
-  return loadu(t, p, n, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, const TypeOf<T>* p, nint_t n, T default_v = T()) {
+  return vec::loadu(t, p, n, vec::fill(t, default_v));
 }
 
 /**
  * @brief Load first n elements from aligned memory, with default for rest.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory (must be aligned)
- * @param n Number of elements to load
- * @param default_v Default values for elements beyond n
  * @return Vector with loaded elements
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, const T* p, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> load(T t, const TypeOf<T>* p, nint_t n, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
-      t, n, [=](auto tt, const T* p, auto v_d) { return word::load(tt, p); },
-      [=](auto tt, nint_t rem, const T* p, auto v_d) { return word::load(tt, p, rem, v_d); },
+      t, n, [=](auto tt, const TypeOf<T>* p, auto v_d) { return word::load(tt, p); },
+      [=](auto tt, nint_t rem, const TypeOf<T>* p, auto v_d) { return word::load(tt, p, rem, v_d); },
       StepPointer(t, p), ShardVec(t, default_v)
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, const T* p, nint_t n, T default_v = T()) {
-  return load(t, p, n, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE auto load(T t, const TypeOf<T>* p, nint_t n, T default_v = T()) {
+  return vec::load(t, p, n, vec::fill(t, default_v));
 }
 
 /**
@@ -476,100 +374,66 @@ auto load(Tag<T, N, P> t, const T* p, nint_t n, T default_v = T()) {
  * For each lane i where mask[i] is true, loads from p[i]. For lanes
  * where mask is false, takes the value from default_v[i].
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory
- * @param m Mask indicating which lanes to load
- * @param default_v Default values for masked-out lanes
  * @return Vector with masked-loaded elements
  * 
  * @note This operation may load from masked-out addresses; ensure
  *       those addresses are valid even if the values won't be used.
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, const TypeOf<T>* p, Mask<T> m, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
-      t, [=](auto tt, const T* p, auto mm, auto v_d) { return word::loadu(tt, p, mm, v_d); },
+      t, [=](auto tt, const TypeOf<T>* p, auto mm, auto v_d) { return word::loadu(tt, p, mm, v_d); },
       StepPointer(t, p), ShardMask(t, m), ShardVec(t, default_v)
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto loadu(Tag<T, N, P> t, const T* p, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
-  return loadu(t, p, m, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> loadu(T t, const TypeOf<T>* p, Mask<T> m, T default_v = T()) {
+  return vec::loadu(t, p, m, vec::fill(t, default_v));
 }
 
 /**
  * @brief Masked load from aligned memory.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to source memory (must be aligned)
- * @param m Mask indicating which lanes to load
- * @param default_v Default values for masked-out lanes
  * @return Vector with masked-loaded elements
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, const T* p, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> load(T t, const TypeOf<T>* p, Mask<T> m, Vec<T> default_v) {
   using namespace details;
   return vectorized_map_v(
-      t, [=](auto tt, const T* p, auto mm, auto v_d) { return word::load(tt, p, mm, v_d); },
+      t, [=](auto tt, const TypeOf<T>* p, auto mm, auto v_d) { return word::load(tt, p, mm, v_d); },
       StepPointer(t, p), ShardMask(t, m), ShardVec(t, default_v)
   );
 }
 
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto load(Tag<T, N, P> t, const T* p, MaskOf(t) m, T default_v = T()) -> VecOf(t) {
-  return load(t, p, m, fill(t, default_v));
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> load(T t, const TypeOf<T>* p, Mask<T> m, T default_v = T()) {
+  return vec::load(t, p, m, vec::fill(t, default_v));
 }
 
 /**
  * @brief Store a vector to unaligned memory.
  * 
  * Stores size(t) consecutive elements to memory starting at address p.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void storeu(Tag<T, N, P> t, T* p, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void storeu(T t, TypeOf<T>* p, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& vv) { word::storeu(tt, pp, vv); },
+      t, [=](auto tt, TypeOf<T>* pp, auto&& vv) { word::storeu(tt, pp, vv); },
       StepPointer(t, p), ShardVec(t, v)
   );
 }
 
 /**
  * @brief Store a vector to aligned memory.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory (must be aligned)
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void store(Tag<T, N, P> t, T* p, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void store(T t, TypeOf<T>* p, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& vv) { word::store(tt, pp, vv); },
+      t, [=](auto tt, TypeOf<T>* pp, auto&& vv) { word::store(tt, pp, vv); },
       StepPointer(t, p), ShardVec(t, v)
   );
 }
@@ -578,44 +442,26 @@ void store(Tag<T, N, P> t, T* p, VecOf(t) v) {
  * @brief Store first n elements of a vector to unaligned memory.
  * 
  * Only the first n elements are written to memory.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory
- * @param n Number of elements to store (0 <= n <= size(t))
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void storeu(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void storeu(T t, TypeOf<T>* p, nint_t n, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, n, [=](auto tt, T* pp, auto&& vv) { word::storeu(tt, pp, vv); },
-      [=](auto tt, nint_t rem, T* pp, auto&& vv) { word::storeu(tt, pp, rem, vv); },
+      t, n, [=](auto tt, TypeOf<T>* pp, auto&& vv) { word::storeu(tt, pp, vv); },
+      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& vv) { word::storeu(tt, pp, rem, vv); },
       StepPointer(t, p), ShardVec(t, v)
   );
 }
 
 /**
  * @brief Store first n elements of a vector to aligned memory.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory (must be aligned)
- * @param n Number of elements to store
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void store(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void store(T t, TypeOf<T>* p, nint_t n, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, n, [=](auto tt, T* pp, auto&& vv) { word::store(tt, pp, vv); },
-      [=](auto tt, nint_t rem, T* pp, auto&& vv) { word::store(tt, pp, rem, vv); },
+      t, n, [=](auto tt, TypeOf<T>* pp, auto&& vv) { word::store(tt, pp, vv); },
+      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& vv) { word::store(tt, pp, rem, vv); },
       StepPointer(t, p), ShardVec(t, v)
   );
 }
@@ -625,42 +471,24 @@ void store(Tag<T, N, P> t, T* p, nint_t n, VecOf(t) v) {
  * 
  * For each lane i where mask[i] is true, stores v[i] to p[i].
  * Masked-out lanes are not written.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory
- * @param m Mask indicating which lanes to store
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void storeu(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void storeu(T t, TypeOf<T>* p, Mask<T> m, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& mm, auto&& vv) { word::storeu(tt, pp, mm, vv); },
+      t, [=](auto tt, TypeOf<T>* pp, auto&& mm, auto&& vv) { word::storeu(tt, pp, mm, vv); },
       StepPointer(t, p), ShardMask(t, m), ShardVec(t, v)
   );
 }
 
 /**
  * @brief Masked store to aligned memory.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param p Pointer to destination memory (must be aligned)
- * @param m Mask indicating which lanes to store
- * @param v The vector to store
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE void store(T t, TypeOf<T>* p, Mask<T> m, Vec<T> v) {
   using namespace details;
   return vectorized_foreach(
-      t, [=](auto tt, T* pp, auto&& mm, auto&& vv) { word::store(tt, pp, mm, vv); },
+      t, [=](auto tt, TypeOf<T>* pp, auto&& mm, auto&& vv) { word::store(tt, pp, mm, vv); },
       StepPointer(t, p), ShardMask(t, m), ShardVec(t, v)
   );
 }
@@ -696,13 +524,12 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // *   auto idx = loadu(Tag<int32_t, 4>(), indices);
 // *   auto v = gather(t, data, idx);  // v[i] = data[indices[i]]
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i) -> VecOf(t) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_map_v(
-//      t, [=](auto tt, T* pp, auto&& ii) { return word::gather(tt, pp, ii); },
+//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii) { return word::gather(tt, pp, ii); },
 //      StepPointer(t, p), ShardVec(it, i)
 //  );
 //}
@@ -720,14 +547,13 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // * @param default_v Default values for elements beyond n
 // * @return Gathered vector
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, VecOf(t) default_v) -> VecOf(t) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, Vec<T> default_v) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_map_v(
-//      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
-//      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
+//      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii); },
+//      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { return word::gather(tt, pp, ii, rem, vv); },
 //      StepPointer(t, p), ShardVec(it, i), ShardVec(t, default_v)
 //  );
 //}
@@ -747,9 +573,8 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // * @param default_v Scalar default value for elements beyond n
 // * @return Gathered vector
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) -> VecOf(t) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, nint_t n, T default_v) {
 //  return gather(t, p, i, n, fill(t, default_v));
 //}
 //
@@ -771,13 +596,12 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // *
 // * @note May access p[index[i]] for masked-out lanes; ensure indices are valid.
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, VecOf(t) default_v) -> VecOf(t) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Mask<T> m, Vec<T> default_v) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_map_v(
-//      t, [=](auto tt, T* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
+//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& mm, auto&& vv) { return word::gather(tt, pp, ii, mm, vv); },
 //      StepPointer(t, p), ShardVec(it, i), ShardMask(t, m), ShardVec(t, default_v)
 //  );
 //}
@@ -795,9 +619,8 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // * @param default_v Scalar default value for masked-out lanes
 // * @return Gathered vector
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//auto gather(Tag<T, N, P> t, const T* p, Vec<Tag<Index<T>, N, P>> i, MaskOf(t) m, T default_v) -> VecOf(t) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //Vec<T> gather(T t, const TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Mask<T> m, T default_v) {
 //  return gather(t, p, i, m, fill(t, default_v));
 //}
 //
@@ -821,13 +644,12 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // *
 // * @note Scatter operations can be significantly slower than consecutive stores.
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_foreach(
-//      t, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
 //      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
 //  );
 //}
@@ -844,14 +666,13 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // * @param v The vector to scatter
 // * @param n Number of elements to scatter (0 <= n <= size(t))
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, nint_t n) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v, nint_t n) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_foreach(
-//      t, n, [=](auto tt, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
-//      [=](auto tt, nint_t rem, T* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv, rem); },
+//      t, n, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv); },
+//      [=](auto tt, nint_t rem, TypeOf<T>* pp, auto&& ii, auto&& vv) { word::scatter(tt, pp, ii, vv, rem); },
 //      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v)
 //  );
 //}
@@ -871,13 +692,12 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
 // * @param v The vector to scatter
 // * @param m Mask indicating which lanes to scatter
 // */
-//template <typename T, nint_t N, int P>
-//CT_ALWAYS_FORCEINLINE
-//void scatter(Tag<T, N, P> t, T* p, Vec<Tag<Index<T>, N, P>> i, VecOf(t) v, MaskOf(t) m) {
+//template <TLV_DECL_TAG(T)>
+//TLV_INLINE //void scatter(T t, TypeOf<T>* p, Vec<Tag<Index<T>, N, P>> i, Vec<T> v, Mask<T> m) {
 //  using namespace details;
 //  Tag<Index<T>, N, P> it;
 //  return vectorized_foreach(
-//      t, [=](auto tt, T* pp, auto&& ii, auto&& vv, auto&& mm) { word::scatter(tt, pp, ii, vv, mm); },
+//      t, [=](auto tt, TypeOf<T>* pp, auto&& ii, auto&& vv, auto&& mm) { word::scatter(tt, pp, ii, vv, mm); },
 //      StepPointer(t, p), ShardVec(it, i), ShardVec(t, v), ShardMask(t, m)
 //  );
 //}
@@ -894,41 +714,32 @@ void store(Tag<T, N, P> t, T* p, MaskOf(t) m, VecOf(t) v) {
  * @warning This operation is relatively slow as it requires extracting
  *          the element from a SIMD register. Avoid using in performance-
  *          critical inner loops.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param v The vector
- * @param index Element index (0 <= index < size(t))
  * @return The element at the specified index
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-T get(Tag<T, N, P> t, VecOf(t) v, nint_t index) {
-  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE TypeOf<T> get(V v, nint_t index) {
+  constexpr T t;
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word(t, v, ord);
   return word::get(word, off);
 }
 
+template <TLV_DECL_TAG(T)>
+TLV_INLINE TypeOf<T> get(T t, Vec<T> v, nint_t index) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
+  return vec::get<Vec<T>, T>(v, index);
+}
+
+
 /**
  * @brief Get a single element from a mask by index.
  * 
  * @warning This operation is relatively slow. Avoid using in hot loops.
- * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param m The mask
- * @param index Element index (0 <= index < size(t))
  * @return The boolean value at the specified index
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-bool get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE bool get(T t, Mask<T> m, nint_t index) {
   CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
@@ -942,23 +753,20 @@ bool get(Tag<T, N, P> t, MaskOf(t) m, nint_t index) {
  * @warning This operation is relatively slow as it requires modifying
  *          the SIMD register. Avoid using in performance-critical loops.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param v The original vector
- * @param index Element index (0 <= index < size(t))
- * @param x The new value
  * @return Vector with the element at index set to x
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
-  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V set(V v, nint_t index, TypeOf<T> x) {
+  constexpr T t;
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
   auto word = get_word(t, v, ord);
   return set_word(t, v, ord, word::set(word, off, x));
+}
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> set(T t, Vec<T> v, nint_t index, TypeOf<T> x) {
+  CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
+  return vec::set<Vec<T>, T>(v, index, x);
 }
 
 /**
@@ -966,18 +774,10 @@ auto set(Tag<T, N, P> t, VecOf(t) v, nint_t index, T x) -> VecOf(t) {
  * 
  * @warning This operation is relatively slow. Avoid using in hot loops.
  * 
- * @tparam T Element type
- * @tparam N Nominal size
- * @tparam P Size multiplier
- * @param t The vector tag
- * @param m The original mask
- * @param index Element index (0 <= index < size(t))
- * @param x The new boolean value
  * @return Mask with the element at index set to x
  */
-template <typename T, nint_t N, int P>
-CT_ALWAYS_FORCEINLINE
-auto set(Tag<T, N, P> t, MaskOf(t) m, nint_t index, bool x) -> MaskOf(t) {
+template <TLV_DECL_TAG(T)>
+TLV_INLINE auto set(T t, Mask<T> m, nint_t index, bool x) -> Mask<T> {
   CT_ASSERT(0 <= index && index < size(t), "%zd !in 0:%zd", index, size(t));
   nint_t ws = word_size(t);
   nint_t ord = index / ws, off = index % ws;
@@ -991,74 +791,230 @@ auto set(Tag<T, N, P> t, MaskOf(t) m, nint_t index, bool x) -> MaskOf(t) {
 //                       Basic arithmetic operations                          //
 /* ************************************************************************** */
 
-#define _CT_VECTORIZED_BINARY_V(name) \
-template <typename TVec> CT_ALWAYS_FORCEINLINE \
-auto name(TVec a, TVec b) -> TVec { \
-  using namespace details; \
-  auto t = vec_to_tag(a); \
-  return vectorized_map_v( \
-      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(aa, bb); }, \
-      ShardVec(t, a), ShardVec(t, b) \
-  ); \
-} \
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec a, TVec b, TMask m) -> TVec { \
-  using namespace details; \
-  auto t = vec_to_tag(a); \
-  return vectorized_map_v( \
-      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(aa, bb, mm); }, \
-      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
-  ); \
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>> 
+TLV_INLINE V add(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::add(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>> 
+TLV_INLINE V add(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::add(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
 }
 
-_CT_VECTORIZED_BINARY_V(add)
-_CT_VECTORIZED_BINARY_V(sub)
-_CT_VECTORIZED_BINARY_V(mul)
-_CT_VECTORIZED_BINARY_V(div)
-_CT_VECTORIZED_BINARY_V(max)
-_CT_VECTORIZED_BINARY_V(min)
-
-// bitwise
-_CT_VECTORIZED_BINARY_V(bit_and)
-_CT_VECTORIZED_BINARY_V(bit_or)
-_CT_VECTORIZED_BINARY_V(bit_xor)
-_CT_VECTORIZED_BINARY_V(bit_andnot) // not(a) and (b)
-#undef _CT_VECTORIZED_BINARY_V
-
-template <typename TVec> CT_ALWAYS_FORCEINLINE
-auto bit_shl(TVec v, int count) -> TVec {
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V sub(V a, V b) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::sub(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V sub(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::sub(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V mul(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::mul(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V mul(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::mul(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V div(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::div(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V div(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::div(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V max(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::max(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V max(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::max(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V min(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::min(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V min(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::min(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_and(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::bit_and(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_and(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::bit_and(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_or(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::bit_or(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_or(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::bit_or(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_xor(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::bit_xor(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_xor(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::bit_xor(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+// not(a) and (b)
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_andnot(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::bit_andnot(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_andnot(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::bit_andnot(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_shl(V v, int count) {
+  using namespace details;
+  constexpr T t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::bit_shl(vv, count); },
       ShardVec(t, v)
   );
 }
-
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
-auto bit_shl(TVec v, int count, TMask m) -> TVec {
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_shl(V v, int count, Mask<T> m) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr T t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shl(vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
   );
 }
 
-template <typename TVec> CT_ALWAYS_FORCEINLINE
-auto bit_shr(TVec v, int count) -> TVec {
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_shr(V v, int count) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr T t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::bit_shr(vv, count); },
       ShardVec(t, v)
   );
 }
 
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE
-auto bit_shr(TVec v, int count, TMask m) -> TVec {
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_shr(V v, int count, Mask<T> m) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr T t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& mm) { return word::bit_shr(vv, count, mm); },
       ShardVec(t, v), ShardMask(t, m)
@@ -1066,91 +1022,347 @@ auto bit_shr(TVec v, int count, TMask m) -> TVec {
 }
 
 
-#define _CT_VECTORIZED_UNARY_V(name) \
-template <typename TVec> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v) -> TVec { \
-  using namespace details; \
-  auto t = vec_to_tag(v); \
-  return vectorized_map_v( \
-      t, [=](auto tt, auto&& vv) { return word::name(vv); }, \
-      ShardVec(t, v) \
-  ); \
-} \
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v, TMask m, TVec default_v) -> TVec { \
-  using namespace details; \
-  auto t = vec_to_tag(v); \
-  return vectorized_map_v( \
-      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::name(vv, mm, dd); }, \
-      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v) \
-  ); \
-} \
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v, TMask m) -> TVec { return name(v, m, v); }
-
-_CT_VECTORIZED_UNARY_V(bit_not)
-_CT_VECTORIZED_UNARY_V(neg)
-_CT_VECTORIZED_UNARY_V(abs)
-_CT_VECTORIZED_UNARY_V(sqrt)
-_CT_VECTORIZED_UNARY_V(rcp) // reciprocal: 1 / x
-_CT_VECTORIZED_UNARY_V(rsqrt) // reciprocal of sqrt(x)
-#undef _CT_VECTORIZED_UNARY_V
-
-#define _CT_VECTORIZED_BINARY_M(name) \
-template <typename TVec> CT_ALWAYS_FORCEINLINE \
-auto name(TVec a, TVec b) -> auto { \
-  using namespace details; \
-  auto t = vec_to_tag(a); \
-  return vectorized_map_m( \
-      t, [=](auto tt, auto&& aa, auto&& bb) { return word::name(aa, bb); }, \
-      ShardVec(t, a), ShardVec(t, b) \
-  ); \
-} \
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec a, TVec b, TMask m) -> TMask { \
-  using namespace details; \
-  auto t = vec_to_tag(a); \
-  return vectorized_map_m( \
-      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::name(aa, bb, mm); }, \
-      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m) \
-  ); \
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_not(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::bit_not(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_not(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::bit_not(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V bit_not(V v, Mask<T> m) { 
+  return vec::bit_not(v, m, v); 
 }
 
-_CT_VECTORIZED_BINARY_M(cmpeq) // equals
-_CT_VECTORIZED_BINARY_M(cmpne) // not equals
-_CT_VECTORIZED_BINARY_M(cmplt) // less than
-_CT_VECTORIZED_BINARY_M(cmple) // less than or equals
-_CT_VECTORIZED_BINARY_M(cmpgt) // greater than
-_CT_VECTORIZED_BINARY_M(cmpge) // greater than or equals
-
-#undef _CT_VECTORIZED_BINARY_M
-
-#define _CT_VECTORIZED_UNARY_M(name) \
-template <typename TVec> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v) -> auto { \
-  using namespace details; \
-  auto t = vec_to_tag(v); \
-  return vectorized_map_m( \
-      t, [=](auto tt, auto&& vv) { return word::name(vv); }, \
-      ShardVec(t, v) \
-  ); \
-} \
-template <typename TVec, typename TMask> CT_ALWAYS_FORCEINLINE \
-auto name(TVec v, TMask m) -> TMask { \
-  using namespace details; \
-  auto t = vec_to_tag(v); \
-  return vectorized_map_m( \
-      t, [=](auto tt, auto&& vv, auto&& mm) { return word::name(vv, mm); }, \
-      ShardVec(t, v), ShardMask(t, m) \
-  ); \
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V neg(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::neg(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V neg(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::neg(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V neg(V v, Mask<T> m) {
+  return vec::neg(v, m, v);
 }
 
-_CT_VECTORIZED_UNARY_M(isnan)
-_CT_VECTORIZED_UNARY_M(isposinf)
-_CT_VECTORIZED_UNARY_M(isneginf)
-_CT_VECTORIZED_UNARY_M(isinf)
-#undef _CT_VECTORIZED_UNARY_M
 
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V abs(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::abs(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V abs(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::abs(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V abs(V v, Mask<T> m) {
+  return vec::abs(v, m, v);
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V sqrt(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::sqrt(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V sqrt(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::sqrt(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V sqrt(V v, Mask<T> m) {
+  return vec::sqrt(v, m, v);
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rsqrt(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::rsqrt(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rsqrt(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::rsqrt(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rsqrt(V v, Mask<T> m) {
+  return vec::rsqrt(v, m, v);
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rcp(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv) { return word::rcp(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rcp(V v, Mask<T> m, V default_v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_v(
+      t, [=](auto tt, auto&& vv, auto&& mm, auto&& dd) { return word::rcp(vv, mm, dd); },
+      ShardVec(t, v), ShardMask(t, m), ShardVec(t, default_v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V rcp(V v, Mask<T> m) {
+  return vec::rcp(v, m, v);
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpeq(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmpeq(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpeq(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmpeq(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpne(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmpne(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpne(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmpne(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmplt(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmplt(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmplt(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmplt(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpgt(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmpgt(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpgt(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmpgt(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmple(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmple(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmple(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmple(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpge(V a, V b) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb) { return word::cmpge(aa, bb); },
+      ShardVec(t, a), ShardVec(t, b)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> cmpge(V a, V b, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& aa, auto&& bb, auto&& mm) { return word::cmpge(aa, bb, mm); },
+      ShardVec(t, a), ShardVec(t, b), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isnan(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv) { return word::isnan(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isnan(V v, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::isnan(vv, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isposinf(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv) { return word::isposinf(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isposinf(V v, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::isposinf(vv, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isneginf(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv) { return word::isneginf(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isneginf(V v, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::isneginf(vv, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
+
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isinf(V v) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv) { return word::isinf(vv); },
+      ShardVec(t, v)
+  );
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE Mask<T> isinf(V v, Mask<T> m) {
+  using namespace details;
+  constexpr T t;
+  return vectorized_map_m(
+      t, [=](auto tt, auto&& vv, auto&& mm) { return word::isinf(vv, mm); },
+      ShardVec(t, v), ShardMask(t, m)
+  );
+}
 
 
 /* ************************************************************************** */
@@ -1166,10 +1378,10 @@ _CT_VECTORIZED_UNARY_M(isinf)
  *      where j = 0...N;
  *            M = 16 / sizeof(element type of V).
  */
-template <int... Is, typename V>
-V local_shuf(V v) {
+template <int... Is, TLV_DECL_VEC(V)>
+TLV_INLINE V local_shuf(V v) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr Vec2Tag<V> t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::local_shuf<Is...>(vv); },
       ShardVec(t, v)
@@ -1186,11 +1398,11 @@ V local_shuf(V v) {
  *            M = 16 / sizeof(element type of V);
  *            i[j] in [0, M), 否则result[j]未定义.
  */
-template <typename V, typename Vi>
-V local_shuf(V v, Vi i) {
+template <TLV_DECL_VEC(V), TLV_DECL_VEC(Vi)>
+TLV_INLINE V local_shuf(V v, Vi i) {
   using namespace details;
-  auto t = vec_to_tag(v);
-  auto ti = vec_to_tag(i);
+  constexpr Vec2Tag<V> t;
+  constexpr Vec2Tag<Vi> ti;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& ii) { return word::local_shuf(vv, ii); },
       ShardVec(t, v), ShardVec(ti, i)
@@ -1200,30 +1412,30 @@ V local_shuf(V v, Vi i) {
 /**
  * 使用运行时下标is对向量v中每一个元素在（16字节）块（即一个x86的lane）内进行重排。要求和个规则与使用固定下标的版本完全相同。
  */
-template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
-V local_shuf(V v, Is... is) {
+template <TLV_DECL_VEC(V), typename... Is, TL_IF(is_any<Is, int> && ...)>
+TLV_INLINE V local_shuf(V v, Is... is) {
   using namespace details;
-  auto t = vec_to_tag(v);
+  constexpr Vec2Tag<V> t;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv) { return word::local_shuf(vv, is...); },
       ShardVec(t, v)
   );
 }
 
-//template <int... Is, typename V>
+//template <int... Is, TLV_DECL_VEC(V)>
 //V block_shuf(V v) {
 //  using namespace details;
-//  auto t = vec_to_tag(v);
+//  constexpr Vec2Tag<V> t;
 //  return vectorized_map_v(
 //      t, [=](auto tt, auto&& vv) { return word::block_shuf<Is...>(vv); },
 //      ShardVec(t, v)
 //  );
 //}
 //
-//template <typename V, typename... Is, TL_IF(is_any<Is, int> && ...)>
+//template <TLV_DECL_VEC(V), typename... Is, TL_IF(is_any<Is, int> && ...)>
 //V block_shuf(V v, Is... is) {
 //  using namespace details;
-//  auto t = vec_to_tag(v);
+//  constexpr Vec2Tag<V> t;
 //  return vectorized_map_v(
 //      t, [=](auto tt, auto&& vv) { return word::block_shuf(vv, is...); },
 //      ShardVec(t, v)
@@ -1242,11 +1454,11 @@ V local_shuf(V v, Is... is) {
  * AVX512，则此操作会更慢。而如果元素类型为int8_t/uint8_t，且没有AVX512_VBMI特性，
  * 则即是有AVX512，此操作会慢于其他更宽的数据类型。
  */
-template <typename V, typename Vi>
-V shuf(V v, Vi i) {
+template <TLV_DECL_VEC(V), TLV_DECL_VEC(Vi)>
+TLV_INLINE V shuf(V v, Vi i) {
   using namespace details;
-  auto t = vec_to_tag(v);
-  auto ti = vec_to_tag(i);
+  constexpr Vec2Tag<V> t;
+  constexpr Vec2Tag<Vi> ti;
   return vectorized_map_v(
       t, [=](auto tt, auto&& vv, auto&& ii) { return word::shuf(vv, ii); },
       ShardVec(t, v), ShardVec(ti, i)
@@ -1266,9 +1478,9 @@ V shuf(V v, Vi i) {
  * Promotion rules:
  *   - all type conversions conform C++ standard.
  */
-template <typename TTag, typename TVec>
-Vec<TTag> promote(TTag t, TVec v) {
-  constexpr auto t_in = Vec2Tag<TVec>();
+template <TLV_DECL_TAG(To), TLV_DECL_VEC(Vi)>
+TLV_INLINE Vec<To> promote(To t, Vi v) {
+  constexpr auto t_in = Vec2Tag<Vi>();
   constexpr auto t_out= t;
   constexpr nint_t nw_in = num_words(t_in);
   constexpr nint_t nw_out = num_words(t_out);
@@ -1291,7 +1503,7 @@ Vec<TTag> promote(TTag t, TVec v) {
   using BatchTag = Tag<TOut, WNOut, log2_floor(factor)>;
   static_assert(num_words(BatchTag()) == factor, "Output element count mismatch");
 
-  Vec<TTag> out;
+  Vec<To> out;
   if constexpr (nw_out > 1) {
     details::ForEachTransformed<nw_in_required>()(
         [&]<nint_t I>() {
@@ -1324,9 +1536,9 @@ Vec<TTag> promote(TTag t, TVec v) {
  *   - float -> signed int: standard float/int conversion
  *   - float -> unsigned int: standard float/int conversion (result for negative input undefined)
  */
-template <typename TTag, typename TVec>
-Vec<TTag> demote(TTag t, TVec v) {
-  constexpr auto t_in = Vec2Tag<TVec>();
+template <TLV_DECL_TAG(To), TLV_DECL_VEC(Vi)>
+TLV_INLINE Vec<To> demote(To t, Vi v) {
+  constexpr auto t_in = Vec2Tag<Vi>();
   constexpr auto t_out= t;
   constexpr nint_t nw_in = num_words(t_in);
   constexpr nint_t nw_out = num_words(t_out);
@@ -1348,7 +1560,7 @@ Vec<TTag> demote(TTag t, TVec v) {
   static_assert(nw_in_required <= nw_in, "Insufficient elements");
   using BatchTag = Tag<TIn, WNIn, log2_floor(factor)>;
 
-  Vec<TTag> out;
+  Vec<To> out;
   if constexpr (nw_out > 1) {
     static_assert (nw_in_required == nw_out * factor);
     details::ForEachTransformed<nw_out>()(
@@ -1384,9 +1596,9 @@ Vec<TTag> demote(TTag t, TVec v) {
  * Conversion rules:
  *   - all type conversions conform C++ standard.
  */
-template <typename TTag, typename TVec>
-Vec<TTag> convert(TTag t, TVec v) {
-  constexpr auto t_in = Vec2Tag<TVec>();
+template <TLV_DECL_TAG(To), TLV_DECL_VEC(Vi)>
+TLV_INLINE Vec<To> convert(To t, Vi v) {
+  constexpr auto t_in = Vec2Tag<Vi>();
   constexpr auto t_out= t;
   constexpr nint_t nw_in = num_words(t_in);
   constexpr nint_t nw_out = num_words(t_out);
@@ -1402,7 +1614,7 @@ Vec<TTag> convert(TTag t, TVec v) {
   static_assert(nw_in == nw_out);
   static_assert(!(is_scalable(t_in) ^ is_scalable(t_out)));
 
-  Vec<TTag> out;
+  Vec<To> out;
   if constexpr (nw_in > 1) {
     details::ForEachTransformed<nw_in>()(
         [&]<nint_t I>() {
@@ -1419,19 +1631,19 @@ Vec<TTag> convert(TTag t, TVec v) {
   return out;
 }
 
-//template <typename TTag, typename TVec>
-//Vec<TTag> bitcast(TTag t, TVec v) {
+//template <TLV_DECL_TAG(T), TLV_DECL_VEC(Vi)>
+//Vec<T> bitcast(T t, Vi v) {
 //  return {};
 //}
 //
-//template <typename TTag, typename TVec>
-//Vec<TTag> resize_bitcast(TTag t, TVec v) {
+//template <TLV_DECL_TAG(T), TLV_DECL_VEC(Vi)>
+//Vec<T> resize_bitcast(T t, Vi v) {
 //  return {};
 //}
 //
 //
-//template <typename TTagTo, typename TTagFrom, typename TVec>
-//Vec<TTagTo> zero_extend_resize_bitcast(TTagTo t_to, TTagFrom t_from, TVec v) {
+//template <TLV_DECL_TAG(To), TLV_DECL_TAG(Ti), TLV_DECL_VEC(Vi)>
+//Vec<To> zero_extend_resize_bitcast(To t_to, Ti t_from, Vi v) {
 //  return {};
 //}
 

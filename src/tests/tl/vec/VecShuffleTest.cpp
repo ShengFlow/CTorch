@@ -672,6 +672,7 @@ TEST(LocalShufCT_MultiWord, Float32_Identity) {
   alignas(DEFAULT_ALIGNMENT) T data[N];
   test_utils::fill_seq(data, N);
   auto v = loadu(t, data);
+  auto wt = word_tag(t);
   // Identity pattern applied to every word's every lane
   auto r = local_shuf<3, 2, 1, 0>(v);
   for (nint_t i = 0; i < N; ++i)
@@ -773,8 +774,8 @@ TEST(Shuf_MultiWord, Float32_ReverseWithinWord) {
   using I = int32_t;
   constexpr auto N1 = test_utils::full_vec_size<T>();
   constexpr auto N  = N1 * 2;
-  Tag<T, N> t;
-  Tag<I, N> ti;
+  Tag<T, N1, 1> t;
+  Tag<I, N1, 1> ti;
   alignas(DEFAULT_ALIGNMENT) T data[32];
   alignas(DEFAULT_ALIGNMENT) I idx[32];
   test_utils::fill_seq(data, N);
@@ -799,8 +800,8 @@ TEST(Shuf_MultiWord, Int16_Identity) {
   using I = int16_t;
   constexpr auto N1 = test_utils::full_vec_size<T>();
   constexpr auto N  = N1 * 2;
-  Tag<T, N> t;
-  Tag<I, N> ti;
+  Tag<T, N1, 1> t;
+  Tag<I, N1, 1> ti;
   alignas(DEFAULT_ALIGNMENT) T data[64];
   alignas(DEFAULT_ALIGNMENT) I idx[64];
   test_utils::fill_seq(data, N);
@@ -818,8 +819,8 @@ TEST(Shuf_MultiWord, Int64_Swap) {
   constexpr auto N1 = test_utils::full_vec_size<T>();
   constexpr auto N  = N1 * 2;
   constexpr auto M  = 2;
-  Tag<T, N> t;
-  Tag<I, N> ti;
+  Tag<T, N1, 1> t;
+  Tag<I, N1, 1> ti;
   alignas(DEFAULT_ALIGNMENT) T data[16];
   alignas(DEFAULT_ALIGNMENT) I idx[16];
   test_utils::fill_seq(data, N);
