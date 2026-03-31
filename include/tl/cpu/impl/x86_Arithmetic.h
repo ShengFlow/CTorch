@@ -1188,7 +1188,7 @@ TLV_INLINE V rcp(V v) {
   #ifdef HAS_AVX512F
   return _mm_rcp14_pd(v.v);
   #else
-  return word::div(fill(T(), 1), v);
+  return word::div(word::fill(T(), 1), v);
   #endif
 }
 
@@ -1345,7 +1345,7 @@ TLV_INLINE V rsqrt(V v) {
   #ifdef HAS_AVX512F
   return _mm_rsqrt14_pd(v.v);
   #else
-  return word::div(fill(T(), 1), word::sqrt(v));
+  return word::div(word::fill(T(), 1), word::sqrt(v));
   #endif
 }
 

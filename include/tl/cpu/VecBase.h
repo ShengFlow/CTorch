@@ -1096,6 +1096,11 @@ TLV_INLINE CT_PURE
 static constexpr auto word_tag(Tag<T, N, P> t) {
   return typename VecDefs<T, N, P>::WordDefs::TagType();
 }
+
+// TODO temp
+template <typename T>
+using WordOf = typename VecDefs<TypeOf<T>, T::N, T::POW2>::WordDefs::TagType;
+
 } // namespace ct::tl::vec
 
 #endif //CTORCH_VECBASE_H

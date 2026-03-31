@@ -807,6 +807,350 @@ TEST_F(VecConvertCornerCaseTest, AllBitsSetPattern) {
   }
 }
 
+// ============================================================================
+// Bitcast Tests: same-size type reinterpretation
+// ============================================================================
+
+// Helper to compare bit patterns (handles NaN correctly)
+template <typename T1, typename T2>
+::testing::AssertionResult bits_equal(T1 expected, T2 actual) {
+  static_assert(sizeof(T1) == sizeof(T2), "Size mismatch");
+  if (std::memcmp(&expected, &actual, sizeof(T1)) == 0) {
+    return ::testing::AssertionSuccess();
+  }
+  return ::testing::AssertionFailure()
+      << "Bit pattern mismatch: expected " << static_cast<long long>(expected)
+      << ", got " << static_cast<long long>(actual);
+}
+
+template <typename TPair>
+class VecBitcastTest : public ::testing::Test {
+protected:
+  using TIn = typename TPair::T1;
+  using TOut = typename TPair::T2;
+  using InType = TIn;
+  using OutType = TOut;
+  static_assert(sizeof(TIn) == sizeof(TOut), "Bitcast requires same-size types");
+
+  void SetUp() override {
+    in_data_ = test_utils::alloc_aligned<TIn>(256);
+    for (size_t i = 0; i < 256; ++i) {
+      in_data_[i] = test_utils::get_test_value<TIn>(i);
+    }
+  }
+
+  void TearDown() override {
+    std::free(in_data_);
+  }
+
+  TIn* in_data_{};
+};
+
+// Define type pairs for bitcast tests (same size)
+using BitcastTypes = ::testing::Types<
+    // 8-bit bitcast
+    Pair<int8_t, uint8_t>,
+    Pair<uint8_t, int8_t>,
+    // 16-bit bitcast
+    Pair<int16_t, uint16_t>,
+    Pair<uint16_t, int16_t>,
+    // 32-bit bitcast
+    Pair<int32_t, uint32_t>,
+    Pair<uint32_t, int32_t>,
+    Pair<int32_t, float32_t>,
+    Pair<float32_t, int32_t>,
+    Pair<uint32_t, float32_t>,
+    Pair<float32_t, uint32_t>,
+    // 64-bit bitcast
+    Pair<int64_t, uint64_t>,
+    Pair<uint64_t, int64_t>,
+    Pair<int64_t, float64_t>,
+    Pair<float64_t, int64_t>,
+    Pair<uint64_t, float64_t>,
+    Pair<float64_t, uint64_t>
+>;
+
+TYPED_TEST_SUITE(VecBitcastTest, BitcastTypes);
+
+TYPED_TEST(VecBitcastTest, BasicBitcast) {
+  using TIn = typename TestFixture::InType;
+  using TOut = typename TestFixture::OutType;
+
+  ScalableTag<TIn> t_in;
+  ScalableTag<TOut> t_out;
+  constexpr nint_t N = size(t_in);
+
+  auto v_in = loadu(t_in, this->in_data_);
+  auto v_out = bitcast(t_out, v_in);
+
+  // Bitcast should preserve bit pattern exactly
+  for (nint_t i = 0; i < N; ++i) {
+    TIn original = this->in_data_[i];
+    TOut actual = get(t_out, v_out, i);
+    // Reinterpret bits: use memcpy for type-punning
+    TOut expected;
+    std::memcpy(&expected, &original, sizeof(TOut));
+    EXPECT_TRUE(bits_equal(expected, actual))
+        << "i=" << i << " input=" << static_cast<long long>(original);
+  }
+}
+
+TYPED_TEST(VecBitcastTest, BitcastRoundTrip) {
+  using TIn = typename TestFixture::InType;
+  using TOut = typename TestFixture::OutType;
+
+  ScalableTag<TIn> t_in;
+  ScalableTag<TOut> t_out;
+  constexpr nint_t N = size(t_in);
+
+  auto v_in = loadu(t_in, this->in_data_);
+  auto v_mid = bitcast(t_out, v_in);
+  auto v_out = bitcast(t_in, v_mid);
+
+  // Round-trip should preserve original values
+  for (nint_t i = 0; i < N; ++i) {
+    TIn expected = this->in_data_[i];
+    TIn actual = get(t_in, v_out, i);
+    EXPECT_TRUE(bits_equal(expected, actual)) << "i=" << i;
+  }
+}
+
+TYPED_TEST(VecBitcastTest, BitcastWithZeroValues) {
+  using TIn = typename TestFixture::InType;
+  using TOut = typename TestFixture::OutType;
+
+  ScalableTag<TIn> t_in;
+  ScalableTag<TOut> t_out;
+  constexpr nint_t N = size(t_in);
+
+  auto v_in = zeros(t_in);
+  auto v_out = bitcast(t_out, v_in);
+
+  for (nint_t i = 0; i < N; ++i) {
+    TOut actual = get(t_out, v_out, i);
+    EXPECT_TRUE(bits_equal(TOut(0), actual)) << "i=" << i;
+  }
+}
+
+// Test special bit patterns (all ones = NaN for floats)
+TYPED_TEST(VecBitcastTest, BitcastWithAllOnesPattern) {
+  using TIn = typename TestFixture::InType;
+  using TOut = typename TestFixture::OutType;
+
+  ScalableTag<TIn> t_in;
+  ScalableTag<TOut> t_out;
+  constexpr nint_t N = size(t_in);
+
+  // Use aligned buffer with sufficient size
+  auto data = test_utils::alloc_aligned<TIn>(N);
+  // Fill with all 1s
+  std::memset(data, 0xFF, N * sizeof(TIn));
+
+  auto v_in = loadu(t_in, data);
+  auto v_out = bitcast(t_out, v_in);
+
+  // All bits should be 1 - compare as bits to handle NaN correctly
+  for (nint_t i = 0; i < N; ++i) {
+    TOut actual = get(t_out, v_out, i);
+    TOut expected;
+    std::memset(&expected, 0xFF, sizeof(TOut));
+    EXPECT_TRUE(bits_equal(expected, actual)) << "i=" << i;
+  }
+
+  std::free(data);
+}
+
+// Corner case tests for bitcast using ScalableTag
+TEST_F(VecConvertCornerCaseTest, BitcastFloat32ToInt32) {
+  ScalableTag<float32_t> t_f32;
+  ScalableTag<int32_t> t_i32;
+  constexpr nint_t N = size(t_f32);
+
+  // Test specific float values with known bit representations
+  auto f32_data = test_utils::alloc_aligned<float32_t>(N);
+  f32_data[0] = 0.0f;           // 0x00000000
+  f32_data[1] = -0.0f;          // 0x80000000
+  f32_data[2] = 1.0f;           // 0x3F800000
+  f32_data[3] = -1.0f;          // 0xBF800000
+
+  auto v_f32 = loadu(t_f32, f32_data);
+  auto v_i32 = bitcast(t_i32, v_f32);
+
+  EXPECT_EQ(0x00000000, uint32_t(get(t_i32, v_i32, 0)));
+  EXPECT_EQ(0x80000000, uint32_t(get(t_i32, v_i32, 1)));
+  EXPECT_EQ(0x3F800000, uint32_t(get(t_i32, v_i32, 2)));
+  EXPECT_EQ(0xBF800000, uint32_t(get(t_i32, v_i32, 3)));
+
+  std::free(f32_data);
+}
+
+TEST_F(VecConvertCornerCaseTest, BitcastInt32ToFloat32) {
+  ScalableTag<int32_t> t_i32;
+  ScalableTag<float32_t> t_f32;
+  constexpr nint_t N = size(t_i32);
+
+  auto i32_data = test_utils::alloc_aligned<int32_t>(N);
+  i32_data[0] = 0x00000000;        // 0.0f
+  i32_data[1] = (int)0x80000000;   // -0.0f
+  i32_data[2] = 0x3F800000;        // 1.0f
+  i32_data[3] = (int)0xBF800000;   // -1.0f
+
+  auto v_i32 = loadu(t_i32, i32_data);
+  auto v_f32 = bitcast(t_f32, v_i32);
+
+  EXPECT_FLOAT_EQ(0.0f, get(t_f32, v_f32, 0));
+  EXPECT_FLOAT_EQ(-0.0f, get(t_f32, v_f32, 1));
+  EXPECT_FLOAT_EQ(1.0f, get(t_f32, v_f32, 2));
+  EXPECT_FLOAT_EQ(-1.0f, get(t_f32, v_f32, 3));
+
+  std::free(i32_data);
+}
+
+TEST_F(VecConvertCornerCaseTest, BitcastFloat64ToInt64) {
+  ScalableTag<float64_t> t_f64;
+  ScalableTag<int64_t> t_i64;
+  constexpr nint_t N = size(t_f64);
+
+  auto f64_data = test_utils::alloc_aligned<float64_t>(N);
+  f64_data[0] = 0.0;   // 0x0000000000000000
+  f64_data[1] = 1.0;   // 0x3FF0000000000000
+
+  auto v_f64 = loadu(t_f64, f64_data);
+  auto v_i64 = bitcast(t_i64, v_f64);
+
+  EXPECT_EQ(int64_t(0x0000000000000000LL), get(t_i64, v_i64, 0));
+  EXPECT_EQ(int64_t(0x3FF0000000000000LL), get(t_i64, v_i64, 1));
+
+  std::free(f64_data);
+}
+
+TEST_F(VecConvertCornerCaseTest, BitcastSignedUnsigned) {
+  ScalableTag<int32_t> t_i32;
+  ScalableTag<uint32_t> t_u32;
+  constexpr nint_t N = size(t_i32);
+
+  auto i32_data = test_utils::alloc_aligned<int32_t>(N);
+  i32_data[0] = -1;                // 0xFFFFFFFF
+  i32_data[1] = -2;                // 0xFFFFFFFE
+  i32_data[2] = 0x7FFFFFFF;        // max int32
+  i32_data[3] = (int)0x80000000;   // min int32
+
+  auto v_i32 = loadu(t_i32, i32_data);
+  auto v_u32 = bitcast(t_u32, v_i32);
+
+  EXPECT_EQ(uint32_t(0xFFFFFFFF), get(t_u32, v_u32, 0));
+  EXPECT_EQ(uint32_t(0xFFFFFFFE), get(t_u32, v_u32, 1));
+  EXPECT_EQ(uint32_t(0x7FFFFFFF), get(t_u32, v_u32, 2));
+  EXPECT_EQ(uint32_t(0x80000000), get(t_u32, v_u32, 3));
+
+  std::free(i32_data);
+}
+
+// Test bitcast with multi-word vectors (same size)
+TEST_F(VecConvertCornerCaseTest, BitcastMultiWordSameSize) {
+  // ScalableTag<T, 1> = 2 words
+  ScalableTag<int32_t, 1> t_i32;
+  ScalableTag<uint32_t, 1> t_u32;
+  constexpr nint_t N = size(t_i32);
+
+  auto i32_data = test_utils::alloc_aligned<int32_t>(N);
+  for (nint_t i = 0; i < N; ++i) {
+    i32_data[i] = (i - N/2) * 0x11111111;
+  }
+
+  auto v_i32 = loadu(t_i32, i32_data);
+  auto v_u32 = bitcast(t_u32, v_i32);
+
+  for (nint_t i = 0; i < N; ++i) {
+    uint32_t expected;
+    std::memcpy(&expected, &i32_data[i], sizeof(uint32_t));
+    uint32_t actual = get(t_u32, v_u32, i);
+    EXPECT_EQ(expected, actual) << "i=" << i;
+  }
+
+  std::free(i32_data);
+}
+
+// Test bitcast with larger input vector (input words > output words)
+TEST_F(VecConvertCornerCaseTest, BitcastInputLarger) {
+  // ScalableTag<T, 1> = 2 words, ScalableTag<T, 0> = 1 word
+  ScalableTag<int32_t, 1> t_i32_in;   // 2 words input
+  ScalableTag<uint32_t, 0> t_u32_out; // 1 word output
+  constexpr nint_t N_IN = size(t_i32_in);
+  constexpr nint_t N_OUT = size(t_u32_out);
+
+  auto i32_data = test_utils::alloc_aligned<int32_t>(N_IN);
+  for (nint_t i = 0; i < N_IN; ++i) {
+    i32_data[i] = i * 12345;
+  }
+
+  auto v_in = loadu(t_i32_in, i32_data);
+  auto v_out = bitcast(t_u32_out, v_in);
+
+  // Only first N_OUT elements should be preserved
+  for (nint_t i = 0; i < N_OUT; ++i) {
+    uint32_t expected;
+    std::memcpy(&expected, &i32_data[i], sizeof(uint32_t));
+    uint32_t actual = get(t_u32_out, v_out, i);
+    EXPECT_EQ(expected, actual) << "i=" << i;
+  }
+
+  std::free(i32_data);
+}
+
+// Test bitcast with larger output vector (input words < output words)
+TEST_F(VecConvertCornerCaseTest, BitcastOutputLarger) {
+  // ScalableTag<T, 0> = 1 word, ScalableTag<T, 1> = 2 words
+  ScalableTag<float32_t, 0> t_f32_in;   // 1 word input
+  ScalableTag<uint32_t, 1> t_u32_out;   // 2 words output
+  constexpr nint_t N_IN = size(t_f32_in);
+  constexpr nint_t N_OUT = size(t_u32_out);
+
+  auto f32_data = test_utils::alloc_aligned<float32_t>(N_IN);
+  for (nint_t i = 0; i < N_IN; ++i) {
+    f32_data[i] = static_cast<float32_t>(i * 1.5f + 0.5f);
+  }
+
+  auto v_in = loadu(t_f32_in, f32_data);
+  auto v_out = bitcast(t_u32_out, v_in);
+
+  // First N_IN elements should be correct
+  for (nint_t i = 0; i < N_IN; ++i) {
+    uint32_t expected;
+    std::memcpy(&expected, &f32_data[i], sizeof(uint32_t));
+    uint32_t actual = get(t_u32_out, v_out, i);
+    EXPECT_EQ(expected, actual) << "i=" << i;
+  }
+  // Elements beyond N_IN are undefined, so we don't test them
+
+  std::free(f32_data);
+}
+
+// Test bitcast with 4-word vectors
+TEST_F(VecConvertCornerCaseTest, BitcastFourWords) {
+  // ScalableTag<T, 2> = 4 words
+  ScalableTag<float64_t, 2> t_f64;
+  ScalableTag<uint64_t, 2> t_u64;
+  constexpr nint_t N = size(t_f64);
+
+  auto f64_data = test_utils::alloc_aligned<float64_t>(N);
+  for (nint_t i = 0; i < N; ++i) {
+    f64_data[i] = static_cast<float64_t>(i * 2.5 + 1.0);
+  }
+
+  auto v_f64 = loadu(t_f64, f64_data);
+  auto v_u64 = bitcast(t_u64, v_f64);
+
+  for (nint_t i = 0; i < N; ++i) {
+    uint64_t expected;
+    std::memcpy(&expected, &f64_data[i], sizeof(uint64_t));
+    uint64_t actual = get(t_u64, v_u64, i);
+    EXPECT_EQ(expected, actual) << "i=" << i;
+  }
+
+  std::free(f64_data);
+}
+
 //// Test: Alternating bit patterns
 //TEST_F(VecConvertCornerCaseTest, AlternatingBitPattern) {
 //  FixedTag<uint8_t, 16> t_u8;
