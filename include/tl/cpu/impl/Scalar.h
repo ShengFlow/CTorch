@@ -6,6 +6,7 @@
 #define CTORCH_SCALAR_H
 
 #include <cmath>
+#include <cstring>
 
 #include "CoreDefs.h"
 #include "tl/cpu/VecBase.h"
@@ -166,7 +167,7 @@ TLV_INLINE Mask<T> mwhilege(T t, nint_t a, nint_t b) {
 //                             Shuffle & Permute                              //
 /* ************************************************************************** */
 template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
-CT_ALWAYS_FORCEINLINE V local_shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
+TLV_INLINE V local_shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
   constexpr T t;
   constexpr Rebind<TypeOf<T>, T> ti;
   constexpr nint_t group_el = 16 / sizeof(TypeOf<T>);
@@ -184,7 +185,7 @@ CT_ALWAYS_FORCEINLINE V local_shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
 }
 
 template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, typename... Is>
-CT_ALWAYS_FORCEINLINE V local_shuf(V v, Is... is) {
+TLV_INLINE V local_shuf(V v, Is... is) {
   constexpr T t;
   static_assert(is_default_impl(t));
   static_assert(is_word_vec(t));
@@ -205,12 +206,12 @@ CT_ALWAYS_FORCEINLINE V local_shuf(V v, Is... is) {
 }
 
 template <int... Is, TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
-CT_ALWAYS_FORCEINLINE V local_shuf(V v) {
+TLV_INLINE V local_shuf(V v) {
   return word::local_shuf(v, Is...);
 }
 
 template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
-CT_ALWAYS_FORCEINLINE V shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
+TLV_INLINE V shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
   constexpr T t;
   constexpr Rebind<TypeOf<T>, T> ti;
   static_assert(is_default_impl(t) && is_default_impl(ti));
@@ -218,6 +219,247 @@ CT_ALWAYS_FORCEINLINE V shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> vi) {
   V u;
   for (nint_t i = 0; i < size(t); ++i) {
     u[i] = v[nint_t(vi[i])];
+  }
+  return u;
+}
+
+/* ************************************************************************** */
+//                    Half-vector operations (upper/lower/etc)                 */
+/* ************************************************************************** */
+
+/**
+ * @brief Get the upper half of a vector (scalar implementation).
+ *
+ * Returns a vector of half the size containing the upper half of elements.
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE V upper(T t, Vec<T> v) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  V u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v[i + size(th)];
+  }
+  return u;
+}
+
+/**
+ * @brief Get the lower half of a vector (scalar implementation).
+ *
+ * Returns a vector of half the size containing the lower half of elements.
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE V lower(T t, Vec<T> v) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  V u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v[i];
+  }
+  return u;
+}
+
+/**
+ * @brief Get the even-indexed elements of a vector (scalar implementation).
+ *
+ * Returns a vector of half the size containing elements at indices 0, 2, 4, ...
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE V even(T t, Vec<T> v) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  static_assert(size(t) >= 2, "Insufficient elements");
+  constexpr Half<T> th;
+  V u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v[2 * i];
+  }
+  return u;
+}
+
+/**
+ * @brief Get the odd-indexed elements of a vector (scalar implementation).
+ *
+ * Returns a vector of half the size containing elements at indices 1, 3, 5, ...
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE V odd(T t, Vec<T> v) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  static_assert(size(t) >= 2, "Insufficient elements");
+  constexpr Half<T> th;
+  V u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v[2 * i + 1];
+  }
+  return u;
+}
+
+/**
+ * @brief Concatenate two half-size vectors into a full-size vector (scalar implementation).
+ *
+ * Returns a vector of double the size with v_lo in lower half and v_hi in upper half.
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE Vec<T> concat(T t, V v_lo, V v_hi) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  Vec<T> u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v_lo[i];
+    u[i + size(th)] = v_hi[i];
+  }
+  return u;
+}
+
+/**
+ * @brief Concatenate even-indexed elements from two vectors (scalar implementation).
+ *
+ * Extracts even-indexed elements from both v_lo and v_hi, then concatenates them.
+ * Result: [v_lo[0], v_lo[2], ..., v_hi[0], v_hi[2], ...]
+ */
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> v_lo, Vec<T> v_hi) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  Vec<T> u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v_lo[2 * i];
+    u[i + size(th)] = v_hi[2 * i];
+  }
+  return u;
+}
+
+/**
+ * @brief Concatenate odd-indexed elements from two vectors (scalar implementation).
+ *
+ * Extracts odd-indexed elements from both v_lo and v_hi, then concatenates them.
+ * Result: [v_lo[1], v_lo[3], ..., v_hi[1], v_hi[3], ...]
+ */
+template <TLV_DECL_TAG(T)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> v_lo, Vec<T> v_hi) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  Vec<T> u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[i] = v_lo[2 * i + 1];
+    u[i + size(th)] = v_hi[2 * i + 1];
+  }
+  return u;
+}
+
+/**
+ * @brief Interleave lower half of each 16-byte block from a and b (scalar implementation).
+ *
+ * For each 16-byte block, interleaves the lower 8 bytes.
+ * Example with float32 x 8: result = [b[3], a[3], b[2], a[2], b[1], a[1], b[0], a[0]]
+ * where indices 0-3 are the lower half of the 8-element block.
+ */
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  constexpr T t;
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr nint_t group_el = 16 / sizeof(TypeOf<T>);
+  constexpr nint_t half_el = group_el / 2;
+  static_assert(size(t) >= group_el && size(t) % group_el == 0);
+  V u;
+  for (nint_t i = 0; i < size(t); i += group_el) {
+    for (nint_t j = 0; j < half_el; ++j) {
+      u[i + 2 * j] = a[i + j];
+      u[i + 2 * j + 1] = b[i + j];
+    }
+  }
+  return u;
+}
+
+/**
+ * @brief Interleave upper half of each 16-byte block from a and b (scalar implementation).
+ *
+ * For each 16-byte block, interleaves the upper 8 bytes.
+ * Example with float32 x 8: result = [b[7], a[7], b[6], a[6], b[5], a[5], b[4], a[4]]
+ * where indices 4-7 are the upper half of the 8-element block.
+ */
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  constexpr T t;
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr nint_t group_el = 16 / sizeof(TypeOf<T>);
+  constexpr nint_t half_el = group_el / 2;
+  static_assert(size(t) >= group_el && size(t) % group_el == 0);
+  V u;
+  for (nint_t i = 0; i < size(t); i += group_el) {
+    for (nint_t j = 0; j < half_el; ++j) {
+      u[i + 2 * j] = a[i + half_el + j];
+      u[i + 2 * j + 1] = b[i + half_el + j];
+    }
+  }
+  return u;
+}
+
+/**
+ * @brief Interleave elements from two half-size vectors (scalar implementation).
+ *
+ * Returns a full-size vector with interleaved elements.
+ * Result: [..., v_hi[1], v_lo[1], v_hi[0], v_lo[0]]
+ */
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>>
+TLV_INLINE Vec<T> interleave(T t, V v_lo, V v_hi) {
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  constexpr Half<T> th;
+  Vec<T> u;
+  for (nint_t i = 0; i < size(th); ++i) {
+    u[2 * i] = v_lo[i];
+    u[2 * i + 1] = v_hi[i];
+  }
+  return u;
+}
+
+/**
+ * @brief Interleave even-indexed elements from a and b (scalar implementation).
+ *
+ * Takes even-indexed elements from both vectors and interleaves them.
+ * Result: [..., b[2], a[2], b[0], a[0]]
+ */
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V interleave_even(V a, V b) {
+  constexpr T t;
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  static_assert(size(t) >= 2, "Insufficient elements");
+  constexpr nint_t half_el = size(t) / 2;
+  V u;
+  for (nint_t i = 0; i < half_el; ++i) {
+    u[2 * i] = a[2 * i];
+    u[2 * i + 1] = b[2 * i];
+  }
+  return u;
+}
+
+/**
+ * @brief Interleave odd-indexed elements from a and b (scalar implementation).
+ *
+ * Takes odd-indexed elements from both vectors and interleaves them.
+ * Result: [..., b[3], a[3], b[1], a[1]]
+ */
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>>
+TLV_INLINE V interleave_odd(V a, V b) {
+  constexpr T t;
+  static_assert(is_default_impl(t));
+  static_assert(is_word_vec(t));
+  static_assert(size(t) >= 2, "Insufficient elements");
+  constexpr nint_t half_el = size(t) / 2;
+  V u;
+  for (nint_t i = 0; i < half_el; ++i) {
+    u[2 * i] = a[2 * i + 1];
+    u[2 * i + 1] = b[2 * i + 1];
   }
   return u;
 }
@@ -904,6 +1146,22 @@ TLV_INLINE Vec<To> reshape(To t_out, Vi v_in) {
     }
   }
   return v_out;
+}
+
+template <typename To, typename V, typename Ti = Vec2Tag<V>, TL_IF(is_word_vec(To())), TL_IF(is_word_vec(Ti())), TL_IF(is_default_impl(To())), TL_IF(is_default_impl(Vec2Tag<V>()))>
+TLV_INLINE Vec<To> bitcast(To t, V v) {
+  using Eo = TypeOf<To>; using Ei = TypeOf<Ti>;
+  Ti t_i;
+  auto n_out = size(t) * sizeof(Eo);
+  auto n_in = size(t_i) * sizeof(Ei);
+
+  if constexpr (std::is_same_v<Ti, To>) {
+    return v;
+  }
+
+  Vec<To> u;
+  std::memcpy(u.data(), v.data(), std::min(n_out, n_in));
+  return u;
 }
 
 } // namespace word

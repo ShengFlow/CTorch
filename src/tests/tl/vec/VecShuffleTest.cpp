@@ -953,6 +953,512 @@ TEST(ShufCornerCase, BroadcastFirst) {
 }
 
 // ============================================================================
+// upper / lower tests
+// ============================================================================
+
+// All 12 element types
+using AllTypes = ::testing::Types<
+    float32_t, float64_t,
+    int8_t, uint8_t,
+    int16_t, uint16_t,
+    int32_t, uint32_t,
+    int64_t, uint64_t,
+    bfloat16_t, float16_t>;
+
+template <typename T> class UpperLower : public ::testing::Test {};
+TYPED_TEST_SUITE(UpperLower, AllTypes);
+
+TYPED_TEST(UpperLower, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data[64];
+  test_utils::fill_seq(data, N);
+  auto v = loadu(t, data);
+
+  auto lo = lower(t, v);
+  auto hi = upper(t, v);
+
+  // Verify lower part
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, lo, i), data[i]) << "lower i=" << i;
+
+  // Verify upper part
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, hi, i), data[i + N / 2]) << "upper i=" << i;
+}
+
+TYPED_TEST(UpperLower, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data[128];
+  test_utils::fill_seq(data, N);
+  auto v = loadu(t, data);
+
+  auto lo = lower(t, v);
+  auto hi = upper(t, v);
+
+  // Verify lower part (first half)
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, lo, i), data[i]) << "lower i=" << i;
+
+  // Verify upper part (second half)
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, hi, i), data[i + N / 2]) << "upper i=" << i;
+}
+
+// ============================================================================
+// even / odd tests
+// ============================================================================
+
+template <typename T> class EvenOdd : public ::testing::Test {};
+TYPED_TEST_SUITE(EvenOdd, AllTypes);
+
+TYPED_TEST(EvenOdd, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data[64];
+  test_utils::fill_seq(data, N);
+  auto v = loadu(t, data);
+
+  auto ev = even(t, v);
+  auto od = odd(t, v);
+
+  // Verify even elements: [0, 2, 4, ...]
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, ev, i), data[2 * i]) << "even i=" << i;
+
+  // Verify odd elements: [1, 3, 5, ...]
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, od, i), data[2 * i + 1]) << "odd i=" << i;
+}
+
+TYPED_TEST(EvenOdd, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data[128];
+  test_utils::fill_seq(data, N);
+  auto v = loadu(t, data);
+
+  auto ev = even(t, v);
+  auto od = odd(t, v);
+
+  // Verify even elements across all words
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, ev, i), data[2 * i]) << "even i=" << i;
+
+  // Verify odd elements across all words
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, od, i), data[2 * i + 1]) << "odd i=" << i;
+}
+
+// ============================================================================
+// concat tests
+// ============================================================================
+
+template <typename T> class Concat : public ::testing::Test {};
+TYPED_TEST_SUITE(Concat, AllTypes);
+
+TYPED_TEST(Concat, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data_lo[32], data_hi[32];
+  test_utils::fill_seq(data_lo, N / 2);
+  for (nint_t i = 0; i < N / 2; ++i)
+    data_hi[i] = static_cast<T>(data_lo[i] + N / 2);
+
+  auto v_lo = loadu(th, data_lo);
+  auto v_hi = loadu(th, data_hi);
+  auto v = concat(t, v_lo, v_hi);
+
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, v, i), data_lo[i]) << "lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, v, i + N / 2), data_hi[i]) << "upper i=" << i;
+}
+
+TYPED_TEST(Concat, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data_lo[64], data_hi[64];
+  test_utils::fill_seq(data_lo, N / 2);
+  for (nint_t i = 0; i < N / 2; ++i)
+    data_hi[i] = static_cast<T>(data_lo[i] + N / 2);
+
+  auto v_lo = loadu(th, data_lo);
+  auto v_hi = loadu(th, data_hi);
+  auto v = concat(t, v_lo, v_hi);
+
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, v, i), data_lo[i]) << "lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, v, i + N / 2), data_hi[i]) << "upper i=" << i;
+}
+
+TYPED_TEST(Concat, RoundTrip) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data[128];
+  test_utils::fill_seq(data, N);
+  auto v = loadu(t, data);
+
+  auto lo = lower(t, v);
+  auto hi = upper(t, v);
+  auto v2 = concat(t, lo, hi);
+
+  for (nint_t i = 0; i < N; ++i)
+    EXPECT_EQ(get(t, v2, i), data[i]) << "i=" << i;
+}
+
+// ============================================================================
+// concat_even / concat_odd tests
+// ============================================================================
+
+template <typename T> class ConcatEvenOdd : public ::testing::Test {};
+TYPED_TEST_SUITE(ConcatEvenOdd, AllTypes);
+
+TYPED_TEST(ConcatEvenOdd, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[64], data_b[64];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto ce = concat_even(t, a, b);
+  auto co = concat_odd(t, a, b);
+
+  // concat_even: even elements of a and b
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, ce, i), data_a[2 * i]) << "concat_even lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, ce, i + N / 2), data_b[2 * i]) << "concat_even upper i=" << i;
+
+  // concat_odd: odd elements of a and b
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, co, i), data_a[2 * i + 1]) << "concat_odd lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, co, i + N / 2), data_b[2 * i + 1]) << "concat_odd upper i=" << i;
+}
+
+TYPED_TEST(ConcatEvenOdd, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[128], data_b[128];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto ce = concat_even(t, a, b);
+  auto co = concat_odd(t, a, b);
+
+  // concat_even: even elements of a and b
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, ce, i), data_a[2 * i]) << "concat_even lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, ce, i + N / 2), data_b[2 * i]) << "concat_even upper i=" << i;
+
+  // concat_odd: odd elements of a and b
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, co, i), data_a[2 * i + 1]) << "concat_odd lower i=" << i;
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(t, co, i + N / 2), data_b[2 * i + 1]) << "concat_odd upper i=" << i;
+}
+
+// ============================================================================
+// local_interleave_lower / local_interleave_upper tests
+// ============================================================================
+
+template <typename T> class LocalInterleave : public ::testing::Test {};
+TYPED_TEST_SUITE(LocalInterleave, AllTypes);
+
+TYPED_TEST(LocalInterleave, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  constexpr auto M = test_utils::lane_size<T>();  // elements per 16-byte lane
+  FixedTag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[64], data_b[64];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto lo = local_interleave_lower(a, b);
+  auto hi = local_interleave_upper(a, b);
+
+  // local_interleave_lower: interleave lower half of each 16-byte lane
+  // result: [b[0], a[0], b[1], a[1], ...] within each lane
+  for (nint_t lane = 0; lane < N / M; ++lane) {
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + i;
+      nint_t out_idx = lane * M + 2 * i;
+      EXPECT_EQ(get(t, lo, out_idx), data_a[idx]) << "lower a lane=" << lane << " i=" << i;
+      EXPECT_EQ(get(t, lo, out_idx + 1), data_b[idx]) << "lower b lane=" << lane << " i=" << i;
+    }
+  }
+
+  // local_interleave_upper: interleave upper half of each 16-byte lane
+  for (nint_t lane = 0; lane < N / M; ++lane) {
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + M / 2 + i;
+      nint_t out_idx = lane * M + 2 * i;
+      EXPECT_EQ(get(t, hi, out_idx), data_a[idx]) << "upper a lane=" << lane << " i=" << i;
+      EXPECT_EQ(get(t, hi, out_idx + 1), data_b[idx]) << "upper b lane=" << lane << " i=" << i;
+    }
+  }
+}
+
+TYPED_TEST(LocalInterleave, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  constexpr auto M = test_utils::lane_size<T>();
+  Tag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[128], data_b[128];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto lo = local_interleave_lower(a, b);
+  auto hi = local_interleave_upper(a, b);
+
+  // Verify interleaving in each lane
+  for (nint_t lane = 0; lane < N / M; ++lane) {
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + i;
+      nint_t out_idx = lane * M + 2 * i;
+      EXPECT_EQ(get(t, lo, out_idx), data_a[idx]) << "lower a lane=" << lane << " i=" << i;
+      EXPECT_EQ(get(t, lo, out_idx + 1), data_b[idx]) << "lower b lane=" << lane << " i=" << i;
+    }
+  }
+
+  for (nint_t lane = 0; lane < N / M; ++lane) {
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + M / 2 + i;
+      nint_t out_idx = lane * M + 2 * i;
+      EXPECT_EQ(get(t, hi, out_idx), data_a[idx]) << "upper a lane=" << lane << " i=" << i;
+      EXPECT_EQ(get(t, hi, out_idx + 1), data_b[idx]) << "upper b lane=" << lane << " i=" << i;
+    }
+  }
+}
+
+// ============================================================================
+// interleave tests
+// ============================================================================
+
+template <typename T> class Interleave : public ::testing::Test {};
+TYPED_TEST_SUITE(Interleave, AllTypes);
+
+TYPED_TEST(Interleave, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data_a[64], data_b[64];
+  test_utils::fill_seq(data_a, N / 2);
+  for (nint_t i = 0; i < N / 2; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N / 2);
+
+  auto a = loadu(th, data_a);
+  auto b = loadu(th, data_b);
+
+  auto v = interleave(t, a, b);
+
+  // interleave: [..., b[1], a[1], b[0], a[0]]
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, v, 2 * i), data_a[i]) << "a i=" << i;
+    EXPECT_EQ(get(t, v, 2 * i + 1), data_b[i]) << "b i=" << i;
+  }
+}
+
+TYPED_TEST(Interleave, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data_a[64], data_b[64];
+  test_utils::fill_seq(data_a, N / 2);
+  for (nint_t i = 0; i < N / 2; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N / 2);
+
+  auto a = loadu(th, data_a);
+  auto b = loadu(th, data_b);
+
+  auto v = interleave(t, a, b);
+
+  // interleave across entire vector
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, v, 2 * i), data_a[i]) << "a i=" << i;
+    EXPECT_EQ(get(t, v, 2 * i + 1), data_b[i]) << "b i=" << i;
+  }
+}
+
+// ============================================================================
+// interleave_even / interleave_odd tests
+// ============================================================================
+
+template <typename T> class InterleaveEvenOdd : public ::testing::Test {};
+TYPED_TEST_SUITE(InterleaveEvenOdd, AllTypes);
+
+TYPED_TEST(InterleaveEvenOdd, SingleWord) {
+  using T = TypeParam;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[64], data_b[64];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto ie = interleave_even(a, b);
+  auto io = interleave_odd(a, b);
+
+  // interleave_even: interleave even-indexed elements
+  // result[2*i] = a[2*i], result[2*i+1] = b[2*i]
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, ie, 2 * i), data_a[2 * i]) << "ie a i=" << i;
+    EXPECT_EQ(get(t, ie, 2 * i + 1), data_b[2 * i]) << "ie b i=" << i;
+  }
+
+  // interleave_odd: interleave odd-indexed elements
+  // result[2*i] = a[2*i+1], result[2*i+1] = b[2*i+1]
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, io, 2 * i), data_a[2 * i + 1]) << "io a i=" << i;
+    EXPECT_EQ(get(t, io, 2 * i + 1), data_b[2 * i + 1]) << "io b i=" << i;
+  }
+}
+
+TYPED_TEST(InterleaveEvenOdd, MultiWord) {
+  using T = TypeParam;
+  constexpr auto N1 = test_utils::full_vec_size<T>();
+  constexpr auto N = N1 * 2;
+  Tag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[128], data_b[128];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  auto ie = interleave_even(a, b);
+  auto io = interleave_odd(a, b);
+
+  // interleave_even across multi-word vector
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, ie, 2 * i), data_a[2 * i]) << "ie a i=" << i;
+    EXPECT_EQ(get(t, ie, 2 * i + 1), data_b[2 * i]) << "ie b i=" << i;
+  }
+
+  // interleave_odd across multi-word vector
+  for (nint_t i = 0; i < N / 2; ++i) {
+    EXPECT_EQ(get(t, io, 2 * i), data_a[2 * i + 1]) << "io a i=" << i;
+    EXPECT_EQ(get(t, io, 2 * i + 1), data_b[2 * i + 1]) << "io b i=" << i;
+  }
+}
+
+// ============================================================================
+// Combined roundtrip tests
+// ============================================================================
+
+TEST(InterleaveRoundTrip, Float32) {
+  using T = float32_t;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  Half<decltype(t)> th;
+  alignas(DEFAULT_ALIGNMENT) T data_a[16], data_b[16];
+  test_utils::fill_seq(data_a, N / 2);
+  for (nint_t i = 0; i < N / 2; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N / 2);
+
+  auto a = loadu(th, data_a);
+  auto b = loadu(th, data_b);
+
+  // interleave then even/odd extraction
+  auto v = interleave(t, a, b);
+  auto ev = even(t, v);
+  auto od = odd(t, v);
+
+  // even(interleave(a, b)) should give a
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, ev, i), data_a[i]) << "even i=" << i;
+
+  // odd(interleave(a, b)) should give b
+  for (nint_t i = 0; i < N / 2; ++i)
+    EXPECT_EQ(get(th, od, i), data_b[i]) << "odd i=" << i;
+}
+
+TEST(LocalInterleaveRoundTrip, Float64) {
+  using T = float64_t;
+  constexpr auto N = test_utils::full_vec_size<T>();
+  FixedTag<T, N> t;
+  alignas(DEFAULT_ALIGNMENT) T data_a[8], data_b[8];
+  test_utils::fill_seq(data_a, N);
+  for (nint_t i = 0; i < N; ++i)
+    data_b[i] = static_cast<T>(data_a[i] + N);
+
+  auto a = loadu(t, data_a);
+  auto b = loadu(t, data_b);
+
+  // local_interleave_lower + local_interleave_upper = full interleaved vector
+  auto lo = local_interleave_lower(a, b);
+  auto hi = local_interleave_upper(a, b);
+
+  // For float64 with 2 elements per lane:
+  // lo = [b[0], a[0], b[2], a[2], ...] (lower half of each lane)
+  // hi = [b[1], a[1], b[3], a[3], ...] (upper half of each lane)
+  // These together cover all elements
+  constexpr auto M = test_utils::lane_size<T>();
+  for (nint_t lane = 0; lane < N / M; ++lane) {
+    // Verify lower
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + i;
+      EXPECT_EQ(get(t, lo, lane * M + 2 * i), data_a[idx]);
+      EXPECT_EQ(get(t, lo, lane * M + 2 * i + 1), data_b[idx]);
+    }
+    // Verify upper
+    for (nint_t i = 0; i < M / 2; ++i) {
+      nint_t idx = lane * M + M / 2 + i;
+      EXPECT_EQ(get(t, hi, lane * M + 2 * i), data_a[idx]);
+      EXPECT_EQ(get(t, hi, lane * M + 2 * i + 1), data_b[idx]);
+    }
+  }
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 

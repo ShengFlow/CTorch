@@ -880,13 +880,13 @@ template <typename V>
 concept VecType = is_vec<V>;
 template <typename M>
 concept MaskType = is_mask<M>;
-#define TLV_DECL_TAG(x) tl::vec::TagType x
-#define TLV_DECL_VEC(x) tl::vec::VecType x
-#define TLV_DECL_MASK(x) tl::vec::MaskType x
+#define TLV_DECL_TAG(...) tl::vec::TagType __VA_ARGS__
+#define TLV_DECL_VEC(...) tl::vec::VecType __VA_ARGS__
+#define TLV_DECL_MASK(...) tl::vec::MaskType __VA_ARGS__
 #else
-#define TLV_DECL_TAG(x) typename x, TL_IF(is_tag<x>)
-  #define TLV_DECL_VEC(x) typename x, TL_IF(is_vec<x>)
-  #define TLV_DECL_MASK(x) typename x, TL_IF(is_mask<x>)
+#define TLV_DECL_TAG(...) typename __VA_ARGS__, TL_IF(is_tag<x>)
+  #define TLV_DECL_VEC(...) typename __VA_ARGS__, TL_IF(is_vec<x>)
+  #define TLV_DECL_MASK(...) typename __VA_ARGS__, TL_IF(is_mask<x>)
 #endif
 
 namespace details {
@@ -1100,6 +1100,12 @@ static constexpr auto word_tag(Tag<T, N, P> t) {
 // TODO temp
 template <typename T>
 using WordOf = typename VecDefs<TypeOf<T>, T::N, T::POW2>::WordDefs::TagType;
+
+template <typename T>
+using Half = Tag<TypeOf<T>, T::N, T::POW2 - 1>;
+
+template <typename T>
+using Twice = Tag<TypeOf<T>, T::N, T::POW2 + 1>;
 
 } // namespace ct::tl::vec
 

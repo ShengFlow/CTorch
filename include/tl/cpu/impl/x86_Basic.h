@@ -475,11 +475,6 @@ template <> struct BitCastFromInt128<float32_t> {
 template <> struct BitCastFromInt128<float64_t> {
   TLV_INLINE __m128d operator()(__m128i v) { return _mm_castsi128_pd(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastFromInt128<float16_t> {
-  TLV_INLINE __m128h operator()(__m128i v) { return _mm_castsi128_ph(v); }
-};
-#endif
 template <typename T> struct BitCastToInt128 {
   TLV_INLINE __m128i operator()(__m128i v) { return v; }
 };
@@ -489,11 +484,6 @@ template <> struct BitCastToInt128<float32_t> {
 template <> struct BitCastToInt128<float64_t> {
   TLV_INLINE __m128i operator()(__m128d v) { return _mm_castpd_si128(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastToInt128<float16_t> {
-  TLV_INLINE __m128i operator()(__m128h v) { return _mm_castph_si128(v); }
-};
-#endif
 
 template <typename T> TLV_INLINE
 x86::RegType<uint8_t, 16> bitcast_to_int(x86::RegType<T, 16 / sizeof(T)> v) { return BitCastToInt128<T>()(v.v); }
@@ -510,11 +500,6 @@ template <> struct BitCastFromInt256<float32_t> {
 template <> struct BitCastFromInt256<float64_t> {
   TLV_INLINE __m256d operator()(__m256i v) { return _mm256_castsi256_pd(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastFromInt256<float16_t> {
-  TLV_INLINE __m256h operator()(__m256i v) { return _mm256_castsi256_ph(v); }
-};
-#endif
 template <typename T> struct BitCastToInt256 {
   TLV_INLINE __m256i operator()(__m256i v) { return v; }
 };
@@ -524,11 +509,6 @@ template <> struct BitCastToInt256<float32_t> {
 template <> struct BitCastToInt256<float64_t> {
   TLV_INLINE __m256i operator()(__m256d v) { return _mm256_castpd_si256(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastToInt256<float16_t> {
-  TLV_INLINE __m256i operator()(__m256h v) { return _mm256_castph_si256(v); }
-};
-#endif
 
 template <typename T> TLV_INLINE
 x86::RegType<uint8_t, 32> bitcast_to_int(x86::RegType<T, 32 / sizeof(T)> v) { return BitCastToInt256<T>()(v.v); }
@@ -547,11 +527,6 @@ template <> struct BitCastFromInt512<float32_t> {
 template <> struct BitCastFromInt512<float64_t> {
   TLV_INLINE __m512d operator()(__m512i v) { return _mm512_castsi512_pd(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastFromInt512<float16_t> {
-  TLV_INLINE __m512h operator()(__m512i v) { return _mm512_castsi512_ph(v); }
-};
-#endif
 template <typename T> struct BitCastToInt512 {
   TLV_INLINE __m512i operator()(__m512i v) { return v; }
 };
@@ -561,11 +536,6 @@ template <> struct BitCastToInt512<float32_t> {
 template <> struct BitCastToInt512<float64_t> {
   TLV_INLINE __m512i operator()(__m512d v) { return _mm512_castpd_si512(v); }
 };
-#ifdef HAS_AVX512_FP16
-template <> struct BitCastToInt512<float16_t> {
-  TLV_INLINE __m512i operator()(__m512h v) { return _mm512_castph_si512(v); }
-};
-#endif
 
 template <typename T> TLV_INLINE
 x86::RegType<uint8_t, 64> bitcast_to_int(x86::RegType<T, 64 / sizeof(T)> v) { return BitCastToInt512<T>()(v.v); }
@@ -1484,8 +1454,8 @@ TLV_INLINE V shuf(V v, Vec<Rebind<Index<TypeOf<T>>, T>> i) {
 /* ************************************************************************** */
 //                           Concat & Upper Lower                             //
 /* ************************************************************************** */
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 2), TL_IF(sizeof(TypeOf<T>) == 1)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 2), TL_IF(sizeof(TypeOf<T>) == 1)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
 Tag<uint8_t, 16> t1;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t1, v2);
@@ -1496,8 +1466,8 @@ Tag<uint8_t, 16> t1;
   return word::bitcast(t, Vec<decltype(t1)>{r});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 4), TL_IF(sizeof(TypeOf<T>) <= 2)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(sizeof(TypeOf<T>) <= 2)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
 Tag<uint8_t, 16> t1;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t1, v2);
@@ -1506,194 +1476,1101 @@ Tag<uint8_t, 16> t1;
   return word::bitcast(t, Vec<decltype(t1)>{r});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   auto hi = word::local_shuf<0, 0, 0, 0>(v1);
   return _mm_move_ss(hi.v, v2.v);
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 8), TL_IF(is_none<TypeOf<T>, float32_t> && sizeof(TypeOf<T>) <= 4)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_none<TypeOf<T>, float32_t> && sizeof(TypeOf<T>) <= 4)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   Tag<uint8_t, 16> t1;
   Tag<float32_t, 4> t2;
   auto hi = word::bitcast(t2, word::local_shuf<0, 0, 0, 0>(word::bitcast(t1, v1)));
   return word::bitcast(t, Vec<decltype(t2)>{_mm_move_ss(hi.v, v2.v)});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 8)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   Tag<float32_t, 4> t1;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t1, v2);
   return word::bitcast(t, Vec<decltype(t1)>{_mm_movelh_ps(u1.v, u2.v)});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 16)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   Tag<float32_t, 4> t1;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t1, v2);
   return word::bitcast(t, Vec<decltype(t1)>{_mm_movelh_ps(u1.v, u2.v)});
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_ps(a.v, b.v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  return _mm_shuffle_ps(a.v, b.v, _MM_SHUFFLE(2, 0, 2, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  return _mm_shuffle_pd(a.v, b.v, _MM_SHUFFLE2(0, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_epi16(a.v, b.v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm_shufflelo_epi16(a.v, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u_b = _mm_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm_blend_epi16(u_a, u_b, 0b11001100);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm_shufflelo_epi16(a.v, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u_b = _mm_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  u_a = _mm_shufflehi_epi16(u_a, _MM_SHUFFLE(2, 0, 2, 0));
+  u_b = _mm_shufflehi_epi16(u_b, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(u_a), _mm_castsi128_ps(u_b), _MM_SHUFFLE(2, 0, 2, 0)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 2), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_epi8(a.v, b.v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  return _mm_blend_epi16(u_a, u_b, 0b10101010);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0, 6, 4, 2, 0);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  return _mm_blend_epi32(u_a, u_b, 0b1010);
+  #else
+  return _mm_blend_epi16(u_a, u_b, 0b11001100);
+  #endif
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  return _mm_blend_epi32(u_a, u_b, 0b1100);
+  #else
+  return _mm_blend_epi16(u_a, u_b, 0b11110000);
+  #endif
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_ps(
+      _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(a.v), 4)),
+      _mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(b.v), 4))
+  );
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  return _mm_shuffle_ps(a.v, b.v, _MM_SHUFFLE(3, 1, 3, 1));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  return _mm_shuffle_pd(a.v, b.v, _MM_SHUFFLE2(1, 1));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_epi16(_mm_srli_si128(a.v, 2), _mm_srli_si128(b.v, 2));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u_b = _mm_shufflelo_epi16(b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm_blend_epi16(u_a, u_b, 0b11001100);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u_b = _mm_shufflelo_epi16(b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  u_a = _mm_shufflehi_epi16(u_a, _MM_SHUFFLE(3, 1, 3, 1));
+  u_b = _mm_shufflehi_epi16(u_b, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm_castps_si128(_mm_shuffle_ps(_mm_castsi128_ps(u_a), _mm_castsi128_ps(u_b), _MM_SHUFFLE(3, 1, 3, 1)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 2), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  return _mm_unpacklo_epi8(_mm_srli_si128(a.v, 1), _mm_srli_si128(b.v, 1));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  return _mm_blend_epi16(u_a, u_b, 0b10101010);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(7, 5, 3, 1, 7, 5, 3, 1, 7, 5, 3, 1, 7, 5, 3, 1);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  return _mm_blend_epi32(u_a, u_b, 0b1010);
+  #else
+  return _mm_blend_epi16(u_a, u_b, 0b11001100);
+  #endif
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm_set_epi8(15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1);
+  auto u_a = _mm_shuffle_epi8(a.v, idx);
+  auto u_b = _mm_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  return _mm_blend_epi32(u_a, u_b, 0b1100);
+  #else
+  return _mm_blend_epi16(u_a, u_b, 0b11110000);
+  #endif
 }
 
 #if VEC_WIDTH >= 256
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 32)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   Tag<uint8_t, 32> t1;
   Tag<uint8_t, 16> t2;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t2, v2);
   return word::bitcast(t, Vec<decltype(t1)>{_mm256_insertf128_si256(u1.v, u2.v, 1)});
 }
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm256_shuffle_ps(a.v, b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(u), _MM_SHUFFLE(3, 1, 2, 0)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm256_shuffle_pd(a.v, b.v, 0b0000); // (b[2], a[2], b[0], a[0])
+  return _mm256_permute4x64_pd(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm256_shufflelo_epi16(a.v, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u_b = _mm256_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  u_a = _mm256_shufflehi_epi16(u_a, _MM_SHUFFLE(2, 0, 2, 0));
+  u_b = _mm256_shufflehi_epi16(u_b, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u = _mm256_castps_si256(_mm256_shuffle_ps(_mm256_castsi256_ps(u_a), _mm256_castsi256_ps(u_b), _MM_SHUFFLE(2, 0, 2, 0)));
+  return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm256_set_epi8(14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0);
+  auto u_a = _mm256_shuffle_epi8(a.v, idx);
+  auto u_b = _mm256_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  auto u = _mm256_blend_epi32(u_a, u_b, 0b11001100);
+  #else
+  auto u = _mm256_blend_epi16(u_a, u_b, 0b11110000);
+  #endif
+  return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm256_shuffle_ps(a.v, b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(u), _MM_SHUFFLE(3, 1, 2, 0)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm256_shuffle_pd(a.v, b.v, 0b1111); // (b[3], a[3], b[1], a[1])
+  return _mm256_permute4x64_pd(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm256_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u_b = _mm256_shufflelo_epi16(b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  u_a = _mm256_shufflehi_epi16(u_a, _MM_SHUFFLE(3, 1, 3, 1));
+  u_b = _mm256_shufflehi_epi16(u_b, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u = _mm256_castps_si256(_mm256_shuffle_ps(_mm256_castsi256_ps(u_a), _mm256_castsi256_ps(u_b), _MM_SHUFFLE(3, 1, 3, 1)));
+  return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm256_set_epi8(15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1);
+  auto u_a = _mm256_shuffle_epi8(a.v, idx);
+  auto u_b = _mm256_shuffle_epi8(b.v, idx);
+  #ifdef HAS_AVX2
+  auto u = _mm256_blend_epi32(u_a, u_b, 0b11001100);
+  #else
+  auto u = _mm256_blend_epi16(u_a, u_b, 0b11110000);
+  #endif
+  return _mm256_permute4x64_epi64(u, _MM_SHUFFLE(3, 1, 2, 0));
+}
 #else
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 32)>
-  TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32)>
+  TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   return Vec<T>{ v1, v2 };
 }
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   Tag<uint8_t, 64> t1;
   Tag<uint8_t, 32> t2;
   auto u1 = word::bitcast(t1, v1);
   auto u2 = word::bitcast(t2, v2);
   return word::bitcast(t, Vec<decltype(t1)>{_mm512_inserti64x4(u1.v, u2.v, 1)});
 }
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 128)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 128)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   return Vec<T>{ v1, v2 };
 }
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm512_shuffle_ps(a.v, b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_castpd_ps(_mm512_permutexvar_pd(idx, _mm512_castps_pd(u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm512_shuffle_pd(a.v, b.v, 0b00000000); // (b[6], a[6], b[4], a[4], b[2], a[2], b[0], a[0])
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_pd(idx, u);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm512_shufflelo_epi16(a.v, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u_b = _mm512_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  u_a = _mm512_shufflehi_epi16(u_a, _MM_SHUFFLE(2, 0, 2, 0));
+  u_b = _mm512_shufflehi_epi16(u_b, _MM_SHUFFLE(2, 0, 2, 0));
+  auto u = _mm512_shuffle_ps(_mm512_castsi512_ps(u_a), _mm512_castsi512_ps(u_b), _MM_SHUFFLE(2, 0, 2, 0));
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_epi64(idx, _mm512_castps_si512(u));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_even(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm512_set_epi8(14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0);
+  auto u_a = _mm512_shuffle_epi8(a.v, idx);
+  auto u_b = _mm512_shuffle_epi8(b.v, idx);
+  auto u = _mm512_mask_blend_epi32(_cvtu32_mask16(0b1100110011001100), u_a, u_b);
+  static const auto idx2 = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_epi64(idx2, u);
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm512_shuffle_ps(a.v, b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_castpd_ps(_mm512_permutexvar_pd(idx, _mm512_castps_pd(u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u = _mm512_shuffle_pd(a.v, b.v, 0b11111111); // (b[7], a[7], b[5], a[5], b[3], a[3], b[1], a[1])
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_pd(idx, u);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float32_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  Rebind<float64_t, T> tf;
+  return word::bitcast(t, word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  auto u_a = _mm512_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u_b = _mm512_shufflelo_epi16(b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  u_a = _mm512_shufflehi_epi16(u_a, _MM_SHUFFLE(3, 1, 3, 1));
+  u_b = _mm512_shufflehi_epi16(u_b, _MM_SHUFFLE(3, 1, 3, 1));
+  auto u = _mm512_shuffle_ps(_mm512_castsi512_ps(u_a), _mm512_castsi512_ps(u_b), _MM_SHUFFLE(3, 1, 3, 1));
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_epi64(idx, _mm512_castps_si512(u));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<T> concat_odd(T t, Vec<T> a, Vec<T> b) {
+  static const auto idx = _mm512_set_epi8(15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1);
+  auto u_a = _mm512_shuffle_epi8(a.v, idx);
+  auto u_b = _mm512_shuffle_epi8(b.v, idx);
+  auto u = _mm512_mask_blend_epi32(_cvtu32_mask16(0b1100110011001100), u_a, u_b);
+  static const auto idx2 = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
+  return _mm512_permutexvar_epi64(idx2, u);
+}
 #elif VEC_WIDTH >= 256
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   return Vec<T>{ v1, v2 };
 }
 #else
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-  TLV_INLINE Vec<T> concat(T t, V v1, V v2) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+  TLV_INLINE Vec<T> concat(T t, Vec<Half<T>> v1, Vec<Half<T>> v2) {
   return Vec<T>{ v1[0], v1[1], v2[0], v2[1] };
 }
 #endif // VEC_WIDTH >= 512
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes <= VEC_WIDTH / 8)>
-TLV_INLINE V lower(T t, Vec<T> v) {
-Tag<TypeOf<T>, T::N / 2> t1;
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= VEC_WIDTH / 8)>
+TLV_INLINE Vec<Half<T>> lower(T t, Vec<T> v) {
+  Half<T> t1;
   return word::bitcast(t1, v);
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 2 * VEC_WIDTH / 8)>
-TLV_INLINE V lower(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 2 * VEC_WIDTH / 8)>
+TLV_INLINE Vec<Half<T>> lower(T t, Vec<T> v) {
   return v[0];
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 2), TL_IF(sizeof(TypeOf<T>) == 1)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 2), TL_IF(sizeof(TypeOf<T>) == 1)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint8_t, 16> t1;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = _mm_srli_epi16(u.v, 8);
   return word::bitcast(tr, Vec<decltype(t1)>{r});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 4), TL_IF(sizeof(TypeOf<T>) <= 2)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 4), TL_IF(sizeof(TypeOf<T>) <= 2)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint8_t, 16> t1;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = _mm_srli_epi32(u.v, 16);
   return word::bitcast(tr, Vec<decltype(t1)>{r});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return word::local_shuf<0, 0, 0, 1>(v);
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 8), TL_IF(is_none<TypeOf<T>, float32_t> && sizeof(TypeOf<T>) <= 4)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 8), TL_IF(is_none<TypeOf<T>, float32_t> && sizeof(TypeOf<T>) <= 4)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint8_t, 16> t1;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = _mm_srli_epi64(u.v, 32);
   return word::bitcast(tr, Vec<decltype(t1)>{r});
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return word::local_shuf<0, 0, 3, 2>(v);
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return word::local_shuf<0, 1>(v);
 }
 
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 16), TL_IF(is_none<TypeOf<T>, float32_t, float64_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 16), TL_IF(is_none<TypeOf<T>, float32_t, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint32_t, 4> t1;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = word::local_shuf<0, 0, 3, 2>(u);
   return word::bitcast(tr, r);
 }
 
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  return word::local_shuf<2, 0, 2, 0>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  return word::local_shuf<0, 0>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  return word::local_shuf<6, 4, 2, 0, 6, 4, 2, 0>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  return word::local_shuf<14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0>(v);
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  return word::local_shuf<3, 1, 3, 1>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  return word::local_shuf<1, 1>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  return word::local_shuf<7, 5, 3, 1, 7, 5, 3, 1>(v);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  return word::local_shuf<15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1>(v);
+}
+
 #if VEC_WIDTH >= 256
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t, float64_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint8_t, 32> t1;
   Tag<uint8_t, 16> t2;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = _mm256_extractf128_si256(u.v, 1);
   return word::bitcast(tr, Vec<decltype(t2)>{r});
 }
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 32), TL_IF(is_none<TypeOf<T>, float32_t, float64_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_none<TypeOf<T>, float32_t, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   Tag<uint8_t, 32> t1;
   Tag<uint8_t, 16> t2;
-  Tag<TypeOf<T>, T::N / 2> tr;
+  Half<T> tr;
   auto u = word::bitcast(t1, v);
   auto r = _mm256_extracti128_si256(u.v, 1);
   return word::bitcast(tr, Vec<decltype(t2)>{r});
 }
+
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  auto w = _mm256_permute4x64_pd(v.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm256_castpd256_pd128(w);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  auto w = _mm256_permute4x64_epi64(v.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm256_castsi256_si128(w);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  ViewAs<float64_t, T> tf;
+  auto u = word::local_shuf<2, 0, 2, 0>(v);
+  return word::bitcast(Half<T>{}, word::even(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<2, 0, 2, 0>(v);
+  return word::bitcast(Half<T>{}, word::even(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<6, 4, 2, 0, 6, 4, 2, 0>(v);
+  return word::bitcast(Half<T>{}, word::even(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0>(v);
+  return word::bitcast(Half<T>{}, word::even(tf, word::bitcast(tf, u)));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  auto w = _mm256_permute4x64_pd(v.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm256_castpd256_pd128(w);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  auto w = _mm256_permute4x64_epi64(v.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm256_castsi256_si128(w);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  ViewAs<float64_t, T> tf;
+  auto u = word::local_shuf<3, 1, 3, 1>(v);
+  return word::bitcast(Half<T>{}, word::odd(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<3, 1, 3, 1>(v);
+  return word::bitcast(Half<T>{}, word::odd(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<7, 5, 3, 1, 7, 5, 3, 1>(v);
+  return word::bitcast(Half<T>{}, word::odd(tf, word::bitcast(tf, u)));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  ViewAs<int64_t, T> tf;
+  auto u = word::local_shuf<15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1>(v);
+  return word::bitcast(Half<T>{}, word::odd(tf, word::bitcast(tf, u)));
+}
 #else
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 32)>
-TLV_INLINE V upper(T t, Vec<T> v) {
-return v[1];
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
+  return v[1];
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::even(th, v[0]);
+  auto u_hi = word::even(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 32)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::odd(th, v[0]);
+  auto u_hi = word::odd(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
 }
 #endif // VEC_WIDTH >= 256
 
 #if VEC_WIDTH >= 512
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return _mm512_extractf32x8_ps(v.v, 1);
 }
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
-TLV_INLINE V upper(T t, Vec<T> v) {
-  return _mm512_extractf64x4_ps(v.v, 1);
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
+  return _mm512_extractf64x4_pd(v.v, 1);
 }
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_none<TypeOf<T>, float32_t, float64_t>)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return _mm512_extracti32x8_epi32(v.v, 1);
 }
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 128)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 128)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return v[1];
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi64(6, 4, 2, 0, 6, 4, 2, 0);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi32(14, 12, 10, 8, 6, 4, 2, 0, 14, 12, 10, 8, 6, 4, 2, 0);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi16(30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi8(62, 60, 58, 56, 54, 52, 50, 48, 46, 44, 42, 40, 38, 36, 34, 32, 30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0, 62, 60, 58, 56, 54, 52, 50, 48, 46, 44, 42, 40, 38, 36, 34, 32, 30, 28, 26, 24, 22, 20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 0);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t, int64_t, uint64_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi64(7, 5, 3, 1, 7, 5, 3, 1);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t, int32_t, uint32_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi32(15, 13, 11, 9, 7, 5, 3, 1, 15, 13, 11, 9, 7, 5, 3, 1);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi16(31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  static const auto idx = _mm512_set_epi8(63, 61, 59, 57, 55, 53, 51, 49, 47, 45, 43, 41, 39, 37, 35, 33, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1, 63, 61, 59, 57, 55, 53, 51, 49, 47, 45, 43, 41, 39, 37, 35, 33, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1);
+  using Ti = Rebind<Index<TypeOf<T>>, T>;
+  return word::bitcast(Half<T>{}, word::shuf(v, Vec<Ti>{idx}));
+}
+
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 128)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::even(th, v[0]);
+  auto u_hi = word::even(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 128)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::odd(th, v[0]);
+  auto u_hi = word::odd(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
 }
 #elif VEC_WIDTH >= 256
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-TLV_INLINE V upper(T t, Vec<T> v) {
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<Half<T>> upper(T t, Vec<T> v) {
   return v[1];
 }
-#else
-template <TLV_DECL_TAG(T), TLV_DECL_VEC(V) = Vec<Tag<TypeOf<T>, T::N / 2>>, TL_IF(T::Bytes == 64)>
-TLV_INLINE V upper(T t, Vec<T> v) {
-return V{ v[2], v[3] };
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<Half<T>> even(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::even(th, v[0]);
+  auto u_hi = word::even(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
+}
+template <TLV_DECL_TAG(T), TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<Half<T>> odd(T t, Vec<T> v) {
+  Half<T> th;
+  auto u_lo = word::odd(th, v[0]);
+  auto u_hi = word::odd(th, v[1]);
+  return word::concat(th, u_lo, u_hi);
 }
 #endif // VEC_WIDTH >= 512
 
+
+/* ************************************************************************** */
+//                                Interleave                                  //
+/* ************************************************************************** */
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm_unpacklo_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm_unpackhi_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>, TL_IF(T::Bytes <= 16)>
+TLV_INLINE Vec<T> interleave(T t, V a, V b) {
+  return word::local_interleave_lower(word::bitcast(t, a), word::bitcast(t, b));
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float32_t, 4> tf;
+  auto u = word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), word::local_shuf<3, 1, 2, 0>(u));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float64_t, 2> tf;
+  auto u = word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<int64_t, 2> tf;
+  auto u = word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<int32_t, 4> tf;
+  auto u = word::concat_even(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), word::local_shuf<3, 1, 2, 0>(u));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u = _mm_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 2, 0, 0));
+  u = _mm_shufflehi_epi16(u, _MM_SHUFFLE(2, 2, 0, 0));
+  return _mm_blend_epi16(a.v, u, 0b10101010);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u_a = _mm_srli_epi16(_mm_slli_epi16(a.v, 8), 8); // clear high 8 bits
+  auto u_b = _mm_slli_epi16(b.v, 8); // move low 8 to high 8 bits and clear low 8 bits
+  return _mm_or_si128(u_a, u_b);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float32_t, 4> tf;
+  auto u = word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), word::local_shuf<3, 1, 2, 0>(u));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float64_t, 2> tf;
+  auto u = word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<int64_t, 2> tf;
+  auto u = word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<int32_t, 4> tf;
+  auto u = word::concat_odd(tf, word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), word::local_shuf<3, 1, 2, 0>(u));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u = _mm_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 3, 1, 1));
+  u = _mm_shufflehi_epi16(u, _MM_SHUFFLE(3, 3, 1, 1));
+  return _mm_blend_epi16(u, b.v, 0b10101010);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes <= 16), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u_a = _mm_srli_epi16(a.v, 8); // move high 8 to low 8 bits and clear high 8 bits
+  auto u_b = _mm_slli_epi16(_mm_srli_epi16(b.v, 8), 8); // clear low 8 bits
+  return _mm_or_si128(u_a, u_b);
+}
+
+#if VEC_WIDTH >= 256
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm256_unpacklo_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm256_unpackhi_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>, TL_IF(T::Bytes == 32)>
+TLV_INLINE Vec<T> interleave(T t, V a, V b) {
+  using Tb = Tag<int64_t, 4>;
+  static const Vec<Tb> idx = _mm256_set_epi64x(0, 1, 1, 0);
+  auto va = word::shuf(word::bitcast(Tb{}, a), idx);
+  auto vb = word::shuf(word::bitcast(Tb{}, b), idx);
+  return word::local_interleave_lower(word::bitcast(t, va), word::bitcast(t, vb));
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u = _mm256_shuffle_ps(a.v, b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm256_shuffle_ps(u, u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  return _mm256_shuffle_pd(a.v, b.v, 0b0000);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float64_t, 4> tf;
+  auto u = word::interleave_even(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float32_t, 8> tf;
+  auto u = word::interleave_even(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u = _mm256_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 2, 0, 0));
+  u = _mm256_shufflehi_epi16(u, _MM_SHUFFLE(2, 2, 0, 0));
+  return _mm256_blend_epi16(a.v, u, 0b10101010);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u_a = _mm256_srli_epi16(_mm256_slli_epi16(a.v, 8), 8); // clear high 8 bits
+  auto u_b = _mm256_slli_epi16(b.v, 8); // move low 8 to high 8 bits and clear low 8 bits
+  return _mm256_or_si256(u_a, u_b);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u = _mm256_shuffle_ps(a.v, b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm256_shuffle_ps(u, u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  return _mm256_shuffle_pd(a.v, b.v, 0b1111);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float64_t, 4> tf;
+  auto u = word::interleave_odd(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float32_t, 8> tf;
+  auto u = word::interleave_odd(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u = _mm256_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 3, 1, 1));
+  u = _mm256_shufflehi_epi16(u, _MM_SHUFFLE(3, 3, 1, 1));
+  return _mm256_blend_epi16(u, b.v, 0b10101010);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 32), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u_a = _mm256_srli_epi16(a.v, 8); // move high 8 to low 8 bits and clear high 8 bits
+  auto u_b = _mm256_slli_epi16(_mm256_srli_epi16(b.v, 8), 8); // clear low 8 bits
+  return _mm256_or_si256(u_a, u_b);
+}
+#endif // VEC_WIDTH >= 256
+
+#if VEC_WIDTH >= 512
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_lower(V a, V b) {
+  return _mm512_unpacklo_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_ps(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_pd(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_epi8(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_epi16(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_epi32(a.v, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V local_interleave_upper(V a, V b) {
+  return _mm512_unpackhi_epi64(a.v, b.v);
+}
+
+template <TLV_DECL_TAG(T), typename V = Vec<Half<T>>, TL_IF(T::Bytes == 64)>
+TLV_INLINE Vec<T> interleave(T t, V a, V b) {
+  using Tb = Tag<int64_t, 8>;
+  static const Vec<Tb> idx = _mm512_set_epi64(2, 3, 3, 2, 0, 1, 1, 0);
+  auto va = word::shuf(word::bitcast(Tb{}, a), idx);
+  auto vb = word::shuf(word::bitcast(Tb{}, b), idx);
+  return word::local_interleave_lower(word::bitcast(t, va), word::bitcast(t, vb));
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u = _mm512_shuffle_ps(a.v, b.v, _MM_SHUFFLE(2, 0, 2, 0));
+  return _mm512_shuffle_ps(u, u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  return _mm512_shuffle_pd(a.v, b.v, 0b00000000);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float64_t, 8> tf;
+  auto u = word::interleave_even(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  Tag<float32_t, 16> tf;
+  auto u = word::interleave_even(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u = _mm512_shufflelo_epi16(b.v, _MM_SHUFFLE(2, 2, 0, 0));
+  u = _mm512_shufflehi_epi16(u, _MM_SHUFFLE(2, 2, 0, 0));
+  // 0b101010...101010
+  return _mm512_mask_blend_epi16(_cvtu32_mask32(0xAAAAAAAA), a.v, u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_even(V a, V b) {
+  auto u_a = _mm512_srli_epi16(_mm512_slli_epi16(a.v, 8), 8); // clear high 8 bits
+  auto u_b = _mm512_slli_epi16(b.v, 8); // move low 8 to high 8 bits and clear low 8 bits
+  return _mm512_or_si512(u_a, u_b);
+}
+
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u = _mm512_shuffle_ps(a.v, b.v, _MM_SHUFFLE(3, 1, 3, 1));
+  return _mm512_shuffle_ps(u, u, _MM_SHUFFLE(3, 1, 2, 0));
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, float64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  return _mm512_shuffle_pd(a.v, b.v, 0b11111111);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int64_t, uint64_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float64_t, 8> tf;
+  auto u = word::interleave_odd(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int32_t, uint32_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  Tag<float32_t, 16> tf;
+  auto u = word::interleave_odd(word::bitcast(tf, a), word::bitcast(tf, b));
+  return word::bitcast(T(), u);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int16_t, uint16_t, float16_t, bfloat16_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u = _mm512_shufflelo_epi16(a.v, _MM_SHUFFLE(3, 3, 1, 1));
+  u = _mm512_shufflehi_epi16(u, _MM_SHUFFLE(3, 3, 1, 1));
+  // 0b101010...101010
+  return _mm512_mask_blend_epi16(_cvtu32_mask32(0xAAAAAAAA), u, b.v);
+}
+template <TLV_DECL_VEC(V), typename T = Vec2Tag<V>, TL_IF(T::Bytes == 64), TL_IF(is_any<TypeOf<T>, int8_t, uint8_t>)>
+TLV_INLINE V interleave_odd(V a, V b) {
+  auto u_a = _mm512_srli_epi16(a.v, 8); // move high 8 to low 8 bits and clear high 8 bits
+  auto u_b = _mm512_slli_epi16(_mm512_srli_epi16(b.v, 8), 8); // clear low 8 bits
+  return _mm512_or_si512(u_a, u_b);
+}
+#endif // VEC_WIDTH >= 512
 
 /* ************************************************************************** */
 //                                Constructors                                //

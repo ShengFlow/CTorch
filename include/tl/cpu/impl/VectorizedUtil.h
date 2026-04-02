@@ -68,6 +68,16 @@ struct StepPointer {
 };
 
 
+/**
+ * @brief Compile-time loop unroller for iterating over indices.
+ *
+ * Recursively unrolls a loop at compile time, calling f.template operator()<I>()
+ * for each index I in [I_start, NLoop) with given step.
+ *
+ * @tparam NLoop Loop bound (exclusive)
+ * @tparam Step Step between iterations (default 1)
+ * @tparam I Current index (default 0)
+ */
 template <nint_t NLoop, nint_t Step = 1, nint_t I = 0, typename = void /* SFINAE*/>
 struct ForEach {
   static_assert((Step > 0 && I < NLoop) || (Step < 0 && I > NLoop));
@@ -99,11 +109,34 @@ struct ForEach<NLoop, Step, I, std::enable_if_t<(I >= NLoop)>> {
   constexpr void operator()(nint_t n, F&& f, Args&& ... args) {}
 };
 
+/**
+ * @brief Iterate over compile-time indices [I, NLoop) with given step.
+ *
+ * Calls f.template operator()<I>() for each index.
+ *
+ * @tparam NLoop Loop bound (exclusive)
+ * @tparam Step Step between iterations
+ * @tparam I Starting index
+ * @param f Callable with template operator()<index>()
+ * @param args Additional arguments passed to f
+ */
 template <nint_t NLoop, nint_t Step = 1, nint_t I = 0, typename F, typename... Args>
 TLV_INLINE constexpr void foreach(F&& f, Args&&... args) {
   ForEach<NLoop, Step, I>()(std::forward<F>(f), std::forward<Args>(args)...);
 }
 
+/**
+ * @brief Iterate over indices with a runtime limit.
+ *
+ * Calls f.template operator()<I>() for indices I < n.
+ *
+ * @tparam NLoop Maximum loop bound (compile-time)
+ * @tparam Step Step between iterations
+ * @tparam I Starting index
+ * @param n Runtime limit (only iterates while I < n)
+ * @param f Callable with template operator()<index>()
+ * @param args Additional arguments passed to f
+ */
 template <nint_t NLoop, nint_t Step = 1, nint_t I = 0, typename F, typename... Args>
 TLV_INLINE constexpr void foreach(nint_t n, F&& f, Args&&... args) {
   ForEach<NLoop, Step, I>()(n, std::forward<F>(f), std::forward<Args>(args)...);
@@ -256,16 +289,47 @@ struct ArgTransform<Index, Batch, StepPointer<T>> {
   }
 };
 
+/**
+ * @brief Transform an argument for word-level processing at compile-time index.
+ *
+ * Applies ArgTransform to extract the Index-th word from ShardVec/ShardMask,
+ * or compute the Index-th address from StepPointer.
+ *
+ * @tparam Index The word index
+ * @tparam Batch Batch size for multi-word extraction (must be power of 2)
+ * @param t The argument to transform
+ * @return Transformed argument appropriate for word-level operation
+ */
 template <nint_t Index, nint_t Batch = 1, typename T>
 TLV_INLINE constexpr decltype(auto) transform(T&& t) {
   return ArgTransform<Index, Batch, T>()(std::forward<T>(t));
 }
 
+/**
+ * @brief Transform an argument for word-level processing at runtime index.
+ *
+ * Same as transform<Index>, but with runtime index instead of compile-time.
+ *
+ * @tparam Batch Batch size for multi-word extraction (must be power of 2)
+ * @param t The argument to transform
+ * @param index Runtime word index
+ * @return Transformed argument appropriate for word-level operation
+ */
 template <nint_t Index = -1, nint_t Batch = 1, typename T>
 TLV_INLINE constexpr decltype(auto) transform(T&& t, nint_t index) {
   return ArgTransform<Index, Batch, T>()(std::forward<T>(t), index);
 }
 
+/**
+ * @brief Wrapper that injects a compile-time index into function calls.
+ *
+ * If Fn has a template operator()<I>(), calls it with the injected index I.
+ * Otherwise, calls Fn directly without template parameter.
+ * This enables uniform handling of both indexed and non-indexed functions.
+ *
+ * @tparam I The index to inject
+ * @tparam Fn The function type
+ */
 template <int I, typename Fn>
 struct IndexedFn {
   Fn& fn;
@@ -319,6 +383,15 @@ public:
   }
 };
 
+/**
+ * @brief Type alias for the return type of a transformed function call.
+ *
+ * Computes the return type when calling F with transformed arguments,
+ * where each argument is processed by transform<0>().
+ *
+ * @tparam F Function type
+ * @tparam Args Argument types before transformation
+ */
 template <typename F, typename... Args>
 using TransformedReturn = decltype(std::declval<IndexedFn<0, F>>()(transform<0>(std::forward<Args>(std::declval<Args>()))...));
 
