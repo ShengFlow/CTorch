@@ -11,11 +11,13 @@ std::vector<GradPack> SubNode::backward(const std::vector<Tensor> &downStreamGra
     std::vector<GradPack> ret;
     ret.push_back(GradPack{
         _upStreamNodes[0],
-        downStreamGrads[0]
+        std::vector({downStreamGrads[0]}),
+        0
     });
     ret.push_back(GradPack{
         _upStreamNodes[1],
-        -downStreamGrads[1]
+        std::vector({-downStreamGrads[1]}),
+        1
     });
     return ret;
 }

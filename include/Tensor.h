@@ -130,6 +130,8 @@ class Tensor {
      * @brief 存储张量数据的对象
      */
     Storage _storage;
+
+    std::shared_ptr<Tensor> _grad;
     // ======================= 内部辅助函数 =======================
 
     /**
@@ -1102,6 +1104,8 @@ class Tensor {
     void setRelatedNode(std::shared_ptr<Node> ptr);
 
     Tensor view(std::initializer_list<size_t> shape);
+
+    void setGrad(std::shared_ptr<Tensor> grad);
 };
 
 /**

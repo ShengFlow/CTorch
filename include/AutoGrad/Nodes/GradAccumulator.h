@@ -9,7 +9,7 @@
 #define CTORCH_GRADACCUMULATOR_H
 #include "AutoGrad/Node.h"
 
-class GradAccumulator : public Node {
+class GradAccumulator final: public Node {
 public:
     std::vector<GradPack> backward(const std::vector<Tensor> &downStreamGrads) override;
 };
