@@ -891,6 +891,92 @@ Tensor Tensor::operator-() const {
   return result;
 }
 
+// 指数函数
+Tensor Tensor::exp() const {
+  // 简单实现指数函数
+  Tensor result(ShapeTag{}, _shape, _dtype, _device);
+
+  size_t count = numel();
+  if (_dtype == DType::kFloat) {
+    const float *data = this->data<float>();
+    float *result_data = result.data<float>();
+    for (size_t i = 0; i < count; ++i) {
+      result_data[i] = std::exp(data[i]);
+    }
+  }
+
+  // 设置梯度需求
+  result._requires_grad = _requires_grad;
+
+  return result;
+}
+
+// 对数函数
+Tensor Tensor::log() const {
+  // 简单实现对数函数
+  Tensor result(ShapeTag{}, _shape, _dtype, _device);
+
+  size_t count = numel();
+  if (_dtype == DType::kFloat) {
+    const float *data = this->data<float>();
+    float *result_data = result.data<float>();
+    for (size_t i = 0; i < count; ++i) {
+      result_data[i] = std::log(data[i]);
+    }
+  }
+
+  // 设置梯度需求
+  result._requires_grad = _requires_grad;
+
+  return result;
+}
+
+// 均值函数
+Tensor Tensor::mean() const {
+  // 简单实现均值函数
+  Tensor result(ShapeTag{}, {}, _dtype, _device);
+
+  if (_dtype == DType::kFloat) {
+    const float *data = _storage.data<float>();
+    float sum = 0.0f;
+    size_t count = numel();
+    for (size_t i = 0; i < count; ++i) {
+      sum += data[i + _storage_offset];
+    }
+    float mean_val = sum / count;
+    result._storage = Storage(1, _dtype, _device);
+    float *result_data = result._storage.data<float>();
+    if (result_data) {
+      *result_data = mean_val;
+    }
+  }
+
+  // 设置梯度需求
+  result._requires_grad = _requires_grad;
+
+  return result;
+}
+
+// 平方函数
+Tensor Tensor::square() const {
+  // 简单实现平方函数
+  Tensor result(ShapeTag{}, _shape, _dtype, _device);
+
+  size_t count = numel();
+  if (_dtype == DType::kFloat) {
+    const float *data = this->data<float>();
+    float *result_data = result.data<float>();
+    for (size_t i = 0; i < count; ++i) {
+      result_data[i] = data[i] * data[i];
+    }
+  }
+
+  // 设置梯度需求
+  result._requires_grad = _requires_grad;
+
+  return result;
+}
+
 // 张量加法运算符
 Tensor Tensor::operator+(const Tensor &other) const {
   // 检查数据类型是否匹配

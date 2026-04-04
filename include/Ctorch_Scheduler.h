@@ -22,6 +22,7 @@ private:
   Ctorch_Scheduler &operator=(const Ctorch_Scheduler &) = delete;
   std::mutex mutex_;
   bool if_first = true;
+  static bool amx_available_;
   // kernel映射表：OpType → DeviceType → BinaryKernelFunc（双输入算子）
   std::unordered_map<op, std::unordered_map<DeviceType, BinaryKernelFunc>>
       binary_kernel_map_;
@@ -31,6 +32,19 @@ private:
 
   // 私有方法：初始化kernel映射表（注册所有kernel）
   void initKernelMap() {
+    // 检测 AMX 是否可用（Apple Silicon 专用）
+    #if defined(__APPLE__) && defined(__arm64__)
+    amx_available_ = true;
+    #else
+    amx_available_ = false;
+    #endif
+    
+    if (amx_available_) {
+      printf(ESC_START COLOR_INFO "[INFO]  " ESC_END "[%s %" PRIu64
+                                  "] Apple AMX acceleration available\n",
+             getFormattedTimeMs().c_str(), getTimestampMs());
+    }
+    
     // ================= 双输入算子注册 =================
     binary_kernel_map_[op::Add][DeviceType::kCPU] = Add_BASIC_kernel;
     binary_kernel_map_[op::Sub][DeviceType::kCPU] = Sub_BASIC_kernel;
@@ -41,6 +55,11 @@ private:
     binary_kernel_map_[op::MSE][DeviceType::kCPU] = MSE_BASIC_kernel;
     binary_kernel_map_[op::CE][DeviceType::kCPU] = CrossEntropy_BASIC_kernel;
     binary_kernel_map_[op::MAE][DeviceType::kCPU] = MAE_BASIC_kernel;
+    
+    // 注册 AMX 内核（如果可用）
+    if (amx_available_) {
+      binary_kernel_map_[op::MatMul][DeviceType::kAMX] = MatMul_AMX_kernel;
+    }
 
     // ================= 单输入算子注册 =================
     unary_kernel_map_[op::Neg][DeviceType::kCPU] = Neg_BASIC_kernel;
@@ -68,17 +87,17 @@ public:
     return instance_;
   }
 
-  // 辅助函数1：检测设备是否可用（简化版，后续可扩展
+  // 辅助函数1：检测设备是否可用
   static bool isDeviceAvailable(DeviceType dev_type) {
     switch (dev_type) {
     case DeviceType::kCPU:
       return true; // CPU必可用
     case DeviceType::kCUDA:
-      return false; // 后续实现后改为true
+      return false;
     case DeviceType::kMPS:
       return false;
     case DeviceType::kAMX:
-      return false;
+      return amx_available_;
     default:
       return false;
     }
@@ -128,12 +147,25 @@ public:
 
     {
       std::lock_guard<std::mutex> lock(instance.mutex_);
-      // 从映射表中查找对应kernel
-      auto op_it = instance.binary_kernel_map_.find(op_type);
-      if (op_it != instance.binary_kernel_map_.end()) {
-        auto dev_it = op_it->second.find(target_dev);
-        if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
-          target_kernel = dev_it->second;
+      // 对于 MatMul，优先尝试 AMX（如果可用）
+      if (op_type == op::MatMul && amx_available_) {
+        auto op_it = instance.binary_kernel_map_.find(op_type);
+        if (op_it != instance.binary_kernel_map_.end()) {
+          auto dev_it = op_it->second.find(DeviceType::kAMX);
+          if (dev_it != op_it->second.end()) {
+            target_kernel = dev_it->second;
+          }
+        }
+      }
+      
+      // 如果 AMX 未找到或不是 MatMul，回退到 CPU 内核
+      if (target_kernel == nullptr) {
+        auto op_it = instance.binary_kernel_map_.find(op_type);
+        if (op_it != instance.binary_kernel_map_.end()) {
+          auto dev_it = op_it->second.find(target_dev);
+          if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
+            target_kernel = dev_it->second;
+          }
         }
       }
     }

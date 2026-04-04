@@ -79,8 +79,7 @@ public:
   Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
       : _size(size), _dtype(dtype), _device(device),
         _data(size > 0
-                  ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)],
-                                            std::default_delete<char[]>())
+                  ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)])
                   : nullptr) {}
 
   /**

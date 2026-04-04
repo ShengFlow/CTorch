@@ -10,6 +10,7 @@ set(CT-Core
         src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
+        src/Ctorch_Scheduler.cpp
 )
 
 set(CT-Core-Headers
@@ -39,6 +40,7 @@ set(CT-OPs
         src/kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+        src/kernels/AMX/MatMul_AMX_kernel.cpp
 )
 
 add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-OPs})
@@ -75,6 +77,11 @@ if(APPLE)
     target_compile_options(CTorch PRIVATE
             -march=native
     )
+    # 链接 Accelerate 框架以使用 AMX 加速
+    find_library(ACCELERATE_FRAMEWORK Accelerate)
+    if(ACCELERATE_FRAMEWORK)
+        target_link_libraries(CTorch PRIVATE ${ACCELERATE_FRAMEWORK})
+    endif()
 elseif(UNIX AND NOT APPLE)
     # Linux 特定选项
     target_compile_options(CTorch PRIVATE
