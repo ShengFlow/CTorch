@@ -10,10 +10,10 @@ set(CT-Core
         src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
-        src/AutoGrad/DataCore.cpp
         src/ThreadPool.cpp
         src/AutoGrad/ComputeCore.cpp
         src/Arena.cpp
+        src/AutoGrad.cpp
 )
 
 set(CT-Core-Headers
@@ -27,6 +27,7 @@ set(CT-Core-Headers
         include/ThreadPool.h
         include/AutoGrad/ComputeCore.h
         include/Arena.h
+        include/AutoGrad.h
 )
 
 set(CT-Nodes-Headers
@@ -34,6 +35,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/AddNode.h
         include/AutoGrad/Nodes/SubNode.h
         include/AutoGrad/Nodes/MulNode.h
+        include/AutoGrad/Nodes/GradAccumulator.h
 )
 
 set(CT-Nodes
@@ -41,6 +43,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/AddNode.cpp
         src/AutoGrad/Nodes/SubNode.cpp
         src/AutoGrad/Nodes/MulNode.cpp
+        src/AutoGrad/Nodes/GradAccumulator.cpp
 )
 
 set(CT-CPU-BASIC-OPs

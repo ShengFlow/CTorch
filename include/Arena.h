@@ -79,13 +79,15 @@ public:
     Arena operator=(const Arena&) = delete;
 
     template <typename T,typename... Args>
-    T* invoke(Args&&... args) {
+    std::shared_ptr<T> invoke(Args&&... args) {
         std::lock_guard lock(_mtx);
         if (char* mem = allocate<T>()) {
             T* obj = new (mem) T(std::forward<Args>(args)...);
             if constexpr (!std::is_trivially_destructible_v<T>)
                 _destroyFuncs.push_back([obj](){obj->~T();});
-            return obj;
+            auto emptyDeleter = [](T*) noexcept {};
+            std::shared_ptr<T> ptr(obj,emptyDeleter);
+            return ptr;
         }
         Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to add for the object.");
         return nullptr;

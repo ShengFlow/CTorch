@@ -8,34 +8,35 @@
 #ifndef CTORCH_NODE_H
 #define CTORCH_NODE_H
 
-#include "Tensor.h"
+#include "../Tensor.h"
 #include <memory>
 
-class ComputeCore;
-class Node;
-
 struct GradPack {
-    std::weak_ptr<Node> _targetNode;
-    Tensor _grad;
+    std::shared_ptr<Node> _targetNode;
+    std::vector<Tensor> _grad;
+    int _idx{0};
 };
 
 class Node {
 protected:
-    std::vector<std::weak_ptr<Node>> _upStreamNodes;
+    std::vector<std::shared_ptr<Node>> _upStreamNodes;
     std::vector<Tensor> _inputs;
     std::weak_ptr<Tensor> _result;
     size_t _dependencies{0};
-    size_t _count{0};
+    std::atomic<size_t> _count{0};
+    bool _requireAccelerate{false};
 public:
-    Node(const std::vector<std::weak_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+    Node() = default;
 
-    Node(const std::vector<std::weak_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+
+    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
 
     virtual ~Node() = default;
 
     void increase();
 
-    void decrease();
+    bool decrease();
 
     void restore();
 
@@ -43,11 +44,17 @@ public:
 
     void setDependencies(size_t dependencies);
 
-    [[nodiscard]] size_t getCount() const;
-
     void setCount(size_t count);
+	
+    [[nodiscard]] std::vector<std::shared_ptr<Node>> getUpStreamNodes() const;
+
+    [[nodiscard]] bool requireAccelerate() const;
+
+    void set_requireAccelerate(bool requireAccelerate);
 
     virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
+
+    void restoreRecursive(std::unordered_set<Node*>& visited);
 };
 
 #endif // CTORCH_NODE_H

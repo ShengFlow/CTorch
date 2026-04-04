@@ -5,19 +5,24 @@
  *@date 2026/2/17
  **/
 
-#include "../include/AutoGrad/Node.h"
-#include "AutoGrad/Node.h"
+#include "../../include/AutoGrad/Node.h"
+#include "../../include/Ctorch_Error.h"
 void Node::increase() {
-    _count += 1;
-    if (_dependencies < _count) _dependencies += 1;
+    _count.fetch_add(1,std::memory_order_acq_rel);
+    _dependencies++;
 }
 
-void Node::decrease() {
-
+bool Node::decrease() {
+	const size_t old = _count.fetch_sub(1,std::memory_order_acq_rel);
+	if(old == 0) {
+	    Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Dependency count is negative");
+	    return false;
+	}
+    return old == 1;
 }
 
 
-void Node::restore() { _count = _dependencies; }
+void Node::restore() { _count.store(_dependencies,std::memory_order_relaxed); }
 
 
 size_t Node::getDependencies() const { return _dependencies; }
@@ -26,15 +31,28 @@ void Node::setDependencies(size_t dependencies) {
     _dependencies = dependencies;
 }
 
-size_t Node::getCount() const { return _count; }
-
 void Node::setCount(const size_t count) { _count = count; }
 
-Node::Node(const std::vector<std::weak_ptr<Node>> &upStreamNodes,
+Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
            const std::vector<Tensor> &inputs)
                :_upStreamNodes(upStreamNodes),_inputs(inputs) {}
 
-Node::Node(const std::vector<std::weak_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
+Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
            const std::weak_ptr<Tensor> &result)
                :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result)
 {}
+
+std::vector<std::shared_ptr<Node>> Node::getUpStreamNodes() const {return _upStreamNodes; }
+
+bool Node::requireAccelerate() const { return _requireAccelerate; }
+
+void Node::set_requireAccelerate(bool requireAccelerate) {_requireAccelerate = requireAccelerate;}
+
+void Node::restoreRecursive(std::unordered_set<Node *>& visited) {
+    if (!visited.count(this)) {
+        visited.insert(this);
+        restore();
+        for (auto &node : _upStreamNodes)
+            if (node) node->restoreRecursive(visited);
+    }
+}

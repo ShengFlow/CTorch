@@ -1842,7 +1842,7 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
 
     // 记录操作到计算图
     if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
+        std::vector inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
         AutoDiffContext::current()->defer_record(result.id(), op::MAE, inputs);
         result._requires_grad = _requires_grad || target.requires_grad();
         if (result._requires_grad) {
@@ -1853,4 +1853,6 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     return result;
 }
 
-std::weak_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
+std::shared_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
+
+void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) { _node = ptr; }

@@ -1,5 +1,5 @@
 /**
-*@file ComputeCore.h
+ *@file ComputeCore.h
  *@author Beapoe
  *@brief 计算核心
  *@date 2026/2/22
@@ -14,7 +14,8 @@
 #include <future>
 #include <condition_variable>
 #include <optional>
-#include "AutoGrad/Node.h"
+#include "Node.h"
+#include <mutex>
 
 // struct ReadyNode {
 //     std::shared_ptr<Node> _node;
@@ -35,12 +36,42 @@
 
 class GradBucket {
     std::vector<GradPack> _packs;
+    std::mutex _mtx;
+
+    size_t find(const std::shared_ptr<Node>& target);
+
+    GradBucket() = default;
+  public:
+    static GradBucket& getInstance();
+
+    void add(const std::vector<GradPack>& newPacks);
+
+    void remove(const std::shared_ptr<Node>& target);
+
+    [[nodiscard]] bool empty();
+
+    std::vector<Tensor> operator[](const std::shared_ptr<Node>& target);
 };
 
 class ComputeCore {
-    static std::vector<std::unique_ptr<Node>> _nodes;
-public:
-    static void addReadyNode(std::unique_ptr<Node>& node){_nodes.push_back(std::move(node));}
+    std::queue<std::shared_ptr<Node>> _readyNodes;
+
+    std::mutex _mtx;
+
+    ComputeCore() = default;
+
+    std::shared_ptr<Node> tryPopReadyNode();
+
+    void scheduleNode(const std::vector<GradPack>& newPacks);
+
+    void scheduleNode(std::shared_ptr<Node> root);
+
+  public:
+    static ComputeCore &getInstance();
+
+    void addReadyNode(std::shared_ptr<Node> node);
+
+    void backward(std::shared_ptr<Node> root,bool retainGraph = false);
 };
 
 #endif // CTORCH_COMPUTECORE_H

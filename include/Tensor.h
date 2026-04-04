@@ -75,7 +75,7 @@ class Tensor {
     /**
      * @var _node 与该张量相关的Node
      */
-    std::weak_ptr<Node> _node;
+    std::shared_ptr<Node> _node;
 
     /**
      * @var global_tensor_id
@@ -142,7 +142,7 @@ class Tensor {
      * @param indices 多维索引
      * @return 存储中的一维索引
      */
-    size_t computeStorageIndex(std::initializer_list<size_t> indices) const;
+    [[nodiscard]] size_t computeStorageIndex(std::initializer_list<size_t> indices) const;
 
     /**
      * @brief 检查数据类型是否匹配
@@ -249,6 +249,7 @@ class Tensor {
         Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
         computeStrides();
         _storage = Storage(1, _dtype, _device);
+        _node = nullptr;
         if (_storage.data<float>()) {
             *_storage.data<float>() = value;
             std::ostringstream oss;
@@ -268,6 +269,7 @@ class Tensor {
     Tensor(std::initializer_list<float> values)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU),
           _dtype(DType::kFloat) {
+        _node = nullptr;
         _shape = {values.size()};
         computeStrides();
         _storage = Storage(values.begin(), values.size(), _dtype, _device);
@@ -284,6 +286,7 @@ class Tensor {
     Tensor(ShapeTag /*tag*/, const std::vector<size_t> &shape, DType dtype = DType::kFloat,
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
+        _node = nullptr;
         _shape = shape;
         computeStrides();
         _storage = Storage(numel(), _dtype, _device);
@@ -301,6 +304,7 @@ class Tensor {
     Tensor(size_t size, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU,
            bool zero_init = true)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
+        _node = nullptr;
         _shape = {size};
         computeStrides();
         _storage = Storage(size, _dtype, _device);
@@ -321,6 +325,7 @@ class Tensor {
           _shape(other._shape) {
         // std::cout << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_
         // << std::endl;
+        _node = nullptr;
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
@@ -346,6 +351,7 @@ class Tensor {
             _storage          = other._storage.clone(); // 深拷贝存储
             _requires_grad    = other._requires_grad;
             record_committed_ = false;
+            _node = other.getRelatedNode();
         }
         return *this;
     }
@@ -356,10 +362,10 @@ class Tensor {
      * @details 移动构造后，原对象的tensor_id变为0，避免冲突
      */
     Tensor(Tensor &&other) noexcept
-        : tensor_id_(other.tensor_id_), record_committed_(other.record_committed_),
+        : _node(other.getRelatedNode()),tensor_id_(other.tensor_id_), record_committed_(other.record_committed_),
           _requires_grad(other._requires_grad), _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
+          _storage(std::move(other._storage)),_shape(std::move(other._shape)){
         // 移动构造后，原对象的tensor_id变为0，避免冲突
         other.tensor_id_        = 0;
         other.record_committed_ = false;
@@ -384,6 +390,7 @@ class Tensor {
             _storage          = std::move(other._storage);
             _requires_grad    = other._requires_grad;
             record_committed_ = other.record_committed_;
+            _node = other.getRelatedNode();
 
             // 移动赋值后，原对象的tensor_id变为0，避免冲突
             other.tensor_id_        = 0;
@@ -1090,7 +1097,9 @@ class Tensor {
     // 添加一个辅助函数来创建真正的空 Tensor
     // 保留设置方法
 
-    std::weak_ptr<Node> getRelatedNode() const;
+    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const;
+
+    void setRelatedNode(std::shared_ptr<Node> ptr);
 
     Tensor view(std::initializer_list<size_t> shape);
 };
