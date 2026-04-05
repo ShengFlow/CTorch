@@ -7,6 +7,12 @@
 
 #include "AutoGrad/Nodes/SubNode.h"
 
+SubNode::SubNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
+    : Node(upStreamNodes, inputs) {}
+
+SubNode::SubNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
+    : Node(upStreamNodes, inputs, result) {}
+
 std::vector<GradPack> SubNode::backward(const std::vector<Tensor> &downStreamGrads) {
     std::vector<GradPack> ret;
     ret.push_back(GradPack{

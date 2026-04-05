@@ -9,7 +9,7 @@
 #define CTORCH_CORE_H
 #include "../include/AutoGrad/Node.h"
 #include "Nodes/GradAccumulator.h"
-#include "Arena.h"
+#include "../Arena.h"
 
 class DataCore {
     DataCore() = default;

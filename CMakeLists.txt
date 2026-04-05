@@ -73,7 +73,14 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
 )
 
-add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-CPU-BASIC-OPs} ${CT-CPU-SIMD-OPs} ${CT-Nodes} ${CT-Nodes-Headers})
+add_library(CTorch STATIC
+        ${CT-Core}
+        ${CT-Core-Headers}
+        ${CT-CPU-BASIC-OPs}
+        ${CT-CPU-SIMD-OPs}
+        ${CT-Nodes}
+        ${CT-Nodes-Headers}
+)
 
 # 包含头文件目录
 target_include_directories(CTorch

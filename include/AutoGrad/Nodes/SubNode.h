@@ -12,7 +12,10 @@
 
 class SubNode final: public Node {
 public:
-    std::vector<GradPack> backward(const std::vector<Tensor> &downStreamGrads) override;
+    SubNode() = default;
+    SubNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+    SubNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+    std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) override;
 };
 
 #endif // CTORCH_SUBNODE_H
