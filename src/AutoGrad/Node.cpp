@@ -7,6 +7,8 @@
 
 #include "../../include/AutoGrad/Node.h"
 #include "../../include/Ctorch_Error.h"
+#include "../include/Tensor.h"
+
 void Node::increase() {
     _count.fetch_add(1,std::memory_order_acq_rel);
     _dependencies++;
@@ -24,7 +26,6 @@ bool Node::decrease() {
 
 void Node::restore() { _count.store(_dependencies,std::memory_order_relaxed); }
 
-
 size_t Node::getDependencies() const { return _dependencies; }
 
 void Node::setDependencies(size_t dependencies) {
@@ -41,6 +42,11 @@ Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::v
            const std::weak_ptr<Tensor> &result)
                :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result)
 {}
+
+Node::Node(const std::weak_ptr<Tensor> &result)
+    :_upStreamNodes(std::vector<std::shared_ptr<Node>>()),_inputs(std::vector<Tensor>()),_result(result)
+{}
+
 
 std::vector<std::shared_ptr<Node>> Node::getUpStreamNodes() const {return _upStreamNodes; }
 

@@ -7,7 +7,13 @@
 
 #include "AutoGrad/Nodes/MulNode.h"
 
-std::vector<GradPack> MulNode::backward(const std::vector<Tensor> &downStreamGrads) {
+MulNode::MulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
+    : Node(upStreamNodes, inputs) {}
+
+MulNode::MulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
+    : Node(upStreamNodes, inputs, result) {}
+
+std::vector<GradPack> MulNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;
     ret.push_back(GradPack{
         _upStreamNodes[0],

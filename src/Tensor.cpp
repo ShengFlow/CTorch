@@ -27,15 +27,6 @@ std::atomic<size_t> Tensor::global_tensor_id(1);
  */
 void Tensor::requires_grad(bool key) {
     _requires_grad = key;
-    if (key) {
-        // 如果需要梯度，确保已注册到计算图
-        if (AutoDiffContext::current()) {
-            // 先尝试make_leaf
-            AutoDiffContext::current()->make_leaf(*this, key);
-            // 然后强制更新requires_grad状态，确保节点在当前上下文中正确注册
-            AutoDiffContext::current()->update_requires_grad(*this, key);
-        }
-    }
 }
 
 /**
@@ -484,71 +475,12 @@ Tensor Tensor::matmul(const Tensor& other) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::MatMul);
     
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::MatMul, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
 
-// 反向传播
-void Tensor::backward() const {
-    // 错误检查1：确保自动微分上下文存在
-    if (!AutoDiffContext::current()) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "反向传播需要自动微分上下文");
-    }
-    
-    // 错误检查2：确保张量需要梯度
-    if (!_requires_grad) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量不需要梯度，无法执行反向传播");
-    }
-    
-    // 错误检查3：确保张量数据有效
-    if (is_cleared() || numel() == 0) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量数据无效，无法执行反向传播");
-    }
-    
-    // 执行反向传播
-    Tensor& self_ref = const_cast<Tensor&>(*this);
-    AutoDiffContext::current()->backward(self_ref);
-}
 
-// 反向传播（带有梯度输出）
-void Tensor::backward(const Tensor& grad_output) const {
-    // 错误检查1：确保自动微分上下文存在
-    if (!AutoDiffContext::current()) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "反向传播需要自动微分上下文");
-    }
-    
-    // 错误检查2：确保张量需要梯度
-    if (!_requires_grad) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量不需要梯度，无法执行反向传播");
-    }
-    
-    // 错误检查3：确保张量数据有效
-    if (is_cleared() || numel() == 0) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量数据无效，无法执行反向传播");
-    }
-    
-    // 错误检查4：确保梯度输出形状与张量形状匹配
-    if (grad_output.shape() != _shape) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "梯度输出形状与张量形状不匹配");
-    }
-    
-    // 错误检查5：确保梯度输出数据类型与张量数据类型匹配
-    if (grad_output.dtype() != _dtype) {
-        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "梯度输出数据类型与张量数据类型不匹配");
-    }
-    
-    // 执行反向传播
-    Tensor& self_ref = const_cast<Tensor&>(*this);
-    AutoDiffContext::current()->backward(self_ref, grad_output);
-}
 
 // ======================= 缺失方法实现 =======================
 
@@ -574,14 +506,7 @@ Tensor Tensor::relu() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::ReLU);
     
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::ReLU, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -590,14 +515,7 @@ Tensor Tensor::dot(const Tensor &other) const{
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Dot);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Dot, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -606,14 +524,7 @@ Tensor Tensor::cos() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::Cos);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Cos, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -622,14 +533,7 @@ Tensor Tensor::sin() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::Sin);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Sin, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -653,14 +557,7 @@ Tensor Tensor::sum() const {
     }
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Sum, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -681,14 +578,7 @@ Tensor Tensor::operator/(const Tensor& other) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Div);
     
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Div, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -708,14 +598,7 @@ Tensor Tensor::operator-(const Tensor& other) const {
     // 使用调度器调用加法kernel执行张量加法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::Sub);
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Sub, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -735,14 +618,7 @@ Tensor Tensor::operator*(const Tensor& other) const {
     // 简单实现张量乘法
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,other,op::Mul);
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Mul, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -788,19 +664,6 @@ Tensor Tensor::operator*(float scalar) const {
             Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量乘法不支持的dtype");
     }
     
-    // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        // 对于标量操作，我们创建一个标量张量作为另一个输入
-        Tensor scalar_tensor(scalar);
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
-        AutoDiffContext::current()->defer_record(result.id(), op::Mul, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    } else {
-        result._requires_grad = _requires_grad;
-    }
     
     return result;
 }
@@ -811,14 +674,7 @@ Tensor Tensor::operator-() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this,op::Neg);
     
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Neg, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -839,14 +695,7 @@ Tensor Tensor::operator+(const Tensor& other) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, other, op::Add);
     
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&other)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Add, inputs);
-        result._requires_grad = _requires_grad || other.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
     
     return result;
 }
@@ -892,19 +741,6 @@ Tensor Tensor::operator+(float scalar) const {
             Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量加法不支持的dtype");
     }
     
-    // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        // 对于标量操作，我们创建一个标量张量作为另一个输入
-        Tensor scalar_tensor(scalar);
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
-        AutoDiffContext::current()->defer_record(result.id(), op::Add, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    } else {
-        result._requires_grad = _requires_grad;
-    }
     
     return result;
 }
@@ -955,19 +791,6 @@ Tensor Tensor::operator/(float scalar) const {
             Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "标量除法不支持的dtype");
     }
     
-    // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        // 对于标量操作，我们创建一个标量张量作为另一个输入
-        Tensor scalar_tensor(scalar);
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), &scalar_tensor};
-        AutoDiffContext::current()->defer_record(result.id(), op::Div, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    } else {
-        result._requires_grad = _requires_grad;
-    }
     
     return result;
 }
@@ -1322,9 +1145,6 @@ bool Tensor::is_cleared() const {
 
 // 提交未完成的记录
 void Tensor::commit_pending_record() {
-    if (AutoDiffContext::current() && has_pending_record()) {
-        AutoDiffContext::current()->commit_record(*this);
-    }
     record_committed_ = true;
 }
 
@@ -1371,24 +1191,21 @@ void Tensor::debug_info_detailed(const std::string& name) const {
 
 // 全局的backward函数，用于启动反向传播
 void backward(Tensor& root) {
-    if (AutoDiffContext::current()) {
-        AutoDiffContext::current()->backward(root);
+    if (auto node = root.getRelatedNode()) {
+        AutoGrad::backward(node, false);
     }
 }
 
 // 全局的backward函数，用于启动反向传播（带有梯度输出）
 void backward(Tensor& root, Tensor grad_output) {
-    if (AutoDiffContext::current()) {
-        AutoDiffContext::current()->backward(root, grad_output);
+    if (auto node = root.getRelatedNode()) {
+        AutoGrad::backward(node, false);
     }
 }
 
 // 全局的grad函数，用于获取张量的梯度
 Tensor grad(const Tensor& t) {
-    if (AutoDiffContext::current()) {
-        return AutoDiffContext::current()->get_grad(&t);
-    }
-    return Tensor();
+    return t.grad();
 }
 
 // 全局的matMul函数
@@ -1612,14 +1429,7 @@ Tensor Tensor::tanh() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Tanh);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Tanh, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1629,14 +1439,7 @@ Tensor Tensor::sigmoid() const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, op::Sigmoid);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Sigmoid, inputs);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1790,14 +1593,7 @@ Tensor Tensor::softmax(int dim) const {
     }
 
     // 记录操作到计算图（把 dim 写进 op_param_i）
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this)};
-        AutoDiffContext::current()->defer_record(result.id(), op::Softmax, inputs, dim);
-        result._requires_grad = _requires_grad;
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1807,14 +1603,7 @@ Tensor Tensor::mse_loss(const Tensor& target) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::MSE);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
-        AutoDiffContext::current()->defer_record(result.id(), op::MSE, inputs);
-        result._requires_grad = _requires_grad || target.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1824,14 +1613,7 @@ Tensor Tensor::cross_entropy(const Tensor& target) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::CE);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector<Tensor*> inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
-        AutoDiffContext::current()->defer_record(result.id(), op::CE, inputs);
-        result._requires_grad = _requires_grad || target.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1841,14 +1623,7 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     Tensor result = Ctorch_Scheduler::getInstance().dispatch(*this, target, op::MAE);
 
     // 记录操作到计算图
-    if (AutoDiffContext::current()) {
-        std::vector inputs = {const_cast<Tensor*>(this), const_cast<Tensor*>(&target)};
-        AutoDiffContext::current()->defer_record(result.id(), op::MAE, inputs);
-        result._requires_grad = _requires_grad || target.requires_grad();
-        if (result._requires_grad) {
-            result.commit_pending_record();
-        }
-    }
+
 
     return result;
 }
@@ -1858,4 +1633,73 @@ std::shared_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
 void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) { _node = std::move(ptr); }
 
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _grad = std::move(grad); }
+
+// 求张量的和
+Tensor Tensor::sum(int dim, bool keepdim) const {
+    // 实现sum操作
+    Tensor result;
+    
+    // 检查维度是否合法
+    if (dim < 0) {
+        dim += _shape.size();
+    }
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "sum: 维度超出范围");
+    }
+    
+    // 计算输出形状
+    std::vector<size_t> output_shape;
+    for (size_t i = 0; i < _shape.size(); ++i) {
+        if (i == static_cast<size_t>(dim) && !keepdim) {
+            continue;
+        }
+        output_shape.push_back(_shape[i]);
+    }
+    if (keepdim) {
+        output_shape[dim] = 1;
+    }
+    
+    // 创建结果张量
+    result = Tensor(ShapeTag{}, output_shape, _dtype, _device);
+    
+    // 根据数据类型执行求和操作
+    size_t count = numel();
+    size_t dim_size = _shape[dim];
+    size_t stride = _strides[dim];
+    
+    switch (_dtype) {
+        case DType::kFloat: {
+            const float* data = this->data<float>();
+            float* result_data = result.data<float>();
+            size_t result_count = result.numel();
+            for (size_t i = 0; i < result_count; ++i) {
+                float sum = 0.0f;
+                for (size_t j = 0; j < dim_size; ++j) {
+                    size_t index = i * stride * dim_size + j * stride;
+                    sum += data[index];
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        case DType::kDouble: {
+            const double* data = this->data<double>();
+            double* result_data = result.data<double>();
+            size_t result_count = result.numel();
+            for (size_t i = 0; i < result_count; ++i) {
+                double sum = 0.0;
+                for (size_t j = 0; j < dim_size; ++j) {
+                    size_t index = i * stride * dim_size + j * stride;
+                    sum += data[index];
+                }
+                result_data[i] = sum;
+            }
+            break;
+        }
+        default:
+            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "sum: 不支持的数据类型");
+    }
+    
+    return result;
+}
 

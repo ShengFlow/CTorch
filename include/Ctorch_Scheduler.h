@@ -10,6 +10,20 @@
 #define CTORCH_SCHEDULER_H
 #include "Ctorch_Error.h"
 #include "Tensor.h"
+#include "AutoGrad.h"
+#include "AutoGrad/Nodes/AddNode.h"
+#include "AutoGrad/Nodes/SubNode.h"
+#include "AutoGrad/Nodes/MulNode.h"
+#include "AutoGrad/Nodes/DivNode.h"
+#include "AutoGrad/Nodes/NegNode.h"
+#include "AutoGrad/Nodes/SinNode.h"
+#include "AutoGrad/Nodes/CosNode.h"
+#include "AutoGrad/Nodes/TanhNode.h"
+#include "AutoGrad/Nodes/SigmoidNode.h"
+#include "AutoGrad/Nodes/ReLUNode.h"
+#include "AutoGrad/Nodes/MatMulNode.h"
+#include "AutoGrad/Nodes/CrossEntropyNode.h"
+#include "AutoGrad/Nodes/SoftmaxNode.h"
 #include "./../src/kernels/kernels.h"
 
 class Ctorch_Scheduler{
@@ -108,7 +122,7 @@ public:
         DeviceType target_dev = getTargetDevice(a, b);
         BinaryKernelFunc target_kernel = nullptr;
 
-        {   
+        {
             std::lock_guard<std::mutex> lock(instance.mutex_);
             // 从映射表中查找对应kernel
             auto op_it = instance.binary_kernel_map_.find(op_type);
@@ -125,7 +139,36 @@ public:
             Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
         }
         // 调用kernel，执行计算并返回结果
-        return target_kernel(a, b);
+        Tensor result = target_kernel(a, b);
+        
+        // 记录操作到计算图（使用AutoGrad）
+        result.requires_grad(true);
+        // 根据op_type注册对应的节点
+        switch (op_type) {
+        case op::Add:
+            AutoGrad::registerNode<AddNode>({a, b}, resultPtr);
+            break;
+        case op::Sub:
+            AutoGrad::registerNode<SubNode>({a, b}, std::make_shared<Tensor>(result));
+            break;
+        case op::Mul:
+            AutoGrad::registerNode<MulNode>({a, b}, std::make_shared<Tensor>(result));
+            break;
+        case op::Div:
+            AutoGrad::registerNode<DivNode>({a, b}, std::make_shared<Tensor>(result));
+            break;
+        case op::MatMul:
+            AutoGrad::registerNode<MatMulNode>({a, b}, std::make_shared<Tensor>(result));
+            break;
+        case op::CE:
+            AutoGrad::registerNode<CrossEntropyNode>({a, b}, std::make_shared<Tensor>(result));
+            break;
+            // 其他双输入算子可以在这里添加
+        default:
+            break;
+        }
+        
+        return result;
     }
     
     // 公共接口实现：dispatch（单输入算子）
@@ -162,7 +205,41 @@ public:
             Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
         }
         // 调用kernel，执行计算并返回结果
-        return target_kernel(a);
+        Tensor result = target_kernel(a);
+        
+        // 记录操作到计算图（使用AutoGrad）
+        if (a.requires_grad()) {
+            result.requires_grad(true);
+            // 根据op_type注册对应的节点
+            switch (op_type) {
+                case op::Neg:
+                    AutoGrad::registerNode<NegNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::ReLU:
+                    AutoGrad::registerNode<ReLUNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::Cos:
+                    AutoGrad::registerNode<CosNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::Sin:
+                    AutoGrad::registerNode<SinNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::Tanh:
+                    AutoGrad::registerNode<TanhNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::Sigmoid:
+                    AutoGrad::registerNode<SigmoidNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                case op::Softmax:
+                    AutoGrad::registerNode<SoftmaxNode>({a}, std::make_shared<Tensor>(result));
+                    break;
+                // 其他单输入算子可以在这里添加
+                default:
+                    break;
+            }
+        }
+        
+        return result;
     }
 
 };

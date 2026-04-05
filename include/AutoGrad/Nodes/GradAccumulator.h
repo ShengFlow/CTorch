@@ -11,7 +11,8 @@
 
 class GradAccumulator final: public Node {
 public:
-    std::vector<GradPack> backward(const std::vector<Tensor> &downStreamGrads) override;
+    GradAccumulator(const std::weak_ptr<Tensor>& result);
+    std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) override;
 };
 
 #endif // CTORCH_GRADACCUMULATOR_H

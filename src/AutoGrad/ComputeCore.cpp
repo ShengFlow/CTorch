@@ -7,10 +7,13 @@
 
 #include <utility>
 #include <queue>
+#include <algorithm>
 
 #include "../../include/AutoGrad/ComputeCore.h"
+#include "../../include/AutoGrad/Node.h"
 #include "../../include/Ctorch_Error.h"
 #include "../../include/ThreadPool.h"
+#include "../../include/AutoGrad.h"
 
 GradBucket &GradBucket::getInstance() {
     static GradBucket instance;
@@ -104,6 +107,11 @@ void ComputeCore::addReadyNode(std::shared_ptr<Node> node) {
 }
 
 void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
+    // 保存当前的EnableGrad值
+    bool original_enable_grad = AutoGrad::EnableGrad;
+    // 在backward执行期间，禁用计算图记录
+    AutoGrad::EnableGrad = false;
+    
     std::atomic<bool> finished{false};
 
     GradBucket &bucket = GradBucket::getInstance();
@@ -139,4 +147,7 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         std::unordered_set<Node *> restored;
         root->restoreRecursive(restored);
     }
+    
+    // 恢复原始的EnableGrad值
+    AutoGrad::EnableGrad = original_enable_grad;
 }

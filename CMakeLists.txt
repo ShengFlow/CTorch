@@ -7,7 +7,6 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(CT-Core
         src/Tensor.cpp
-        src/AutoDiff.cpp
         src/Storage.cpp
         src/Ctools.cpp
         src/ThreadPool.cpp
@@ -18,7 +17,6 @@ set(CT-Core
 
 set(CT-Core-Headers
         include/Tensor.h
-        include/AutoDiff.h
         include/Storage.h
         include/Ctools.h
         include/Ctorch_Scheduler.h
@@ -35,6 +33,16 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/AddNode.h
         include/AutoGrad/Nodes/SubNode.h
         include/AutoGrad/Nodes/MulNode.h
+        include/AutoGrad/Nodes/DivNode.h
+        include/AutoGrad/Nodes/NegNode.h
+        include/AutoGrad/Nodes/SinNode.h
+        include/AutoGrad/Nodes/CosNode.h
+        include/AutoGrad/Nodes/TanhNode.h
+        include/AutoGrad/Nodes/SigmoidNode.h
+        include/AutoGrad/Nodes/ReLUNode.h
+        include/AutoGrad/Nodes/MatMulNode.h
+        include/AutoGrad/Nodes/CrossEntropyNode.h
+        include/AutoGrad/Nodes/SoftmaxNode.h
         include/AutoGrad/Nodes/GradAccumulator.h
 )
 
@@ -43,6 +51,16 @@ set(CT-Nodes
         src/AutoGrad/Nodes/AddNode.cpp
         src/AutoGrad/Nodes/SubNode.cpp
         src/AutoGrad/Nodes/MulNode.cpp
+        src/AutoGrad/Nodes/DivNode.cpp
+        src/AutoGrad/Nodes/NegNode.cpp
+        src/AutoGrad/Nodes/SinNode.cpp
+        src/AutoGrad/Nodes/CosNode.cpp
+        src/AutoGrad/Nodes/TanhNode.cpp
+        src/AutoGrad/Nodes/SigmoidNode.cpp
+        src/AutoGrad/Nodes/ReLUNode.cpp
+        src/AutoGrad/Nodes/MatMulNode.cpp
+        src/AutoGrad/Nodes/CrossEntropyNode.cpp
+        src/AutoGrad/Nodes/SoftmaxNode.cpp
         src/AutoGrad/Nodes/GradAccumulator.cpp
 )
 
@@ -65,12 +83,16 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
 )
 
+# 暂时禁用CPU-SIMD相关文件，因为需要AVX指令集支持
+# set(CT-CPU-SIMD-OPs
+#         src/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
+#         src/kernels/CPU-SIMD/Div_SIMD_kernel.cpp
+#         src/kernels/CPU-SIMD/Mul_SIMD_kernel.cpp
+#         src/kernels/CPU-SIMD/Sub_SIMD_kernel.cpp
+#         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
+# )
+
 set(CT-CPU-SIMD-OPs
-        src/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
-        src/kernels/CPU-SIMD/Div_SIMD_kernel.cpp
-        src/kernels/CPU-SIMD/Mul_SIMD_kernel.cpp
-        src/kernels/CPU-SIMD/Sub_SIMD_kernel.cpp
-        src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
 )
 
 add_library(CTorch STATIC ${CT-Core} ${CT-Core-Headers} ${CT-CPU-BASIC-OPs} ${CT-CPU-SIMD-OPs} ${CT-Nodes} ${CT-Nodes-Headers})

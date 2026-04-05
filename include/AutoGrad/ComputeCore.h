@@ -13,9 +13,14 @@
 #include <queue>
 #include <future>
 #include <condition_variable>
-#include <optional>
-#include "Node.h"
 #include <mutex>
+
+#include "Node.h"
+
+// 前向声明
+// class Node;
+// class Tensor;
+// struct GradPack;
 
 // struct ReadyNode {
 //     std::shared_ptr<Node> _node;

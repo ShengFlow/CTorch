@@ -39,8 +39,18 @@
 // #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 // ======================= 前向声明 =======================
 class Tensor;
-class Storage;
+// class Storage;
 class Node;
+// namespace AutoGrad{
+// extern thread_local bool EnableGrad;
+// void backward(std::shared_ptr<Node> root, bool retainGraph);
+// template <typename T>
+//     void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor> result) {
+//     if (EnableGrad) {
+//         DataCore::registerNode<T>(inputs,result);
+//     }
+// }
+// }
 // ======================= 存储类 (Storage) =======================
 
 /**
@@ -53,9 +63,7 @@ class Node;
 struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
 // 引入自动微分系统
-#include "AutoDiff.h"
-
-class GradFn;
+// #include "AutoGrad.h"
 
 /**
  * @brief 矩阵乘法函数
@@ -406,10 +414,10 @@ class Tensor {
      * @details 如果是计算图的根节点，会清理计算图相关资源
      */
     ~Tensor() {
-        // 如果是计算图的根节点，清理计算图
-        if (record_committed_ && AutoDiffContext::current()) {
-            // 注意：这里不再直接调用AutoDiff的清理方法，避免循环依赖
-        }
+        // // 如果是计算图的根节点，清理计算图
+        // if (record_committed_ && AutoDiffContext::current()) {
+        //     // 注意：这里不再直接调用AutoDiff的清理方法，避免循环依赖
+        // }
     }
 
     /**
@@ -1041,6 +1049,8 @@ class Tensor {
      * @return Softmax结果张量
      */
     Tensor softmax(int dim = -1) const;
+    
+
 
     /**
      * @brief 求LogSoftmax操作
@@ -1072,18 +1082,27 @@ class Tensor {
 
     //  ======================= 自动微分 =======================
 
-    /**
-     * @brief 反向传播
-     * @details 从当前张量开始，计算所有梯度
-     */
-    void backward() const;
+    // /**
+    //  * @brief 反向传播
+    //  * @details 从当前张量开始，计算所有梯度
+    //  */
+    // void backward() const {
+    //     if (auto node = getRelatedNode()) {
+    //         AutoGrad::backward(node,false);
+    //     }
+    // }
 
-    /**
-     * @brief 反向传播（带有梯度输出）
-     * @param grad_output 输出梯度
-     * @details 从当前张量开始，使用指定的输出梯度计算所有梯度
-     */
-    void backward(const Tensor &grad_output) const;
+    // /**
+    //  * @brief 反向传播（带有梯度输出）
+    //  * @param grad_output 输出梯度
+    //  * @details 从当前张量开始，使用指定的输出梯度计算所有梯度
+    //  */
+    // void backward() const {
+    //     if (auto node = getRelatedNode()) {
+    //         // 这里需要处理grad_output，暂时使用默认实现
+    //         AutoGrad::backward(node, false);
+    //     }
+    // }
 
     //  ======================= 统一矩阵乘法接口 =======================
 
@@ -1106,6 +1125,18 @@ class Tensor {
     Tensor view(std::initializer_list<size_t> shape);
 
     void setGrad(std::shared_ptr<Tensor> grad);
+    
+    /**
+     * @brief 获取张量的梯度
+     * @return 梯度张量
+     */
+    Tensor grad() const {
+        if (_grad) {
+            return *_grad;
+        }
+        // 返回一个与当前张量形状相同的零张量
+        return Tensor(ShapeTag{}, _shape, _dtype, _device, true);
+    }
 };
 
 /**

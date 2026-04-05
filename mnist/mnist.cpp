@@ -1,5 +1,5 @@
 #include "mnist_loader.h"
-#include "AutoDiff.h"
+#include "AutoGrad.h"
 #include "Ctorch_Error.h"
 #include <iostream>
 #include <iomanip>
@@ -42,26 +42,9 @@ public:
     }
     
     float train_step(const Tensor& x, const Tensor& y) {
-        if (AutoDiffContext::current()) {
-            AutoDiffContext::current()->make_leaf(W1, true);
-            AutoDiffContext::current()->make_leaf(b1, true);
-            AutoDiffContext::current()->make_leaf(W2, true);
-            AutoDiffContext::current()->make_leaf(b2, true);
-            AutoDiffContext::current()->make_leaf(W3, true);
-            AutoDiffContext::current()->make_leaf(b3, true);
-        }
         W1.requires_grad(true); b1.requires_grad(true);
         W2.requires_grad(true); b2.requires_grad(true);
         W3.requires_grad(true); b3.requires_grad(true);
-        
-        if (AutoDiffContext::current()) {
-            AutoDiffContext::current()->zero_grad(W1);
-            AutoDiffContext::current()->zero_grad(b1);
-            AutoDiffContext::current()->zero_grad(W2);
-            AutoDiffContext::current()->zero_grad(b2);
-            AutoDiffContext::current()->zero_grad(W3);
-            AutoDiffContext::current()->zero_grad(b3);
-        }
         
         Tensor logits = forward(x);
         Tensor y_one_hot = Tensor(ShapeTag{}, {static_cast<size_t>(y.numel()), 10}, DType::kFloat, DeviceType::kCPU);
@@ -72,7 +55,7 @@ public:
         }
         Tensor loss = logits.cross_entropy(y_one_hot);
         float loss_value = loss.item<float>();
-        backward(loss);
+        AutoGrad::backward(loss.getRelatedNode(),false);
         update_parameters();
         return loss_value;
     }
@@ -80,7 +63,7 @@ public:
     void update_parameters() {
         float lr = learning_rate;
         auto sgd_step = [this, lr](Tensor& param) {
-            Tensor g = grad(param);
+            Tensor g = param.grad();
             float* p = param.data<float>();
             const float* gp = g.data<float>();
             for (size_t i = 0; i < param.numel(); ++i)
@@ -237,9 +220,7 @@ int main() {
         
         std::cout << "网络: 784->" << hidden1 << "->" << hidden2 << "->10 | Epochs:" << epochs << " | Batch:" << batch_size << " | lr:" << learning_rate << std::endl;
         
-        // 创建一个AutoDiff上下文用于整个训练过程
-        AutoDiff autodiff;
-        AutoDiffContext::Guard guard(&autodiff);
+        // 使用AutoGrad进行自动微分
         
         // 完整训练：遍历所有 epoch 和 batch
         for (int epoch = 0; epoch < epochs; ++epoch) {

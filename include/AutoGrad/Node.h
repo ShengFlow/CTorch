@@ -7,15 +7,20 @@
 
 #ifndef CTORCH_NODE_H
 #define CTORCH_NODE_H
+#include <atomic>
+#include <unordered_set>
 
-#include "../Tensor.h"
+#include "Tensor.h"
+class Node;
+#include <vector>
 #include <memory>
 
-struct GradPack {
+struct GradPack{
     std::shared_ptr<Node> _targetNode;
     std::vector<Tensor> _grad;
     int _idx{0};
 };
+
 
 class Node {
 protected:
@@ -31,6 +36,8 @@ public:
     Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
 
     Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+
+    explicit Node(const std::weak_ptr<Tensor> &result);
 
     virtual ~Node() = default;
 
@@ -52,7 +59,7 @@ public:
 
     void set_requireAccelerate(bool requireAccelerate);
 
-    virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
+    virtual std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) = 0;
 
     void restoreRecursive(std::unordered_set<Node*>& visited);
 };

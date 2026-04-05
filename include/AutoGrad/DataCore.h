@@ -7,24 +7,28 @@
 
 #ifndef CTORCH_CORE_H
 #define CTORCH_CORE_H
-#include "../include/AutoGrad/Node.h"
-#include "Nodes/GradAccumulator.h"
 #include "Arena.h"
+#include "Node.h"
+#include "Nodes/GradAccumulator.h"
 
 class DataCore {
     DataCore() = default;
 
   public:
     template <typename T>
-    static void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor> result) {
+    static void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor>& result) {
         bool toContinue = false;
         for (auto& input:inputs) if (input.requires_grad()) toContinue = true;
         if (toContinue) {
             Arena &arena = Arena::getInstance();
             std::vector<std::shared_ptr<Node>> upStreamNodes;
             upStreamNodes.reserve(inputs.size());
-            for (const auto &input : inputs) {
-                if (input.requires_grad()) upStreamNodes.push_back(input.getRelatedNode());
+            for (auto &input : inputs) {
+                if (input.requires_grad()) {
+                    if (input.getRelatedNode() == nullptr)
+                        input.setRelatedNode(arena.invoke<GradAccumulator>(result));
+                    upStreamNodes.push_back(input.getRelatedNode());
+                }
                 else upStreamNodes.push_back(nullptr);
             }
             const auto node = arena.invoke<T>(upStreamNodes,inputs, result);

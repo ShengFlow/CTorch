@@ -7,7 +7,14 @@
 
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 
-std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor> &downStreamGrads) {
+GradAccumulator::GradAccumulator(const std::weak_ptr<Tensor> &result){
+    _upStreamNodes = std::vector<std::shared_ptr<Node>>();
+    _inputs = std::vector<Tensor>();
+    _result = result;
+}
+
+
+std::vector<GradPack> GradAccumulator::backward(std::vector<Tensor> downStreamGrads) {
     if (_result.lock()) {
         std::shared_ptr<Tensor> grad = std::make_shared<Tensor>(downStreamGrads[0]);
         for (int i = 1;i<downStreamGrads.size()-1;i++) *grad = *grad + downStreamGrads[i];
