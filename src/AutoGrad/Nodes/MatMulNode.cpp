@@ -11,10 +11,10 @@
 #include "Tensor.h"
 
 MatMulNode::MatMulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
-    : Node(upStreamNodes, inputs) {}
+    : Node(upStreamNodes, inputs) {set_requireAccelerate(true);}
 
 MatMulNode::MatMulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
-    : Node(upStreamNodes, inputs, result) {}
+    : Node(upStreamNodes, inputs, result) {set_requireAccelerate(true);}
 
 std::vector<GradPack> MatMulNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;

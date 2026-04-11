@@ -62,6 +62,7 @@ class ComputeCore {
     std::queue<std::shared_ptr<Node>> _readyNodes;
 
     std::mutex _mtx;
+    std::condition_variable _cv;
 
     ComputeCore() = default;
 

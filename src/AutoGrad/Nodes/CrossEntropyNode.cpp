@@ -7,11 +7,11 @@
 
 #include "AutoGrad/Nodes/CrossEntropyNode.h"
 
-CrossEntropyNode::CrossEntropyNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
-    : Node(upStreamNodes, inputs) {}
+CrossEntropyNode::CrossEntropyNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs) 
+    : Node(upStreamNodes, inputs) {set_requireAccelerate(true);}
 
-CrossEntropyNode::CrossEntropyNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
-    : Node(upStreamNodes, inputs, result) {}
+CrossEntropyNode::CrossEntropyNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs, const std::weak_ptr<Tensor>& result) 
+    : Node(upStreamNodes, inputs, result) {set_requireAccelerate(true);}
 
 std::vector<GradPack> CrossEntropyNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;

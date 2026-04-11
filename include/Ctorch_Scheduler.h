@@ -143,31 +143,40 @@ public:
         
         // 记录操作到计算图（使用AutoGrad）
         result.requires_grad(true);
+        auto result_ptr = std::make_shared<Tensor>(result);
         // 根据op_type注册对应的节点
-        switch (op_type) {
-        case op::Add:
-            AutoGrad::registerNode<AddNode>({a, b}, resultPtr);
-            break;
-        case op::Sub:
-            AutoGrad::registerNode<SubNode>({a, b}, std::make_shared<Tensor>(result));
-            break;
-        case op::Mul:
-            AutoGrad::registerNode<MulNode>({a, b}, std::make_shared<Tensor>(result));
-            break;
-        case op::Div:
-            AutoGrad::registerNode<DivNode>({a, b}, std::make_shared<Tensor>(result));
-            break;
-        case op::MatMul:
-            AutoGrad::registerNode<MatMulNode>({a, b}, std::make_shared<Tensor>(result));
-            break;
-        case op::CE:
-            AutoGrad::registerNode<CrossEntropyNode>({a, b}, std::make_shared<Tensor>(result));
-            break;
-            // 其他双输入算子可以在这里添加
-        default:
-            break;
+        if (AutoGrad::EnableGrad) {
+
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            switch (op_type) {
+            case op::Add:
+                AutoGrad::registerNode<AddNode>({a, b}, result_weak);
+                break;
+            case op::Sub:
+                AutoGrad::registerNode<SubNode>({a, b}, result_weak);
+                break;
+            case op::Mul:
+                AutoGrad::registerNode<MulNode>({a, b}, result_weak);
+                break;
+                // 看Q
+            case op::Div:
+                AutoGrad::registerNode<DivNode>({a, b}, result_weak);
+                break;
+            case op::MatMul:
+                AutoGrad::registerNode<MatMulNode>({a, b}, result_weak);
+                break;
+            case op::CE:
+                AutoGrad::registerNode<CrossEntropyNode>({a, b}, result_weak);
+                break;
+                // 其他双输入算子可以在这里添加
+            default:
+                break;
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
         }
-        
+
         return result;
     }
     
@@ -211,31 +220,38 @@ public:
         if (a.requires_grad()) {
             result.requires_grad(true);
             // 根据op_type注册对应的节点
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
             switch (op_type) {
                 case op::Neg:
-                    AutoGrad::registerNode<NegNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<NegNode>({a}, result_weak);
                     break;
                 case op::ReLU:
-                    AutoGrad::registerNode<ReLUNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<ReLUNode>({a}, result_weak);
                     break;
                 case op::Cos:
-                    AutoGrad::registerNode<CosNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<CosNode>({a}, result_weak);
                     break;
                 case op::Sin:
-                    AutoGrad::registerNode<SinNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<SinNode>({a}, result_weak);
                     break;
                 case op::Tanh:
-                    AutoGrad::registerNode<TanhNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<TanhNode>({a}, result_weak);
                     break;
                 case op::Sigmoid:
-                    AutoGrad::registerNode<SigmoidNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<SigmoidNode>({a}, result_weak);
                     break;
                 case op::Softmax:
-                    AutoGrad::registerNode<SoftmaxNode>({a}, std::make_shared<Tensor>(result));
+                    AutoGrad::registerNode<SoftmaxNode>({a}, result_weak);
                     break;
                 // 其他单输入算子可以在这里添加
                 default:
                     break;
+            }
+            
+            // 将新创建的result_ptr中的_node属性复制到原始的result张量中
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
             }
         }
         

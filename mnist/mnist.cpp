@@ -214,8 +214,8 @@ int main() {
         
         NeuralNetwork model(input_size, hidden1, hidden2, output_size, learning_rate);
         
-        int epochs = 5;  // 减少epochs
-        int batch_size = 128;  // 增大batch size减少batch数量
+        int epochs = 5;  // 增加训练轮数，获得更好的效果
+        int batch_size = 128;  // 适中的batch size，平衡速度和精度
         int num_batches = static_cast<int>(train_images.shape()[0]) / batch_size;
         
         std::cout << "网络: 784->" << hidden1 << "->" << hidden2 << "->10 | Epochs:" << epochs << " | Batch:" << batch_size << " | lr:" << learning_rate << std::endl;

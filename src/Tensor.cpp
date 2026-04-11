@@ -1628,12 +1628,10 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     return result;
 }
 
+std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _node; }
 std::shared_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
-
 void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) { _node = std::move(ptr); }
-
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _grad = std::move(grad); }
-
 // 求张量的和
 Tensor Tensor::sum(int dim, bool keepdim) const {
     // 实现sum操作

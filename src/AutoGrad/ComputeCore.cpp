@@ -104,6 +104,7 @@ ComputeCore &ComputeCore::getInstance() {
 void ComputeCore::addReadyNode(std::shared_ptr<Node> node) {
     std::lock_guard lock(_mtx);
     _readyNodes.push(std::move(node));
+    _cv.notify_one();
 }
 
 void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
@@ -111,7 +112,7 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     bool original_enable_grad = AutoGrad::EnableGrad;
     // 在backward执行期间，禁用计算图记录
     AutoGrad::EnableGrad = false;
-    
+
     std::atomic<bool> finished{false};
 
     GradBucket &bucket = GradBucket::getInstance();
@@ -133,21 +134,21 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     bucket.add(std::vector({primary}));
     scheduleNode(root);
 
+
     while (!finished.load()) {
         if (auto node = tryPopReadyNode()) {
             if (node->requireAccelerate())
                 pool.addTask(core, node);
             else
                 core(node);
-        } else
-            std::this_thread::yield();
+        }
+        // 这样？std::this_thread::yield();
     }
-
     if (retainGraph) {
         std::unordered_set<Node *> restored;
         root->restoreRecursive(restored);
     }
-    
+
     // 恢复原始的EnableGrad值
     AutoGrad::EnableGrad = original_enable_grad;
 }

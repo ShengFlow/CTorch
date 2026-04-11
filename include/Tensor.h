@@ -203,6 +203,7 @@ class Tensor {
      * @brief 张量的维度大小
      */
     std::vector<size_t> _shape;
+    //
 
   public:
     /**
@@ -361,7 +362,10 @@ class Tensor {
             _storage          = other._storage.clone(); // 深拷贝存储
             _requires_grad    = other._requires_grad;
             record_committed_ = false;
-            _node = other.getRelatedNode();
+            // 啥玩意把模板实参放到
+            setRelatedNode(other.getRelatedNode());
+            //试试
+//
         }
         return *this;
     }
@@ -1118,9 +1122,10 @@ class Tensor {
     // 添加一个辅助函数来创建真正的空 Tensor
     // 保留设置方法
 
-    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const;
-
+    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() ;
+    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const ;
     void setRelatedNode(std::shared_ptr<Node> ptr);
+
 
     Tensor view(std::initializer_list<size_t> shape);
 
