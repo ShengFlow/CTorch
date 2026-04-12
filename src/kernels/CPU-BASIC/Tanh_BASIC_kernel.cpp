@@ -7,13 +7,13 @@
 
 #include <cmath>
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
 Tensor Tanh_BASIC_kernel(const Tensor &a) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
+        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                           ErrorType::DEVICE_COMPAT, "CPU-BASIC Tanh_Kernel: 仅在CPU支持");
     }
     // 实现Tanh激活函数

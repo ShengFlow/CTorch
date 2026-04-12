@@ -10,7 +10,7 @@
 #ifndef STORAGE_H
 #define STORAGE_H
 #include "Ctools.h"
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 
 /**
  * @class Storage
@@ -62,7 +62,7 @@ private:
            (std::is_same<T, bool>::value && _dtype != DType::kBool)) {
            std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
                      << ", dtype=" << dtypeToString(_dtype) << std::endl;
-           Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"数据类型不匹配！");
+           CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"数据类型不匹配！");
            throw std::runtime_error("Storage data type mismatch");
        }
    }

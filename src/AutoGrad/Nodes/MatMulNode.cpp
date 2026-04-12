@@ -7,7 +7,7 @@
 
 #include "AutoGrad/Nodes/MatMulNode.h"
 #include "Ctools.h"
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 #include "Tensor.h"
 
 MatMulNode::MatMulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
@@ -25,7 +25,7 @@ std::vector<GradPack> MatMulNode::backward(std::vector<Tensor> downStreamGrads) 
     
     // 检查输入数量
     if (_inputs.size() != 2) {
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "MatMulNode: 输入数量错误");
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "MatMulNode: 输入数量错误");
         return ret;
     }
     

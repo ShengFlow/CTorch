@@ -19,8 +19,8 @@ set(CT-Core-Headers
         include/Tensor.h
         include/Storage.h
         include/Ctools.h
-        include/Ctorch_Scheduler.h
-        include/Ctorch_Error.h
+        include/CtorchScheduler.h
+        include/CtorchError.h
         include/AutoGrad/DataCore.h
         include/ThreadPool.h
         include/AutoGrad/ComputeCore.h
@@ -101,6 +101,9 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+)
+set(CT-AMX-OPs
+        src/kernels/AMX/MatMul_AMX_kernel.cpp
 )
 
 # 暂时禁用CPU-SIMD相关文件，因为需要AVX指令集支持

@@ -6,7 +6,7 @@
  */
 
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 #include <cmath>
 #include <algorithm>
@@ -14,13 +14,13 @@
 Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
+        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC CrossEntropy_Kernel: 仅在CPU支持");
     }
     
     // 校验数据类型
     if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                           "CPU-BASIC CrossEntropy_Kernel: 张量数据类型不一致");
     }
     
@@ -81,7 +81,7 @@ Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
                 cross_entropy -= data_b[j] * std::log(pred);
             }
         } else {
-            Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+            CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                               "CPU-BASIC CrossEntropy_Kernel: one-hot 仅支持 1D/2D");
             return Tensor();
         }
@@ -94,7 +94,7 @@ Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
             // 获取类别索引
             int class_idx = static_cast<int>(data_b[i]);
             if (class_idx < 0 || class_idx >= static_cast<int>(num_classes)) {
-                Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
+                CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                                   "CPU-BASIC CrossEntropy_Kernel: 类别索引超出范围");
                 return Tensor();
             }
@@ -119,7 +119,7 @@ Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
             cross_entropy -= std::log(pred);
         }
     } else {
-        Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                           "CPU-BASIC CrossEntropy_Kernel: 张量形状不兼容");
         return Tensor();
     }

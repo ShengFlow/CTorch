@@ -8,4 +8,4 @@
 #include "./../include/Ctorch_Scheduler.h"
 
 // 静态成员变量定义
-bool Ctorch_Scheduler::amx_available_ = false;
+bool CtorchScheduler::amx_available_ = false;

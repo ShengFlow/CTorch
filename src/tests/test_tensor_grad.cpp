@@ -1,11 +1,11 @@
 #include "Tensor.h"
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 #include <iostream>
 #include <vector>
 
 // 测试张量梯度计算
 void test_tensor_gradient() {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "=== 测试：张量梯度计算 ===");
+    CtorchError::trace(ErrorPlatform::kCPU, "=== 测试：张量梯度计算 ===");
     try {
         AutoDiff ctx;
         AutoDiffContext::Guard guard(&ctx);
@@ -32,10 +32,10 @@ void test_tensor_gradient() {
         Tensor d = c * 2.0f;
         
         // 输出中间结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "a = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "b = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "c = a + b = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "d = c * 2 = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "a = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "b = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "c = a + b = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "d = c * 2 = Tensor(shape=[2, 3], dtype=float)");
 
         // 反向传播 - 直接使用d作为根节点
         backward(d);
@@ -45,8 +45,8 @@ void test_tensor_gradient() {
         Tensor grad_b = grad(b);
 
         // 输出梯度结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂c/∂a = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂c/∂b = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂c/∂a = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂c/∂b = Tensor(shape=[2, 3], dtype=float)");
 
         // 验证梯度结果
         bool passed = true;
@@ -62,19 +62,19 @@ void test_tensor_gradient() {
         }
         
         if (passed) {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "✅ 张量梯度计算测试通过");
+            CtorchError::trace(ErrorPlatform::kCPU, "✅ 张量梯度计算测试通过");
         } else {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 张量梯度计算测试失败");
+            CtorchError::trace(ErrorPlatform::kCPU, "❌ 张量梯度计算测试失败");
         }
         
     } catch (const std::exception& e) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 张量梯度测试异常: " + std::string(e.what()));
+        CtorchError::trace(ErrorPlatform::kCPU, "!!! 张量梯度测试异常: " + std::string(e.what()));
     }
 }
 
 // 测试广播操作的梯度计算
 void test_broadcast_gradient() {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n=== 测试：广播操作的梯度计算 ===");
+    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试：广播操作的梯度计算 ===");
     try {
         AutoDiff ctx;
         AutoDiffContext::Guard guard(&ctx);
@@ -101,9 +101,9 @@ void test_broadcast_gradient() {
         Tensor c = a + b;
         
         // 输出中间结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "a = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "b = Tensor(shape=[3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "c = a + b = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "a = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "b = Tensor(shape=[3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "c = a + b = Tensor(shape=[2, 3], dtype=float)");
 
         // 反向传播 - 直接使用c作为根节点
         backward(c);
@@ -113,8 +113,8 @@ void test_broadcast_gradient() {
         Tensor grad_b = grad(b);
 
         // 输出梯度结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂c/∂a = Tensor(shape=[2, 3], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂c/∂b = Tensor(shape=[3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂c/∂a = Tensor(shape=[2, 3], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂c/∂b = Tensor(shape=[3], dtype=float)");
 
         // 验证梯度结果
         bool passed = true;
@@ -138,19 +138,19 @@ void test_broadcast_gradient() {
         }
         
         if (passed) {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "✅ 广播操作梯度测试通过");
+            CtorchError::trace(ErrorPlatform::kCPU, "✅ 广播操作梯度测试通过");
         } else {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 广播操作梯度测试失败");
+            CtorchError::trace(ErrorPlatform::kCPU, "❌ 广播操作梯度测试失败");
         }
         
     } catch (const std::exception& e) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 广播梯度测试异常: " + std::string(e.what()));
+        CtorchError::trace(ErrorPlatform::kCPU, "!!! 广播梯度测试异常: " + std::string(e.what()));
     }
 }
 
 // 测试复杂计算图的张量梯度
 void test_complex_graph_gradient() {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n=== 测试：复杂计算图的张量梯度 ===");
+    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试：复杂计算图的张量梯度 ===");
     try {
         AutoDiff ctx;
         AutoDiffContext::Guard guard(&ctx);
@@ -178,10 +178,10 @@ void test_complex_graph_gradient() {
         Tensor z2 = z1 + x;
         
         // 输出中间结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "x = Tensor(shape=[2, 2], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "y = Tensor(shape=[2, 2], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "z1 = x * y = Tensor(shape=[2, 2], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "z2 = z1 + x = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "x = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "y = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "z1 = x * y = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "z2 = z1 + x = Tensor(shape=[2, 2], dtype=float)");
 
         // 反向传播 - 直接使用z2作为根节点
         backward(z2);
@@ -191,8 +191,8 @@ void test_complex_graph_gradient() {
         Tensor grad_y = grad(y);
 
         // 输出梯度结果
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂z2/∂x = Tensor(shape=[2, 2], dtype=float)");
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "∂z2/∂y = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂z2/∂x = Tensor(shape=[2, 2], dtype=float)");
+        CtorchError::trace(ErrorPlatform::kCPU, "∂z2/∂y = Tensor(shape=[2, 2], dtype=float)");
 
         // 验证梯度结果
         bool passed = true;
@@ -213,13 +213,13 @@ void test_complex_graph_gradient() {
         }
         
         if (passed) {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "✅ 复杂计算图梯度测试通过");
+            CtorchError::trace(ErrorPlatform::kCPU, "✅ 复杂计算图梯度测试通过");
         } else {
-            Ctorch_Error::trace(ErrorPlatform::kCPU, "❌ 复杂计算图梯度测试失败");
+            CtorchError::trace(ErrorPlatform::kCPU, "❌ 复杂计算图梯度测试失败");
         }
         
     } catch (const std::exception& e) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 复杂计算图梯度测试异常: " + std::string(e.what()));
+        CtorchError::trace(ErrorPlatform::kCPU, "!!! 复杂计算图梯度测试异常: " + std::string(e.what()));
     }
 }
 
@@ -229,6 +229,6 @@ int main() {
     test_broadcast_gradient();
     test_complex_graph_gradient();
     
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "\n=== 所有张量梯度测试完成 ===");
+    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 所有张量梯度测试完成 ===");
     return 0;
 }

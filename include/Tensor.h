@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 #include "Storage.h"
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h> // 使用Apple的BLAS实现
@@ -257,7 +257,7 @@ class Tensor {
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
-        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+        CtorchError::trace(ErrorPlatform::kCPU, msg);
         computeStrides();
         _storage = Storage(1, _dtype, _device);
         _node = nullptr;
@@ -266,9 +266,9 @@ class Tensor {
             std::ostringstream oss;
             oss << ">>> 标量Tensor设置完成, 存储值: " << *_storage.data<float>();
             std::string msg = oss.str();
-            Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+            CtorchError::trace(ErrorPlatform::kCPU, msg);
         } else {
-            Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::MEMORY,
+            CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::MEMORY,
                               "!!! 错误: 无法分配存储");
         }
     }
@@ -340,7 +340,7 @@ class Tensor {
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
-        Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+        CtorchError::trace(ErrorPlatform::kCPU, msg);
     }
 
     /**
@@ -548,7 +548,7 @@ class Tensor {
     template <typename T> [[nodiscard]] const T *data() const {
         checkDType<T>();
         if (!check_storage_offset()) {
-            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
         }
         return _storage.data<T>() + _storage_offset;
@@ -563,7 +563,7 @@ class Tensor {
     template <typename T> T *data() {
         checkDType<T>();
         if (!check_storage_offset()) {
-            Ctorch_Error::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
         }
         return _storage.data<T>() + _storage_offset;

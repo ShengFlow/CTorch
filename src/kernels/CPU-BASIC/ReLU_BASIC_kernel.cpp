@@ -6,13 +6,13 @@
  */
 
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
 Tensor ReLU_BASIC_kernel(const Tensor& a) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
+        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC ReLU_Kernel: 仅在CPU支持");
     }
     // 简单实现ReLU激活函数

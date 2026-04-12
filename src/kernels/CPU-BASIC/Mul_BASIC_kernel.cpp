@@ -7,17 +7,17 @@
 
 // DONE: name fix & git push
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
 Tensor Mul_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Mul_Kernel: 仅在CPU支持");
+        CtorchError::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Mul_Kernel: 仅在CPU支持");
     }
     // 校验数据类型
     if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DATATYPE,"CPU-BASIC Mul_Kernel: Tensor数据类型不匹配");
+        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DATATYPE,"CPU-BASIC Mul_Kernel: Tensor数据类型不匹配");
     }
 
     // 检查是否需要广播
@@ -40,7 +40,7 @@ Tensor Mul_BASIC_kernel(const Tensor& a, const Tensor& b) {
             if (a_broadcasted.sizes() == b_broadcasted.sizes()) {
                 return Mul_BASIC_kernel(a_broadcasted, b_broadcasted);
             } else {
-                Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Mul_Kernel: Tensor形状不兼容，无法广播");
+                CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Mul_Kernel: Tensor形状不兼容，无法广播");
             }
         }
     }

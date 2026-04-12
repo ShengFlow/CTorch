@@ -6,24 +6,24 @@
  */
 
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
 Tensor MSE_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
+        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC MSE_Kernel: 仅在CPU支持");
     }
     
     // 校验形状和数据类型
     if (a.sizes() != b.sizes()) {
-        Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                           "CPU-BASIC MSE_Kernel: 张量形状不一致");
     }
     
     if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                           "CPU-BASIC MSE_Kernel: 张量数据类型不一致");
     }
     

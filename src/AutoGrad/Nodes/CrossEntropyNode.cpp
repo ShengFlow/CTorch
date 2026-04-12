@@ -22,7 +22,7 @@ std::vector<GradPack> CrossEntropyNode::backward(std::vector<Tensor> downStreamG
     
     // 检查输入数量
     if (_inputs.size() != 2) {
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "CrossEntropyNode: 输入数量错误");
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "CrossEntropyNode: 输入数量错误");
         return ret;
     }
     

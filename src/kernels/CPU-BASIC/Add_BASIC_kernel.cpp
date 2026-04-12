@@ -6,16 +6,16 @@
  */
 
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Add_Kernel: 仅在CPU支持");
+        CtorchError::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Add_Kernel: 仅在CPU支持");
     }
     // 校验数据类型
     if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Add_Kernel: Tensor数据类型不匹配");
+        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Add_Kernel: Tensor数据类型不匹配");
     }
 
     // 检查形状兼容性
@@ -30,7 +30,7 @@ Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     
     // 如果形状不匹配且不能广播，抛出异常
     if (!shapes_match && !b_is_scalar && !can_broadcast) {
-        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "CPU-BASIC Add_Kernel: Tensor形状不匹配，且无法广播");
+        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "CPU-BASIC Add_Kernel: Tensor形状不匹配，且无法广播");
     }
     
     // 支持广播：使用a的形状作为结果形状

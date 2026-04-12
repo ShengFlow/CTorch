@@ -11,7 +11,7 @@
 
 #include "../../include/AutoGrad/ComputeCore.h"
 #include "../../include/AutoGrad/Node.h"
-#include "../../include/Ctorch_Error.h"
+#include "../../include/CtorchError.h"
 #include "../../include/ThreadPool.h"
 #include "../../include/AutoGrad.h"
 
@@ -56,7 +56,7 @@ void GradBucket::remove(const std::shared_ptr<Node> &target) {
     if (idx != -1)
         _packs.erase(_packs.begin() + idx);
     else
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
                             "Trying to erase an unexistent gradPack");
 }
 
@@ -70,7 +70,7 @@ std::vector<Tensor> GradBucket::operator[](const std::shared_ptr<Node> &target) 
     size_t idx = find(target);
     if (idx != -1)
         return _packs[idx]._grad;
-    Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
+    CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
                         "Trying to visit an nonexistential grad pack");
     return {};
 }

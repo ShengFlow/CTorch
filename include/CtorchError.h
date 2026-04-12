@@ -247,11 +247,11 @@ public:
 };
 
 /**
- * @class Ctorch_Error
+ * @class CtorchError
  * @brief Ctorch错误处理类
  * @details 用于记录和管理CTorch中的各种错误信息，包括日志记录、错误统计和异常抛出
  */
-class Ctorch_Error {
+class CtorchError {
     /**
      * @brief 将ErrorLevel枚举转换为字符串名称
      * @param level 错误级别枚举值

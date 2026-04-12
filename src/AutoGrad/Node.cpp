@@ -6,7 +6,7 @@
  **/
 
 #include "../../include/AutoGrad/Node.h"
-#include "../../include/Ctorch_Error.h"
+#include "../../include/CtorchError.h"
 #include "../include/Tensor.h"
 
 void Node::increase() {
@@ -17,7 +17,7 @@ void Node::increase() {
 bool Node::decrease() {
 	const size_t old = _count.fetch_sub(1,std::memory_order_acq_rel);
 	if(old == 0) {
-	    Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Dependency count is negative");
+	    CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Dependency count is negative");
 	    return false;
 	}
     return old == 1;

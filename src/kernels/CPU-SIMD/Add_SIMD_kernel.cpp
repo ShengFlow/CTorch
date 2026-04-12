@@ -6,7 +6,7 @@
  */
 
 #include "../kernels.h"
-#include "../include/Ctorch_Error.h"
+#include "../include/CtorchError.h"
 #include "../include/Tensor.h"
 #include <cmath>
 

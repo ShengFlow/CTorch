@@ -12,7 +12,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 
 struct Block {
     char* _base;
@@ -63,7 +63,7 @@ class Arena {
 
         ptr = allocateFrom(_blocks.back(),alignof(T),sizeof(T));
         if (ptr) return ptr;
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to allocate for the object.");
+        CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to allocate for the object.");
         return nullptr;
     }
 
@@ -89,7 +89,7 @@ public:
             std::shared_ptr<T> ptr(obj,emptyDeleter);
             return ptr;
         }
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to add for the object.");
+        CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to add for the object.");
         return nullptr;
     }
 

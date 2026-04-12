@@ -19,18 +19,18 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
 
   // 校验设备：仅支持CPU张量
   if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-    Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
+    CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                       ErrorType::DEVICE_COMPAT,
                       "AMX MatMul_Kernel: 仅在CPU支持");
   }
 
   // 仅支持2D张量
   if (a.shape().size() != 2 || b.shape().size() != 2) {
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                  "AMX MatMul仅支持2D张量");
   }
   if (a.shape()[1] != b.shape()[0]) {
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                  "矩阵维度不匹配");
   }
 

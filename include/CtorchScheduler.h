@@ -8,7 +8,7 @@
  */
 #ifndef CTORCH_SCHEDULER_H
 #define CTORCH_SCHEDULER_H
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 #include "Tensor.h"
 #include "AutoGrad.h"
 #include "AutoGrad/Nodes/AddNode.h"
@@ -26,13 +26,13 @@
 #include "AutoGrad/Nodes/SoftmaxNode.h"
 #include "./../src/kernels/kernels.h"
 
-class Ctorch_Scheduler{
+class CtorchScheduler{
 private:
-    Ctorch_Scheduler() = default;
+    CtorchScheduler() = default;
     // 禁止拷贝构造：防止通过“实例拷贝”创建新对象
-    Ctorch_Scheduler(const Ctorch_Scheduler&);
+    CtorchScheduler(const CtorchScheduler&);
     // 禁止赋值重载：防止通过“赋值”创建新对象
-    Ctorch_Scheduler& operator=(const Ctorch_Scheduler&) = delete;
+    CtorchScheduler& operator=(const CtorchScheduler&) = delete;
     std::mutex mutex_;
     bool if_first = true;
     // kernel映射表：OpType → DeviceType → BinaryKernelFunc（双输入算子）
@@ -66,8 +66,8 @@ private:
         unary_kernel_map_[op::LReLU];
     }
 public:
-    static Ctorch_Scheduler& getInstance() {
-        static Ctorch_Scheduler instance_;
+    static CtorchScheduler& getInstance() {
+        static CtorchScheduler instance_;
         std::lock_guard<std::mutex> lock(instance_.mutex_);
         if (instance_.if_first) {
             printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Ctorch Scheduler Started\n", getFormattedTimeMs().c_str(), getTimestampMs());
@@ -91,7 +91,7 @@ public:
     // 辅助函数：获取输入张量设备
     static DeviceType getTargetDevice(const Tensor& a, const Tensor& b) {
         if (a.device() != b.device()) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DEVICE_COMPAT,"Ctorch_Scheduler: Tensor不在同一平台");
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DEVICE_COMPAT,"Ctorch_Scheduler: Tensor不在同一平台");
         }
         return a.device();
     }
@@ -100,15 +100,15 @@ public:
     Tensor dispatch(const Tensor& a, const Tensor& b, op op_type) {
         // 1. 参数合法性校验（dtype一致）
         if (a.dtype() != b.dtype()) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
         }
         // 对于加法、乘法、减法、除法、交叉熵和矩阵乘法操作，允许形状不同（支持广播、不同标签格式和矩阵乘法维度要求）
         if (op_type != op::Add && op_type != op::Mul && op_type != op::Sub && op_type != op::Div && op_type != op::CE && op_type != op::MatMul && a.sizes() != b.sizes()) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
         }
 
         // 获取调度器实例，初始化kernel映射表（仅首次调用）
-        Ctorch_Scheduler &instance = getInstance();
+        CtorchScheduler &instance = getInstance();
         {
             std::lock_guard<std::mutex> lock(instance.mutex_);
             static bool kernel_map_inited = false;
@@ -136,7 +136,7 @@ public:
 
         // 未找到kernel则抛异常
         if (target_kernel == nullptr) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
         }
         // 调用kernel，执行计算并返回结果
         Tensor result = target_kernel(a, b);
@@ -183,7 +183,7 @@ public:
     // 公共接口实现：dispatch（单输入算子）
     Tensor dispatch(const Tensor& a, op op_type) {
         // 获取调度器实例，初始化kernel映射表（仅首次调用）
-        Ctorch_Scheduler &instance = getInstance();
+        CtorchScheduler &instance = getInstance();
         {
             std::lock_guard<std::mutex> lock(instance.mutex_);
             static bool kernel_map_inited = false;
@@ -211,7 +211,7 @@ public:
 
         // 未找到kernel则抛异常
         if (target_kernel == nullptr) {
-            Ctorch_Error::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
         }
         // 调用kernel，执行计算并返回结果
         Tensor result = target_kernel(a);

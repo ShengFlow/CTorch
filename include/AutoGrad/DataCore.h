@@ -36,7 +36,7 @@ class DataCore {
                 result.lock()->setRelatedNode(node);
                 for (auto& upStream:upStreamNodes) if (upStream != nullptr) upStream->increase();
             }
-            else Ctorch_Error::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Tensor was destroyed but called.");
+            else CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Tensor was destroyed but called.");
         }
     }
 };

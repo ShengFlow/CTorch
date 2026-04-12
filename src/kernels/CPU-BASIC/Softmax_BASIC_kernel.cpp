@@ -7,7 +7,7 @@
 
 #include <cmath>
 #include "./../kernels.h"
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
 // 说明：此 BASIC 版本 softmax 的实现与 Tensor::softmax 的数值稳定手写实现保持一致：
@@ -16,21 +16,21 @@
 Tensor Softmax_BASIC_kernel(const Tensor &a) {
     // 校验设备：仅支持CPU张量
     if (a.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR,
+        CtorchError::log(ErrorLevel::ERROR,
                           DeviceTypeToErrorPlatform(a.device()),
                           ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC Softmax_Kernel: 仅在CPU支持");
     }
 
     if (a.dtype() != DType::kFloat) {
-        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                      "CPU-BASIC Softmax_Kernel: 目前仅支持 float");
     }
 
     const auto &shape = a.sizes();
     size_t dim = shape.size();
     if (dim == 0) {
-        Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                      "CPU-BASIC Softmax_Kernel: 不支持标量");
     }
 
@@ -92,7 +92,7 @@ Tensor Softmax_BASIC_kernel(const Tensor &a) {
             }
         }
     } else {
-        Ctorch_Error::throwException(
+        CtorchError::throwException(
             ErrorPlatform::kCPU, ErrorType::DIMENSION,
             "CPU-BASIC Softmax_Kernel: 暂仅支持 1D / 2D（如 [N] 或 [batch, classes]）");
     }

@@ -1,6 +1,6 @@
 #include "mnist_loader.h"
 #include "AutoGrad.h"
-#include "Ctorch_Error.h"
+#include "CtorchError.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -192,7 +192,7 @@ void show_progress(int current, int total, const std::string& status, float loss
 int main() {
     try {
         // MINIUM=少输出, FULL=显示TRACE(含阶段3、W2梯度验证)
-        Ctorch_Error::setPrintLevel(PrintLevel::MINIUM);
+        CtorchError::setPrintLevel(PrintLevel::MINIUM);
         
         // 设置随机种子
         srand(42);
@@ -254,7 +254,7 @@ int main() {
         std::cout << ">>> 测试集准确率: " << std::fixed << std::setprecision(2) << (test_acc * 100) << "%" << std::endl;
         
     } catch (const std::exception& e) {
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "错误: " + std::string(e.what()));
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "错误: " + std::string(e.what()));
         return 1;
     }
     

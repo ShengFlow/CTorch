@@ -21,7 +21,7 @@ std::vector<GradPack> SoftmaxNode::backward(std::vector<Tensor> downStreamGrads)
     
     // 检查输入数量
     if (_inputs.size() != 1) {
-        Ctorch_Error::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "SoftmaxNode: 输入数量错误");
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "SoftmaxNode: 输入数量错误");
         return ret;
     }
     
