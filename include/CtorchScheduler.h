@@ -1,5 +1,5 @@
 /**
- * @file Ctorch_Scheduler.h
+ * @file CtorchScheduler.h
  * @brief Ctorch 框架的核心调度器类
  * @details 采用单例模式实现，负责管理所有 kernel 映射关系，根据算子类型和设备类型，
  * 自动查找并调用对应的 kernel，实现 kernel 的统一调度。

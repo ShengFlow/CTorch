@@ -26,6 +26,7 @@ set(CT-Core-Headers
         include/AutoGrad/ComputeCore.h
         include/Arena.h
         include/AutoGrad.h
+        include/ctQALS/ctQALS.h
 )
 
 set(CT-Nodes-Headers
