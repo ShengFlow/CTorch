@@ -119,6 +119,13 @@ set(CT-AMX-OPs
 set(CT-CPU-SIMD-OPs
 )
 
+set(ctQALS
+        include/ctQALS/ctQALS.h
+        include/ctQALS/Random.h
+        src/ctQALS/xoshiro.cpp
+        src/ctQALS/ziggurat.cpp
+)
+
 add_library(CTorch STATIC
         ${CT-Core}
         ${CT-Core-Headers}
@@ -127,6 +134,7 @@ add_library(CTorch STATIC
         ${CT-AMX-OPs}
         ${CT-Nodes}
         ${CT-Nodes-Headers}
+        ${ctQALS}
 )
 
 # 包含头文件目录
@@ -259,7 +267,8 @@ if (${TEST_ENABLED})
 
     foreach (TEST ${TESTS_TO_BUILD})
         get_filename_component(TEST_NAME ${TEST} NAME_WE)
-        add_executable(${TEST_NAME} ${TEST})
+        add_executable(${TEST_NAME} ${TEST}
+                src/tests/units/ctQALS/test_rng.cpp)
         target_link_libraries(${TEST_NAME} PRIVATE CTorch)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endforeach ()
