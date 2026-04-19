@@ -48,6 +48,7 @@ private:
         binary_kernel_map_[op::Mul][DeviceType::kCPU] = Mul_BASIC_kernel;
         binary_kernel_map_[op::Div][DeviceType::kCPU] = Div_BASIC_kernel;
         binary_kernel_map_[op::MatMul][DeviceType::kCPU] = MatMul_BASIC_kernel;
+        binary_kernel_map_[op::MatMul][DeviceType::kAMX] = MatMul_AMX_kernel;
         binary_kernel_map_[op::Dot][DeviceType::kCPU] = Dot_BASIC_kernel;
         binary_kernel_map_[op::MSE][DeviceType::kCPU] = MSE_BASIC_kernel;
         binary_kernel_map_[op::CE][DeviceType::kCPU] = CrossEntropy_BASIC_kernel;
@@ -83,7 +84,7 @@ public:
             case DeviceType::kCPU: return true; // CPU必可用
             case DeviceType::kCUDA: return false; // 后续实现后改为true
             case DeviceType::kMPS: return false;
-            case DeviceType::kAMX: return false;
+            case DeviceType::kAMX: return true; // Apple Silicon Accelerate可用
             default: return false;
         }
     }
@@ -127,8 +128,18 @@ public:
             // 从映射表中查找对应kernel
             auto op_it = instance.binary_kernel_map_.find(op_type);
             if (op_it != instance.binary_kernel_map_.end()) {
-                auto dev_it = op_it->second.find(target_dev);
-                if (dev_it != op_it->second.end() && isDeviceAvailable(target_dev)) {
+                DeviceType search_dev = target_dev;
+                
+                // 对于 MatMul，如果 target_dev 是 CPU 但 AMX 可用，则使用 AMX
+                if (op_type == op::MatMul && target_dev == DeviceType::kCPU && isDeviceAvailable(DeviceType::kAMX)) {
+                    auto amx_it = op_it->second.find(DeviceType::kAMX);
+                    if (amx_it != op_it->second.end()) {
+                        search_dev = DeviceType::kAMX;
+                    }
+                }
+                
+                auto dev_it = op_it->second.find(search_dev);
+                if (dev_it != op_it->second.end() && isDeviceAvailable(search_dev)) {
                     target_kernel = dev_it->second;
                 }
             }
@@ -150,25 +161,23 @@ public:
             std::weak_ptr<Tensor> result_weak = result_ptr;
             switch (op_type) {
             case op::Add:
-                AutoGrad::registerNode<AddNode>({a, b}, result_weak);
+                AutoGrad::registerNode<AddNode>(a, b, result_weak);
                 break;
             case op::Sub:
-                AutoGrad::registerNode<SubNode>({a, b}, result_weak);
+                AutoGrad::registerNode<SubNode>(a, b, result_weak);
                 break;
             case op::Mul:
-                AutoGrad::registerNode<MulNode>({a, b}, result_weak);
+                AutoGrad::registerNode<MulNode>(a, b, result_weak);
                 break;
-                // 看Q
             case op::Div:
-                AutoGrad::registerNode<DivNode>({a, b}, result_weak);
+                AutoGrad::registerNode<DivNode>(a, b, result_weak);
                 break;
             case op::MatMul:
-                AutoGrad::registerNode<MatMulNode>({a, b}, result_weak);
+                AutoGrad::registerNode<MatMulNode>(a, b, result_weak);
                 break;
             case op::CE:
-                AutoGrad::registerNode<CrossEntropyNode>({a, b}, result_weak);
+                AutoGrad::registerNode<CrossEntropyNode>(a, b, result_weak);
                 break;
-                // 其他双输入算子可以在这里添加
             default:
                 break;
             }
@@ -222,29 +231,29 @@ public:
             // 根据op_type注册对应的节点
             auto result_ptr = std::make_shared<Tensor>(result);
             std::weak_ptr<Tensor> result_weak = result_ptr;
+            std::vector<Tensor> inputs = {a};
             switch (op_type) {
                 case op::Neg:
-                    AutoGrad::registerNode<NegNode>({a}, result_weak);
+                    AutoGrad::registerNode<NegNode>(inputs, result_weak);
                     break;
                 case op::ReLU:
-                    AutoGrad::registerNode<ReLUNode>({a}, result_weak);
+                    AutoGrad::registerNode<ReLUNode>(inputs, result_weak);
                     break;
                 case op::Cos:
-                    AutoGrad::registerNode<CosNode>({a}, result_weak);
+                    AutoGrad::registerNode<CosNode>(inputs, result_weak);
                     break;
                 case op::Sin:
-                    AutoGrad::registerNode<SinNode>({a}, result_weak);
+                    AutoGrad::registerNode<SinNode>(inputs, result_weak);
                     break;
                 case op::Tanh:
-                    AutoGrad::registerNode<TanhNode>({a}, result_weak);
+                    AutoGrad::registerNode<TanhNode>(inputs, result_weak);
                     break;
                 case op::Sigmoid:
-                    AutoGrad::registerNode<SigmoidNode>({a}, result_weak);
+                    AutoGrad::registerNode<SigmoidNode>(inputs, result_weak);
                     break;
                 case op::Softmax:
-                    AutoGrad::registerNode<SoftmaxNode>({a}, result_weak);
+                    AutoGrad::registerNode<SoftmaxNode>(inputs, result_weak);
                     break;
-                // 其他单输入算子可以在这里添加
                 default:
                     break;
             }

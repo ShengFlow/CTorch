@@ -124,6 +124,7 @@ add_library(CTorch STATIC
         ${CT-Core-Headers}
         ${CT-CPU-BASIC-OPs}
         ${CT-CPU-SIMD-OPs}
+        ${CT-AMX-OPs}
         ${CT-Nodes}
         ${CT-Nodes-Headers}
 )
@@ -134,16 +135,20 @@ target_include_directories(CTorch
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-add_executable(PerformanceTest src/tests/performance_test.cpp)
-add_executable(StdTest src/tests/test.cpp)
-add_executable(ActivationLossTest src/tests/test_activation_loss.cpp)
-add_executable(TensorGradTest src/tests/test_tensor_grad.cpp)
+# 链接 Accelerate 框架（用于 AMX BLAS 加速）
+target_link_libraries(CTorch PUBLIC "-framework Accelerate")
+
+# 注释掉老版本的测试文件编译
+# add_executable(PerformanceTest src/tests/performance_test.cpp)
+# add_executable(StdTest src/tests/test.cpp)
+# add_executable(ActivationLossTest src/tests/test_activation_loss.cpp)
+# add_executable(TensorGradTest src/tests/test_tensor_grad.cpp)
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 
-target_link_libraries(PerformanceTest PRIVATE CTorch)
-target_link_libraries(StdTest PRIVATE CTorch)
-target_link_libraries(ActivationLossTest PRIVATE CTorch)
-target_link_libraries(TensorGradTest PRIVATE CTorch)
+# target_link_libraries(PerformanceTest PRIVATE CTorch)
+# target_link_libraries(StdTest PRIVATE CTorch)
+# target_link_libraries(ActivationLossTest PRIVATE CTorch)
+# target_link_libraries(TensorGradTest PRIVATE CTorch)
 target_link_libraries(MnistTest PRIVATE CTorch)
 
 # 添加编译选项

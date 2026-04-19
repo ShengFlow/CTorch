@@ -331,18 +331,15 @@ const T& add_const(const T& a) {
     return a;
 }
 
-// 针对 std::shared_ptr：返回 shared_ptr<const T>
-#include <memory>
-
 // 通用版本：返回 const T（按值，对右值增加顶层 const）
 template <typename T>
 const T add_const(T&& a) {
     return std::forward<T>(a);
 }
 
-// 针对 shared_ptr 的重载（可选，因为通用版本已经能工作，但保留明确语义）
+// 针对 shared_ptr 的重载：返回 shared_ptr<const T>
 template <typename T>
-const std::shared_ptr<T> add_const(std::shared_ptr<T> a) {
-    return a;   // 返回 const shared_ptr<T>
+std::shared_ptr<const T> add_const(std::shared_ptr<T> a) {
+    return a;   // 返回 shared_ptr<const T>
 }
 #endif // CTOOLS_H

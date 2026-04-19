@@ -16,27 +16,55 @@ class DataCore {
 
   public:
     template <typename T>
-    static void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor>& result) {
+    static void registerNode(const Tensor& a, const Tensor& b, std::weak_ptr<Tensor> result) {
         bool toContinue = false;
-        for (auto& input:inputs) if (input.requires_grad()) toContinue = true;
+        if (a.requires_grad() || b.requires_grad()) {
+            toContinue = true;
+        }
         if (toContinue) {
             Arena &arena = Arena::getInstance();
             std::vector<std::shared_ptr<Node>> upStreamNodes;
-            upStreamNodes.reserve(inputs.size());
-            for (auto &input : inputs) {
-                if (input.requires_grad()) {
-                    if (input.getRelatedNode() == nullptr)
-                        input.setRelatedNode(arena.invoke<GradAccumulator>(result));
-                    upStreamNodes.push_back(input.getRelatedNode());
+            upStreamNodes.reserve(2);
+
+            // 处理第一个输入张量
+            if (a.requires_grad()) {
+                // 使用 const_cast 获取非 const 引用，以便调用非 const 的方法
+                Tensor& nonConstA = const_cast<Tensor&>(a);
+                if (nonConstA.getRelatedNode() == nullptr) {
+                    nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
                 }
-                else upStreamNodes.push_back(nullptr);
+                upStreamNodes.push_back(nonConstA.getRelatedNode());
+            } else {
+                upStreamNodes.push_back(nullptr);
             }
-            const auto node = arena.invoke<T>(upStreamNodes,inputs, result);
+
+            // 处理第二个输入张量
+            if (b.requires_grad()) {
+                // 使用 const_cast 获取非 const 引用，以便调用非 const 的方法
+                Tensor& nonConstB = const_cast<Tensor&>(b);
+                if (nonConstB.getRelatedNode() == nullptr) {
+                    nonConstB.setRelatedNode(arena.invoke<GradAccumulator>(b));
+                }
+                upStreamNodes.push_back(nonConstB.getRelatedNode());
+            } else {
+                upStreamNodes.push_back(nullptr);
+            }
+
+            // 创建输入向量，直接使用原始的 a 和 b 张量
+            std::vector<Tensor> inputs = {a, b};
+
+            // 创建操作节点，传递输入张量的引用
+            const auto node = arena.invoke<T>(upStreamNodes, inputs, result);
             if (result.lock()) {
                 result.lock()->setRelatedNode(node);
-                for (auto& upStream:upStreamNodes) if (upStream != nullptr) upStream->increase();
+                for (auto& upStream : upStreamNodes) {
+                    if (upStream != nullptr) {
+                        upStream->increase();
+                    }
+                }
+            } else {
+                CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "Tensor was destroyed but called.");
             }
-            else CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Tensor was destroyed but called.");
         }
     }
 };

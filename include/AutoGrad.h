@@ -22,9 +22,23 @@ namespace AutoGrad {
     inline thread_local bool EnableGrad{true};
     
     template <typename T>
-    void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor>& result) {
+    void registerNode(const std::vector<Tensor>& inputs, std::weak_ptr<Tensor> result) {
         if (EnableGrad) {
-            DataCore::registerNode<T>(inputs,result);
+            // 对于单输入操作
+            if (inputs.size() == 1) {
+                // 这里可以添加单输入操作的处理逻辑
+            }
+            // 对于双输入操作
+            else if (inputs.size() == 2) {
+                DataCore::registerNode<T>(inputs[0], inputs[1], result);
+            }
+        }
+    }
+    
+    template <typename T>
+    void registerNode(const Tensor& a, const Tensor& b, std::weak_ptr<Tensor> result) {
+        if (EnableGrad) {
+            DataCore::registerNode<T>(a, b, result);
         }
     }
     

@@ -15,6 +15,8 @@ SubNode::SubNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const s
 
 std::vector<GradPack> SubNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;
+    // 对于 c = a - b，导数是：∂c/∂a = 1，∂c/∂b = -1
+    // 所以 grad_a = grad，grad_b = -grad
     ret.push_back(GradPack{
         _upStreamNodes[0],
         std::vector({downStreamGrads[0]}),
@@ -22,7 +24,7 @@ std::vector<GradPack> SubNode::backward(std::vector<Tensor> downStreamGrads) {
     });
     ret.push_back(GradPack{
         _upStreamNodes[1],
-        std::vector({-downStreamGrads[1]}),
+        std::vector({-downStreamGrads[0]}),
         1
     });
     return ret;

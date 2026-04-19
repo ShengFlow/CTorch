@@ -15,14 +15,16 @@ MulNode::MulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const s
 
 std::vector<GradPack> MulNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;
+    Tensor grad_a = downStreamGrads[0] * _inputs[1];
+    Tensor grad_b = downStreamGrads[0] * _inputs[0];
     ret.push_back(GradPack{
         _upStreamNodes[0],
-        std::vector({_inputs[0] * downStreamGrads[1]}),
+        std::vector({grad_a}),
         0
     });
     ret.push_back(GradPack{
         _upStreamNodes[1],
-        std::vector({_inputs[1] * downStreamGrads[0]}),
+        std::vector({grad_b}),
         1
     });
    return ret;

@@ -43,7 +43,7 @@ class GradBucket {
     std::vector<GradPack> _packs;
     std::mutex _mtx;
 
-    size_t find(const std::shared_ptr<Node>& target);
+    ssize_t find(const std::shared_ptr<Node>& target);
 
     GradBucket() = default;
   public:
@@ -55,7 +55,11 @@ class GradBucket {
 
     [[nodiscard]] bool empty();
 
+    void clear();
+
     std::vector<Tensor> operator[](const std::shared_ptr<Node>& target);
+
+    bool tryGetGrad(const std::shared_ptr<Node>& target, std::vector<Tensor>& out_grads);
 };
 
 class ComputeCore {

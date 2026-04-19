@@ -20,9 +20,9 @@ GradBucket &GradBucket::getInstance() {
     return instance;
 }
 
-size_t GradBucket::find(const std::shared_ptr<Node> &target) {
+ssize_t GradBucket::find(const std::shared_ptr<Node> &target) {
     auto it = std::find_if(_packs.begin(), _packs.end(), [target](const GradPack &pack) {
-        return pack._targetNode == target && pack._idx == -1;
+        return pack._targetNode == target;
     });
     if (it != _packs.end())
         return std::distance(_packs.begin(), it);
@@ -30,19 +30,24 @@ size_t GradBucket::find(const std::shared_ptr<Node> &target) {
 }
 
 void GradBucket::add(const std::vector<GradPack> &newPacks) {
-    std::lock_guard lock(_mtx);
+    std::lock_guard<std::mutex> lock(_mtx);
     for (auto pack : newPacks) {
-        const size_t idx = find(pack._targetNode);
+        const ssize_t idx = find(pack._targetNode);
         if (idx != -1) {
-            if (pack._idx >= _packs[idx]._grad.size())
-                _packs[idx]._grad.resize(pack._idx + 1);
-            _packs[idx]._grad[pack._idx] = _packs[idx]._grad[pack._idx] + pack._grad[0];
+            if (pack._idx >= 0 && static_cast<size_t>(pack._idx) < pack._grad.size()) {
+                if (static_cast<size_t>(pack._idx) < _packs[idx]._grad.size()) {
+                    _packs[idx]._grad[pack._idx] = _packs[idx]._grad[pack._idx] + pack._grad[pack._idx];
+                } else {
+                    if (static_cast<size_t>(pack._idx) >= _packs[idx]._grad.size()) {
+                        _packs[idx]._grad.resize(pack._idx + 1);
+                    }
+                    _packs[idx]._grad[pack._idx] = pack._grad[pack._idx];
+                }
+            }
         } else {
-            if (pack._idx >= pack._grad.size())
-                pack._grad.resize(pack._idx + 1);
-            if (pack._idx != 0) {
-                pack._grad[pack._idx] = std::move(pack._grad[0]);
-                pack._grad[0]         = Tensor({0.0});
+            if (pack._idx >= 0) {
+                if (static_cast<size_t>(pack._idx) >= pack._grad.size())
+                    pack._grad.resize(pack._idx + 1);
             }
             pack._idx = -1;
             _packs.push_back(std::move(pack));
@@ -52,12 +57,19 @@ void GradBucket::add(const std::vector<GradPack> &newPacks) {
 
 void GradBucket::remove(const std::shared_ptr<Node> &target) {
     std::lock_guard lock(_mtx);
-    const size_t idx = find(target);
+    const ssize_t idx = find(target);
     if (idx != -1)
         _packs.erase(_packs.begin() + idx);
-    else
-        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
-                            "Trying to erase an unexistent gradPack");
+}
+
+bool GradBucket::tryGetGrad(const std::shared_ptr<Node> &target, std::vector<Tensor> &out_grads) {
+    std::lock_guard lock(_mtx);
+    const ssize_t idx = find(target);
+    if (idx != -1) {
+        out_grads = _packs[idx]._grad;
+        return true;
+    }
+    return false;
 }
 
 bool GradBucket::empty() {
@@ -65,9 +77,14 @@ bool GradBucket::empty() {
     return _packs.empty();
 }
 
+void GradBucket::clear() {
+    std::lock_guard lock(_mtx);
+    _packs.clear();
+}
+
 std::vector<Tensor> GradBucket::operator[](const std::shared_ptr<Node> &target) {
     std::lock_guard lock(_mtx);
-    size_t idx = find(target);
+    ssize_t idx = find(target);
     if (idx != -1)
         return _packs[idx]._grad;
     CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN,
@@ -113,37 +130,70 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     // 在backward执行期间，禁用计算图记录
     AutoGrad::EnableGrad = false;
 
-    std::atomic<bool> finished{false};
-
     GradBucket &bucket = GradBucket::getInstance();
-    ThreadPool &pool   = ThreadPool::getInstance();
-    auto core = [this, &bucket, &finished, retainGraph](const std::shared_ptr<Node> &root) {
-        const std::vector<Tensor> grads    = bucket[root];
-        const std::vector<GradPack> result = root->backward(grads);
-        if (!result.empty()) {
-            bucket.add(result);
-            scheduleNode(result);
-        }
-        if (!retainGraph)
-            bucket.remove(root);
-        if (bucket.empty())
-            finished = true;
-    };
+    
+    // 清除梯度桶
+    bucket.clear();
 
-    GradPack primary = {root, std::vector({Tensor({1.0})}),0};
+    // 创建一个标量张量，值为1.0
+    Tensor grad_tensor(1.0f);
+    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - grad_tensor dim: " + std::to_string(grad_tensor.dim()));
+    GradPack primary = {root, std::vector({grad_tensor}), -1};
+    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding primary grad pack");
     bucket.add(std::vector({primary}));
-    scheduleNode(root);
+    
+    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding root to ready nodes");
+    addReadyNode(root);
 
-
-    while (!finished.load()) {
-        if (auto node = tryPopReadyNode()) {
-            if (node->requireAccelerate())
-                pool.addTask(core, node);
-            else
-                core(node);
+    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing ready nodes");
+    while (true) {
+        std::shared_ptr<Node> node = tryPopReadyNode();
+        if (!node) {
+            // 检查是否还有未处理的节点
+            // 如果梯度桶不为空且readyNodes为空，可能存在死锁
+            if (!bucket.empty()) {
+                CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Grad bucket not empty but no ready nodes");
+                // 这里可以添加额外的处理逻辑
+            }
+            break;
         }
-        // 这样？std::this_thread::yield();
+        
+        CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node");
+        
+        // 获取节点的梯度
+        std::vector<Tensor> grads;
+        if (!bucket.tryGetGrad(node, grads)) {
+            CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - No grad found for node, skipping");
+            continue;
+        }
+
+        // 执行反向传播
+        CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
+        const std::vector<GradPack> result = node->backward(grads);
+        
+        // 处理反向传播的结果
+        if (!result.empty()) {
+            CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding " + std::to_string(result.size()) + " grad packs");
+            bucket.add(result);
+            
+            // 检查并添加上游节点到ready队列
+            for (const auto &pack : result) {
+                // pack._targetNode就是上游节点
+                if (pack._targetNode && pack._targetNode->decrease()) {
+                    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding upstream node to ready queue");
+                    addReadyNode(pack._targetNode);
+                }
+            }
+        }
+        
+        // 移除处理过的节点的梯度
+        if (!retainGraph) {
+            bucket.remove(node);
+        }
     }
+    
+    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Done processing ready nodes");
+    
     if (retainGraph) {
         std::unordered_set<Node *> restored;
         root->restoreRecursive(restored);

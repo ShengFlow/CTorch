@@ -32,16 +32,30 @@ Tensor Mul_BASIC_kernel(const Tensor& a, const Tensor& b) {
             Tensor b_broadcasted = b.broadcast_to(a.sizes());
             return Mul_BASIC_kernel(a, b_broadcasted);
         } else {
-            // 两个都是非0D张量，尝试广播到相同形状
-            Tensor a_broadcasted = a.broadcast_to(b.sizes());
-            Tensor b_broadcasted = b.broadcast_to(a.sizes());
+            // 计算广播后形状
+            std::vector<size_t> broadcast_shape;
+            size_t max_dims = std::max(a.sizes().size(), b.sizes().size());
+            broadcast_shape.reserve(max_dims);
             
-            // 检查广播是否成功
-            if (a_broadcasted.sizes() == b_broadcasted.sizes()) {
-                return Mul_BASIC_kernel(a_broadcasted, b_broadcasted);
-            } else {
-                CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Mul_Kernel: Tensor形状不兼容，无法广播");
+            // 从后往前计算广播形状
+            for (size_t i = 0; i < max_dims; ++i) {
+                size_t a_dim = i < a.sizes().size() ? a.sizes()[a.sizes().size() - 1 - i] : 1;
+                size_t b_dim = i < b.sizes().size() ? b.sizes()[b.sizes().size() - 1 - i] : 1;
+                if (a_dim != 1 && b_dim != 1 && a_dim != b_dim) {
+                    CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Mul_Kernel: Tensor形状不兼容，无法广播");
+                    return Tensor();
+                }
+                broadcast_shape.push_back(std::max(a_dim, b_dim));
             }
+            
+            // 反转形状以恢复正确顺序
+            std::reverse(broadcast_shape.begin(), broadcast_shape.end());
+            
+            // 广播两个张量
+            Tensor a_broadcasted = a.broadcast_to(broadcast_shape);
+            Tensor b_broadcasted = b.broadcast_to(broadcast_shape);
+            
+            return Mul_BASIC_kernel(a_broadcasted, b_broadcasted);
         }
     }
 

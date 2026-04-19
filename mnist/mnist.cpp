@@ -1,9 +1,11 @@
 #include "mnist_loader.h"
 #include "AutoGrad.h"
 #include "CtorchError.h"
+#include "Ctools.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <chrono>
 
 // 两隐藏层 MLP: 784 -> 256(ReLU) -> 128(ReLU) -> 10
 class NeuralNetwork {
@@ -29,6 +31,11 @@ public:
         W3 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2), static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
         b3 = Tensor(ShapeTag{}, {static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
         
+        // 设置 requires_grad
+        W1.requires_grad(true); b1.requires_grad(true);
+        W2.requires_grad(true); b2.requires_grad(true);
+        W3.requires_grad(true); b3.requires_grad(true);
+        
         xavier_init(W1, input_size);
         xavier_init(W2, hidden1);
         xavier_init(W3, hidden2);
@@ -42,21 +49,23 @@ public:
     }
     
     float train_step(const Tensor& x, const Tensor& y) {
-        W1.requires_grad(true); b1.requires_grad(true);
-        W2.requires_grad(true); b2.requires_grad(true);
-        W3.requires_grad(true); b3.requires_grad(true);
         
         Tensor logits = forward(x);
+        
         Tensor y_one_hot = Tensor(ShapeTag{}, {static_cast<size_t>(y.numel()), 10}, DType::kFloat, DeviceType::kCPU);
         for (size_t i = 0; i < y.numel(); ++i) {
             int lab = static_cast<int>(y.data<float>()[i]);
             for (int j = 0; j < 10; ++j)
                 y_one_hot.data<float>()[i * 10 + j] = (j == lab) ? 1.0f : 0.0f;
         }
+        
         Tensor loss = logits.cross_entropy(y_one_hot);
         float loss_value = loss.item<float>();
+        
         AutoGrad::backward(loss.getRelatedNode(),false);
+        
         update_parameters();
+        
         return loss_value;
     }
     
@@ -210,7 +219,7 @@ int main() {
         int input_size = 784;
         int hidden1 = 128, hidden2 = 64;  // 简化：256->128, 128->64
         int output_size = 10;
-        float learning_rate = 0.01f;  // 提高学习率加速收敛
+        float learning_rate = 0.001f;  // 降低学习率避免发散
         
         NeuralNetwork model(input_size, hidden1, hidden2, output_size, learning_rate);
         
@@ -219,6 +228,8 @@ int main() {
         int num_batches = static_cast<int>(train_images.shape()[0]) / batch_size;
         
         std::cout << "网络: 784->" << hidden1 << "->" << hidden2 << "->10 | Epochs:" << epochs << " | Batch:" << batch_size << " | lr:" << learning_rate << std::endl;
+        
+        auto train_start = std::chrono::high_resolution_clock::now();
         
         // 使用AutoGrad进行自动微分
         
@@ -252,6 +263,10 @@ int main() {
         
         std::cout << "\n>>> 训练集准确率: " << std::fixed << std::setprecision(2) << (train_acc * 100) << "%" << std::endl;
         std::cout << ">>> 测试集准确率: " << std::fixed << std::setprecision(2) << (test_acc * 100) << "%" << std::endl;
+        
+        auto train_end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(train_end - train_start);
+        std::cout << "\n>>> 总训练时间: " << std::fixed << std::setprecision(0) << duration.count() << " ms" << std::endl;
         
     } catch (const std::exception& e) {
         CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "错误: " + std::string(e.what()));

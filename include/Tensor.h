@@ -83,7 +83,7 @@ class Tensor {
     /**
      * @var _node 与该张量相关的Node
      */
-    std::shared_ptr<Node> _node;
+    mutable std::shared_ptr<Node> _node;
 
     /**
      * @var global_tensor_id
@@ -333,10 +333,9 @@ class Tensor {
           _requires_grad(other._requires_grad), _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage.clone()), // 注意：这里调用了clone()
-          _shape(other._shape) {
+          _shape(other._shape), _node(other._node) {
         // std::cout << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_
         // << std::endl;
-        _node = nullptr;
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
@@ -363,7 +362,7 @@ class Tensor {
             _requires_grad    = other._requires_grad;
             record_committed_ = false;
             // 啥玩意把模板实参放到
-            setRelatedNode(other.getRelatedNode());
+            _node = std::const_pointer_cast<Node>(other.getRelatedNode());
             //试试
 //
         }
@@ -1123,8 +1122,8 @@ class Tensor {
     // 保留设置方法
 
     [[nodiscard]] std::shared_ptr<Node> getRelatedNode() ;
-    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const ;
-    void setRelatedNode(std::shared_ptr<Node> ptr);
+    [[nodiscard]] std::shared_ptr<const Node> getRelatedNode() const ;
+    void setRelatedNode(std::shared_ptr<Node> ptr) const;
 
 
     Tensor view(std::initializer_list<size_t> shape);

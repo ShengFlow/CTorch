@@ -282,7 +282,8 @@ Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
 
     // 步骤1：检查输入形状是否有效
     if (shape.empty()) {
-        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播目标形状不能为空");
+        // 目标形状为空，返回标量张量
+        return *this;
     }
 
     // 步骤2：计算广播后的形状和当前张量的扩展形状
@@ -300,7 +301,19 @@ Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
     // 步骤3：检查广播是否可行
     for (size_t i = 0; i < current_shape.size(); ++i) {
         if (current_shape[i] != target_shape[i] && current_shape[i] != 1) {
-            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播形状不兼容");
+            std::ostringstream oss;
+            oss << "广播形状不兼容: 当前形状 [";
+            for (size_t j = 0; j < current_shape.size(); ++j) {
+                if (j > 0) oss << ", ";
+                oss << current_shape[j];
+            }
+            oss << "], 目标形状 [";
+            for (size_t j = 0; j < target_shape.size(); ++j) {
+                if (j > 0) oss << ", ";
+                oss << target_shape[j];
+            }
+            oss << "], 在维度 " << i << " 不兼容 (当前: " << current_shape[i] << ", 目标: " << target_shape[i] << ")";
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, oss.str());
         }
     }
 
@@ -1573,12 +1586,69 @@ Tensor Tensor::softmax(int dim) const {
             CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                          "Softmax: 仅支持 float/double");
         }
-    } else {
-        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                     "Softmax: 暂仅支持 1D/2D");
     }
 
-    // 记录操作到计算图（把 dim 写进 op_param_i）
+    // 记录操作到计算图
+
+
+    return result;
+}
+
+// Max操作
+Tensor Tensor::max() const {
+    Tensor result(ShapeTag{}, {}, _dtype, _device);
+
+    if (_dtype == DType::kFloat) {
+        const float* data = _storage.data<float>();
+        float max_val = data[0];
+        for (size_t i = 1; i < numel(); ++i) {
+            if (data[i + _storage_offset] > max_val) {
+                max_val = data[i + _storage_offset];
+            }
+        }
+        result._storage = Storage(1, _dtype, _device);
+        float* result_data = result._storage.data<float>();
+        if (result_data) {
+            *result_data = max_val;
+        }
+    }
+
+    // 记录操作到计算图
+
+
+    return result;
+}
+
+// Min操作
+Tensor Tensor::min() const {
+    Tensor result(ShapeTag{}, {}, _dtype, _device);
+
+    if (_dtype == DType::kFloat) {
+        const float* data = _storage.data<float>();
+        float min_val = data[0];
+        for (size_t i = 1; i < numel(); ++i) {
+            if (data[i + _storage_offset] < min_val) {
+                min_val = data[i + _storage_offset];
+            }
+        }
+        result._storage = Storage(1, _dtype, _device);
+        float* result_data = result._storage.data<float>();
+        if (result_data) {
+            *result_data = min_val;
+        }
+    }
+
+    // 记录操作到计算图
+
+
+    return result;
+}
+
+// Square操作
+Tensor Tensor::square() const {
+    Tensor result = *this * *this;
+
+    // 记录操作到计算图
 
 
     return result;
@@ -1615,8 +1685,8 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
 }
 
 std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _node; }
-std::shared_ptr<Node> Tensor::getRelatedNode() const { return  _node; }
-void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) { _node = std::move(ptr); }
+std::shared_ptr<const Node> Tensor::getRelatedNode() const { return add_const(_node); }
+void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const { _node = std::move(ptr); }
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _grad = std::move(grad); }
 // 求张量的和
 Tensor Tensor::sum(int dim, bool keepdim) const {

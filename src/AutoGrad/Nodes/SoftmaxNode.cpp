@@ -16,28 +16,27 @@ SoftmaxNode::SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes
 std::vector<GradPack> SoftmaxNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;
     
-    // 对于softmax，导数是：
-    // softmax(x) * (downStreamGrads - sum(downStreamGrads * softmax(x), dim))
-    
-    // 检查输入数量
     if (_inputs.size() != 1) {
         CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "SoftmaxNode: 输入数量错误");
         return ret;
     }
     
-    const Tensor& x = _inputs[0]; // 输入
-    const Tensor& grad = downStreamGrads[0]; // 下游梯度
+    // 检查downStreamGrads大小
+    if (downStreamGrads.empty()) {
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "SoftmaxNode: 下游梯度为空");
+        return ret;
+    }
     
-    // 计算softmax(x)
+    const Tensor& x = _inputs[0];
+    const Tensor& grad = downStreamGrads[0];
+    
     Tensor softmax_x = x.softmax(1);
     
-    // 计算sum(downStreamGrads * softmax(x), dim=1)
-    Tensor sum_grad_softmax = (grad * softmax_x).sum(1, true);
+    Tensor grad_softmax = grad * softmax_x;
+    Tensor sum_grad_softmax = grad_softmax.sum(1, true);
     
-    // 计算梯度：softmax(x) * (downStreamGrads - sum_grad_softmax)
     Tensor grad_x = softmax_x * (grad - sum_grad_softmax);
     
-    // 添加到返回值
     ret.push_back(GradPack{
         _upStreamNodes[0],
         std::vector({grad_x}),
