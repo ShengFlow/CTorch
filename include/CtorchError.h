@@ -1,8 +1,9 @@
 /**
-* @file CtorchError.h
+ * @file CtorchError.h
  * @brief Ctorch 错误处理类
  * @author GhostFace
  * @date 2025/12/20
+ * Last edit : 2026/6/19 by GhostFace
  */
 #ifndef CTORCH_ERROR_H
 #define CTORCH_ERROR_H
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <thread>
 #include "Ctools.h"
+
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
 #endif
@@ -29,6 +31,65 @@
 #ifdef __linux__
     #include <fstream>
 #endif
+
+/**
+ * @namespace PlatformConfig
+ * @brief 编译期平台检测配置
+ * @details 提供编译期常量用于 if constexpr 条件判断
+ * @note 使用宏定义常量，确保编译期求值
+ */
+#if defined(__CUDACC__)
+    #define PLATFORM_HAS_CUDA true
+#else
+    #define PLATFORM_HAS_CUDA false
+#endif
+
+#if defined(__APPLE__)
+    #define PLATFORM_HAS_APPLE true
+#else
+    #define PLATFORM_HAS_APPLE false
+#endif
+
+#if defined(__linux__)
+    #define PLATFORM_HAS_LINUX true
+#else
+    #define PLATFORM_HAS_LINUX false
+#endif
+
+#if defined(_WIN32)
+    #define PLATFORM_HAS_WINDOWS true
+#else
+    #define PLATFORM_HAS_WINDOWS false
+#endif
+
+#if defined(__GNUC__)
+    #define PLATFORM_HAS_GNUC true
+#else
+    #define PLATFORM_HAS_GNUC false
+#endif
+
+#if defined(__clang__)
+    #define PLATFORM_HAS_CLANG true
+#else
+    #define PLATFORM_HAS_CLANG false
+#endif
+
+#if defined(_MSC_VER)
+    #define PLATFORM_HAS_MSVC true
+#else
+    #define PLATFORM_HAS_MSVC false
+#endif
+
+namespace PlatformConfig {
+    // 便捷布尔常量
+    constexpr bool HAS_CUDA = PLATFORM_HAS_CUDA;
+    constexpr bool HAS_APPLE = PLATFORM_HAS_APPLE;
+    constexpr bool HAS_LINUX = PLATFORM_HAS_LINUX;
+    constexpr bool HAS_WINDOWS = PLATFORM_HAS_WINDOWS;
+    constexpr bool HAS_GNUC = PLATFORM_HAS_GNUC;
+    constexpr bool HAS_CLANG = PLATFORM_HAS_CLANG;
+    constexpr bool HAS_MSVC = PLATFORM_HAS_MSVC;
+}
 
 
 /**
@@ -71,6 +132,7 @@ private:
      * @brief 互斥锁，用于线程安全操作
      */
     std::mutex mutex_;
+
     /**
      * @brief 打印欢迎信息
      * @details 打印Ctorch的欢迎界面，包括版本信息、CUDA信息、C++标准、编译器信息、构建时间和系统信息
@@ -90,85 +152,101 @@ private:
         printf("Version RC Public 1.0\n");
         ctorch_sleep(500);
         // printf(ESC_END);
-#ifdef __CUDACC__
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, 0);
-    std::string cudaInfo = std::string(prop.name) + " (Compute Capability: " +
-                           std::to_string(prop.major) + "." + std::to_string(prop.minor) + ")";
-    printf("| %-10s %-48s \n", "CUDA:", cudaInfo.c_str());
-#else
-    printf("| %-10s %-50s \n", "CUDA:", "Not Found (仅支持CPU/MPS/AMX)");
+
+        // CUDA 信息
+        if constexpr (PLATFORM_HAS_CUDA) {
+#if PLATFORM_HAS_CUDA
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, 0);
+            std::string cudaInfo = std::string(prop.name) + " (Compute Capability: " +
+                                   std::to_string(prop.major) + "." + std::to_string(prop.minor) + ")";
+            printf("| %-10s %-48s \n", "CUDA:", cudaInfo.c_str());
 #endif
-
-    // C++标准（修复宽度不一致问题）
-    printf("| %-10s C++%-45ld\n", "C++:", __cplusplus / 100 - 1997);
-
-    // 编译器信息（动态获取）
-    std::string compilerInfo;
-#ifdef __GNUC__
-    compilerInfo = "GCC " + std::to_string(__GNUC__) + "." +
-                   std::to_string(__GNUC_MINOR__) + "." +
-                   std::to_string(__GNUC_PATCHLEVEL__);
-#elif defined(__clang__)
-    compilerInfo = "Clang " + std::to_string(__clang_major__) + "." +
-                   std::to_string(__clang_minor__) + "." +
-                   std::to_string(__clang_patchlevel__);
-#elif defined(_MSC_VER)
-    compilerInfo = "MSVC " + std::to_string(_MSC_VER);
-#else
-    compilerInfo = "Unknown Compiler";
-#endif
-    printf("| %-10s %-48s \n", "Compiler:", compilerInfo.c_str());
-
-    // 构建时间
-    std::string buildTime = std::string(__DATE__) + " " + __TIME__;
-    printf("| %-10s %-48s \n", "Build:", buildTime.c_str());
-
-    // 系统信息
-    std::string systemInfo;
-#ifdef __APPLE__
-    struct utsname un;
-    if (uname(&un) == 0) {
-        systemInfo = std::string("macOS (Kernel ") + un.release + ")";
-    } else {
-        systemInfo = "macOS (Unknown version)";
-    }
-#elif defined(__linux__)
-    // 优先读取/etc/os-release获取发行版名称
-    std::ifstream osRelease("/etc/os-release");
-    if (osRelease.is_open()) {
-        std::string line;
-        while (std::getline(osRelease, line)) {
-            if (line.find("PRETTY_NAME=") == 0) {
-                systemInfo = line.substr(12);
-                // 移除可能存在的引号
-                if (!systemInfo.empty() && systemInfo.front() == '"')
-                    systemInfo.erase(0, 1);
-                if (!systemInfo.empty() && systemInfo.back() == '"')
-                    systemInfo.pop_back();
-                break;
-            }
-        }
-        osRelease.close();
-    }
-
-    // 如果无法从os-release获取，则使用uname
-    if (systemInfo.empty()) {
-        struct utsname un;
-        if (uname(&un) == 0) {
-            systemInfo = std::string(un.sysname) + " " + un.release;
         } else {
-            systemInfo = "Linux (Unknown version)";
+            printf("| %-10s %-50s \n", "CUDA:", "Not Found (仅支持CPU/MPS/AMX)");
         }
-    }
-#elif defined(_WIN32)
-    systemInfo = "Windows";
-    // 如需更详细的Windows版本，可使用GetVersionExW或RtlGetVersion
-#else
-    systemInfo = "Unknown System";
+
+        // C++标准（修复宽度不一致问题）
+        printf("| %-10s C++%-45ld\n", "C++:", __cplusplus / 100 - 1997);
+
+        // 编译器信息（动态获取）
+        std::string compilerInfo;
+        if constexpr (PLATFORM_HAS_GNUC) {
+#if PLATFORM_HAS_GNUC
+            compilerInfo = "GCC " + std::to_string(__GNUC__) + "." +
+                           std::to_string(__GNUC_MINOR__) + "." +
+                           std::to_string(__GNUC_PATCHLEVEL__);
 #endif
-    printf("| %-10s %-48s \n", "System:", systemInfo.c_str());
+        } else if constexpr (PLATFORM_HAS_CLANG) {
+#if PLATFORM_HAS_CLANG
+            compilerInfo = "Clang " + std::to_string(__clang_major__) + "." +
+                           std::to_string(__clang_minor__) + "." +
+                           std::to_string(__clang_patchlevel__);
+#endif
+        } else if constexpr (PLATFORM_HAS_MSVC) {
+#if PLATFORM_HAS_MSVC
+            compilerInfo = "MSVC " + std::to_string(_MSC_VER);
+#endif
+        } else {
+            compilerInfo = "Unknown Compiler";
+        }
+        printf("| %-10s %-48s \n", "Compiler:", compilerInfo.c_str());
+
+        // 构建时间
+        std::string buildTime = std::string(__DATE__) + " " + __TIME__;
+        printf("| %-10s %-48s \n", "Build:", buildTime.c_str());
+
+        // 系统信息
+        std::string systemInfo;
+        if constexpr (PLATFORM_HAS_APPLE) {
+#if PLATFORM_HAS_APPLE
+            struct utsname un;
+            if (uname(&un) == 0) {
+                systemInfo = std::string("macOS (Kernel ") + un.release + ")";
+            } else {
+                systemInfo = "macOS (Unknown version)";
+            }
+#endif
+        } else if constexpr (PLATFORM_HAS_LINUX) {
+#if PLATFORM_HAS_LINUX
+            // 优先读取/etc/os-release获取发行版名称
+            std::ifstream osRelease("/etc/os-release");
+            if (osRelease.is_open()) {
+                std::string line;
+                while (std::getline(osRelease, line)) {
+                    if (line.find("PRETTY_NAME=") == 0) {
+                        systemInfo = line.substr(12);
+                        // 移除可能存在的引号
+                        if (!systemInfo.empty() && systemInfo.front() == '"')
+                            systemInfo.erase(0, 1);
+                        if (!systemInfo.empty() && systemInfo.back() == '"')
+                            systemInfo.pop_back();
+                        break;
+                    }
+                }
+                osRelease.close();
+            }
+
+            // 如果无法从os-release获取，则使用uname
+            if (systemInfo.empty()) {
+                struct utsname un;
+                if (uname(&un) == 0) {
+                    systemInfo = std::string(un.sysname) + " " + un.release;
+                } else {
+                    systemInfo = "Linux (Unknown version)";
+                }
+            }
+#endif
+        } else if constexpr (PLATFORM_HAS_WINDOWS) {
+#if PLATFORM_HAS_WINDOWS
+            systemInfo = "Windows";
+#endif
+        } else {
+            systemInfo = "Unknown System";
+        }
+        printf("| %-10s %-48s \n", "System:", systemInfo.c_str());
     }
+
 public:
     /**
      * @brief 打印级别
@@ -342,7 +420,7 @@ class CtorchError {
         return static_cast<uint8_t>(type);
     }
 
-public: 
+public:
     /**
      * @brief 记录日志信息
      * @param level 错误级别
@@ -458,7 +536,7 @@ public:
                msg.c_str());
         printf(ESC_END);
     }
-    
+
     /**
      * @brief 便捷方法：快速记录ERROR级别错误
      * @param platform 错误平台
@@ -468,7 +546,7 @@ public:
     static void error(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::ERROR, platform, type, msg);
     }
-    
+
     /**
      * @brief 便捷方法：快速记录WARN级别错误
      * @param platform 错误平台
@@ -478,7 +556,7 @@ public:
     static void warn(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::WARN, platform, type, msg);
     }
-    
+
     /**
      * @brief 便捷方法：快速记录FATAL级别错误
      * @param platform 错误平台
@@ -488,9 +566,9 @@ public:
     static void fatal(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::FATAL, platform, type, msg);
     }
-    
 
-    
+
+
     /**
      * @brief 便捷方法：快速记录DEBUG级别信息
      * @param platform 错误平台
@@ -499,7 +577,7 @@ public:
     static void debug(ErrorPlatform platform, const std::string& msg) {
         log(ErrorLevel::DEBUG, platform, ErrorType::UNKNOWN, msg);
     }
-    
+
     /**
      * @brief 抛出异常方法：记录错误并抛出异常
      * @param platform 错误平台
@@ -513,7 +591,7 @@ public:
         // 然后抛出异常
         throw std::runtime_error(msg);
     }
-    
+
     /**
      * @brief 抛出致命异常方法：记录致命错误并抛出异常
      * @param platform 错误平台

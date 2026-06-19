@@ -10,7 +10,7 @@
 #include <atomic>
 #include <unordered_set>
 
-#include "Tensor.h"
+#include "../Tensor.h"
 class Node;
 #include <vector>
 #include <memory>

@@ -1,7 +1,7 @@
 #ifndef MNIST_LOADER_H
 #define MNIST_LOADER_H
 
-#include "Tensor.h"
+#include "../include/Tensor.h"
 #include <string>
 #include <vector>
 

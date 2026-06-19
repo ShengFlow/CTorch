@@ -262,10 +262,10 @@ add_multiarch_executable(tl-VecShuffleTest
         ARCH x86-64 corei7-avx core-avx2 native
 )
 
-target_link_libraries(PerformanceTest PRIVATE CTorch)
-target_link_libraries(StdTest PRIVATE CTorch)
-target_link_libraries(ActivationLossTest PRIVATE CTorch)
-target_link_libraries(TensorGradTest PRIVATE CTorch)
+# target_link_libraries(PerformanceTest PRIVATE CTorch)
+# target_link_libraries(StdTest PRIVATE CTorch)
+# target_link_libraries(ActivationLossTest PRIVATE CTorch)
+# target_link_libraries(TensorGradTest PRIVATE CTorch)
 target_link_libraries(MnistTest PRIVATE CTorch)
 
 # 添加编译选项

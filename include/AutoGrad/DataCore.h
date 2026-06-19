@@ -7,7 +7,7 @@
 
 #ifndef CTORCH_CORE_H
 #define CTORCH_CORE_H
-#include "Arena.h"
+#include "../Arena.h"
 #include "Node.h"
 #include "Nodes/GradAccumulator.h"
 

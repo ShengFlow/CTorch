@@ -5,6 +5,13 @@
  * @date 2025/12/21
  */
 
+//              &(/>-</)&              /
+// =====================================
+//       A Part of Ctorch Project
+//         Powered by ghostface
+// =====================================
+// Copyright (c) 2026 ShengFlow. All Rights Reserved.
+
 #ifndef CTOOLS_H
 #define CTOOLS_H
 

@@ -7,7 +7,7 @@
 
 #ifndef CTORCH_GRADACCUMULATOR_H
 #define CTORCH_GRADACCUMULATOR_H
-#include "AutoGrad/Node.h"
+#include "../Node.h"
 
 class GradAccumulator final: public Node {
 public:

@@ -188,7 +188,7 @@ public:
 
         return result;
     }
-    
+
     // 公共接口实现：dispatch（单输入算子）
     Tensor dispatch(const Tensor& a, op op_type) {
         // 获取调度器实例，初始化kernel映射表（仅首次调用）
