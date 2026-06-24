@@ -11,18 +11,18 @@
 GradAccumulator::GradAccumulator(const Tensor& tensor) : _tensor(&tensor) {
     _upStreamNodes = std::vector<std::shared_ptr<Node>>();
     _inputs = std::vector<Tensor>();
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::GradAccumulator - Created for tensor with requires_grad: " + std::to_string(tensor.requires_grad()));
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::GradAccumulator - Created for tensor with requires_grad: " + std::to_string(tensor.requires_grad()));
 }
 
 std::vector<GradPack> GradAccumulator::backward(std::vector<Tensor> downStreamGrads) {
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Called with downStreamGrads size: " + std::to_string(downStreamGrads.size()));
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Called with downStreamGrads size: " + std::to_string(downStreamGrads.size()));
     if (downStreamGrads.empty()) {
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - No gradients received");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - No gradients received");
         return {};
     }
 
     if (_tensor) {
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Setting grad to tensor");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Setting grad to tensor");
         Tensor* nonConstTensor = const_cast<Tensor*>(_tensor);
 
         std::shared_ptr<Tensor> grad;
@@ -39,9 +39,9 @@ std::vector<GradPack> GradAccumulator::backward(std::vector<Tensor> downStreamGr
         }
 
         nonConstTensor->setGrad(grad);
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Grad set successfully");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Grad set successfully");
     } else {
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - _tensor is null");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - _tensor is null");
     }
     return {};
 }

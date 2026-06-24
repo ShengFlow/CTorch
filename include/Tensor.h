@@ -80,6 +80,8 @@ Tensor matMul(const Tensor &a, const Tensor &b);
  */
 class Tensor {
   private:
+    friend class AutoDiff;  // v1 AD 引擎保留，允许其访问私有 tensor_id_
+
     /**
      * @var _node 与该张量相关的Node
      */
@@ -96,12 +98,6 @@ class Tensor {
      * @brief 张量的唯一标识符
      */
     size_t tensor_id_;
-
-    /**
-     * @var record_committed_
-     * @brief 记录是否已提交
-     */
-    bool record_committed_ = false;
 
     /**
      * @var _requires_grad
@@ -206,39 +202,6 @@ class Tensor {
     //
 
   public:
-    /**
-     * @brief 清空存储的方法，避免创建新Tensor
-     */
-    void clear_storage();
-
-    /**
-     * @brief 判断是否为空的辅助方法
-     * @return 如果存储为空返回true，否则返回false
-     */
-    bool is_cleared() const;
-
-    /**
-     * @brief 增强调试信息
-     * @param name 张量名称，用于调试输出
-     */
-    void debug_info_detailed(const std::string &name = "") const;
-
-    /**
-     * @brief 提交未完成的记录
-     */
-    void commit_pending_record();
-
-    /**
-     * @brief 检查是否有待处理记录
-     * @return 如果有待处理记录返回true，否则返回false
-     */
-    bool has_pending_record() { return !record_committed_; }
-
-    /**
-     * @brief 设置张量ID（仅用于自动微分系统）
-     * @param id 新的张量ID
-     */
-    void set_id(size_t id) { tensor_id_ = id; }
     // ======================= 构造和析构 =======================
 
     /**
@@ -257,7 +220,7 @@ class Tensor {
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
-        CtorchError::trace(ErrorPlatform::kCPU, msg);
+        CTORCH_TRACE(ErrorPlatform::kCPU, msg);
         computeStrides();
         _storage = Storage(1, _dtype, _device);
         _node = nullptr;
@@ -266,7 +229,7 @@ class Tensor {
             std::ostringstream oss;
             oss << ">>> 标量Tensor设置完成, 存储值: " << *_storage.data<float>();
             std::string msg = oss.str();
-            CtorchError::trace(ErrorPlatform::kCPU, msg);
+            CTORCH_TRACE(ErrorPlatform::kCPU, msg);
         } else {
             CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::MEMORY,
                               "!!! 错误: 无法分配存储");
@@ -329,7 +292,7 @@ class Tensor {
      * @details 新对象会分配新的张量ID和深拷贝存储
      */
     Tensor(const Tensor &other)
-        : tensor_id_(global_tensor_id++), record_committed_(false),
+        : tensor_id_(global_tensor_id++),
           _requires_grad(other._requires_grad), _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage.clone()), // 注意：这里调用了clone()
@@ -339,7 +302,7 @@ class Tensor {
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
-        CtorchError::trace(ErrorPlatform::kCPU, msg);
+        CTORCH_TRACE(ErrorPlatform::kCPU, msg);
     }
 
     /**
@@ -350,8 +313,6 @@ class Tensor {
      */
     Tensor &operator=(const Tensor &other) {
         if (this != &other) {
-            commit_pending_record();
-
             tensor_id_        = global_tensor_id++;
             _shape            = other._shape;
             _strides          = other._strides;
@@ -360,11 +321,7 @@ class Tensor {
             _dtype            = other._dtype;
             _storage          = other._storage.clone(); // 深拷贝存储
             _requires_grad    = other._requires_grad;
-            record_committed_ = false;
-            // 啥玩意把模板实参放到
             _node = std::const_pointer_cast<Node>(other.getRelatedNode());
-            //试试
-//
         }
         return *this;
     }
@@ -375,13 +332,12 @@ class Tensor {
      * @details 移动构造后，原对象的tensor_id变为0，避免冲突
      */
     Tensor(Tensor &&other) noexcept
-        : _node(other.getRelatedNode()),tensor_id_(other.tensor_id_), record_committed_(other.record_committed_),
+        : _node(other.getRelatedNode()), tensor_id_(other.tensor_id_),
           _requires_grad(other._requires_grad), _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)),_shape(std::move(other._shape)){
+          _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
         // 移动构造后，原对象的tensor_id变为0，避免冲突
-        other.tensor_id_        = 0;
-        other.record_committed_ = false;
+        other.tensor_id_ = 0;
     }
 
     /**
@@ -392,8 +348,6 @@ class Tensor {
      */
     Tensor &operator=(Tensor &&other) noexcept {
         if (this != &other) {
-            commit_pending_record();
-
             tensor_id_        = other.tensor_id_;
             _shape            = std::move(other._shape);
             _strides          = std::move(other._strides);
@@ -402,26 +356,18 @@ class Tensor {
             _dtype            = other._dtype;
             _storage          = std::move(other._storage);
             _requires_grad    = other._requires_grad;
-            record_committed_ = other.record_committed_;
             _node = other.getRelatedNode();
 
             // 移动赋值后，原对象的tensor_id变为0，避免冲突
-            other.tensor_id_        = 0;
-            other.record_committed_ = false;
+            other.tensor_id_ = 0;
         }
         return *this;
     }
 
     /**
      * @brief 析构函数
-     * @details 如果是计算图的根节点，会清理计算图相关资源
      */
-    ~Tensor() {
-        // // 如果是计算图的根节点，清理计算图
-        // if (record_committed_ && AutoDiffContext::current()) {
-        //     // 注意：这里不再直接调用AutoDiff的清理方法，避免循环依赖
-        // }
-    }
+    ~Tensor() = default;
 
     /**
      * @brief 设置梯度需求

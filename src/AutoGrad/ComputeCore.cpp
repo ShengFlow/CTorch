@@ -137,62 +137,62 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
 
     // 创建一个标量张量，值为1.0
     Tensor grad_tensor(1.0f);
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - grad_tensor dim: " + std::to_string(grad_tensor.dim()));
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - grad_tensor dim: " + std::to_string(grad_tensor.dim()));
     GradPack primary = {root, std::vector({grad_tensor}), -1};
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding primary grad pack");
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding primary grad pack");
     bucket.add(std::vector({primary}));
-    
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding root to ready nodes");
+
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding root to ready nodes");
     addReadyNode(root);
 
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing ready nodes");
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing ready nodes");
     while (true) {
         std::shared_ptr<Node> node = tryPopReadyNode();
         if (!node) {
             // 检查是否还有未处理的节点
             // 如果梯度桶不为空且readyNodes为空，可能存在死锁
             if (!bucket.empty()) {
-                CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Grad bucket not empty but no ready nodes");
+                CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Grad bucket not empty but no ready nodes");
                 // 这里可以添加额外的处理逻辑
             }
             break;
         }
-        
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node");
-        
+
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node");
+
         // 获取节点的梯度
         std::vector<Tensor> grads;
         if (!bucket.tryGetGrad(node, grads)) {
-            CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - No grad found for node, skipping");
+            CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - No grad found for node, skipping");
             continue;
         }
 
         // 执行反向传播
-        CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
         const std::vector<GradPack> result = node->backward(grads);
-        
+
         // 处理反向传播的结果
         if (!result.empty()) {
-            CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding " + std::to_string(result.size()) + " grad packs");
+            CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding " + std::to_string(result.size()) + " grad packs");
             bucket.add(result);
-            
+
             // 检查并添加上游节点到ready队列
             for (const auto &pack : result) {
                 // pack._targetNode就是上游节点
                 if (pack._targetNode && pack._targetNode->decrease()) {
-                    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding upstream node to ready queue");
+                    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding upstream node to ready queue");
                     addReadyNode(pack._targetNode);
                 }
             }
         }
-        
+
         // 移除处理过的节点的梯度
         if (!retainGraph) {
             bucket.remove(node);
         }
     }
-    
-    CtorchError::trace(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Done processing ready nodes");
+
+    CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Done processing ready nodes");
     
     if (retainGraph) {
         std::unordered_set<Node *> restored;

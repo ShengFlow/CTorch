@@ -33,11 +33,11 @@ void AutoDiff::Node::clear_grad_safely() {
   std::ostringstream oss;
   oss << ">>> Node::clear_grad_safely - 开始, 节点ID: " << tensor_id;
   std::string msg = oss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msg);
   if (grad) {
-    grad->clear_storage();
+    grad->storage().clear();
   }
-  Ctorch_Error::trace(ErrorPlatform::kCPU,
+  CTORCH_TRACE(ErrorPlatform::kCPU,
                       "<<< Node::clear_grad_safely - 完成");
 }
 
@@ -54,7 +54,7 @@ AutoDiff::Node *AutoDiff::get_node_by_id(size_t id) {
   if (it != id_to_node.end()) {
     return it->second.get();
   }
-  Ctorch_Error::trace(ErrorPlatform::kCPU,
+  CTORCH_TRACE(ErrorPlatform::kCPU,
                       "警告: 找不到节点 " + std::to_string(id));
   return nullptr;
 }
@@ -83,20 +83,20 @@ void AutoDiff::debug_print_state(const std::string &context) {
   oss << std::endl;
   oss << "=================================" << std::endl;
   std::string msg = oss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msg);
 }
 
 // ======================= get_grad函数 =======================
 Tensor AutoDiff::get_grad(const Tensor *t) {
   if (!t || t->id() == 0) {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> get_grad: 无效输入");
+    CTORCH_TRACE(ErrorPlatform::kCPU, ">>> get_grad: 无效输入");
     return Tensor();
   }
 
   std::ostringstream oss;
   oss << ">>> get_grad - 开始, 目标ID: " << t->id();
   std::string msg = oss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msg);
 
   // 保存输入张量的信息，用于创建默认零张量
   std::vector<size_t> input_shape = t->shape();
@@ -133,13 +133,13 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
         osss << s << " ";
       osss << "], 值: " << grad_value;
       std::string msgs = osss.str();
-      Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
+      CTORCH_TRACE(ErrorPlatform::kCPU, msgs);
     }
   } // 释放锁
 
   // 第二步：在锁外创建结果Tensor
   if (has_grad) {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> 创建梯度副本");
+    CTORCH_TRACE(ErrorPlatform::kCPU, ">>> 创建梯度副本");
     Tensor result(ShapeTag{}, grad_shape, grad_dtype, grad_device);
 
     // 第三步：重新加锁复制数据
@@ -147,7 +147,7 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
       std::lock_guard<std::mutex> lock(records_mutex);
       auto it = id_to_node.find(t->id());
       if (it != id_to_node.end() && it->second && it->second->grad) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> 复制梯度数据");
+        CTORCH_TRACE(ErrorPlatform::kCPU, ">>> 复制梯度数据");
         // 直接复制数据，避免调用clone()
         switch (grad_dtype) {
         case DType::kFloat: {
@@ -160,7 +160,7 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
           std::ostringstream osss;
           osss << ">>> 复制了 " << count << " 个float值，第一个值: " << dst[0];
           std::string msgs = osss.str();
-          Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
+          CTORCH_TRACE(ErrorPlatform::kCPU, msgs);
           break;
         }
         case DType::kDouble: {
@@ -188,7 +188,7 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
           break;
         }
         default:
-          Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+          CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                        "get_grad中不支持的dtype");
         }
       }
@@ -201,11 +201,11 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
     osss << "<<< get_grad - 完成" << std::endl;
 
     std::string msgs = osss.str();
-    Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
+    CTORCH_TRACE(ErrorPlatform::kCPU, msgs);
     return result;
   }
   // 未找到梯度时，输出Error级别提示并返回零张量
-  Ctorch_Error::trace(
+  CTORCH_TRACE(
       ErrorPlatform::kCPU,
       "[ERROR] [2025-12-21 18:05:10.882 1766311510882] [ERROR_CODE:0x5060400] "
       "[PLATFORM:GENERAL] [TYPE:TENSOR_STATE] Tensor梯度未找到，返回零张量");
@@ -246,7 +246,7 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
     break;
   }
   default:
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                  "get_grad中不支持的dtype");
   }
   return result;
@@ -256,7 +256,7 @@ Tensor AutoDiff::get_grad(const Tensor *t) {
 void AutoDiff::make_leaf(Tensor &t, bool requires_grad) {
   size_t id = t.id();
   if (id == 0) {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "!!! 错误: 尝试注册ID为0的张量");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "!!! 错误: 尝试注册ID为0的张量");
     return;
   }
 
@@ -264,7 +264,7 @@ void AutoDiff::make_leaf(Tensor &t, bool requires_grad) {
   osss << ">>> AutoDiff::make_leaf - 开始, ID: " << id;
 
   std::string msgs = osss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msgs);
   debug_print_state("make_leaf开始前");
   {
     std::lock_guard<std::mutex> lock(records_mutex);
@@ -272,7 +272,7 @@ void AutoDiff::make_leaf(Tensor &t, bool requires_grad) {
       std::ostringstream oss;
       oss << ">>> 节点 " << id << " 已存在，更新requires_grad状态" << std::endl;
       std::string msg = oss.str();
-      Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+      CTORCH_TRACE(ErrorPlatform::kCPU, msg);
       // 更新节点的requires_grad状态
       id_to_node[id]->requires_grad = requires_grad;
       if (requires_grad && !id_to_node[id]->grad) {
@@ -284,15 +284,9 @@ void AutoDiff::make_leaf(Tensor &t, bool requires_grad) {
     }
   }
 
-  // 直接使用原始张量的引用，而不是创建一个新的张量对象
-  // 这样可以确保节点引用的是原始张量，而不是一个新创建的张量
-  // 直接使用原始张量的引用，而不是创建一个新的张量对象
-  // 这样可以确保节点引用的是原始张量，而不是一个新创建的张量
-  // 创建一个指向原始张量的指针，而不是复制它
+  // v1 AD 引擎保留但不再被外部 Tensor 使用，这里克隆张量并保留其原始 ID
   auto tensor_ptr = std::make_unique<Tensor>(t);
-  // 手动设置张量ID为原始张量的ID，以保持ID一致
-  tensor_ptr->set_id(id);
-  // 创建节点，使用新创建的张量对象
+  tensor_ptr->tensor_id_ = id;  // AutoDiff 是 Tensor 的 friend
   auto node =
       std::make_unique<Node>(id, std::move(tensor_ptr), requires_grad, true);
 
@@ -304,13 +298,13 @@ void AutoDiff::make_leaf(Tensor &t, bool requires_grad) {
   std::ostringstream oss;
   oss << "<<< AutoDiff::make_leaf - 完成, ID: " << id;
   std::string msg = oss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msg);
   debug_print_state("make_leaf完成后");
 }
 
 // ======================= 析构函数 =======================
 AutoDiff::~AutoDiff() {
-  Ctorch_Error::trace(ErrorPlatform::kCPU, ">>> AutoDiff 析构");
+  CTORCH_TRACE(ErrorPlatform::kCPU, ">>> AutoDiff 析构");
   // 避免在析构时进行复杂操作
   // 直接清空，不持有锁
   id_to_node.clear();
@@ -325,9 +319,9 @@ void AutoDiff::defer_record(size_t output_id, op operation,
   oss << ">>> 进入 defer_record, output_id: " << output_id
       << ", 操作类型: " << static_cast<int>(operation);
   std::string msg = oss.str();
-  Ctorch_Error::trace(ErrorPlatform::kCPU, msg);
+  CTORCH_TRACE(ErrorPlatform::kCPU, msg);
   if (output_id == 0) {
-    Ctorch_Error::log(ErrorLevel::WARN, ErrorPlatform::kCPU,
+    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kCPU,
                       ErrorType::TENSOR_STATE, "警告: output_id 为0");
     return;
   }
@@ -348,7 +342,7 @@ void AutoDiff::defer_record(size_t output_id, op operation,
       std::ostringstream osss;
       osss << ">>> 处理输入: " << input->id();
       std::string msgs = osss.str();
-      Ctorch_Error::trace(ErrorPlatform::kCPU, msgs);
+      CTORCH_TRACE(ErrorPlatform::kCPU, msgs);
 
       // 检查是否已注册，避免不必要的锁
       bool needs_registration = false;
@@ -361,7 +355,7 @@ void AutoDiff::defer_record(size_t output_id, op operation,
         std::ostringstream ost;
         ost << ">>> 注册叶子节点: " << input->id() << std::endl;
         std::string msgt = ost.str();
-        Ctorch_Error::trace(ErrorPlatform::kCPU, msgt);
+        CTORCH_TRACE(ErrorPlatform::kCPU, msgt);
 
         make_leaf(*input, input->requires_grad());
       }
@@ -376,18 +370,18 @@ void AutoDiff::defer_record(size_t output_id, op operation,
     pending_records[output_id] = record;
   }
 
-  Ctorch_Error::trace(ErrorPlatform::kCPU, "<<< 离开 defer_record");
+  CTORCH_TRACE(ErrorPlatform::kCPU, "<<< 离开 defer_record");
 }
 
 // ======================= commit_record函数 =======================
 void AutoDiff::commit_record(Tensor &output) {
   size_t output_id = output.id();
-  Ctorch_Error::trace(ErrorPlatform::kCPU,
+  CTORCH_TRACE(ErrorPlatform::kCPU,
                       "AutoDiff::commit_record - 开始, ID: " +
                           std::to_string(output_id));
 
   if (output_id == 0) {
-    Ctorch_Error::trace(ErrorPlatform::kCPU, "错误: 输出ID为0");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "错误: 输出ID为0");
     return;
   }
 
@@ -403,47 +397,47 @@ void AutoDiff::commit_record(Tensor &output) {
 
     auto it = pending_records.find(output_id);
     if (it == pending_records.end()) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU, "警告: 找不到待处理记录 " +
+      CTORCH_TRACE(ErrorPlatform::kCPU, "警告: 找不到待处理记录 " +
                                                    std::to_string(output_id));
       return;
     }
 
     PendingRecord &record = it->second;
     if (record.committed) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU, "记录 " +
+      CTORCH_TRACE(ErrorPlatform::kCPU, "记录 " +
                                                    std::to_string(output_id) +
                                                    " 已提交，跳过");
       return;
     }
 
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "开始提交记录 " + std::to_string(output_id));
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "操作类型: " +
                             std::to_string(static_cast<int>(record.operation)));
     std::ostringstream oss;
     oss << "输入IDs: ";
     for (auto id : record.input_ids)
       oss << id << " ";
-    Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
+    CTORCH_TRACE(ErrorPlatform::kCPU, oss.str());
 
     // 验证输入节点
     bool valid = true;
     for (size_t input_id : record.input_ids) {
       if (id_to_node.find(input_id) == id_to_node.end()) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "错误: 输入节点 " +
+        CTORCH_TRACE(ErrorPlatform::kCPU, "错误: 输入节点 " +
                                                      std::to_string(input_id) +
                                                      " 不存在");
         valid = false;
         break;
       } else {
-        Ctorch_Error::trace(ErrorPlatform::kCPU,
+        CTORCH_TRACE(ErrorPlatform::kCPU,
                             "输入节点 " + std::to_string(input_id) + " 存在");
       }
     }
 
     if (!valid) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU, "记录验证失败，清除记录 " +
+      CTORCH_TRACE(ErrorPlatform::kCPU, "记录验证失败，清除记录 " +
                                                    std::to_string(output_id));
       pending_records.erase(it);
       return;
@@ -460,7 +454,7 @@ void AutoDiff::commit_record(Tensor &output) {
 
   // 第二步：在锁外创建节点（避免死锁）
   if (should_create_node) {
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "在锁外创建操作节点 " + std::to_string(output_id));
 
     // 确定梯度需求（在锁外检查）
@@ -473,7 +467,7 @@ void AutoDiff::commit_record(Tensor &output) {
       }
     }
 
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "节点 " + std::to_string(output_id) +
                             " 需要梯度: " + (requires_grad ? "1" : "0"));
 
@@ -489,12 +483,12 @@ void AutoDiff::commit_record(Tensor &output) {
     std::ostringstream oss;
     oss << "设置节点 " << output_id
         << " 的操作类型为: " << static_cast<int>(record_copy.operation);
-    Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
+    CTORCH_TRACE(ErrorPlatform::kCPU, oss.str());
     output_node->input_ids = input_ids_copy;
 
     // 延迟创建梯度存储
     if (requires_grad) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU, "为节点 " +
+      CTORCH_TRACE(ErrorPlatform::kCPU, "为节点 " +
                                                    std::to_string(output_id) +
                                                    " 延迟分配梯度存储");
       // 注意：不在构造函数中创建 grad，避免死锁
@@ -512,7 +506,7 @@ void AutoDiff::commit_record(Tensor &output) {
       }
     }
 
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "记录提交完成 " + std::to_string(output_id));
     debug_print_state("commit_record完成后");
   }
@@ -535,7 +529,7 @@ void AutoDiff::update_requires_grad(Tensor &t, bool requires_grad) {
   if (id == 0)
     return;
 
-  Ctorch_Error::trace(ErrorPlatform::kCPU,
+  CTORCH_TRACE(ErrorPlatform::kCPU,
                       "更新梯度需求: " + std::to_string(id) + " -> " +
                           (requires_grad ? "1" : "0"));
 
@@ -554,12 +548,12 @@ void AutoDiff::update_requires_grad(Tensor &t, bool requires_grad) {
       }
     } else {
       // 如果节点不存在，可能需要创建它
-      Ctorch_Error::trace(ErrorPlatform::kCPU,
+      CTORCH_TRACE(ErrorPlatform::kCPU,
                           "节点不存在，可能需要创建: " + std::to_string(id));
     }
   }
 
-  Ctorch_Error::trace(ErrorPlatform::kCPU, "更新梯度需求完成");
+  CTORCH_TRACE(ErrorPlatform::kCPU, "更新梯度需求完成");
 }
 
 // ======================= set_retain_graph函数 =======================
@@ -596,7 +590,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
   oss << "-> ";
   for (size_t s : target_shape)
     oss << s << " ";
-  Ctorch_Error::trace(ErrorPlatform::kCPU, oss.str());
+  CTORCH_TRACE(ErrorPlatform::kCPU, oss.str());
 
   // 处理标量情况
   if (grad.sizes().empty()) {
@@ -642,7 +636,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
       break;
     }
     default:
-      Ctorch_Error::throwException(
+      CtorchError::throwException(
           ErrorPlatform::kCPU, ErrorType::DATATYPE,
           "check_and_adjust_grad_shape中不支持的dtype");
     }
@@ -702,7 +696,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
       break;
     }
     default:
-      Ctorch_Error::throwException(
+      CtorchError::throwException(
           ErrorPlatform::kCPU, ErrorType::DATATYPE,
           "check_and_adjust_grad_shape中不支持的dtype");
     }
@@ -907,7 +901,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
       break;
     }
     default:
-      Ctorch_Error::throwException(
+      CtorchError::throwException(
           ErrorPlatform::kCPU, ErrorType::DATATYPE,
           "check_and_adjust_grad_shape中不支持的dtype");
     }
@@ -984,7 +978,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
       break;
     }
     default:
-      Ctorch_Error::throwException(
+      CtorchError::throwException(
           ErrorPlatform::kCPU, ErrorType::DATATYPE,
           "check_and_adjust_grad_shape中不支持的dtype");
     }
@@ -1068,7 +1062,7 @@ AutoDiff::check_and_adjust_grad_shape(const Tensor &grad,
     break;
   }
   default:
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                  "check_and_adjust_grad_shape中不支持的dtype");
   }
 
@@ -1106,23 +1100,23 @@ void AutoDiff::dfs_topological_sort(Node *node,
 
 // ======================= backward函数（版本2） =======================
 void AutoDiff::backward(Tensor &root, Tensor grad_output) {
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff,
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff,
                       std::string("======================================="));
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff,
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff,
                       std::string("进入 backward 函数，root ID: ") +
                           std::to_string(root.id()));
 
   if (root.id() == 0) {
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::TENSOR_STATE,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::TENSOR_STATE,
                                  "反向传播的无效根张量 (ID为0)");
     return;
   }
 
   // 阶段1：准备阶段（不持有锁）
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("阶段1: 准备阶段"));
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff, std::string("阶段1: 准备阶段"));
 
   // 阶段2：验证阶段和设置根节点梯度
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff,
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff,
                       std::string("阶段2: 验证和设置根节点梯度"));
   Node *root_node = nullptr;
   bool root_requires_grad = false;
@@ -1132,7 +1126,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     std::lock_guard<std::mutex> lock(records_mutex);
     auto it = id_to_node.find(root.id());
     if (it == id_to_node.end() || !it->second) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU,
+      CTORCH_TRACE(ErrorPlatform::kCPU,
                           "错误: 找不到根节点 " + std::to_string(root.id()));
       return;
     }
@@ -1141,7 +1135,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     root_shape = root.sizes();
 
     if (!root_requires_grad) {
-      Ctorch_Error::trace(ErrorPlatform::kCPU,
+      CTORCH_TRACE(ErrorPlatform::kCPU,
                           "根节点不需要梯度，跳过反向传播");
       return;
     }
@@ -1158,15 +1152,15 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     *root_node->grad = adjusted_grad_output;
   }
 
-  Ctorch_Error::trace(ErrorPlatform::kCPU, "根节点需要梯度，开始反向传播");
-  Ctorch_Error::trace(ErrorPlatform::kCPU,
+  CTORCH_TRACE(ErrorPlatform::kCPU, "根节点需要梯度，开始反向传播");
+  CTORCH_TRACE(ErrorPlatform::kCPU,
                       "根节点形状: " + std::to_string(root_shape.size()) + "D");
-  Ctorch_Error::trace(
+  CTORCH_TRACE(
       ErrorPlatform::kCPU,
       "梯度输出形状: " + std::to_string(grad_output.sizes().size()) + "D");
 
   // 阶段3：反向传播（实现实际的梯度计算）
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff,
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff,
                       std::string("阶段3: 反向传播计算"));
 
   std::vector<Node *> topological_order;
@@ -1182,7 +1176,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     topological_order = forward_order;
     std::reverse(topological_order.begin(), topological_order.end());
 
-    Ctorch_Error::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "拓扑排序完成，节点数量: " +
                             std::to_string(topological_order.size()));
   }
@@ -1192,15 +1186,15 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     std::lock_guard<std::mutex> lock(records_mutex);
     for (Node *node : topological_order) {
       // 打印节点信息
-      Ctorch_Error::trace(
+      CTORCH_TRACE(
           ErrorPlatform::kCPU,
           "处理节点: " + std::to_string(node->tensor_id) +
               ", requires_grad: " + (node->requires_grad ? "1" : "0"));
-      Ctorch_Error::trace(
+      CTORCH_TRACE(
           ErrorPlatform::kCPU,
           "操作类型: " + std::to_string(static_cast<int>(node->operation)));
       if (node->grad) {
-        Ctorch_Error::trace(
+        CTORCH_TRACE(
             ErrorPlatform::kCPU,
             "梯度形状: " + std::to_string(node->grad->sizes().size()) + "D");
         if (!node->grad->sizes().empty()) {
@@ -1208,13 +1202,13 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
           for (size_t s : node->grad->sizes()) {
             shape_str += std::to_string(s) + " ";
           }
-          Ctorch_Error::trace(ErrorPlatform::kCPU, "梯度维度: " + shape_str);
+          CTORCH_TRACE(ErrorPlatform::kCPU, "梯度维度: " + shape_str);
         }
       }
 
       // 跳过不需要梯度的节点
       if (!node->requires_grad) {
-        Ctorch_Error::trace(ErrorPlatform::kCPU, "跳过不需要梯度的节点");
+        CTORCH_TRACE(ErrorPlatform::kCPU, "跳过不需要梯度的节点");
         continue;
       }
 
@@ -1230,7 +1224,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
             auto &input_node = *input_it->second;
 
             // 打印输入节点信息
-            Ctorch_Error::trace(ErrorPlatform::kCPU,
+            CTORCH_TRACE(ErrorPlatform::kCPU,
                                 "处理输入节点: " + std::to_string(input_id) +
                                     ", requires_grad: " +
                                     (input_node.requires_grad ? "1" : "0"));
@@ -1241,7 +1235,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                   ShapeTag{}, input_node.tensor->sizes(),
                   input_node.tensor->dtype(), input_node.tensor->device());
               input_node.grad->zero();
-              Ctorch_Error::trace(ErrorPlatform::kCPU, "初始化输入节点梯度");
+              CTORCH_TRACE(ErrorPlatform::kCPU, "初始化输入节点梯度");
             }
 
             Tensor &input_grad = *input_node.grad;
@@ -1315,7 +1309,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                     }
                   }
                   if (has_zero) {
-                    Ctorch_Error::throwException(
+                    CtorchError::throwException(
                         ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                         "除零错误：Div操作的梯度计算中除数为零");
                   }
@@ -1344,7 +1338,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                     }
                   }
                   if (has_zero) {
-                    Ctorch_Error::throwException(
+                    CtorchError::throwException(
                         ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                         "除零错误：Div操作的梯度计算中除数为零");
                   }
@@ -1401,7 +1395,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                 break;
               }
               default:
-                Ctorch_Error::throwException(ErrorPlatform::kCPU,
+                CtorchError::throwException(ErrorPlatform::kCPU,
                                              ErrorType::DATATYPE,
                                              "ReLU梯度计算中不支持的dtype");
               }
@@ -1463,7 +1457,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
 
               std::vector<size_t> shape = y_tensor.sizes();
               if (y_tensor.dtype() != DType::kFloat) {
-                Ctorch_Error::throwException(
+                CtorchError::throwException(
                     ErrorPlatform::kCPU, ErrorType::DATATYPE,
                     "Softmax backward: 目前仅支持 float");
               }
@@ -1472,7 +1466,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                 if (dim == -1)
                   dim = 0;
                 if (dim != 0) {
-                  Ctorch_Error::throwException(
+                  CtorchError::throwException(
                       ErrorPlatform::kCPU, ErrorType::DIMENSION,
                       "Softmax backward: 1D 张量仅支持 dim=0/-1");
                 }
@@ -1494,7 +1488,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                 if (dim == -1)
                   dim = 1;
                 if (dim != 0 && dim != 1) {
-                  Ctorch_Error::throwException(
+                  CtorchError::throwException(
                       ErrorPlatform::kCPU, ErrorType::DIMENSION,
                       "Softmax backward: 2D 张量仅支持 dim=0/1/-1");
                 }
@@ -1533,7 +1527,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                 }
                 input_grad_val = dx;
               } else {
-                Ctorch_Error::throwException(
+                CtorchError::throwException(
                     ErrorPlatform::kCPU, ErrorType::DIMENSION,
                     "Softmax backward: 暂仅支持 1D/2D 张量");
               }
@@ -1576,7 +1570,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
 
                 std::vector<size_t> pred_shape = pred_tensor.sizes();
                 if (pred_tensor.dtype() != DType::kFloat) {
-                  Ctorch_Error::throwException(
+                  CtorchError::throwException(
                       ErrorPlatform::kCPU, ErrorType::DATATYPE,
                       "CrossEntropy backward: 目前仅支持 float");
                 }
@@ -1653,7 +1647,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                   float grad_val = node_grad.item<float>();
                   input_grad_val = softmax_minus_target * grad_val;
                 } else {
-                  Ctorch_Error::throwException(
+                  CtorchError::throwException(
                       ErrorPlatform::kCPU, ErrorType::DIMENSION,
                       "CrossEntropy backward: 暂仅支持 1D/2D logits");
                 }
@@ -1712,25 +1706,25 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                   // 对第一个输入的梯度是 grad * B^T
                   try {
                     // 打印调试信息
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "MatMul梯度计算：处理第一个输入");
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "输入形状: " +
                             std::to_string(input_node.tensor->sizes()[0]) +
                             "x" +
                             std::to_string(input_node.tensor->sizes()[1]));
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "另一个输入形状: " +
                             std::to_string(other_tensor.sizes()[0]) + "x" +
                             std::to_string(other_tensor.sizes()[1]));
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "节点梯度形状: " +
                             std::to_string(node_grad.sizes().size()) + "D");
                     if (!node_grad.sizes().empty()) {
-                      Ctorch_Error::trace(
+                      CTORCH_TRACE(
                           ErrorPlatform::kCPU,
                           "节点梯度维度: " +
                               std::to_string(node_grad.sizes()[0]) + "x" +
@@ -1743,7 +1737,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                     if (is_scalar_grad) {
                       // 标量情况：grad * B^T 等同于 B^T * grad_value
                       float grad_value = node_grad.item<float>();
-                      Ctorch_Error::trace(ErrorPlatform::kCPU,
+                      CTORCH_TRACE(ErrorPlatform::kCPU,
                                           "标量梯度值: " +
                                               std::to_string(grad_value));
 
@@ -1775,12 +1769,12 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                         }
                       }
                     }
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "result is zero: " +
                                             std::to_string(result_is_zero));
                   } catch (const std::exception &e) {
                     // 如果矩阵乘法失败，详细记录错误并创建零梯度
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "MatMul梯度计算失败，创建零梯度: " +
                                             std::string(e.what()));
                     std::vector<size_t> expected_shape =
@@ -1794,25 +1788,25 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                   // 对第二个输入的梯度是 A^T * grad
                   try {
                     // 打印调试信息
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "MatMul梯度计算：处理第二个输入");
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "输入形状: " +
                             std::to_string(input_node.tensor->sizes()[0]) +
                             "x" +
                             std::to_string(input_node.tensor->sizes()[1]));
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "另一个输入形状: " +
                             std::to_string(other_tensor.sizes()[0]) + "x" +
                             std::to_string(other_tensor.sizes()[1]));
-                    Ctorch_Error::trace(
+                    CTORCH_TRACE(
                         ErrorPlatform::kCPU,
                         "节点梯度形状: " +
                             std::to_string(node_grad.sizes().size()) + "D");
                     if (!node_grad.sizes().empty()) {
-                      Ctorch_Error::trace(
+                      CTORCH_TRACE(
                           ErrorPlatform::kCPU,
                           "节点梯度维度: " +
                               std::to_string(node_grad.sizes()[0]) + "x" +
@@ -1825,7 +1819,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                     if (is_scalar_grad) {
                       // 标量情况：A^T * grad 等同于 A^T * grad_value
                       float grad_value = node_grad.item<float>();
-                      Ctorch_Error::trace(ErrorPlatform::kCPU,
+                      CTORCH_TRACE(ErrorPlatform::kCPU,
                                           "标量梯度值: " +
                                               std::to_string(grad_value));
 
@@ -1859,7 +1853,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                           break;
                         }
                       }
-                      Ctorch_Error::trace(ErrorPlatform::kCPU,
+                      CTORCH_TRACE(ErrorPlatform::kCPU,
                                           "node_grad is zero: " +
                                               std::to_string(is_zero));
 
@@ -1881,12 +1875,12 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                         }
                       }
                     }
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "result is zero: " +
                                             std::to_string(result_is_zero));
                   } catch (const std::exception &e) {
                     // 如果矩阵乘法失败，详细记录错误并创建零梯度
-                    Ctorch_Error::trace(ErrorPlatform::kCPU,
+                    CTORCH_TRACE(ErrorPlatform::kCPU,
                                         "MatMul梯度计算失败，创建零梯度: " +
                                             std::string(e.what()));
                     std::vector<size_t> expected_shape =
@@ -1899,7 +1893,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
                 }
               } else {
                 // 如果找不到另一个输入张量，创建一个零梯度
-                Ctorch_Error::trace(ErrorPlatform::kCPU,
+                CTORCH_TRACE(ErrorPlatform::kCPU,
                                     "MatMul梯度计算失败：找不到另一个输入张量");
                 std::vector<size_t> expected_shape = input_node.tensor->sizes();
                 input_grad_val = Tensor(ShapeTag{}, expected_shape,
@@ -1913,7 +1907,7 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
               input_grad_val = check_and_adjust_grad_shape(
                   node_grad, input_node.tensor->sizes());
             } else {
-              Ctorch_Error::trace(
+              CTORCH_TRACE(
                   ErrorPlatform::kCPU,
                   "不支持的操作类型: " +
                       std::to_string(static_cast<int>(node->operation)));
@@ -1961,16 +1955,16 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
               break;
             }
             default:
-              Ctorch_Error::throwException(ErrorPlatform::kCPU,
+              CtorchError::throwException(ErrorPlatform::kCPU,
                                            ErrorType::DATATYPE,
                                            "不支持的dtype类型");
             }
 
-            Ctorch_Error::trace(ErrorPlatform::kCPU,
+            CTORCH_TRACE(ErrorPlatform::kCPU,
                                 "节点 " + std::to_string(node->tensor_id) +
                                     " 向节点 " + std::to_string(input_id) +
                                     " 传播梯度");
-            Ctorch_Error::trace(
+            CTORCH_TRACE(
                 ErrorPlatform::kCPU,
                 "梯度形状: " + std::to_string(input_grad_val.sizes().size()) +
                     "D");
@@ -1980,13 +1974,13 @@ void AutoDiff::backward(Tensor &root, Tensor grad_output) {
     }
   }
 
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff, std::string("反向传播完成"));
-  Ctorch_Error::trace(ErrorPlatform::kAutoDiff,
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff, std::string("反向传播完成"));
+  CTORCH_TRACE(ErrorPlatform::kAutoDiff,
                       std::string("========================================"));
 }
 
 void AutoDiff::clear_graph() {
-  std::lock_guard lock(records_mutex);
+  std::lock_guard<std::mutex> lock(records_mutex);
   id_to_node.clear();
   pending_records.clear();
   retain_graph = false;

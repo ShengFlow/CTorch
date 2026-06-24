@@ -34,7 +34,7 @@ static float row_sum_2d(const Tensor& t, size_t row, size_t cols) {
 }
 
 void test_activation_functions() {
-    CtorchError::trace(ErrorPlatform::kCPU, "=== 测试激活函数 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "=== 测试激活函数 ===");
 
     // 创建上下文
     AutoDiff ctx;
@@ -43,19 +43,19 @@ void test_activation_functions() {
 
     // 创建测试张量
     Tensor x({-1.0f, 0.0f, 1.0f, 2.0f});
-    CtorchError::trace(ErrorPlatform::kCPU, "原始张量: Tensor(shape=[4], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "原始张量: Tensor(shape=[4], dtype=float)");
 
     // 测试 Sigmoid 激活函数
     Tensor sigmoid_result = x.sigmoid();
-    CtorchError::trace(ErrorPlatform::kCPU, "Sigmoid 结果: Tensor(shape=[4], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "Sigmoid 结果: Tensor(shape=[4], dtype=float)");
 
     // 测试 Tanh 激活函数
     Tensor tanh_result = x.tanh();
-    CtorchError::trace(ErrorPlatform::kCPU, "Tanh 结果: Tensor(shape=[4], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "Tanh 结果: Tensor(shape=[4], dtype=float)");
 
     // 测试 Softmax 激活函数
     Tensor softmax_result = x.softmax(0);
-    CtorchError::trace(ErrorPlatform::kCPU, "Softmax 结果: Tensor(shape=[4], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "Softmax 结果: Tensor(shape=[4], dtype=float)");
     // 单元测试：softmax 概率和为 1
     {
         const float* s = softmax_result.data<float>();
@@ -65,16 +65,16 @@ void test_activation_functions() {
     }
 
     // 测试带自动微分的激活函数
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试带自动微分的激活函数 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试带自动微分的激活函数 ===");
     Tensor y({-0.5f, 0.5f});
     y.requires_grad(true);
 
     Tensor sigmoid_with_grad = y.sigmoid();
     Tensor tanh_with_grad    = y.tanh();
 
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "带自动微分的 Sigmoid 结果: Tensor(shape=[2], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "带自动微分的 Tanh 结果: Tensor(shape=[2], dtype=float)");
 
     // 测试反向传播
@@ -82,11 +82,11 @@ void test_activation_functions() {
     backward(loss);
 
     Tensor grad_y = grad(y);
-    CtorchError::trace(ErrorPlatform::kCPU, "y 的梯度: Tensor(shape=[2], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "y 的梯度: Tensor(shape=[2], dtype=float)");
 }
 
 static void test_softmax_dim_and_backward() {
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 单元测试: softmax(dim) 前向/反向 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 单元测试: softmax(dim) 前向/反向 ===");
     AutoDiff ctx;
     AutoDiffContext::Guard guard(&ctx);
     CtorchError::setPrintLevel(PrintLevel::MINIUM);
@@ -127,7 +127,7 @@ static void test_softmax_dim_and_backward() {
 }
 
 void test_loss_functions() {
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试损失函数 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试损失函数 ===");
 
     // 创建上下文
     AutoDiff ctx;
@@ -138,17 +138,17 @@ void test_loss_functions() {
     Tensor y_pred({0.8f, 0.2f, 0.6f});
     Tensor y_true({1.0f, 0.0f, 0.5f});
 
-    CtorchError::trace(ErrorPlatform::kCPU, "预测值: Tensor(shape=[3], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU, "目标值: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "预测值: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "目标值: Tensor(shape=[3], dtype=float)");
 
     // 测试 MSE 损失函数
     Tensor mse_result = y_pred.mse_loss(y_true);
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "MSE 损失: " + std::to_string(mse_result.item<float>()));
 
     // 测试 MAE 损失函数
     Tensor mae_result = y_pred.mae_loss(y_true);
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "MAE 损失: " + std::to_string(mae_result.item<float>()));
 
     // 测试 CrossEntropy 损失函数
@@ -158,7 +158,7 @@ void test_loss_functions() {
 
     // CrossEntropy(kernel) 内部会对 logits 做 softmax，因此这里直接对 logits 计算 CE
     Tensor ce_result = logits.cross_entropy(targets);
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "CrossEntropy 损失: " + std::to_string(ce_result.item<float>()));
 
     // 单元测试：CE forward 数值（1D one-hot）应等于 -log(softmax(z)[0])
@@ -189,25 +189,25 @@ void test_loss_functions() {
     }
 
     // 测试带自动微分的损失函数
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试带自动微分的损失函数 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试带自动微分的损失函数 ===");
     Tensor y_pred_with_grad({0.7f, 0.3f});
     Tensor y_true_with_grad({1.0f, 0.0f});
 
     y_pred_with_grad.requires_grad(true);
 
     Tensor mse_with_grad = y_pred_with_grad.mse_loss(y_true_with_grad);
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "带自动微分的 MSE 损失: " + std::to_string(mse_with_grad.item<float>()));
 
     // 测试反向传播
     backward(mse_with_grad);
 
     Tensor grad_y_pred = grad(y_pred_with_grad);
-    CtorchError::trace(ErrorPlatform::kCPU, "y_pred 的梯度: Tensor(shape=[2], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "y_pred 的梯度: Tensor(shape=[2], dtype=float)");
 }
 
 void test_more_activation_functions() {
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试更多激活函数 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试更多激活函数 ===");
 
     // 创建上下文
     AutoDiff ctx;
@@ -216,19 +216,19 @@ void test_more_activation_functions() {
 
     // 创建测试张量
     Tensor x({-2.0f, -1.0f, 0.0f, 1.0f, 2.0f});
-    CtorchError::trace(ErrorPlatform::kCPU, "原始张量: Tensor(shape=[5], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "原始张量: Tensor(shape=[5], dtype=float)");
 
     // 测试 ReLU 激活函数
     Tensor relu_result = x.relu();
-    CtorchError::trace(ErrorPlatform::kCPU, "ReLU 结果: Tensor(shape=[5], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "ReLU 结果: Tensor(shape=[5], dtype=float)");
 
     // 测试带自动微分的 ReLU
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试带自动微分的 ReLU ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试带自动微分的 ReLU ===");
     Tensor y({-1.0f, 0.0f, 1.0f});
     y.requires_grad(true);
 
     Tensor relu_with_grad = y.relu();
-    CtorchError::trace(ErrorPlatform::kCPU,
+    CTORCH_TRACE(ErrorPlatform::kCPU,
                         "带自动微分的 ReLU 结果: Tensor(shape=[3], dtype=float)");
 
     // 测试反向传播
@@ -236,11 +236,11 @@ void test_more_activation_functions() {
     backward(loss);
 
     Tensor grad_y = grad(y);
-    CtorchError::trace(ErrorPlatform::kCPU, "y 的梯度: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "y 的梯度: Tensor(shape=[3], dtype=float)");
 }
 
 void test_tensor_operations() {
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试张量操作 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试张量操作 ===");
 
     // 创建上下文
     AutoDiff ctx;
@@ -250,8 +250,8 @@ void test_tensor_operations() {
     // 测试不同形状的张量
     Tensor a({1.0f, 2.0f, 3.0f});
     Tensor b({4.0f, 5.0f, 6.0f});
-    CtorchError::trace(ErrorPlatform::kCPU, "张量 a: Tensor(shape=[3], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU, "张量 b: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "张量 a: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "张量 b: Tensor(shape=[3], dtype=float)");
 
     // 测试基本运算
     Tensor add_result = a + b;
@@ -259,20 +259,20 @@ void test_tensor_operations() {
     Tensor mul_result = a * b;
     Tensor div_result = a / b;
 
-    CtorchError::trace(ErrorPlatform::kCPU, "a + b: Tensor(shape=[3], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU, "a - b: Tensor(shape=[3], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU, "a * b: Tensor(shape=[3], dtype=float)");
-    CtorchError::trace(ErrorPlatform::kCPU, "a / b: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "a + b: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "a - b: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "a * b: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "a / b: Tensor(shape=[3], dtype=float)");
 
     // 测试广播操作
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试广播操作 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试广播操作 ===");
     Tensor scalar(2.0f);
     Tensor broadcast_result = a * scalar;
-    CtorchError::trace(ErrorPlatform::kCPU, "a * 2.0: Tensor(shape=[3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "a * 2.0: Tensor(shape=[3], dtype=float)");
 }
 
 void test_random_tensors() {
-    CtorchError::trace(ErrorPlatform::kCPU, "\n=== 测试随机数生成 ===");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "\n=== 测试随机数生成 ===");
 
     // 创建上下文
     AutoDiff ctx;
@@ -283,11 +283,11 @@ void test_random_tensors() {
     Tensor rand_tensor({0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f});
     rand_tensor.rand();
     Tensor reshaped_rand = rand_tensor.reshape({3, 3});
-    CtorchError::trace(ErrorPlatform::kCPU, "随机张量: Tensor(shape=[3, 3], dtype=float)");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "随机张量: Tensor(shape=[3, 3], dtype=float)");
 }
 
 int main() {
-    CtorchError::trace(ErrorPlatform::kCPU, "开始测试激活函数和损失函数...");
+    CTORCH_TRACE(ErrorPlatform::kCPU, "开始测试激活函数和损失函数...");
 
     // 测试激活函数
     test_activation_functions();

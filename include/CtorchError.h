@@ -607,4 +607,16 @@ public:
     }
 };
 
+/**
+ * @def CTORCH_TRACE
+ * @brief 编译期可控的 TRACE 日志宏
+ * @details 仅在定义了 CTORCH_DEBUG 时才会输出 TRACE 日志，
+ *          Release 构建中完全消失，零运行时开销。
+ */
+#ifdef CTORCH_DEBUG
+    #define CTORCH_TRACE(platform, msg) CtorchError::trace(platform, msg)
+#else
+    #define CTORCH_TRACE(platform, msg) ((void)0)
+#endif
+
 #endif //CTORCH_ERROR_H
