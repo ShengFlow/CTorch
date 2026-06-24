@@ -10,16 +10,11 @@
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 
-// 说明：此 BASIC 版本 softmax 的实现与 Tensor::softmax 的数值稳定手写实现保持一致：
-//  - 对每一行/向量先减去该行最大值，再做 exp，再按行归一化；
-//  - 当前仅支持 float，且只处理 1D / 2D（2D 默认按最后一维做 softmax，典型形状为 [batch, num_classes]）。
-Tensor Softmax_BASIC_kernel(const Tensor &a) {
-    // 校验设备：仅支持CPU张量
+Tensor Softmax_BASIC_kernel(const Tensor &a, int dim) {
     if (a.device() != DeviceType::kCPU) {
-        CtorchError::log(ErrorLevel::ERROR,
-                          DeviceTypeToErrorPlatform(a.device()),
-                          ErrorType::DEVICE_COMPAT,
-                          "CPU-BASIC Softmax_Kernel: 仅在CPU支持");
+        CtorchError::throwException(DeviceTypeToErrorPlatform(a.device()),
+                                     ErrorType::DEVICE_COMPAT,
+                                     "CPU-BASIC Softmax_Kernel: 仅在CPU支持");
     }
 
     if (a.dtype() != DType::kFloat) {
@@ -28,73 +23,57 @@ Tensor Softmax_BASIC_kernel(const Tensor &a) {
     }
 
     const auto &shape = a.sizes();
-    size_t dim = shape.size();
-    if (dim == 0) {
+    size_t rank = shape.size();
+    if (rank == 0) {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                      "CPU-BASIC Softmax_Kernel: 不支持标量");
     }
 
-    // 构造输出张量
+    int d = dim;
+    if (d < 0) d += static_cast<int>(rank);
+    if (d < 0 || d >= static_cast<int>(rank)) {
+        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                                     "CPU-BASIC Softmax_Kernel: dim 越界");
+    }
+    size_t softmax_dim = static_cast<size_t>(d);
+
     Tensor result(ShapeTag{}, shape, a.dtype(), a.device());
     const float *in = a.data<float>();
     float *out      = result.data<float>();
 
-    if (dim == 1) {
-        // 1D: 对整个向量做 softmax
-        size_t n = shape[0];
-        if (n == 0) return result;
+    size_t outer_size = 1;
+    for (size_t i = 0; i < softmax_dim; ++i) {
+        outer_size *= shape[i];
+    }
+    size_t inner_size = 1;
+    for (size_t i = softmax_dim + 1; i < rank; ++i) {
+        inner_size *= shape[i];
+    }
+    size_t dim_size = shape[softmax_dim];
 
-        // 先找最大值
-        float max_val = in[0];
-        for (size_t i = 1; i < n; ++i) {
-            if (in[i] > max_val) max_val = in[i];
-        }
+    for (size_t outer = 0; outer < outer_size; ++outer) {
+        for (size_t inner = 0; inner < inner_size; ++inner) {
+            size_t base = outer * dim_size * inner_size + inner;
 
-        // 计算 exp(x - max) 并累加
-        float sum = 0.0f;
-        for (size_t i = 0; i < n; ++i) {
-            float e = std::exp(in[i] - max_val);
-            out[i]  = e;
-            sum    += e;
-        }
-
-        // 归一化
-        if (sum > 0.0f) {
-            for (size_t i = 0; i < n; ++i) out[i] /= sum;
-        }
-    } else if (dim == 2) {
-        // 2D: 默认按照最后一维（列）做 softmax，典型用于 [batch, num_classes]
-        size_t rows = shape[0];
-        size_t cols = shape[1];
-        if (rows == 0 || cols == 0) return result;
-
-        for (size_t i = 0; i < rows; ++i) {
-            // 每一行先找最大值
-            float max_val = in[i * cols];
-            for (size_t j = 1; j < cols; ++j) {
-                float v = in[i * cols + j];
+            float max_val = in[base];
+            for (size_t j = 1; j < dim_size; ++j) {
+                float v = in[base + j * inner_size];
                 if (v > max_val) max_val = v;
             }
 
-            // 计算 exp(x - max) 并累加
             float sum = 0.0f;
-            for (size_t j = 0; j < cols; ++j) {
-                float e = std::exp(in[i * cols + j] - max_val);
-                out[i * cols + j] = e;
+            for (size_t j = 0; j < dim_size; ++j) {
+                float e = std::exp(in[base + j * inner_size] - max_val);
+                out[base + j * inner_size] = e;
                 sum += e;
             }
 
-            // 归一化
             if (sum > 0.0f) {
-                for (size_t j = 0; j < cols; ++j) {
-                    out[i * cols + j] /= sum;
+                for (size_t j = 0; j < dim_size; ++j) {
+                    out[base + j * inner_size] /= sum;
                 }
             }
         }
-    } else {
-        CtorchError::throwException(
-            ErrorPlatform::kCPU, ErrorType::DIMENSION,
-            "CPU-BASIC Softmax_Kernel: 暂仅支持 1D / 2D（如 [N] 或 [batch, classes]）");
     }
 
     return result;

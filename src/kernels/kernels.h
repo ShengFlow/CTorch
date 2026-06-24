@@ -184,13 +184,14 @@ Tensor Sigmoid_MPS_kernel(const Tensor& a);
  * @brief 基本Softmax算子实现
  * @details 执行张量的Softmax操作
  * @param a 输入张量
+ * @param dim 沿哪个维度做softmax，-1表示最后一维
  * @return Softmax结果张量
  */
-Tensor Softmax_BASIC_kernel(const Tensor& a);
-Tensor Softmax_SIMD_kernel(const Tensor& a);
-Tensor Softmax_CUDA_kernel(const Tensor& a);
-Tensor Softmax_AMX_kernel(const Tensor& a);
-Tensor Softmax_MPS_kernel(const Tensor& a);
+Tensor Softmax_BASIC_kernel(const Tensor& a, int dim = -1);
+Tensor Softmax_SIMD_kernel(const Tensor& a, int dim = -1);
+Tensor Softmax_CUDA_kernel(const Tensor& a, int dim = -1);
+Tensor Softmax_AMX_kernel(const Tensor& a, int dim = -1);
+Tensor Softmax_MPS_kernel(const Tensor& a, int dim = -1);
 
 /**
  * @brief 基本LReLU算子实现

@@ -39,18 +39,7 @@
 // #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
 // ======================= 前向声明 =======================
 class Tensor;
-// class Storage;
 class Node;
-// namespace AutoGrad{
-// extern thread_local bool EnableGrad;
-// void backward(std::shared_ptr<Node> root, bool retainGraph);
-// template <typename T>
-//     void registerNode(std::vector<Tensor> inputs, std::weak_ptr<Tensor> result) {
-//     if (EnableGrad) {
-//         DataCore::registerNode<T>(inputs,result);
-//     }
-// }
-// }
 // ======================= 存储类 (Storage) =======================
 
 /**
@@ -60,10 +49,8 @@ class Node;
  */
 
 // ======================= 张量类 (Tensor) =======================
-struct ShapeTag {}; // 此处结构体为了使编译器区分构造函数
 
-// 引入自动微分系统
-// #include "AutoGrad.h"
+struct ShapeTag {}; // 用于在构造时明确指定形状（区分 size_t 构造）
 
 /**
  * @brief 矩阵乘法函数
@@ -80,8 +67,6 @@ Tensor matMul(const Tensor &a, const Tensor &b);
  */
 class Tensor {
   private:
-    friend class AutoDiff;  // v1 AD 引擎保留，允许其访问私有 tensor_id_
-
     /**
      * @var _node 与该张量相关的Node
      */
@@ -491,7 +476,6 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> [[nodiscard]] const T *data() const {
-        checkDType<T>();
         if (!check_storage_offset()) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
@@ -506,7 +490,6 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> T *data() {
-        checkDType<T>();
         if (!check_storage_offset()) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
@@ -1029,30 +1012,6 @@ class Tensor {
      */
     Tensor mae_loss(const Tensor &target) const;
 
-    //  ======================= 自动微分 =======================
-
-    // /**
-    //  * @brief 反向传播
-    //  * @details 从当前张量开始，计算所有梯度
-    //  */
-    // void backward() const {
-    //     if (auto node = getRelatedNode()) {
-    //         AutoGrad::backward(node,false);
-    //     }
-    // }
-
-    // /**
-    //  * @brief 反向传播（带有梯度输出）
-    //  * @param grad_output 输出梯度
-    //  * @details 从当前张量开始，使用指定的输出梯度计算所有梯度
-    //  */
-    // void backward() const {
-    //     if (auto node = getRelatedNode()) {
-    //         // 这里需要处理grad_output，暂时使用默认实现
-    //         AutoGrad::backward(node, false);
-    //     }
-    // }
-
     //  ======================= 统一矩阵乘法接口 =======================
 
     /**
@@ -1088,26 +1047,6 @@ class Tensor {
         return Tensor(ShapeTag{}, _shape, _dtype, _device, true);
     }
 };
-
-/**
- * @brief 全局的backward函数，用于启动反向传播
- * @param root 根张量
- */
-void backward(Tensor &root);
-
-/**
- * @brief 全局的backward函数，用于启动反向传播（带有梯度输出）
- * @param root 根张量
- * @param grad_output 输出梯度
- */
-void backward(Tensor &root, Tensor grad_output);
-
-/**
- * @brief 全局的grad函数，用于获取张量的梯度
- * @param t 输入张量
- * @return 梯度张量
- */
-Tensor grad(const Tensor &t);
 
 // ======================= 标量操作符重载（右操作数） =======================
 

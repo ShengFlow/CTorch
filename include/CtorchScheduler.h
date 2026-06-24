@@ -10,7 +10,10 @@
 #define CTORCH_SCHEDULER_H
 #include "CtorchError.h"
 #include "Tensor.h"
+#include "Arena.h"
 #include "AutoGrad.h"
+#include "AutoGrad/DataCore.h"
+#include "AutoGrad/Nodes/GradAccumulator.h"
 #include "AutoGrad/Nodes/AddNode.h"
 #include "AutoGrad/Nodes/SubNode.h"
 #include "AutoGrad/Nodes/MulNode.h"
@@ -39,6 +42,8 @@ private:
     std::unordered_map<op, std::unordered_map<DeviceType, BinaryKernelFunc>> binary_kernel_map_;
     // 单输入算子映射表
     std::unordered_map<op, std::unordered_map<DeviceType, UnaryKernelFunc>> unary_kernel_map_;
+    // softmax 算子映射表（带 dim 参数）
+    std::unordered_map<DeviceType, Tensor (*)(const Tensor&, int)> softmax_kernel_map_;
 
     // 私有方法：初始化kernel映射表（注册所有kernel）
     void initKernelMap() {
@@ -61,7 +66,8 @@ private:
         unary_kernel_map_[op::Sin][DeviceType::kCPU] = Sin_BASIC_kernel;
         unary_kernel_map_[op::Tanh][DeviceType::kCPU] = Tanh_BASIC_kernel;
         unary_kernel_map_[op::Sigmoid][DeviceType::kCPU] = Sigmoid_BASIC_kernel;
-        unary_kernel_map_[op::Softmax][DeviceType::kCPU] = Softmax_BASIC_kernel;
+
+        softmax_kernel_map_[DeviceType::kCPU] = Softmax_BASIC_kernel;
         
         // LReLU算子 - 仅注册映射关系，不绑定具体函数
         unary_kernel_map_[op::LReLU];
@@ -72,6 +78,7 @@ public:
         std::lock_guard<std::mutex> lock(instance_.mutex_);
         if (instance_.if_first) {
             printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Ctorch Scheduler Started\n", getFormattedTimeMs().c_str(), getTimestampMs());
+            instance_.initKernelMap();
             instance_.if_first = false;
         }
         return instance_;
@@ -108,16 +115,8 @@ public:
             CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
         }
 
-        // 获取调度器实例，初始化kernel映射表（仅首次调用）
+        // 获取调度器实例
         CtorchScheduler &instance = getInstance();
-        {
-            std::lock_guard<std::mutex> lock(instance.mutex_);
-            static bool kernel_map_inited = false;
-            if (!kernel_map_inited) {
-                instance.initKernelMap();
-                kernel_map_inited = true;
-            }
-        }
 
         // 确定目标设备，查找可用kernel
         DeviceType target_dev = getTargetDevice(a, b);
@@ -151,13 +150,13 @@ public:
         }
         // 调用kernel，执行计算并返回结果
         Tensor result = target_kernel(a, b);
-        
-        // 记录操作到计算图（使用AutoGrad）
-        result.requires_grad(true);
-        auto result_ptr = std::make_shared<Tensor>(result);
-        // 根据op_type注册对应的节点
-        if (AutoGrad::EnableGrad) {
 
+        // 记录操作到计算图（使用AutoGrad）
+        // 语义与单输入版本保持一致：只有当启用 grad 且至少一个输入需要 grad 时，才挂上节点。
+        if (AutoGrad::EnableGrad && (a.requires_grad() || b.requires_grad())) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            // 根据op_type注册对应的节点
             std::weak_ptr<Tensor> result_weak = result_ptr;
             switch (op_type) {
             case op::Add:
@@ -191,16 +190,8 @@ public:
 
     // 公共接口实现：dispatch（单输入算子）
     Tensor dispatch(const Tensor& a, op op_type) {
-        // 获取调度器实例，初始化kernel映射表（仅首次调用）
+        // 获取调度器实例
         CtorchScheduler &instance = getInstance();
-        {
-            std::lock_guard<std::mutex> lock(instance.mutex_);
-            static bool kernel_map_inited = false;
-            if (!kernel_map_inited) {
-                instance.initKernelMap();
-                kernel_map_inited = true;
-            }
-        }
 
         // 确定目标设备，查找可用kernel
         DeviceType target_dev = a.device();
@@ -226,33 +217,29 @@ public:
         Tensor result = target_kernel(a);
         
         // 记录操作到计算图（使用AutoGrad）
-        if (a.requires_grad()) {
+        if (AutoGrad::EnableGrad && a.requires_grad()) {
             result.requires_grad(true);
             // 根据op_type注册对应的节点
             auto result_ptr = std::make_shared<Tensor>(result);
             std::weak_ptr<Tensor> result_weak = result_ptr;
-            std::vector<Tensor> inputs = {a};
             switch (op_type) {
                 case op::Neg:
-                    AutoGrad::registerNode<NegNode>(inputs, result_weak);
+                    AutoGrad::registerNode<NegNode>(a, result_weak);
                     break;
                 case op::ReLU:
-                    AutoGrad::registerNode<ReLUNode>(inputs, result_weak);
+                    AutoGrad::registerNode<ReLUNode>(a, result_weak);
                     break;
                 case op::Cos:
-                    AutoGrad::registerNode<CosNode>(inputs, result_weak);
+                    AutoGrad::registerNode<CosNode>(a, result_weak);
                     break;
                 case op::Sin:
-                    AutoGrad::registerNode<SinNode>(inputs, result_weak);
+                    AutoGrad::registerNode<SinNode>(a, result_weak);
                     break;
                 case op::Tanh:
-                    AutoGrad::registerNode<TanhNode>(inputs, result_weak);
+                    AutoGrad::registerNode<TanhNode>(a, result_weak);
                     break;
                 case op::Sigmoid:
-                    AutoGrad::registerNode<SigmoidNode>(inputs, result_weak);
-                    break;
-                case op::Softmax:
-                    AutoGrad::registerNode<SoftmaxNode>(inputs, result_weak);
+                    AutoGrad::registerNode<SigmoidNode>(a, result_weak);
                     break;
                 default:
                     break;
@@ -264,6 +251,58 @@ public:
             }
         }
         
+        return result;
+    }
+
+    Tensor dispatch_softmax(const Tensor& a, int dim = -1) {
+        CtorchScheduler &instance = getInstance();
+
+        DeviceType target_dev = a.device();
+        Tensor (*target_kernel)(const Tensor&, int) = nullptr;
+
+        {
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            auto dev_it = instance.softmax_kernel_map_.find(target_dev);
+            if (dev_it != instance.softmax_kernel_map_.end() && isDeviceAvailable(target_dev)) {
+                target_kernel = dev_it->second;
+            }
+        }
+
+        if (target_kernel == nullptr) {
+            CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
+        }
+
+        Tensor result = target_kernel(a, dim);
+
+        if (AutoGrad::EnableGrad && a.requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+
+            Arena &arena = Arena::getInstance();
+            std::vector<std::shared_ptr<Node>> upStreamNodes;
+
+            Tensor& nonConstA = const_cast<Tensor&>(a);
+            if (nonConstA.getRelatedNode() == nullptr) {
+                nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
+            }
+            upStreamNodes.push_back(nonConstA.getRelatedNode());
+
+            std::vector<Tensor> inputs = {a};
+            const auto node = arena.invoke<SoftmaxNode>(upStreamNodes, inputs, result_weak, dim);
+            if (result_weak.lock()) {
+                result_weak.lock()->setRelatedNode(node);
+                for (auto& upStream : upStreamNodes) {
+                    if (upStream != nullptr) {
+                        upStream->increase();
+                    }
+                }
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
         return result;
     }
 

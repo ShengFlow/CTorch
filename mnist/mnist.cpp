@@ -2,10 +2,13 @@
 #include "AutoGrad.h"
 #include "CtorchError.h"
 #include "Ctools.h"
+#include "ctQALS/Random.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
 #include <chrono>
+
+static ctQALS::rng::Xoshiro256PlusPlus g_mnist_rng(42);
 
 // 两隐藏层 MLP: 784 -> 256(ReLU) -> 128(ReLU) -> 10
 class NeuralNetwork {
@@ -15,9 +18,10 @@ private:
     
     static void xavier_init(Tensor& W, size_t fan_in) {
         float std = std::sqrt(1.0f / fan_in);
+        float* data = W.data<float>();
         for (size_t i = 0; i < W.numel(); ++i) {
-            float r = (2.0f * rand() / static_cast<float>(RAND_MAX)) - 1.0f;
-            W.data<float>()[i] = r * std;
+            float r = 2.0f * g_mnist_rng.uniform_f32() - 1.0f;
+            data[i] = r * std;
         }
     }
     
@@ -203,8 +207,7 @@ int main() {
         // MINIUM=少输出, FULL=显示TRACE(含阶段3、W2梯度验证)
         CtorchError::setPrintLevel(PrintLevel::MINIUM);
         
-        // 设置随机种子
-        srand(42);
+        // 设置随机种子（使用 ctQALS Xoshiro256++，种子 42，在全局 g_mnist_rng 中设置）
         
         // 加载MNIST数据
 

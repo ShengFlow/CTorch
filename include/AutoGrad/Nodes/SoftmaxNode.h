@@ -11,10 +11,12 @@
 #include "AutoGrad/Node.h"
 
 class SoftmaxNode final:public Node {
+private:
+    int _dim = -1;
 public:
     SoftmaxNode() = default;
     SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
-    SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+    SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result, int dim = -1);
     std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) override;
 };
 

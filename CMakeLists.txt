@@ -23,8 +23,8 @@ set(CT-Core
         src/ThreadPool.cpp
         src/AutoGrad/ComputeCore.cpp
         src/Arena.cpp
-        src/AutoGrad.cpp
         src/Assertion.cpp
+        src/AutoGrad.cpp
 )
 
 set(CT-Core-Headers
@@ -57,16 +57,6 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/CrossEntropyNode.h
         include/AutoGrad/Nodes/SoftmaxNode.h
         include/AutoGrad/Nodes/GradAccumulator.h
-        include/AutoGrad/Nodes/MatMulNode.h
-        include/AutoGrad/Nodes/CosNode.h
-        include/AutoGrad/Nodes/CrossEntropyNode.h
-        include/AutoGrad/Nodes/DivNode.h
-        include/AutoGrad/Nodes/NegNode.h
-        include/AutoGrad/Nodes/ReLUNode.h
-        include/AutoGrad/Nodes/SigmoidNode.h
-        include/AutoGrad/Nodes/SinNode.h
-        include/AutoGrad/Nodes/SoftmaxNode.h
-        include/AutoGrad/Nodes/TanhNode.h
 )
 
 set(CT-Nodes
@@ -85,16 +75,6 @@ set(CT-Nodes
         src/AutoGrad/Nodes/CrossEntropyNode.cpp
         src/AutoGrad/Nodes/SoftmaxNode.cpp
         src/AutoGrad/Nodes/GradAccumulator.cpp
-        src/AutoGrad/Nodes/CosNode.cpp
-        src/AutoGrad/Nodes/CrossEntropyNode.cpp
-        src/AutoGrad/Nodes/DivNode.cpp
-        src/AutoGrad/Nodes/MatMulNode.cpp
-        src/AutoGrad/Nodes/NegNode.cpp
-        src/AutoGrad/Nodes/ReLUNode.cpp
-        src/AutoGrad/Nodes/SigmoidNode.cpp
-        src/AutoGrad/Nodes/SinNode.cpp
-        src/AutoGrad/Nodes/SoftmaxNode.cpp
-        src/AutoGrad/Nodes/TanhNode.cpp
 )
 
 set(CT-CPU-BASIC-OPs
@@ -159,18 +139,8 @@ add_compile_options(-march=native)
 # 链接 Accelerate 框架（用于 AMX BLAS 加速）
 target_link_libraries(CTorch PUBLIC "-framework Accelerate")
 
-# 注释掉老版本的测试文件编译
-# add_executable(PerformanceTest src/tests/performance_test.cpp)
-# add_executable(StdTest src/tests/test.cpp)
-# add_executable(ActivationLossTest src/tests/test_activation_loss.cpp)
-# add_executable(TensorGradTest src/tests/test_tensor_grad.cpp)
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 
-# target_link_libraries(PerformanceTest PRIVATE CTorch)
-# target_link_libraries(StdTest PRIVATE CTorch)
-# target_link_libraries(ActivationLossTest PRIVATE CTorch)
-# target_link_libraries(TensorGradTest PRIVATE CTorch)
-# Ignore warnings
 add_compile_options(-Wno-ignored-attributes)
 
 # Discover all GDB pretty-printer Python modules in scripts/
@@ -377,8 +347,8 @@ if (${TEST_ENABLED})
 
     foreach (TEST ${TESTS_TO_BUILD})
         get_filename_component(TEST_NAME ${TEST} NAME_WE)
-        add_executable(${TEST_NAME} ${TEST}
-                src/tests/units/ctQALS/test_rng.cpp)
+        # 每个测试文件自带 main()，不再向其注入 test_rng.cpp（曾导致 _main 重复）
+        add_executable(${TEST_NAME} ${TEST})
         target_link_libraries(${TEST_NAME} PRIVATE CTorch)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endforeach ()

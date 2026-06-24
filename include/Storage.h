@@ -60,10 +60,7 @@ private:
            (std::is_same<T, int32_t>::value && _dtype != DType::kInt) ||
            (std::is_same<T, int64_t>::value && _dtype != DType::kLong) ||
            (std::is_same<T, bool>::value && _dtype != DType::kBool)) {
-           std::cerr << "Storage data type mismatch: T=" << typeid(T).name()
-                     << ", dtype=" << dtypeToString(_dtype) << std::endl;
-           CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"数据类型不匹配！");
-           throw std::runtime_error("Storage data type mismatch");
+           CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "Storage data type mismatch");
        }
    }
 

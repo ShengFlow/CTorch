@@ -137,20 +137,6 @@ enum class PrintLevel {
     FULL = 2,    ///< 全部级别输出
 };
 
-// ==================== 统一矩阵乘法接口 ====================
-
-/**
- * @enum MatMulStrategy
- * @brief 矩阵乘法算法选择策略枚举
- */
-enum class MatMulStrategy {
-    AUTO,           ///< 自动选择
-    NAIVE,          ///< 朴素算法
-    BLOCKED,        ///< 分块优化
-    STRASSEN,       ///< Strassen递归算法
-    OPTIMIZED       ///< 最优算法组合
-};
-
 /**
  * @enum DeviceType
  * @brief 设备类型枚举，定义张量存储的位置

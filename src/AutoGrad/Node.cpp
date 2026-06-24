@@ -41,11 +41,19 @@ Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
            const std::weak_ptr<Tensor> &result)
                :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result)
-{}
+{
+    if (auto t = result.lock()) {
+        _resultShape = t->sizes();
+    }
+}
 
 Node::Node(const std::weak_ptr<Tensor> &result)
     :_upStreamNodes(std::vector<std::shared_ptr<Node>>()),_inputs(std::vector<Tensor>()),_result(result)
-{}
+{
+    if (auto t = result.lock()) {
+        _resultShape = t->sizes();
+    }
+}
 
 
 std::vector<std::shared_ptr<Node>> Node::getUpStreamNodes() const {return _upStreamNodes; }

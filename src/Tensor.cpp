@@ -147,7 +147,6 @@ T Tensor::item() const {
     if (numel() != 1) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量不是标量");
     }
-    checkDType<T>();
     const T* data_ptr = _storage.data<T>();
     if (!data_ptr) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, "张量数据为null");
@@ -487,9 +486,6 @@ Tensor Tensor::matmul(const Tensor& other) const {
     // 使用调度器执行矩阵乘法
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, other, op::MatMul);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
@@ -517,17 +513,11 @@ Tensor Tensor::relu() const {
     // 简单实现ReLU激活函数
     Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::ReLU);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
 Tensor Tensor::dot(const Tensor &other) const{
     Tensor result = CtorchScheduler::getInstance().dispatch(*this,other,op::Dot);
-
-    // 记录操作到计算图
-
 
     return result;
 }
@@ -535,17 +525,11 @@ Tensor Tensor::dot(const Tensor &other) const{
 Tensor Tensor::cos() const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::Cos);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
 Tensor Tensor::sin() const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::Sin);
-
-    // 记录操作到计算图
-
 
     return result;
 }
@@ -567,9 +551,6 @@ Tensor Tensor::sum() const {
             *result_data = sum;
         }
     }
-
-    // 记录操作到计算图
-
 
     return result;
 }
@@ -676,7 +657,10 @@ Tensor Tensor::operator*(const Tensor& other) const { return binaryOpImpl<op::Mu
 // ======================= 标量运算符 (Tensor op float) =======================
 
 Tensor Tensor::operator*(float scalar) const {
-    return scalarOpImpl(*this, scalar, [](auto& val, auto s) { val *= s; });
+    Tensor scalar_tensor(scalar);
+    scalar_tensor = scalar_tensor.to(_dtype);
+    scalar_tensor._device = _device;
+    return binaryOpImpl<op::Mul>(*this, scalar_tensor);
 }
 
 // 一元负号运算符
@@ -688,11 +672,17 @@ Tensor Tensor::operator-() const {
 Tensor Tensor::operator+(const Tensor& other) const { return binaryOpImpl<op::Add>(*this, other); }
 
 Tensor Tensor::operator+(float scalar) const {
-    return scalarOpImpl(*this, scalar, [](auto& val, auto s) { val += s; });
+    Tensor scalar_tensor(scalar);
+    scalar_tensor = scalar_tensor.to(_dtype);
+    scalar_tensor._device = _device;
+    return binaryOpImpl<op::Add>(*this, scalar_tensor);
 }
 
 Tensor Tensor::operator-(float scalar) const {
-    return scalarOpImpl(*this, scalar, [](auto& val, auto s) { val -= s; });
+    Tensor scalar_tensor(scalar);
+    scalar_tensor = scalar_tensor.to(_dtype);
+    scalar_tensor._device = _device;
+    return binaryOpImpl<op::Sub>(*this, scalar_tensor);
 }
 
 Tensor Tensor::operator/(float scalar) const {
@@ -737,11 +727,6 @@ bool Tensor::check_index_bounds(const std::vector<size_t>& indices) const {
 }
 
 // ======================= 全局函数实现 =======================
-
-// 全局的grad函数，用于获取张量的梯度
-Tensor grad(const Tensor& t) {
-    return t.grad();
-}
 
 // 全局的matMul函数
 Tensor matMul(const Tensor &a, const Tensor &b) {
@@ -834,9 +819,6 @@ template void Tensor::checkDType<int64_t>() const;
 Tensor Tensor::tanh() const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, op::Tanh);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
@@ -844,161 +826,12 @@ Tensor Tensor::tanh() const {
 Tensor Tensor::sigmoid() const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, op::Sigmoid);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
 // Softmax激活函数
 Tensor Tensor::softmax(int dim) const {
-    // 彻底实现 dim-softmax（目前支持 1D/2D；dim=-1 表示最后一维）
-    std::vector<size_t> shape = this->sizes();
-    if (shape.empty()) {
-        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                     "Softmax: 不支持标量 softmax");
-    }
-
-    int rank = static_cast<int>(shape.size());
-    if (dim < 0) dim += rank; // -1 -> last dim
-    if (dim < 0 || dim >= rank) {
-        CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                     "Softmax: dim 越界");
-    }
-
-    if (this->device() != DeviceType::kCPU) {
-        CtorchError::throwException(DeviceTypeToErrorPlatform(this->device()),
-                                     ErrorType::DEVICE_COMPAT,
-                                     "Softmax: 当前仅实现 CPU");
-    }
-
-    Tensor result(ShapeTag{}, shape, this->dtype(), this->device());
-
-    if (shape.size() == 1) {
-        // 1D: 只有 dim=0 合法
-        if (dim != 0) {
-            CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                         "Softmax: 1D 张量仅支持 dim=0/-1");
-        }
-        size_t n = this->numel();
-        switch (this->dtype()) {
-        case DType::kFloat: {
-            const float* in = this->data<float>();
-            float* out = result.data<float>();
-            float max_val = in[0];
-            for (size_t i = 1; i < n; ++i) if (in[i] > max_val) max_val = in[i];
-            float sum = 0.0f;
-            for (size_t i = 0; i < n; ++i) { out[i] = std::exp(in[i] - max_val); sum += out[i]; }
-            for (size_t i = 0; i < n; ++i) out[i] /= sum;
-            break;
-        }
-        case DType::kDouble: {
-            const double* in = this->data<double>();
-            double* out = result.data<double>();
-            double max_val = in[0];
-            for (size_t i = 1; i < n; ++i) if (in[i] > max_val) max_val = in[i];
-            double sum = 0.0;
-            for (size_t i = 0; i < n; ++i) { out[i] = std::exp(in[i] - max_val); sum += out[i]; }
-            for (size_t i = 0; i < n; ++i) out[i] /= sum;
-            break;
-        }
-        default:
-            CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
-                                         "Softmax: 仅支持 float/double");
-        }
-    } else if (shape.size() == 2) {
-        size_t rows = shape[0];
-        size_t cols = shape[1];
-        // 2D: 支持 dim=0 或 dim=1
-        if (dim != 0 && dim != 1) {
-            CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                         "Softmax: 2D 张量仅支持 dim=0/1/-1");
-        }
-        switch (this->dtype()) {
-        case DType::kFloat: {
-            const float* in = this->data<float>();
-            float* out = result.data<float>();
-            if (dim == 1) {
-                // 按行 softmax
-                for (size_t i = 0; i < rows; ++i) {
-                    float max_val = in[i * cols];
-                    for (size_t j = 1; j < cols; ++j) {
-                        float v = in[i * cols + j];
-                        if (v > max_val) max_val = v;
-                    }
-                    float sum = 0.0f;
-                    for (size_t j = 0; j < cols; ++j) {
-                        float e = std::exp(in[i * cols + j] - max_val);
-                        out[i * cols + j] = e;
-                        sum += e;
-                    }
-                    for (size_t j = 0; j < cols; ++j) out[i * cols + j] /= sum;
-                }
-            } else {
-                // 按列 softmax
-                for (size_t j = 0; j < cols; ++j) {
-                    float max_val = in[j];
-                    for (size_t i = 1; i < rows; ++i) {
-                        float v = in[i * cols + j];
-                        if (v > max_val) max_val = v;
-                    }
-                    float sum = 0.0f;
-                    for (size_t i = 0; i < rows; ++i) {
-                        float e = std::exp(in[i * cols + j] - max_val);
-                        out[i * cols + j] = e;
-                        sum += e;
-                    }
-                    for (size_t i = 0; i < rows; ++i) out[i * cols + j] /= sum;
-                }
-            }
-            break;
-        }
-        case DType::kDouble: {
-            const double* in = this->data<double>();
-            double* out = result.data<double>();
-            if (dim == 1) {
-                for (size_t i = 0; i < rows; ++i) {
-                    double max_val = in[i * cols];
-                    for (size_t j = 1; j < cols; ++j) {
-                        double v = in[i * cols + j];
-                        if (v > max_val) max_val = v;
-                    }
-                    double sum = 0.0;
-                    for (size_t j = 0; j < cols; ++j) {
-                        double e = std::exp(in[i * cols + j] - max_val);
-                        out[i * cols + j] = e;
-                        sum += e;
-                    }
-                    for (size_t j = 0; j < cols; ++j) out[i * cols + j] /= sum;
-                }
-            } else {
-                for (size_t j = 0; j < cols; ++j) {
-                    double max_val = in[j];
-                    for (size_t i = 1; i < rows; ++i) {
-                        double v = in[i * cols + j];
-                        if (v > max_val) max_val = v;
-                    }
-                    double sum = 0.0;
-                    for (size_t i = 0; i < rows; ++i) {
-                        double e = std::exp(in[i * cols + j] - max_val);
-                        out[i * cols + j] = e;
-                        sum += e;
-                    }
-                    for (size_t i = 0; i < rows; ++i) out[i * cols + j] /= sum;
-                }
-            }
-            break;
-        }
-        default:
-            CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
-                                         "Softmax: 仅支持 float/double");
-        }
-    }
-
-    // 记录操作到计算图
-
-
-    return result;
+    return CtorchScheduler::getInstance().dispatch_softmax(*this, dim);
 }
 
 // Max操作
@@ -1019,9 +852,6 @@ Tensor Tensor::max() const {
             *result_data = max_val;
         }
     }
-
-    // 记录操作到计算图
-
 
     return result;
 }
@@ -1045,18 +875,12 @@ Tensor Tensor::min() const {
         }
     }
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
 // Square操作
 Tensor Tensor::square() const {
     Tensor result = *this * *this;
-
-    // 记录操作到计算图
-
 
     return result;
 }
@@ -1065,9 +889,6 @@ Tensor Tensor::square() const {
 Tensor Tensor::mse_loss(const Tensor& target) const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::MSE);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
@@ -1075,18 +896,12 @@ Tensor Tensor::mse_loss(const Tensor& target) const {
 Tensor Tensor::cross_entropy(const Tensor& target) const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::CE);
 
-    // 记录操作到计算图
-
-
     return result;
 }
 
 // MAE损失函数
 Tensor Tensor::mae_loss(const Tensor& target) const {
     Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::MAE);
-
-    // 记录操作到计算图
-
 
     return result;
 }

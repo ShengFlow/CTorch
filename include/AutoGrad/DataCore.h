@@ -16,6 +16,34 @@ class DataCore {
 
   public:
     template <typename T>
+    static void registerNode(const Tensor& input, std::weak_ptr<Tensor> result) {
+        if (!input.requires_grad()) return;
+
+        Arena &arena = Arena::getInstance();
+        std::vector<std::shared_ptr<Node>> upStreamNodes;
+
+        Tensor& nonConstInput = const_cast<Tensor&>(input);
+        if (nonConstInput.getRelatedNode() == nullptr) {
+            nonConstInput.setRelatedNode(arena.invoke<GradAccumulator>(input));
+        }
+        upStreamNodes.push_back(nonConstInput.getRelatedNode());
+
+        std::vector<Tensor> inputs = {input};
+
+        const auto node = arena.invoke<T>(upStreamNodes, inputs, result);
+        if (result.lock()) {
+            result.lock()->setRelatedNode(node);
+            for (auto& upStream : upStreamNodes) {
+                if (upStream != nullptr) {
+                    upStream->increase();
+                }
+            }
+        } else {
+            CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "Tensor was destroyed but called.");
+        }
+    }
+
+    template <typename T>
     static void registerNode(const Tensor& a, const Tensor& b, std::weak_ptr<Tensor> result) {
         bool toContinue = false;
         if (a.requires_grad() || b.requires_grad()) {

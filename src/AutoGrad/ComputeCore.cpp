@@ -101,18 +101,6 @@ std::shared_ptr<Node> ComputeCore::tryPopReadyNode() {
     return node;
 }
 
-void ComputeCore::scheduleNode(const std::vector<GradPack> &newPacks) {
-    for (const auto &pack : newPacks) {
-        for (const auto &upstream : pack._targetNode->getUpStreamNodes()) {
-            if (upstream && upstream->decrease()) {
-                addReadyNode(upstream);
-            }
-        }
-    }
-}
-
-void ComputeCore::scheduleNode(std::shared_ptr<Node> root) { addReadyNode(std::move(root)); }
-
 ComputeCore &ComputeCore::getInstance() {
     static ComputeCore instance;
     return instance;
@@ -131,12 +119,23 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     AutoGrad::EnableGrad = false;
 
     GradBucket &bucket = GradBucket::getInstance();
-    
+
     // 清除梯度桶
     bucket.clear();
 
-    // 创建一个标量张量，值为1.0
+    // 构造初始 grad：标量 1.0 按 root 的输出形状广播。
+    // 这样所有反向节点收到的 downStreamGrad 都与输出同形，可以直接走 element-wise/matmul 路径。
+    const std::vector<size_t>& root_shape = root->getResultShape();
     Tensor grad_tensor(1.0f);
+    if (!root_shape.empty() && (root_shape.size() > 1 || (root_shape.size() == 1 && root_shape[0] != 1))) {
+        // root 不是 0D 标量，把初始 grad 广播到 root 的形状
+        Tensor broadcasted(ShapeTag{}, root_shape, grad_tensor.dtype(), grad_tensor.device());
+        const float scalar = grad_tensor.item<float>();
+        const size_t total = broadcasted.numel();
+        float* p = broadcasted.data<float>();
+        for (size_t i = 0; i < total; ++i) p[i] = scalar;
+        grad_tensor = broadcasted;
+    }
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - grad_tensor dim: " + std::to_string(grad_tensor.dim()));
     GradPack primary = {root, std::vector({grad_tensor}), -1};
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding primary grad pack");

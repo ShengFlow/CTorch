@@ -27,6 +27,7 @@ protected:
     std::vector<std::shared_ptr<Node>> _upStreamNodes;
     std::vector<Tensor> _inputs;
     std::weak_ptr<Tensor> _result;
+    std::vector<size_t> _resultShape;
     size_t _dependencies{0};
     std::atomic<size_t> _count{0};
     bool _requireAccelerate{false};
@@ -62,6 +63,15 @@ public:
     virtual std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) = 0;
 
     void restoreRecursive(std::unordered_set<Node*>& visited);
+
+    // 获取该节点对应的输出张量（可能为 nullptr 如果已经被释放）
+    [[nodiscard]] std::shared_ptr<Tensor> getResult() const {
+        return _result.lock();
+    }
+
+    [[nodiscard]] const std::vector<size_t>& getResultShape() const {
+        return _resultShape;
+    }
 };
 
 #endif // CTORCH_NODE_H

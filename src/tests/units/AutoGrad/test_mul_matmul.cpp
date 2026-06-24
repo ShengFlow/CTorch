@@ -140,12 +140,12 @@ bool test_matmul_node_backward() {
         
         // 验证梯度
         // 理论值: grad_A = grad_C * B^T, grad_B = A^T * grad_C
-        // 由于我们没有指定 grad_C，默认是 1.0，所以 grad_C 是全 1 的矩阵
-        // grad_A 应该是 B^T
-        // grad_B 应该是 A^T
+        // grad_C 是全 1 的 2x2 矩阵
+        // grad_A (2x3) = [[15, 19, 23], [15, 19, 23]]
+        // grad_B (3x2) = [[5, 5], [7, 7], [9, 9]]
         
-        // 验证 grad_A (应该等于 B^T)
-        float expected_grad_A[] = {7, 9, 11, 8, 10, 12};
+        // 验证 grad_A
+        float expected_grad_A[] = {15, 19, 23, 15, 19, 23};
         for (int i = 0; i < 6; i++) {
             if (std::abs(grad_A.data<float>()[i] - expected_grad_A[i]) > 1e-6) {
                 std::cout << "❌ grad_A 错误: grad_A[" << i << "] 期望 " << expected_grad_A[i] << ", 实际 " << grad_A.data<float>()[i] << std::endl;
@@ -153,8 +153,8 @@ bool test_matmul_node_backward() {
             }
         }
         
-        // 验证 grad_B (应该等于 A^T)
-        float expected_grad_B[] = {1, 4, 2, 5, 3, 6};
+        // 验证 grad_B
+        float expected_grad_B[] = {5, 5, 7, 7, 9, 9};
         for (int i = 0; i < 6; i++) {
             if (std::abs(grad_B.data<float>()[i] - expected_grad_B[i]) > 1e-6) {
                 std::cout << "❌ grad_B 错误: grad_B[" << i << "] 期望 " << expected_grad_B[i] << ", 实际 " << grad_B.data<float>()[i] << std::endl;

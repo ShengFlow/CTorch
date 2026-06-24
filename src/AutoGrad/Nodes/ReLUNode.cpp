@@ -9,12 +9,19 @@ ReLUNode::ReLUNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const
 std::vector<GradPack> ReLUNode::backward(std::vector<Tensor> downStreamGrads) {
     std::vector<GradPack> ret;
     
-    // 对于ReLU算子，导数是：当输入大于0时为1，否则为0
-    Tensor mask = _inputs[0] > 0;
-    Tensor grad = downStreamGrads[0] * mask;
+    const Tensor& x = _inputs[0];
+    const Tensor& grad_out = downStreamGrads[0];
+    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
+    const float* x_p = x.data<float>();
+    const float* gout_p = grad_out.data<float>();
+    float* gx_p = grad_x.data<float>();
+    size_t n = x.numel();
+    for (size_t i = 0; i < n; ++i) {
+        gx_p[i] = x_p[i] > 0.0f ? gout_p[i] : 0.0f;
+    }
     ret.push_back(GradPack{
         _upStreamNodes[0],
-        std::vector({grad}),
+        std::vector({grad_x}),
         0
     });
     

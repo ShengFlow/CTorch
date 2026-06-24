@@ -330,6 +330,8 @@ public:
  * @details 用于记录和管理CTorch中的各种错误信息，包括日志记录、错误统计和异常抛出
  */
 class CtorchError {
+    inline static std::mutex log_mutex_;
+
     /**
      * @brief 将ErrorLevel枚举转换为字符串名称
      * @param level 错误级别枚举值
@@ -432,6 +434,7 @@ public:
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         if (inst.level == PrintLevel::MEDIUM && level == ErrorLevel::TRACE) return;
         if (inst.level == PrintLevel::MINIUM && (level == ErrorLevel::DEBUG || level == ErrorLevel::TRACE)) return ;
+        std::lock_guard<std::mutex> lock(log_mutex_);
         uint32_t error_code = computeCode(level, platform, type);
         switch (level) {
             case ErrorLevel::TRACE: {
