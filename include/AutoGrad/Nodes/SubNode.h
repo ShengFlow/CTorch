@@ -1,8 +1,8 @@
 /**
-*@file SubNode.h
- *@author Beapoe
- *@brief 减法节点定义
- *@date 2026/2/21
+* @file SubNode.h
+ * @author Beapoe
+ * @brief 减法节点定义
+ * @date 2026/2/21
  **/
 
 #ifndef CTORCH_SUBNODE_H

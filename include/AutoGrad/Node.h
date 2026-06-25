@@ -1,9 +1,9 @@
 /**
- *@file Node.h
- *@author Beapoe
- *@brief 节点定义
- *@date 2026/2/17
- **/
+ * @file Node.h
+ * @author Beapoe
+ * @brief 自动微分计算图节点定义
+ * @date 2026/2/17
+ */
 
 #ifndef CTORCH_NODE_H
 #define CTORCH_NODE_H
@@ -15,62 +15,136 @@ class Node;
 #include <vector>
 #include <memory>
 
+/**
+ * @struct GradPack
+ * @brief 梯度传播包，用于反向传播时存储梯度和目标节点信息
+ * @details 反向传播过程中，每个节点计算完梯度后，将其打包成 GradPack
+ *          发送给上游节点。
+ */
 struct GradPack{
+    /** @brief 梯度要传播到的上游节点 */
     std::shared_ptr<Node> _targetNode;
+    /** @brief 梯度张量列表 */
     std::vector<Tensor> _grad;
+    /** @brief 当前梯度对应的输入索引 */
     int _idx{0};
 };
 
 
+/**
+ * @class Node
+ * @brief 自动微分计算图的抽象基类
+ * @details 所有计算图节点（如加法、乘法、ReLU等）都继承自此类。
+ *          负责管理上游节点、输入张量、输出张量引用以及依赖计数。
+ */
 class Node {
 protected:
+    /** @brief 上游节点列表 */
     std::vector<std::shared_ptr<Node>> _upStreamNodes;
+    /** @brief 输入张量列表 */
     std::vector<Tensor> _inputs;
+    /** @brief 输出张量的弱引用 */
     std::weak_ptr<Tensor> _result;
+    /** @brief 输出张量的形状缓存 */
     std::vector<size_t> _resultShape;
+    /** @brief 依赖节点总数 */
     size_t _dependencies{0};
+    /** @brief 当前活跃的依赖计数 */
     std::atomic<size_t> _count{0};
+    /** @brief 是否需要加速计算 */
     bool _requireAccelerate{false};
 public:
+    /** @brief 默认构造函数 */
     Node() = default;
 
-    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+    /**
+     * @brief 构造函数
+     * @param upStreamNodes 上游节点列表（const引用）
+     * @param inputs 输入张量列表（const引用）
+     */
+    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs);
+    
+    /**
+     * @brief 构造函数（移动语义）
+     * @param upStreamNodes 上游节点列表（右值引用）
+     * @param inputs 输入张量列表（右值引用）
+     */
     Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs);
 
-    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+    /**
+     * @brief 构造函数（带输出张量引用）
+     * @param upStreamNodes 上游节点列表（const引用）
+     * @param inputs 输入张量列表（const引用）
+     * @param result 输出张量的弱引用
+     */
+    Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs, const std::weak_ptr<Tensor>& result);
+    
+    /**
+     * @brief 构造函数（带输出张量引用，移动语义）
+     * @param upStreamNodes 上游节点列表（右值引用）
+     * @param inputs 输入张量列表（右值引用）
+     * @param result 输出张量的弱引用
+     */
     Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result);
 
+    /**
+     * @brief 构造函数（仅输出张量）
+     * @param result 输出张量的弱引用
+     */
     explicit Node(const std::weak_ptr<Tensor> &result);
 
+    /** @brief 虚析构函数 */
     virtual ~Node() = default;
 
+    /** @brief 增加依赖计数 */
     void increase();
 
+    /**
+     * @brief 减少依赖计数
+     * @return 当计数减到0时返回true，否则返回false
+     */
     bool decrease();
 
+    /** @brief 恢复依赖计数到初始值 */
     void restore();
 
+    /** @brief 获取依赖节点总数 */
     [[nodiscard]] size_t getDependencies() const;
 
+    /** @brief 设置依赖节点总数 */
     void setDependencies(size_t dependencies);
 
+    /** @brief 设置当前活跃的依赖计数 */
     void setCount(size_t count);
-	
+
+    /** @brief 获取上游节点列表 */
     [[nodiscard]] std::vector<std::shared_ptr<Node>> getUpStreamNodes() const;
 
+    /** @brief 检查是否需要加速计算 */
     [[nodiscard]] bool requireAccelerate() const;
 
+    /** @brief 设置是否需要加速计算 */
     void set_requireAccelerate(bool requireAccelerate);
 
+    /**
+     * @brief 反向传播接口（纯虚函数）
+     * @param downStreamGrads 下游传来的梯度列表
+     * @return 梯度传播包列表，包含要发送给上游节点的梯度
+     */
     virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
 
+    /**
+     * @brief 递归恢复依赖计数
+     * @param visited 已访问节点集合，防止重复访问
+     */
     void restoreRecursive(std::unordered_set<Node*>& visited);
 
-    // 获取该节点对应的输出张量（可能为 nullptr 如果已经被释放）
+    /** @brief 获取该节点对应的输出张量（可能为nullptr如果已被释放） */
     [[nodiscard]] std::shared_ptr<Tensor> getResult() const {
         return _result.lock();
     }
 
+    /** @brief 获取输出张量的形状 */
     [[nodiscard]] const std::vector<size_t>& getResultShape() const {
         return _resultShape;
     }

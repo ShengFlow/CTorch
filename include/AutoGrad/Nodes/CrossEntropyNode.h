@@ -1,8 +1,8 @@
 /**
- *@file CrossEntropyNode.h
- *@author Beapoe
- *@brief 交叉熵损失节点实现
- *@date 2026/4/5
+ * @file CrossEntropyNode.h
+ * @author Beapoe
+ * @brief 交叉熵损失节点实现
+ * @date 2026/4/5
  **/
 
 #ifndef CTORCH_CROSSENTROPYNODE_H

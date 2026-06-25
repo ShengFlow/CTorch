@@ -20,7 +20,6 @@
 #endif
 
 #include <initializer_list>
-// #include <immintrin.h> 未支持ARM
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -32,14 +31,14 @@
 #include <iomanip>
 #include <string>
 #include <unordered_set>
-#include <sstream>
 #include <limits>
 #include <map>
 #include "Ctools.h"
-// #include<omp.h>   !!!目前不确定在哪些机器上需要这个头文件，如果编译错误，可以尝试加上
+
 // ======================= 前向声明 =======================
 class Tensor;
 class Node;
+
 // ======================= 存储类 (Storage) =======================
 
 /**
@@ -50,7 +49,13 @@ class Node;
 
 // ======================= 张量类 (Tensor) =======================
 
-struct ShapeTag {}; // 用于在构造时明确指定形状（区分 size_t 构造）
+/**
+ * @struct ShapeTag
+ * @brief 形状标签类型，用于区分构造函数重载
+ * @details 在构造张量时使用此类作为第一个参数，明确表示后续参数为形状而非尺寸。
+ *          例如：Tensor(ShapeTag{}, {3, 4}) 创建一个 3x4 的张量。
+ */
+struct ShapeTag {};
 
 /**
  * @brief 矩阵乘法函数
@@ -280,7 +285,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _requires_grad(other._requires_grad), _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(other._storage.clone()), // 注意：这里调用了clone()
+          _storage(other._storage), // 浅拷贝：共享底层存储
           _shape(other._shape), _node(other._node) {
         // std::cout << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_
         // << std::endl;
@@ -304,7 +309,7 @@ class Tensor {
             _storage_offset   = other._storage_offset;
             _device           = other._device;
             _dtype            = other._dtype;
-            _storage          = other._storage.clone(); // 深拷贝存储
+            _storage          = other._storage; // 浅拷贝：共享底层存储
             _requires_grad    = other._requires_grad;
             _node = std::const_pointer_cast<Node>(other.getRelatedNode());
         }

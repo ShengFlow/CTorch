@@ -53,20 +53,30 @@ public:
     }
     
     float train_step(const Tensor& x, const Tensor& y) {
+        const size_t batch_size = y.numel();
         
         Tensor logits = forward(x);
         
-        Tensor y_one_hot = Tensor(ShapeTag{}, {static_cast<size_t>(y.numel()), 10}, DType::kFloat, DeviceType::kCPU);
-        for (size_t i = 0; i < y.numel(); ++i) {
-            int lab = static_cast<int>(y.data<float>()[i]);
-            for (int j = 0; j < 10; ++j)
-                y_one_hot.data<float>()[i * 10 + j] = (j == lab) ? 1.0f : 0.0f;
+        // 预分配 one-hot 张量
+        static Tensor y_one_hot_cache;
+        std::vector<size_t> one_hot_shape = {batch_size, 10};
+        if (y_one_hot_cache.sizes() != one_hot_shape) {
+            y_one_hot_cache = Tensor(ShapeTag{}, one_hot_shape, DType::kFloat, DeviceType::kCPU);
         }
         
-        Tensor loss = logits.cross_entropy(y_one_hot);
+        // 快速填充 one-hot：先清零，再设置对应位置
+        std::memset(y_one_hot_cache.data<float>(), 0, batch_size * 10 * sizeof(float));
+        const float* y_data = y.data<float>();
+        float* one_hot_data = y_one_hot_cache.data<float>();
+        for (size_t i = 0; i < batch_size; ++i) {
+            int lab = static_cast<int>(y_data[i]);
+            one_hot_data[i * 10 + lab] = 1.0f;
+        }
+        
+        Tensor loss = logits.cross_entropy(y_one_hot_cache);
         float loss_value = loss.item<float>();
         
-        AutoGrad::backward(loss.getRelatedNode(),false);
+        AutoGrad::backward(loss.getRelatedNode(), false);
         
         update_parameters();
         
@@ -153,30 +163,34 @@ float calculate_accuracy(const Tensor& y_pred, const Tensor& y_true) {
     return static_cast<float>(correct) / total;
 }
 
-// 批次处理
-void get_batch(const Tensor& images, const Tensor& labels, int batch_size, int batch_idx, Tensor& batch_images, Tensor& batch_labels) {
+// 批次处理 - 预分配版本
+void get_batch(const Tensor& images, const Tensor& labels, int batch_size, int batch_idx, 
+               Tensor& batch_images, Tensor& batch_labels) {
     int start = batch_idx * batch_size;
     int end = std::min(start + batch_size, static_cast<int>(images.shape()[0]));
     int actual_batch_size = end - start;
+    size_t feature_size = images.shape()[1];
+    size_t image_bytes = actual_batch_size * feature_size * sizeof(float);
+    size_t label_bytes = actual_batch_size * sizeof(float);
     
-    // 创建批次图像张量
-    std::vector<size_t> image_shape = {static_cast<size_t>(actual_batch_size), images.shape()[1]};
-    batch_images = Tensor(ShapeTag{}, image_shape, DType::kFloat, DeviceType::kCPU);
-    
-    // 创建批次标签张量
+    // 预分配或调整大小
+    std::vector<size_t> image_shape = {static_cast<size_t>(actual_batch_size), feature_size};
     std::vector<size_t> label_shape = {static_cast<size_t>(actual_batch_size)};
-    batch_labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, DeviceType::kCPU);
     
-    // 复制数据
-    for (int i = 0; i < actual_batch_size; ++i) {
-        for (size_t j = 0; j < images.shape()[1]; ++j) {
-            float value = images.data<float>()[(start + i) * images.shape()[1] + j];
-            batch_images.data<float>()[i * images.shape()[1] + j] = value;
-        }
-        
-        float label = labels.data<float>()[start + i];
-        batch_labels.data<float>()[i] = label;
+    if (batch_images.sizes() != image_shape) {
+        batch_images = Tensor(ShapeTag{}, image_shape, DType::kFloat, DeviceType::kCPU);
     }
+    if (batch_labels.sizes() != label_shape) {
+        batch_labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, DeviceType::kCPU);
+    }
+    
+    // 直接内存拷贝
+    std::memcpy(batch_images.data<float>(), 
+                images.data<float>() + start * feature_size, 
+                image_bytes);
+    std::memcpy(batch_labels.data<float>(), 
+                labels.data<float>() + start, 
+                label_bytes);
 }
 
 // 进度条显示函数

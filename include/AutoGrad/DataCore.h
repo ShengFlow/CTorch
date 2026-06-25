@@ -1,9 +1,9 @@
 /**
- *@file DataCore.h
- *@brief 自动微分系统核心
- *@author Beapoe
- *@date 2026/2/18
- **/
+ * @file DataCore.h
+ * @brief 自动微分系统数据核心
+ * @author Beapoe
+ * @date 2026/2/18
+ */
 
 #ifndef CTORCH_CORE_H
 #define CTORCH_CORE_H
@@ -11,10 +11,23 @@
 #include "Node.h"
 #include "Nodes/GradAccumulator.h"
 
+/**
+ * @class DataCore
+ * @brief 自动微分系统的数据核心类
+ * @details 负责管理计算图节点的注册和构建，是自动微分系统的核心组件之一。
+ *          提供静态方法用于注册单输入和双输入操作节点。
+ */
 class DataCore {
+    /** @brief 私有构造函数，防止外部实例化 */
     DataCore() = default;
 
   public:
+    /**
+     * @brief 注册单输入操作节点
+     * @tparam T 节点类型（如 ReLUNode、NegNode 等）
+     * @param input 输入张量
+     * @param result 输出张量的弱引用
+     */
     template <typename T>
     static void registerNode(const Tensor& input, std::weak_ptr<Tensor> result) {
         if (!input.requires_grad()) return;
@@ -44,6 +57,13 @@ class DataCore {
         }
     }
 
+    /**
+     * @brief 注册双输入操作节点
+     * @tparam T 节点类型（如 AddNode、MulNode、MatMulNode 等）
+     * @param a 第一个输入张量
+     * @param b 第二个输入张量
+     * @param result 输出张量的弱引用
+     */
     template <typename T>
     static void registerNode(const Tensor& a, const Tensor& b, std::weak_ptr<Tensor> result) {
         bool toContinue = false;
@@ -55,9 +75,7 @@ class DataCore {
             std::vector<std::shared_ptr<Node>> upStreamNodes;
             upStreamNodes.reserve(2);
 
-            // 处理第一个输入张量
             if (a.requires_grad()) {
-                // 使用 const_cast 获取非 const 引用，以便调用非 const 的方法
                 Tensor& nonConstA = const_cast<Tensor&>(a);
                 if (nonConstA.getRelatedNode() == nullptr) {
                     nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
@@ -67,9 +85,7 @@ class DataCore {
                 upStreamNodes.push_back(nullptr);
             }
 
-            // 处理第二个输入张量
             if (b.requires_grad()) {
-                // 使用 const_cast 获取非 const 引用，以便调用非 const 的方法
                 Tensor& nonConstB = const_cast<Tensor&>(b);
                 if (nonConstB.getRelatedNode() == nullptr) {
                     nonConstB.setRelatedNode(arena.invoke<GradAccumulator>(b));
@@ -79,10 +95,8 @@ class DataCore {
                 upStreamNodes.push_back(nullptr);
             }
 
-            // 创建输入向量，直接使用原始的 a 和 b 张量
             std::vector<Tensor> inputs = {a, b};
 
-            // 创建操作节点，传递输入张量的引用
             const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
             if (result.lock()) {
                 result.lock()->setRelatedNode(node);

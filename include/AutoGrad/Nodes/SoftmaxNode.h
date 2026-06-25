@@ -1,8 +1,8 @@
 /**
- *@file SoftmaxNode.h
- *@author Beapoe
- *@brief Softmax节点实现
- *@date 2026/4/5
+ * @file SoftmaxNode.h
+ * @author Beapoe
+ * @brief Softmax节点实现
+ * @date 2026/4/5
  **/
 
 #ifndef CTORCH_SOFTMAXNODE_H
