@@ -30,10 +30,11 @@ class DataCore {
 
         std::vector<Tensor> inputs = {input};
 
-        const auto node = arena.invoke<T>(upStreamNodes, inputs, result);
+        const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
         if (result.lock()) {
             result.lock()->setRelatedNode(node);
-            for (auto& upStream : upStreamNodes) {
+            auto& nodeRef = *node;
+            for (auto& upStream : nodeRef.getUpStreamNodes()) {
                 if (upStream != nullptr) {
                     upStream->increase();
                 }
@@ -82,10 +83,11 @@ class DataCore {
             std::vector<Tensor> inputs = {a, b};
 
             // 创建操作节点，传递输入张量的引用
-            const auto node = arena.invoke<T>(upStreamNodes, inputs, result);
+            const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
             if (result.lock()) {
                 result.lock()->setRelatedNode(node);
-                for (auto& upStream : upStreamNodes) {
+                auto& nodeRef = *node;
+                for (auto& upStream : nodeRef.getUpStreamNodes()) {
                     if (upStream != nullptr) {
                         upStream->increase();
                     }

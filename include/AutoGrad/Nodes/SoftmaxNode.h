@@ -16,8 +16,10 @@ private:
 public:
     SoftmaxNode() = default;
     SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+    SoftmaxNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs);
     SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result, int dim = -1);
-    std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) override;
+    SoftmaxNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result, int dim = -1);
+    std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) override;
 };
 
 #endif // CTORCH_SOFTMAXNODE_H

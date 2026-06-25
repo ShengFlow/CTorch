@@ -12,7 +12,7 @@
 class GradAccumulator final: public Node {
 public:
     GradAccumulator(const Tensor& tensor);
-    std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) override;
+    std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) override;
 private:
     const Tensor* _tensor;
 };

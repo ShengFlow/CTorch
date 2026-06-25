@@ -10,10 +10,16 @@
 SoftmaxNode::SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
 
+SoftmaxNode::SoftmaxNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs)
+    : Node(std::move(upStreamNodes), std::move(inputs)) {}
+
 SoftmaxNode::SoftmaxNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result, int dim)
     : Node(upStreamNodes, inputs, result), _dim(dim) {}
 
-std::vector<GradPack> SoftmaxNode::backward(std::vector<Tensor> downStreamGrads) {
+SoftmaxNode::SoftmaxNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result, int dim)
+    : Node(std::move(upStreamNodes), std::move(inputs), result), _dim(dim) {}
+
+std::vector<GradPack> SoftmaxNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
     
     if (_inputs.size() != 1) {

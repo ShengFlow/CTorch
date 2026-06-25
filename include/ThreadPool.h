@@ -48,10 +48,10 @@ auto addTask(Callable&& callable, Args&&... args){
                      argsTuple = std::make_tuple(std::forward<Args>(args)...)]() mutable {
             try {
                 if constexpr(std::is_same_v<Ret, void>){
-                    std::apply(toCall, argsTuple);
+                    std::apply(std::move(toCall), std::move(argsTuple));
                     promise->set_value();
                 } else {
-                    auto val = std::apply(toCall, argsTuple);
+                    auto val = std::apply(std::move(toCall), std::move(argsTuple));
                     promise->set_value(std::move(val));
                 }
             } catch (...) {

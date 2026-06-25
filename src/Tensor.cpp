@@ -11,6 +11,7 @@
 #include "../include/CtorchScheduler.h"
 #include <random>
 #include <cmath>
+#include <cstring>
 
 /**
  * @var Tensor::global_tensor_id
@@ -391,34 +392,10 @@ Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
 
 // 零初始化张量
 void Tensor::zero() {
-    // 简单实现，将所有元素设为0
     size_t count = numel();
-    if (_dtype == DType::kFloat) {
-        float* data = _storage.data<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 0.0f;
-        }
-    } else if (_dtype == DType::kDouble) {
-        double* data = _storage.data<double>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 0.0;
-        }
-    } else if (_dtype == DType::kInt) {
-        int32_t* data = _storage.data<int32_t>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 0;
-        }
-    } else if (_dtype == DType::kLong) {
-        int64_t* data = _storage.data<int64_t>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 0;
-        }
-    } else if (_dtype == DType::kBool) {
-        bool* data = _storage.data<bool>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = false;
-        }
-    }
+    size_t elem_size = dtypeSize(_dtype);
+    void* ptr = _storage.data<char>() + _storage_offset * elem_size;
+    std::memset(ptr, 0, count * elem_size);
 }
 
 // 一初始化张量

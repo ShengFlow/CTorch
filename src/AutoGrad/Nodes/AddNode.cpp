@@ -10,10 +10,16 @@
 AddNode::AddNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
 
+AddNode::AddNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs)
+    : Node(std::move(upStreamNodes), std::move(inputs)) {}
+
 AddNode::AddNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
     : Node(upStreamNodes, inputs, result) {}
 
-std::vector<GradPack> AddNode::backward(std::vector<Tensor> downStreamGrads) {
+AddNode::AddNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result)
+    : Node(std::move(upStreamNodes), std::move(inputs), result) {}
+
+std::vector<GradPack> AddNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
     if (downStreamGrads.empty()) {
         return ret;

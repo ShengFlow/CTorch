@@ -35,8 +35,10 @@ public:
     Node() = default;
 
     Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs);
+    Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs);
 
     Node(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result);
+    Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result);
 
     explicit Node(const std::weak_ptr<Tensor> &result);
 
@@ -60,7 +62,7 @@ public:
 
     void set_requireAccelerate(bool requireAccelerate);
 
-    virtual std::vector<GradPack> backward(std::vector<Tensor> downStreamGrads) = 0;
+    virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
 
     void restoreRecursive(std::unordered_set<Node*>& visited);
 

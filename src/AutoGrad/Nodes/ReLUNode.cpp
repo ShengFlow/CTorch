@@ -3,10 +3,16 @@
 ReLUNode::ReLUNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
 
+ReLUNode::ReLUNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs)
+    : Node(std::move(upStreamNodes), std::move(inputs)) {}
+
 ReLUNode::ReLUNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
     : Node(upStreamNodes, inputs, result) {}
 
-std::vector<GradPack> ReLUNode::backward(std::vector<Tensor> downStreamGrads) {
+ReLUNode::ReLUNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result)
+    : Node(std::move(upStreamNodes), std::move(inputs), result) {}
+
+std::vector<GradPack> ReLUNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
     
     const Tensor& x = _inputs[0];

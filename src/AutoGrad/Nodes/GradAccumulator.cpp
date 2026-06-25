@@ -14,7 +14,7 @@ GradAccumulator::GradAccumulator(const Tensor& tensor) : _tensor(&tensor) {
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::GradAccumulator - Created for tensor with requires_grad: " + std::to_string(tensor.requires_grad()));
 }
 
-std::vector<GradPack> GradAccumulator::backward(std::vector<Tensor> downStreamGrads) {
+std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downStreamGrads) {
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Called with downStreamGrads size: " + std::to_string(downStreamGrads.size()));
     if (downStreamGrads.empty()) {
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - No gradients received");

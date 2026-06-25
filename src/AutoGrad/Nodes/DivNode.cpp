@@ -3,10 +3,16 @@
 DivNode::DivNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
 
+DivNode::DivNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs)
+    : Node(std::move(upStreamNodes), std::move(inputs)) {}
+
 DivNode::DivNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs,const std::weak_ptr<Tensor>& result) 
     : Node(upStreamNodes, inputs, result) {}
 
-std::vector<GradPack> DivNode::backward(std::vector<Tensor> downStreamGrads) {
+DivNode::DivNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector<Tensor>&& inputs, const std::weak_ptr<Tensor>& result)
+    : Node(std::move(upStreamNodes), std::move(inputs), result) {}
+
+std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
     
     // 对于分子的梯度：1/分母 * 下游梯度
