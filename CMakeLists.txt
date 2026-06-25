@@ -21,6 +21,7 @@ set(CT-Core
         src/Storage.cpp
         src/Ctools.cpp
         src/ThreadPool.cpp
+        src/CtorchScheduler.cpp
         src/AutoGrad/ComputeCore.cpp
         src/Arena.cpp
         src/Assertion.cpp

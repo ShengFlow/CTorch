@@ -15,19 +15,35 @@ class Node;
 // 包含必要的头文件
 #include "AutoGrad/DataCore.h"
 #include "AutoGrad/ComputeCore.h"
+#include "CtorchScheduler.h"
+#include "AutoGrad/Nodes/AddNode.h"
+#include "AutoGrad/Nodes/SubNode.h"
+#include "AutoGrad/Nodes/MulNode.h"
+#include "AutoGrad/Nodes/DivNode.h"
+#include "AutoGrad/Nodes/NegNode.h"
+#include "AutoGrad/Nodes/ReLUNode.h"
+#include "AutoGrad/Nodes/CosNode.h"
+#include "AutoGrad/Nodes/SinNode.h"
+#include "AutoGrad/Nodes/TanhNode.h"
+#include "AutoGrad/Nodes/SigmoidNode.h"
+#include "AutoGrad/Nodes/MatMulNode.h"
+#include "AutoGrad/Nodes/CrossEntropyNode.h"
+#include "AutoGrad/Nodes/SoftmaxNode.h"
+#include "AutoGrad/Nodes/GradAccumulator.h"
+#include "Arena.h"
 
 namespace AutoGrad {
 
     //线程本地的全局变量，用于控制是否记录计算图
     inline thread_local bool EnableGrad{true};
-    
+
     template <typename T>
     void registerNode(const Tensor& input, std::weak_ptr<Tensor> result) {
         if (EnableGrad) {
             DataCore::registerNode<T>(input, result);
         }
     }
-    
+
     template <typename T>
     void registerNode(const std::vector<Tensor>& inputs, std::weak_ptr<Tensor> result) {
         if (EnableGrad) {
@@ -39,15 +55,125 @@ namespace AutoGrad {
             }
         }
     }
-    
+
     template <typename T>
     void registerNode(const Tensor& a, const Tensor& b, std::weak_ptr<Tensor> result) {
         if (EnableGrad) {
             DataCore::registerNode<T>(a, b, result);
         }
     }
-    
+
     void backward(std::shared_ptr<Node> root, bool retainGraph);
+
+    inline Tensor dispatch(const Tensor& a, const Tensor& b, op op_type) {
+        Tensor result = CtorchScheduler::getInstance().dispatch(a, b, op_type);
+
+        if (EnableGrad && (a.requires_grad() || b.requires_grad())) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            switch (op_type) {
+            case op::Add:
+                registerNode<AddNode>(a, b, result_weak);
+                break;
+            case op::Sub:
+                registerNode<SubNode>(a, b, result_weak);
+                break;
+            case op::Mul:
+                registerNode<MulNode>(a, b, result_weak);
+                break;
+            case op::Div:
+                registerNode<DivNode>(a, b, result_weak);
+                break;
+            case op::MatMul:
+                registerNode<MatMulNode>(a, b, result_weak);
+                break;
+            case op::CE:
+                registerNode<CrossEntropyNode>(a, b, result_weak);
+                break;
+            default:
+                break;
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
+        return result;
+    }
+
+    inline Tensor dispatch(const Tensor& a, op op_type) {
+        Tensor result = CtorchScheduler::getInstance().dispatch(a, op_type);
+
+        if (EnableGrad && a.requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            switch (op_type) {
+                case op::Neg:
+                    registerNode<NegNode>(a, result_weak);
+                    break;
+                case op::ReLU:
+                    registerNode<ReLUNode>(a, result_weak);
+                    break;
+                case op::Cos:
+                    registerNode<CosNode>(a, result_weak);
+                    break;
+                case op::Sin:
+                    registerNode<SinNode>(a, result_weak);
+                    break;
+                case op::Tanh:
+                    registerNode<TanhNode>(a, result_weak);
+                    break;
+                case op::Sigmoid:
+                    registerNode<SigmoidNode>(a, result_weak);
+                    break;
+                default:
+                    break;
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
+        return result;
+    }
+
+    inline Tensor dispatch_softmax(const Tensor& a, int dim = -1) {
+        Tensor result = CtorchScheduler::getInstance().dispatch_softmax(a, dim);
+
+        if (EnableGrad && a.requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+
+            Arena &arena = Arena::getInstance();
+            std::vector<std::shared_ptr<Node>> upStreamNodes;
+
+            Tensor& nonConstA = const_cast<Tensor&>(a);
+            if (nonConstA.getRelatedNode() == nullptr) {
+                nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
+            }
+            upStreamNodes.push_back(nonConstA.getRelatedNode());
+
+            std::vector<Tensor> inputs = {a};
+            const auto node = arena.invoke<SoftmaxNode>(upStreamNodes, inputs, result_weak, dim);
+            if (result_weak.lock()) {
+                result_weak.lock()->setRelatedNode(node);
+                for (auto& upStream : node->getUpStreamNodes()) {
+                    if (upStream != nullptr) {
+                        upStream->increase();
+                    }
+                }
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
+        return result;
+    }
+
 };
 
 #endif // CTORCH_AUTOGRAD_H

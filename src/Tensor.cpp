@@ -8,7 +8,7 @@
  */
 #include "../include/Tensor.h"
 #include "kernels/kernels.h"
-#include "../include/CtorchScheduler.h"
+#include "../include/AutoGrad.h"
 #include <random>
 #include <cmath>
 #include <cstring>
@@ -461,7 +461,7 @@ void Tensor::rand() {
 // 矩阵乘法
 Tensor Tensor::matmul(const Tensor& other) const {
     // 使用调度器执行矩阵乘法
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, other, op::MatMul);
+    Tensor result = AutoGrad::dispatch(*this, other, op::MatMul);
 
     return result;
 }
@@ -488,25 +488,25 @@ bool Tensor::check_storage_offset() const {
 // ReLU激活函数
 Tensor Tensor::relu() const {
     // 简单实现ReLU激活函数
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::ReLU);
+    Tensor result = AutoGrad::dispatch(*this,op::ReLU);
 
     return result;
 }
 
 Tensor Tensor::dot(const Tensor &other) const{
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this,other,op::Dot);
+    Tensor result = AutoGrad::dispatch(*this,other,op::Dot);
 
     return result;
 }
 
 Tensor Tensor::cos() const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::Cos);
+    Tensor result = AutoGrad::dispatch(*this,op::Cos);
 
     return result;
 }
 
 Tensor Tensor::sin() const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this,op::Sin);
+    Tensor result = AutoGrad::dispatch(*this,op::Sin);
 
     return result;
 }
@@ -543,7 +543,7 @@ static Tensor binaryOpImpl(const Tensor& a, const Tensor& b) {
     if (a.device() != b.device()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
     }
-    return CtorchScheduler::getInstance().dispatch(a, b, OpType);
+    return AutoGrad::dispatch(a, b, OpType);
 }
 
 // 标量运算模板 (Tensor op float)
@@ -642,7 +642,7 @@ Tensor Tensor::operator*(float scalar) const {
 
 // 一元负号运算符
 Tensor Tensor::operator-() const {
-    return CtorchScheduler::getInstance().dispatch(*this, op::Neg);
+    return AutoGrad::dispatch(*this, op::Neg);
 }
 
 // 张量加法运算符
@@ -707,7 +707,7 @@ bool Tensor::check_index_bounds(const std::vector<size_t>& indices) const {
 
 // 全局的matMul函数
 Tensor matMul(const Tensor &a, const Tensor &b) {
-    return CtorchScheduler::getInstance().dispatch(a,b,op::MatMul);
+    return AutoGrad::dispatch(a,b,op::MatMul);
 }
 
 // 计算两个张量的广播结果
@@ -794,21 +794,21 @@ template void Tensor::checkDType<int64_t>() const;
 
 // Tanh激活函数
 Tensor Tensor::tanh() const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, op::Tanh);
+    Tensor result = AutoGrad::dispatch(*this, op::Tanh);
 
     return result;
 }
 
 // Sigmoid激活函数
 Tensor Tensor::sigmoid() const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, op::Sigmoid);
+    Tensor result = AutoGrad::dispatch(*this, op::Sigmoid);
 
     return result;
 }
 
 // Softmax激活函数
 Tensor Tensor::softmax(int dim) const {
-    return CtorchScheduler::getInstance().dispatch_softmax(*this, dim);
+    return AutoGrad::dispatch_softmax(*this, dim);
 }
 
 // Max操作
@@ -864,21 +864,21 @@ Tensor Tensor::square() const {
 
 // MSE损失函数
 Tensor Tensor::mse_loss(const Tensor& target) const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::MSE);
+    Tensor result = AutoGrad::dispatch(*this, target, op::MSE);
 
     return result;
 }
 
 // CrossEntropy损失函数
 Tensor Tensor::cross_entropy(const Tensor& target) const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::CE);
+    Tensor result = AutoGrad::dispatch(*this, target, op::CE);
 
     return result;
 }
 
 // MAE损失函数
 Tensor Tensor::mae_loss(const Tensor& target) const {
-    Tensor result = CtorchScheduler::getInstance().dispatch(*this, target, op::MAE);
+    Tensor result = AutoGrad::dispatch(*this, target, op::MAE);
 
     return result;
 }
