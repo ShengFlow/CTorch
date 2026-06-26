@@ -16,7 +16,7 @@ Tensor ReLU_BASIC_kernel(const Tensor& a) {
                           "CPU-BASIC ReLU_Kernel: 仅在CPU支持");
     }
     // 简单实现ReLU激活函数
-    Tensor result(a);
+    Tensor result = a.clone();
 
     size_t count = a.numel();
     float *data = result.data<float>();

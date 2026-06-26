@@ -218,6 +218,7 @@ void test_tanh_grad() {
     float t0 = std::tanh(0.0f);
     float t1 = std::tanh(1.0f);
     float t2 = std::tanh(-1.0f);
+    
     EXPECT_NEAR_F(ga_p[0], 1.0f - t0 * t0, kEps);
     EXPECT_NEAR_F(ga_p[1], 1.0f - t1 * t1, kEps);
     EXPECT_NEAR_F(ga_p[2], 1.0f - t2 * t2, kEps);

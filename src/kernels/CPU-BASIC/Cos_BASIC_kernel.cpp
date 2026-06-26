@@ -16,7 +16,7 @@ Tensor Cos_BASIC_kernel(const Tensor &a) {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                           ErrorType::DEVICE_COMPAT, "CPU-BASIC Cos_Kernel: 仅在CPU支持");
     }
-    Tensor result(a);
+    Tensor result = a.clone();
 
     size_t count = a.numel();
     float *data  = result.data<float>();

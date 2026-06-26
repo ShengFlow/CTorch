@@ -41,7 +41,7 @@ class DataCore {
         }
         upStreamNodes.push_back(nonConstInput.getRelatedNode());
 
-        std::vector<Tensor> inputs = {input};
+        std::vector<Tensor> inputs = {input.clone()};
 
         const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
         if (result.lock()) {
@@ -95,7 +95,7 @@ class DataCore {
                 upStreamNodes.push_back(nullptr);
             }
 
-            std::vector<Tensor> inputs = {a, b};
+            std::vector<Tensor> inputs = {a.clone(), b.clone()};
 
             const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
             if (result.lock()) {

@@ -24,7 +24,7 @@ Tensor Tanh_SIMD_kernel(const Tensor& a) {
     }
 
     // 实现Tanh激活函数
-    Tensor result(a);
+    Tensor result = a.clone();
 
     size_t count = a.numel();
     float *data = result.data<float>();
