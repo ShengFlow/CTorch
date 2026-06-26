@@ -200,38 +200,40 @@ add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
 target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
 gtest_discover_tests(tl-ArrayTest)
 
-# tl-VecBaseTest
-add_multiarch_executable(tl-VecBaseTest
-        FILES src/tests/tl/vec/VecBaseTest.cpp
-        ARCH x86-64
-)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "amd64")
+    # tl-VecBaseTest
+    add_multiarch_executable(tl-VecBaseTest
+            FILES src/tests/tl/vec/VecBaseTest.cpp
+            ARCH x86-64
+    )
 
-# tl-VecScalarTest
-add_multiarch_executable(tl-VecScalarTest
-        FILES src/tests/tl/vec/VecScalarTest.cpp
-        ARCH x86-64
-)
+    # tl-VecScalarTest
+    add_multiarch_executable(tl-VecScalarTest
+            FILES src/tests/tl/vec/VecScalarTest.cpp
+            ARCH x86-64
+    )
 
-# tl-VecLoadStoreTest
-add_multiarch_executable(tl-VecLoadStoreTest
-        FILES src/tests/tl/vec/VecLoadStoreTest.cpp
-        ARCH x86-64 corei7-avx core-avx2 native
-)
-# tl-VecArithTest
-add_multiarch_executable(tl-VecArithTest
-        FILES src/tests/tl/vec/VecArithTest.cpp
-        ARCH x86-64 corei7-avx core-avx2 native
-)
-# tl-VecConversionTest
-add_multiarch_executable(tl-VecConversionTest
-        FILES src/tests/tl/vec/VecConversionTest.cpp
-        ARCH x86-64 corei7-avx core-avx2 native
-)
-# tl-VecShuffleTest
-add_multiarch_executable(tl-VecShuffleTest
-        FILES src/tests/tl/vec/VecShuffleTest.cpp
-        ARCH x86-64 corei7-avx core-avx2 native
-)
+    # tl-VecLoadStoreTest
+    add_multiarch_executable(tl-VecLoadStoreTest
+            FILES src/tests/tl/vec/VecLoadStoreTest.cpp
+            ARCH x86-64 corei7-avx core-avx2 native
+    )
+    # tl-VecArithTest
+    add_multiarch_executable(tl-VecArithTest
+            FILES src/tests/tl/vec/VecArithTest.cpp
+            ARCH x86-64 corei7-avx core-avx2 native
+    )
+    # tl-VecConversionTest
+    add_multiarch_executable(tl-VecConversionTest
+            FILES src/tests/tl/vec/VecConversionTest.cpp
+            ARCH x86-64 corei7-avx core-avx2 native
+    )
+    # tl-VecShuffleTest
+    add_multiarch_executable(tl-VecShuffleTest
+            FILES src/tests/tl/vec/VecShuffleTest.cpp
+            ARCH x86-64 corei7-avx core-avx2 native
+    )
+endif()
 
 # target_link_libraries(PerformanceTest PRIVATE CTorch)
 # target_link_libraries(StdTest PRIVATE CTorch)

@@ -17,12 +17,13 @@ Tensor Sigmoid_BASIC_kernel(const Tensor &a) {
                           ErrorType::DEVICE_COMPAT, "CPU-BASIC Sigmoid_Kernel: 仅在CPU支持");
     }
     // 实现Sigmoid激活函数
-    Tensor result = a.clone();
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
     size_t count = a.numel();
-    float *data  = result.data<float>();
+    const float *a_data = a.data<float>();
+    float *result_data = result.data<float>();
     for (size_t i = 0; i < count; ++i) {
-        data[i] = 1.0f / (1.0f + std::exp(-data[i]));
+        result_data[i] = 1.0f / (1.0f + std::exp(-a_data[i]));
     }
 
     return result;

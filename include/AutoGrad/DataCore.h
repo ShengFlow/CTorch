@@ -35,13 +35,12 @@ class DataCore {
         Arena &arena = Arena::getInstance();
         std::vector<std::shared_ptr<Node>> upStreamNodes;
 
-        Tensor& nonConstInput = const_cast<Tensor&>(input);
-        if (nonConstInput.getRelatedNode() == nullptr) {
-            nonConstInput.setRelatedNode(arena.invoke<GradAccumulator>(input));
+        if (input.getRelatedNode() == nullptr) {
+            input.setRelatedNode(arena.invoke<GradAccumulator>(input.getWeakPtr()));
         }
-        upStreamNodes.push_back(nonConstInput.getRelatedNode());
+        upStreamNodes.push_back(input.getRelatedNode());
 
-        std::vector<Tensor> inputs = {input.clone()};
+        std::vector<Tensor> inputs = {input};
 
         const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
         if (result.lock()) {
@@ -76,26 +75,24 @@ class DataCore {
             upStreamNodes.reserve(2);
 
             if (a.requires_grad()) {
-                Tensor& nonConstA = const_cast<Tensor&>(a);
-                if (nonConstA.getRelatedNode() == nullptr) {
-                    nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
+                if (a.getRelatedNode() == nullptr) {
+                    a.setRelatedNode(arena.invoke<GradAccumulator>(a.getWeakPtr()));
                 }
-                upStreamNodes.push_back(nonConstA.getRelatedNode());
+                upStreamNodes.push_back(a.getRelatedNode());
             } else {
                 upStreamNodes.push_back(nullptr);
             }
 
             if (b.requires_grad()) {
-                Tensor& nonConstB = const_cast<Tensor&>(b);
-                if (nonConstB.getRelatedNode() == nullptr) {
-                    nonConstB.setRelatedNode(arena.invoke<GradAccumulator>(b));
+                if (b.getRelatedNode() == nullptr) {
+                    b.setRelatedNode(arena.invoke<GradAccumulator>(b.getWeakPtr()));
                 }
-                upStreamNodes.push_back(nonConstB.getRelatedNode());
+                upStreamNodes.push_back(b.getRelatedNode());
             } else {
                 upStreamNodes.push_back(nullptr);
             }
 
-            std::vector<Tensor> inputs = {a.clone(), b.clone()};
+            std::vector<Tensor> inputs = {a, b};
 
             const auto node = arena.invoke<T>(std::move(upStreamNodes), std::move(inputs), result);
             if (result.lock()) {

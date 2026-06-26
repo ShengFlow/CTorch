@@ -6,8 +6,11 @@
 
 #include "AutoGrad.h"
 #include "Tensor.h"
+#include "Arena.h"
+#include "AutoGrad/Nodes/AddNode.h"
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -240,6 +243,58 @@ void test_sigmoid_grad() {
     EXPECT_NEAR_F(ga_p[2], s2 * (1.0f - s2), kEps);
 }
 
+void test_memory_grad_accumulator_safety() {
+    AutoGrad::EnableGrad = true;
+    std::shared_ptr<Tensor> a_ptr = std::make_shared<Tensor>(makeTensor({2.0f, 3.0f}));
+    a_ptr->requires_grad(true);
+    Tensor b = makeTensor({10.0f, 20.0f});
+    b.requires_grad(true);
+    Tensor c = (*a_ptr) + b;
+    a_ptr.reset();
+    AutoGrad::backward(c.getRelatedNode(), false);
+    EXPECT(true, "GradAccumulator with weak_ptr should not crash");
+}
+
+void test_memory_tensor_copy_grad_independence() {
+    AutoGrad::EnableGrad = true;
+    Tensor a = makeTensor({1.0f, 2.0f});
+    a.requires_grad(true);
+    Tensor b = makeTensor({10.0f, 20.0f});
+    b.requires_grad(true);
+    Tensor c = a + b;
+    AutoGrad::backward(c.getRelatedNode(), false);
+    Tensor a_copy = a;
+    auto grad_before = a.grad().data<float>();
+    auto grad_copy_before = a_copy.grad().data<float>();
+    EXPECT(grad_before[0] == grad_copy_before[0], "Initial grads should be equal");
+    Tensor d = a_copy * makeTensor({2.0f, 3.0f});
+    AutoGrad::backward(d.getRelatedNode(), false);
+    auto grad_after = a.grad().data<float>();
+    auto grad_copy_after = a_copy.grad().data<float>();
+    EXPECT(grad_after[0] != grad_copy_after[0], "Grads should be independent after copy");
+}
+
+void test_memory_arena_clear() {
+    Arena& arena = Arena::getInstance();
+    auto node = arena.invoke<AddNode>(std::vector<std::shared_ptr<Node>>(), std::vector<Tensor>());
+    EXPECT(node != nullptr, "Arena should allocate node");
+    arena.clear();
+    EXPECT(arena.invoke<AddNode>(std::vector<std::shared_ptr<Node>>(), std::vector<Tensor>()) != nullptr, 
+           "Arena should work after clear");
+}
+
+void test_memory_tensor_move_grad() {
+    AutoGrad::EnableGrad = true;
+    Tensor a = makeTensor({1.0f, 2.0f});
+    a.requires_grad(true);
+    Tensor b = makeTensor({10.0f, 20.0f});
+    b.requires_grad(true);
+    Tensor c = a + b;
+    AutoGrad::backward(c.getRelatedNode(), false);
+    Tensor d = std::move(a);
+    EXPECT(d.grad().numel() == 2, "Moved tensor should retain grad");
+}
+
 } // namespace
 
 int main() {
@@ -257,6 +312,10 @@ int main() {
     test_cos_grad();
     test_tanh_grad();
     test_sigmoid_grad();
+    test_memory_grad_accumulator_safety();
+    test_memory_tensor_copy_grad_independence();
+    test_memory_arena_clear();
+    test_memory_tensor_move_grad();
     std::cout << "\n通过: " << g_passed << " / 失败: " << g_failed << std::endl;
     return g_failed == 0 ? 0 : 1;
 }

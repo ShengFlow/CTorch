@@ -15,15 +15,29 @@ SigmoidNode::SigmoidNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std
 
 std::vector<GradPack> SigmoidNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
-    
-    // 对于Sigmoid算子，导数是sigmoid(input) * (1 - sigmoid(input))
-    Tensor sigmoid_input = _inputs[0].sigmoid();
-    Tensor grad = sigmoid_input * (1 - sigmoid_input) * downStreamGrads[0];
-    ret.push_back(GradPack{
-        _upStreamNodes[0],
-        std::vector({grad}),
-        0
-    });
+
+    if (_inputs.empty() || downStreamGrads.empty()) {
+        return ret;
+    }
+
+    auto result = getResult();
+    if (result) {
+        Tensor y = *result;
+        Tensor grad = y * (1 - y) * downStreamGrads[0];
+        ret.push_back(GradPack{
+            _upStreamNodes[0],
+            std::vector({grad}),
+            0
+        });
+    } else {
+        Tensor sigmoid_input = _inputs[0].sigmoid();
+        Tensor grad = sigmoid_input * (1 - sigmoid_input) * downStreamGrads[0];
+        ret.push_back(GradPack{
+            _upStreamNodes[0],
+            std::vector({grad}),
+            0
+        });
+    }
     
     return ret;
 }

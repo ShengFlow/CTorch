@@ -15,8 +15,11 @@ CosNode::CosNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector
 
 std::vector<GradPack> CosNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
-    
-    // 对于Cos算子，导数是-sin(input)
+
+    if (_inputs.empty() || downStreamGrads.empty()) {
+        return ret;
+    }
+
     Tensor grad = -_inputs[0].sin() * downStreamGrads[0];
     ret.push_back(GradPack{
         _upStreamNodes[0],

@@ -186,48 +186,61 @@ Tensor Tensor::clone() const {
     return result;
 }
 
-// 将张量转换为指定数据类型
 Tensor Tensor::to(DType dtype) const {
-    // 简单实现，仅支持float到其他类型
     if (_dtype == dtype) {
         return *this;
     }
 
     Tensor result(ShapeTag{}, _shape, dtype, _device);
+    size_t n = numel();
 
-    if (_dtype == DType::kFloat) {
-        const float* src = _storage.data<float>();
-        if (src) {
-            if (dtype == DType::kDouble) {
-                double* dst = result._storage.data<double>();
-                if (dst) {
-                    for (size_t i = 0; i < numel(); ++i) {
-                        dst[i] = static_cast<double>(src[i + _storage_offset]);
-                    }
+    auto convert = [&](auto src_data) {
+        if (!src_data) return;
+        if (dtype == DType::kFloat) {
+            float* dst = result._storage.data<float>();
+            if (dst) {
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = static_cast<float>(src_data[i + _storage_offset]);
                 }
-            } else if (dtype == DType::kInt) {
-                int32_t* dst = result._storage.data<int32_t>();
-                if (dst) {
-                    for (size_t i = 0; i < numel(); ++i) {
-                        dst[i] = static_cast<int32_t>(src[i + _storage_offset]);
-                    }
+            }
+        } else if (dtype == DType::kDouble) {
+            double* dst = result._storage.data<double>();
+            if (dst) {
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = static_cast<double>(src_data[i + _storage_offset]);
                 }
-            } else if (dtype == DType::kLong) {
-                int64_t* dst = result._storage.data<int64_t>();
-                if (dst) {
-                    for (size_t i = 0; i < numel(); ++i) {
-                        dst[i] = static_cast<int64_t>(src[i + _storage_offset]);
-                    }
+            }
+        } else if (dtype == DType::kInt) {
+            int32_t* dst = result._storage.data<int32_t>();
+            if (dst) {
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = static_cast<int32_t>(src_data[i + _storage_offset]);
                 }
-            } else if (dtype == DType::kBool) {
-                bool* dst = result._storage.data<bool>();
-                if (dst) {
-                    for (size_t i = 0; i < numel(); ++i) {
-                        dst[i] = static_cast<bool>(src[i + _storage_offset]);
-                    }
+            }
+        } else if (dtype == DType::kLong) {
+            int64_t* dst = result._storage.data<int64_t>();
+            if (dst) {
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = static_cast<int64_t>(src_data[i + _storage_offset]);
+                }
+            }
+        } else if (dtype == DType::kBool) {
+            bool* dst = result._storage.data<bool>();
+            if (dst) {
+                for (size_t i = 0; i < n; ++i) {
+                    dst[i] = static_cast<bool>(src_data[i + _storage_offset]);
                 }
             }
         }
+    };
+
+    switch (_dtype) {
+        case DType::kFloat: convert(_storage.data<float>()); break;
+        case DType::kDouble: convert(_storage.data<double>()); break;
+        case DType::kInt: convert(_storage.data<int32_t>()); break;
+        case DType::kLong: convert(_storage.data<int64_t>()); break;
+        case DType::kBool: convert(_storage.data<bool>()); break;
+        default: break;
     }
 
     return result;
@@ -317,73 +330,54 @@ Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
         }
     }
 
-    // 步骤4：创建结果张量
     Tensor result(ShapeTag{}, shape, _dtype, _device);
 
-    // 步骤5：执行广播（复制数据）
-    if (_dtype == DType::kFloat) {
-        const float* src_data = data<float>();
-        float* dst_data = result.data<float>();
+    size_t src_numel = numel();
+    size_t dst_numel = result.numel();
 
-        // 检查数据指针是否有效
-        if (!src_data || !dst_data) {
-            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, "张量数据指针无效");
+    if (src_numel == 1) {
+        size_t elem_size = dtypeSize(_dtype);
+        const char* src_ptr = _storage.data<char>() + _storage_offset * elem_size;
+        char* dst_ptr = result._storage.data<char>();
+        for (size_t i = 0; i < dst_numel; ++i) {
+            std::memcpy(dst_ptr + i * elem_size, src_ptr, elem_size);
+        }
+    } else {
+        std::vector<size_t> src_strides(current_shape.size());
+        src_strides.back() = 1;
+        for (int i = static_cast<int>(current_shape.size()) - 2; i >= 0; --i) {
+            src_strides[i] = src_strides[i + 1] * current_shape[i + 1];
         }
 
-        // 计算当前张量的元素数量
-        size_t src_numel = numel();
+        std::vector<size_t> dst_strides(target_shape.size());
+        dst_strides.back() = 1;
+        for (int i = static_cast<int>(target_shape.size()) - 2; i >= 0; --i) {
+            dst_strides[i] = dst_strides[i + 1] * target_shape[i + 1];
+        }
 
-        // 计算广播后的元素数量
-        size_t dst_numel = result.numel();
+        size_t elem_size = dtypeSize(_dtype);
+        const char* src_base = _storage.data<char>() + _storage_offset * elem_size;
+        char* dst_base = result._storage.data<char>();
 
-        // 对于标量广播，直接复制到所有位置
-        if (src_numel == 1) {
-            float value = src_data[0];
-            for (size_t i = 0; i < dst_numel; ++i) {
-                dst_data[i] = value;
-            }
-        } else {
-            // 实现完整的NumPy风格广播逻辑
-            // 计算当前张量的步幅
-            std::vector<size_t> src_strides(current_shape.size());
-            src_strides.back() = 1;
-            for (int i = static_cast<int>(current_shape.size()) - 2; i >= 0; --i) {
-                src_strides[i] = src_strides[i + 1] * current_shape[i + 1];
+        for (size_t i = 0; i < dst_numel; ++i) {
+            std::vector<size_t> dst_indices(target_shape.size());
+            size_t temp = i;
+            for (int j = static_cast<int>(target_shape.size()) - 1; j >= 0; --j) {
+                dst_indices[j] = temp / dst_strides[j];
+                temp %= dst_strides[j];
             }
 
-            // 计算目标张量的步幅
-            std::vector<size_t> dst_strides(target_shape.size());
-            dst_strides.back() = 1;
-            for (int i = static_cast<int>(target_shape.size()) - 2; i >= 0; --i) {
-                dst_strides[i] = dst_strides[i + 1] * target_shape[i + 1];
+            size_t src_idx = 0;
+            for (size_t j = 0; j < current_shape.size(); ++j) {
+                size_t idx = (current_shape[j] == 1) ? 0 : dst_indices[j];
+                src_idx += idx * src_strides[j];
             }
 
-            // 对于广播后的每个元素，计算原始张量中的对应索引
-            for (size_t i = 0; i < dst_numel; ++i) {
-                // 计算目标张量中元素i的多维索引
-                std::vector<size_t> dst_indices(target_shape.size());
-                size_t temp = i;
-                for (int j = static_cast<int>(target_shape.size()) - 1; j >= 0; --j) {
-                    dst_indices[j] = temp / dst_strides[j];
-                    temp %= dst_strides[j];
-                }
-
-                // 计算原始张量中的对应索引
-                size_t src_idx = 0;
-                for (size_t j = 0; j < current_shape.size(); ++j) {
-                    // 如果当前维度大小为1，则使用0索引（广播）
-                    size_t idx = (current_shape[j] == 1) ? 0 : dst_indices[j];
-                    src_idx += idx * src_strides[j];
-                }
-
-                // 检查源索引是否在有效范围内
-                if (src_idx >= src_numel) {
-                    CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播时源索引越界");
-                }
-
-                // 复制数据
-                dst_data[i] = src_data[src_idx];
+            if (src_idx >= src_numel) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "广播时源索引越界");
             }
+
+            std::memcpy(dst_base + i * elem_size, src_base + src_idx * elem_size, elem_size);
         }
     }
 
@@ -477,6 +471,7 @@ Tensor::Tensor()
       _storage_offset(0),
       _device(DeviceType::kCPU),
       _dtype(DType::kFloat) {
+    _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
     computeStrides();
 }
 
@@ -884,7 +879,7 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
 }
 
 std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _node; }
-std::shared_ptr<const Node> Tensor::getRelatedNode() const { return add_const(_node); }
+std::shared_ptr<Node> Tensor::getRelatedNode() const { return _node; }
 void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const { _node = std::move(ptr); }
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _grad = std::move(grad); }
 // 求张量的和

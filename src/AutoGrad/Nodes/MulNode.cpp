@@ -21,6 +21,15 @@ MulNode::MulNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector
 
 std::vector<GradPack> MulNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
+
+    if (_inputs.size() != 2) {
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "MulNode: 输入数量错误");
+        return ret;
+    }
+    if (downStreamGrads.empty()) {
+        return ret;
+    }
+
     Tensor grad_a = downStreamGrads[0] * _inputs[1];
     Tensor grad_b = downStreamGrads[0] * _inputs[0];
     ret.push_back(GradPack{

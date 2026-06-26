@@ -15,8 +15,11 @@ SinNode::SinNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vector
 
 std::vector<GradPack> SinNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
-    
-    // 对于Sin算子，导数是cos(input)
+
+    if (_inputs.empty() || downStreamGrads.empty()) {
+        return ret;
+    }
+
     Tensor grad = _inputs[0].cos() * downStreamGrads[0];
     ret.push_back(GradPack{
         _upStreamNodes[0],

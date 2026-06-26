@@ -27,16 +27,21 @@ std::vector<GradPack> SoftmaxNode::backward(const std::vector<Tensor>& downStrea
         return ret;
     }
     
-    // 检查downStreamGrads大小
     if (downStreamGrads.empty()) {
         CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "SoftmaxNode: 下游梯度为空");
         return ret;
     }
     
-    const Tensor& x = _inputs[0];
     const Tensor& grad = downStreamGrads[0];
 
-    Tensor softmax_x = x.softmax(_dim);
+    Tensor softmax_x;
+    auto cached_result = getResult();
+    if (cached_result) {
+        softmax_x = *cached_result;
+    } else {
+        const Tensor& x = _inputs[0];
+        softmax_x = x.softmax(_dim);
+    }
 
     Tensor grad_softmax = grad * softmax_x;
     Tensor sum_grad_softmax = grad_softmax.sum(_dim, true);

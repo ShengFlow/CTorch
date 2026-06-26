@@ -150,11 +150,10 @@ namespace AutoGrad {
             Arena &arena = Arena::getInstance();
             std::vector<std::shared_ptr<Node>> upStreamNodes;
 
-            Tensor& nonConstA = const_cast<Tensor&>(a);
-            if (nonConstA.getRelatedNode() == nullptr) {
-                nonConstA.setRelatedNode(arena.invoke<GradAccumulator>(a));
+            if (a.getRelatedNode() == nullptr) {
+                a.setRelatedNode(arena.invoke<GradAccumulator>(a.getWeakPtr()));
             }
-            upStreamNodes.push_back(nonConstA.getRelatedNode());
+            upStreamNodes.push_back(a.getRelatedNode());
 
             std::vector<Tensor> inputs = {a};
             const auto node = arena.invoke<SoftmaxNode>(upStreamNodes, inputs, result_weak, dim);

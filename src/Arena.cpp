@@ -33,3 +33,11 @@ void Arena::reset() {
 
     for (auto& block:_blocks) block->_offset = 0;
 }
+
+void Arena::clear() {
+    std::lock_guard lock(_mtx);
+    for (auto it = _destroyFuncs.rbegin();it != _destroyFuncs.rend();++it) (*it)();
+    _destroyFuncs.clear();
+
+    _blocks.clear();
+}

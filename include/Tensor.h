@@ -73,6 +73,11 @@ Tensor matMul(const Tensor &a, const Tensor &b);
 class Tensor {
   private:
     /**
+     * @var _self 自引用shared_ptr，用于支持weak_ptr获取
+     */
+    std::shared_ptr<Tensor> _self;
+
+    /**
      * @var _node 与该张量相关的Node
      */
     mutable std::shared_ptr<Node> _node;
@@ -207,6 +212,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU),
           _dtype(DType::kFloat) {
         _shape = {};
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
@@ -233,6 +239,7 @@ class Tensor {
     Tensor(std::initializer_list<float> values)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU),
           _dtype(DType::kFloat) {
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _node = nullptr;
         _shape = {values.size()};
         computeStrides();
@@ -250,6 +257,7 @@ class Tensor {
     Tensor(ShapeTag /*tag*/, const std::vector<size_t> &shape, DType dtype = DType::kFloat,
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _node = nullptr;
         _shape = shape;
         computeStrides();
@@ -268,6 +276,7 @@ class Tensor {
     Tensor(size_t size, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU,
            bool zero_init = true)
         : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _node = nullptr;
         _shape = {size};
         computeStrides();
@@ -286,9 +295,9 @@ class Tensor {
           _requires_grad(other._requires_grad), _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage), // 浅拷贝：共享底层存储
-          _shape(other._shape), _node(other._node) {
-        // std::cout << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_
-        // << std::endl;
+          _shape(other._shape), _node(other._node),
+          _grad(other._grad ? std::make_shared<Tensor>(*other._grad) : nullptr) {
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
@@ -312,6 +321,8 @@ class Tensor {
             _storage          = other._storage; // 浅拷贝：共享底层存储
             _requires_grad    = other._requires_grad;
             _node = std::const_pointer_cast<Node>(other.getRelatedNode());
+            _grad = other._grad ? std::make_shared<Tensor>(*other._grad) : nullptr;
+            _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         }
         return *this;
     }
@@ -325,8 +336,9 @@ class Tensor {
         : _node(other.getRelatedNode()), tensor_id_(other.tensor_id_),
           _requires_grad(other._requires_grad), _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
-        // 移动构造后，原对象的tensor_id变为0，避免冲突
+          _storage(std::move(other._storage)), _shape(std::move(other._shape)),
+          _grad(std::move(other._grad)) {
+        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         other.tensor_id_ = 0;
     }
 
@@ -347,8 +359,9 @@ class Tensor {
             _storage          = std::move(other._storage);
             _requires_grad    = other._requires_grad;
             _node = other.getRelatedNode();
+            _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+            _grad = std::move(other._grad);
 
-            // 移动赋值后，原对象的tensor_id变为0，避免冲突
             other.tensor_id_ = 0;
         }
         return *this;
@@ -1032,8 +1045,10 @@ class Tensor {
     // 保留设置方法
 
     [[nodiscard]] std::shared_ptr<Node> getRelatedNode() ;
-    [[nodiscard]] std::shared_ptr<const Node> getRelatedNode() const ;
+    [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const ;
     void setRelatedNode(std::shared_ptr<Node> ptr) const;
+
+    [[nodiscard]] std::weak_ptr<Tensor> getWeakPtr() const { return _self; }
 
 
     Tensor view(std::initializer_list<size_t> shape);

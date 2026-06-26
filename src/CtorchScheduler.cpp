@@ -96,17 +96,17 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
 
 Tensor CtorchScheduler::dispatch(const Tensor& a, const Tensor& b, op op_type) {
     if (a.dtype() != b.dtype()) {
-        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
     }
     if (op_type != op::Add && op_type != op::Mul && op_type != op::Sub && op_type != op::Div && op_type != op::CE && op_type != op::MatMul && a.sizes() != b.sizes()) {
-        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::DIMENSION,"Ctorch_Scheduler: Tensor形状不一致");
     }
 
     DeviceType target_dev = getTargetDevice(a, b);
     BinaryKernelFunc target_kernel = selectBestBinary(op_type, target_dev, binary_kernels_);
 
     if (target_kernel == nullptr) {
-        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
     }
     return target_kernel(a, b);
 }
@@ -116,7 +116,7 @@ Tensor CtorchScheduler::dispatch(const Tensor& a, op op_type) {
     UnaryKernelFunc target_kernel = selectBestUnary(op_type, target_dev, unary_kernels_);
 
     if (target_kernel == nullptr) {
-        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
     }
     return target_kernel(a);
 }
@@ -141,7 +141,7 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
     }
 
     if (target_kernel == nullptr) {
-        CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
     }
     return target_kernel(a, dim);
 }

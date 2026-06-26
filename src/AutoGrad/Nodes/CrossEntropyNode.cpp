@@ -30,6 +30,15 @@ std::vector<GradPack> CrossEntropyNode::backward(const std::vector<Tensor>& down
     const Tensor& logits = _inputs[0];
     const Tensor& target = _inputs[1];
 
+    if (logits.dim() != 2) {
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::DIMENSION, "CrossEntropyNode: logits 必须是 2D 张量");
+        return ret;
+    }
+    if (target.dim() != 1 && target.dim() != 2) {
+        CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::DIMENSION, "CrossEntropyNode: target 必须是 1D 或 2D 张量");
+        return ret;
+    }
+
     if (downStreamGrads.empty()) {
         CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "CrossEntropyNode: downStreamGrads is empty");
         return ret;
@@ -40,12 +49,7 @@ std::vector<GradPack> CrossEntropyNode::backward(const std::vector<Tensor>& down
     Tensor softmax_logits = logits.softmax(1);
     Tensor diff = softmax_logits - target;
 
-    Tensor grad_logits;
-    if (grad.dim() == 0) {
-        grad_logits = grad * diff;
-    } else {
-        grad_logits = grad * diff;
-    }
+    Tensor grad_logits = grad * diff;
 
     ret.push_back(GradPack{
         _upStreamNodes[0],

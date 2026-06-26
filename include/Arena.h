@@ -131,7 +131,7 @@ public:
             if constexpr (!std::is_trivially_destructible_v<T>)
                 _destroyFuncs.push_back([obj](){obj->~T();});
             auto emptyDeleter = [](T*) noexcept {};
-            std::shared_ptr<T> ptr(obj,emptyDeleter);
+            std::shared_ptr<T> ptr(obj, emptyDeleter);
             return ptr;
         }
         CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to add for the object.");
@@ -140,6 +140,9 @@ public:
 
     /** @brief 重置内存池，释放所有分配的内存 */
     void reset();
+
+    /** @brief 清理内存池，释放所有内存块 */
+    void clear();
 };
 
 #endif // CTORCH_ARENA_H

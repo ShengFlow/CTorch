@@ -16,12 +16,13 @@ Tensor Cos_BASIC_kernel(const Tensor &a) {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                           ErrorType::DEVICE_COMPAT, "CPU-BASIC Cos_Kernel: 仅在CPU支持");
     }
-    Tensor result = a.clone();
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
     size_t count = a.numel();
-    float *data  = result.data<float>();
+    const float *a_data = a.data<float>();
+    float *result_data = result.data<float>();
     for (size_t i = 0; i < count; ++i) {
-        data[i] = std::cos(data[i]);
+        result_data[i] = std::cos(a_data[i]);
     }
     return result;
 }
