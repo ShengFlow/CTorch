@@ -138,6 +138,22 @@ public:
         return nullptr;
     }
 
+    /**
+     * @brief 分配指定大小的原始内存
+     * @param bytes 需要分配的字节数
+     * @param align 对齐要求，默认最大对齐
+     * @return 分配的内存指针，失败返回nullptr
+     */
+    char* allocBytes(size_t bytes, size_t align = alignof(std::max_align_t));
+
+    /**
+     * @brief 分配指定大小的内存并返回 shared_ptr（由 Arena 管理生命周期）
+     * @param bytes 需要分配的字节数
+     * @param align 对齐要求，默认最大对齐
+     * @return shared_ptr<char>，空删除器（内存由 Arena 统一管理）
+     */
+    std::shared_ptr<char> allocShared(size_t bytes, size_t align = alignof(std::max_align_t));
+
     /** @brief 重置内存池，释放所有分配的内存 */
     void reset();
 

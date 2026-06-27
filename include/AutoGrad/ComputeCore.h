@@ -46,9 +46,9 @@ class GradBucket {
 
     /**
      * @brief 添加梯度包列表
-     * @param newPacks 新的梯度包列表
+     * @param newPacks 新的梯度包列表（移动语义）
      */
-    void add(const std::vector<GradPack>& newPacks);
+    void add(std::vector<GradPack>&& newPacks);
 
     /**
      * @brief 移除指定节点的梯度包

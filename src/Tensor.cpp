@@ -27,7 +27,7 @@ std::atomic<size_t> Tensor::global_tensor_id(1);
  * @details 如果需要梯度，确保已注册到计算图
  */
 void Tensor::requires_grad(bool key) {
-    _requires_grad = key;
+    _autograd_meta._requires_grad = key;
 }
 
 /**
@@ -467,11 +467,8 @@ Tensor Tensor::matmul(const Tensor& other) const {
 // 默认构造函数
 Tensor::Tensor()
     : tensor_id_(global_tensor_id++),
-      _requires_grad(false),
-      _storage_offset(0),
-      _device(DeviceType::kCPU),
-      _dtype(DType::kFloat) {
-    _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+      _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+    _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
     computeStrides();
 }
 
@@ -878,10 +875,10 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     return result;
 }
 
-std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _node; }
-std::shared_ptr<Node> Tensor::getRelatedNode() const { return _node; }
-void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const { _node = std::move(ptr); }
-void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _grad = std::move(grad); }
+std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _autograd_meta._node; }
+std::shared_ptr<Node> Tensor::getRelatedNode() const { return _autograd_meta._node; }
+void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const { _autograd_meta._node = std::move(ptr); }
+void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _autograd_meta._grad = std::move(grad); }
 // 求张量的和
 Tensor Tensor::sum(int dim, bool keepdim) const {
     // 实现sum操作

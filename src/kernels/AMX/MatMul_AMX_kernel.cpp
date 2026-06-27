@@ -52,10 +52,10 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
   CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - a_is_contiguous: " + std::to_string(a_is_contiguous));
   CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - b_is_contiguous: " + std::to_string(b_is_contiguous));
 
-  // 无论是否连续，都使用 cblas_sgemm
-  // 如果不连续，创建连续的副本
-  Tensor a_contig = a;
-  Tensor b_contig = b;
+  Tensor a_contig;
+  Tensor b_contig;
+  const Tensor* a_ptr = &a;
+  const Tensor* b_ptr = &b;
 
   if (!a_is_contiguous) {
     CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - Creating contiguous copy for a");
@@ -66,6 +66,7 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
         a_contig.data<float>()[i * k + j] = a.data<float>()[idx];
       }
     }
+    a_ptr = &a_contig;
   }
 
   if (!b_is_contiguous) {
@@ -77,6 +78,7 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
         b_contig.data<float>()[i * n + j] = b.data<float>()[idx];
       }
     }
+    b_ptr = &b_contig;
   }
 
   CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - Using cblas_sgemm for acceleration");
@@ -92,9 +94,9 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
       (int)n,
       (int)k,
       alpha,
-      a_contig.data<float>(),
+      a_ptr->data<float>(),
       (int)k,
-      b_contig.data<float>(),
+      b_ptr->data<float>(),
       (int)n,
       beta,
       result.data<float>(),

@@ -34,6 +34,50 @@ void Arena::reset() {
     for (auto& block:_blocks) block->_offset = 0;
 }
 
+char* Arena::allocBytes(size_t bytes, size_t align) {
+    std::lock_guard lock(_mtx);
+
+    auto allocateFrom = [](std::unique_ptr<Block>& block, size_t alignment, size_t size) -> char* {
+        void* ptr = block->_base + block->_offset;
+        size_t space = block->_maxOffset - block->_offset;
+        if (std::align(alignment, size, ptr, space)) {
+            block->_offset = static_cast<char*>(ptr) + size - block->_base;
+            return static_cast<char*>(ptr);
+        }
+        return nullptr;
+    };
+
+    if (_blocks.empty()) {
+        size_t blockSize = std::max(bytes + align, static_cast<size_t>(1024 * 1024));
+        addBlock(blockSize);
+    }
+
+    char* ptr = allocateFrom(_blocks.back(), align, bytes);
+    if (ptr) return ptr;
+
+    for (auto it = _blocks.rbegin() + 1; it != _blocks.rend(); ++it) {
+        ptr = allocateFrom(*it, align, bytes);
+        if (ptr) return ptr;
+    }
+
+    size_t blockSize = std::max(bytes + align, static_cast<size_t>(1024 * 1024));
+    addBlock(blockSize);
+
+    ptr = allocateFrom(_blocks.back(), align, bytes);
+    if (ptr) return ptr;
+
+    CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "Unable to allocate bytes from Arena.");
+    return nullptr;
+}
+
+std::shared_ptr<char> Arena::allocShared(size_t bytes, size_t align) {
+    char* mem = allocBytes(bytes, align);
+    if (mem) {
+        return std::shared_ptr<char>(mem, [](char*) noexcept {});
+    }
+    return nullptr;
+}
+
 void Arena::clear() {
     std::lock_guard lock(_mtx);
     for (auto it = _destroyFuncs.rbegin();it != _destroyFuncs.rend();++it) (*it)();

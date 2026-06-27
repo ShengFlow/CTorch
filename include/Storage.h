@@ -11,6 +11,7 @@
 #define STORAGE_H
 #include "Ctools.h"
 #include "CtorchError.h"
+#include "Arena.h"
 
 /**
  * @class Storage
@@ -41,11 +42,15 @@ private:
    /**
     * @var _data
     * @brief 原始内存指针
-    * @details 使用shared_ptr<char[]>实现共享所有权，避免手动delete问题和数组delete不匹配问题
-    * 使用char[]能够最大限度节省内存并支持存储任意类型的数据
+    * @details 使用shared_ptr<char>实现共享所有权，避免手动delete问题
+    * 使用char*能够最大限度节省内存并支持存储任意类型的数据
     * 同等tensor可以共用一块内存，减少不必要的内存占用
+    * 小对象使用Arena内存池分配，大对象使用系统malloc
     */
-   std::shared_ptr<char[]> _data;
+   std::shared_ptr<char> _data;
+
+   /** @brief 小对象阈值（字节），小于此值走Arena内存池 */
+   static constexpr size_t ARENA_THRESHOLD = 64 * 1024;  // 64KB
 
    /**
     * @brief 检查模板类型是否与存储类型匹配
@@ -71,7 +76,17 @@ public:
      * @param dtype 数据类型
      * @param device 设备类型，默认CPU
      */
-    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU): _size(size), _dtype(dtype), _device(device),_data(size > 0 ? std::shared_ptr<char[]>(new char[size * dtypeSize(dtype)], std::default_delete<char[]>()) : nullptr) {}
+    Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
+        : _size(size), _dtype(dtype), _device(device) {
+        if (size > 0) {
+            size_t bytes = size * dtypeSize(dtype);
+            if (device == DeviceType::kCPU && bytes <= ARENA_THRESHOLD) {
+                _data = Arena::getInstance().allocShared(bytes);
+            } else {
+                _data = std::shared_ptr<char>(new char[bytes], std::default_delete<char[]>());
+            }
+        }
+    }
 
     /**
      * @brief 构造函数：从现有数据复制

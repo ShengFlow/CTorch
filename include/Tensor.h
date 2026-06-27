@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include "AutogradMeta.h"
 #include "CtorchError.h"
 #include "Storage.h"
 #ifdef __APPLE__
@@ -73,14 +74,9 @@ Tensor matMul(const Tensor &a, const Tensor &b);
 class Tensor {
   private:
     /**
-     * @var _self 自引用shared_ptr，用于支持weak_ptr获取
+     * @var _autograd_meta 自动微分元数据，封装所有自动微分相关状态
      */
-    std::shared_ptr<Tensor> _self;
-
-    /**
-     * @var _node 与该张量相关的Node
-     */
-    mutable std::shared_ptr<Node> _node;
+    AutogradMeta _autograd_meta;
 
     /**
      * @var global_tensor_id
@@ -93,12 +89,6 @@ class Tensor {
      * @brief 张量的唯一标识符
      */
     size_t tensor_id_;
-
-    /**
-     * @var _requires_grad
-     * @brief 是否参与自动微分计算，默认不参与
-     */
-    bool _requires_grad = false;
 
     /**
      * @var _strides
@@ -130,7 +120,6 @@ class Tensor {
      */
     Storage _storage;
 
-    std::shared_ptr<Tensor> _grad;
     // ======================= 内部辅助函数 =======================
 
     /**
@@ -209,17 +198,17 @@ class Tensor {
      * @param value 标量值
      */
     Tensor(float value)
-        : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU),
-          _dtype(DType::kFloat) {
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
         _shape = {};
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
         CTORCH_TRACE(ErrorPlatform::kCPU, msg);
         computeStrides();
         _storage = Storage(1, _dtype, _device);
-        _node = nullptr;
+        _autograd_meta._node = nullptr;
         if (_storage.data<float>()) {
             *_storage.data<float>() = value;
             std::ostringstream oss;
@@ -237,10 +226,10 @@ class Tensor {
      * @param values 初始化列表
      */
     Tensor(std::initializer_list<float> values)
-        : tensor_id_(global_tensor_id++), _storage_offset(0), _device(DeviceType::kCPU),
-          _dtype(DType::kFloat) {
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _node = nullptr;
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node = nullptr;
         _shape = {values.size()};
         computeStrides();
         _storage = Storage(values.begin(), values.size(), _dtype, _device);
@@ -256,9 +245,10 @@ class Tensor {
      */
     Tensor(ShapeTag /*tag*/, const std::vector<size_t> &shape, DType dtype = DType::kFloat,
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
-        : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _node = nullptr;
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(device), _dtype(dtype) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node = nullptr;
         _shape = shape;
         computeStrides();
         _storage = Storage(numel(), _dtype, _device);
@@ -275,9 +265,10 @@ class Tensor {
      */
     Tensor(size_t size, DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU,
            bool zero_init = true)
-        : tensor_id_(global_tensor_id++), _storage_offset(0), _device(device), _dtype(dtype) {
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _node = nullptr;
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(device), _dtype(dtype) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node = nullptr;
         _shape = {size};
         computeStrides();
         _storage = Storage(size, _dtype, _device);
@@ -292,12 +283,14 @@ class Tensor {
      */
     Tensor(const Tensor &other)
         : tensor_id_(global_tensor_id++),
-          _requires_grad(other._requires_grad), _strides(other._strides),
+          _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage), // 浅拷贝：共享底层存储
-          _shape(other._shape), _node(other._node),
-          _grad(other._grad ? std::make_shared<Tensor>(*other._grad) : nullptr) {
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+          _shape(other._shape) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node = other._autograd_meta._node;
+        _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
+        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
@@ -319,10 +312,10 @@ class Tensor {
             _device           = other._device;
             _dtype            = other._dtype;
             _storage          = other._storage; // 浅拷贝：共享底层存储
-            _requires_grad    = other._requires_grad;
-            _node = std::const_pointer_cast<Node>(other.getRelatedNode());
-            _grad = other._grad ? std::make_shared<Tensor>(*other._grad) : nullptr;
-            _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+            _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
+            _autograd_meta._node = std::const_pointer_cast<Node>(other.getRelatedNode());
+            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+            _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         }
         return *this;
     }
@@ -333,12 +326,11 @@ class Tensor {
      * @details 移动构造后，原对象的tensor_id变为0，避免冲突
      */
     Tensor(Tensor &&other) noexcept
-        : _node(other.getRelatedNode()), tensor_id_(other.tensor_id_),
-          _requires_grad(other._requires_grad), _strides(std::move(other._strides)),
+        : _autograd_meta(std::move(other._autograd_meta)), tensor_id_(other.tensor_id_),
+          _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)), _shape(std::move(other._shape)),
-          _grad(std::move(other._grad)) {
-        _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+          _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         other.tensor_id_ = 0;
     }
 
@@ -357,10 +349,8 @@ class Tensor {
             _device           = other._device;
             _dtype            = other._dtype;
             _storage          = std::move(other._storage);
-            _requires_grad    = other._requires_grad;
-            _node = other.getRelatedNode();
-            _self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-            _grad = std::move(other._grad);
+            _autograd_meta    = std::move(other._autograd_meta);
+            _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
 
             other.tensor_id_ = 0;
         }
@@ -382,13 +372,13 @@ class Tensor {
      * @brief 获取是否需要梯度
      * @return 如果需要梯度返回true，否则返回false
      */
-    bool requires_grad() const { return _requires_grad; }
+    bool requires_grad() const { return _autograd_meta._requires_grad; }
 
     /**
      * @brief 设置梯度需求
      * @param requires_grad 是否需要梯度
      */
-    void set_requires_grad(bool requires_grad) { _requires_grad = requires_grad; }
+    void set_requires_grad(bool requires_grad) { _autograd_meta._requires_grad = requires_grad; }
 
     // ======================= 访问器 =======================
 
@@ -1048,7 +1038,7 @@ class Tensor {
     [[nodiscard]] std::shared_ptr<Node> getRelatedNode() const ;
     void setRelatedNode(std::shared_ptr<Node> ptr) const;
 
-    [[nodiscard]] std::weak_ptr<Tensor> getWeakPtr() const { return _self; }
+    [[nodiscard]] std::weak_ptr<Tensor> getWeakPtr() const { return _autograd_meta._self; }
 
 
     Tensor view(std::initializer_list<size_t> shape);
@@ -1060,8 +1050,8 @@ class Tensor {
      * @return 梯度张量
      */
     Tensor grad() const {
-        if (_grad) {
-            return *_grad;
+        if (_autograd_meta._grad) {
+            return *_autograd_meta._grad;
         }
         // 返回一个与当前张量形状相同的零张量
         return Tensor(ShapeTag{}, _shape, _dtype, _device, true);
