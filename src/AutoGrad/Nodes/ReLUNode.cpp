@@ -25,22 +25,8 @@ std::vector<GradPack> ReLUNode::backward(const std::vector<Tensor>& downStreamGr
     
     const Tensor& x = _inputs[0];
     const Tensor& grad_out = downStreamGrads[0];
-    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
-    size_t n = x.numel();
-
-    auto relu_grad = [&](auto x_p, auto gout_p, auto gx_p) {
-        for (size_t i = 0; i < n; ++i) {
-            gx_p[i] = x_p[i] > 0 ? gout_p[i] : 0;
-        }
-    };
-
-    switch (x.dtype()) {
-        case DType::kFloat: relu_grad(x.data<float>(), grad_out.data<float>(), grad_x.data<float>()); break;
-        case DType::kDouble: relu_grad(x.data<double>(), grad_out.data<double>(), grad_x.data<double>()); break;
-        case DType::kInt: relu_grad(x.data<int32_t>(), grad_out.data<int32_t>(), grad_x.data<int32_t>()); break;
-        case DType::kLong: relu_grad(x.data<int64_t>(), grad_out.data<int64_t>(), grad_x.data<int64_t>()); break;
-        default: break;
-    }
+    
+    Tensor grad_x = (x > 0) * grad_out;
 
     ret.push_back(GradPack{
         _upStreamNodes[0],

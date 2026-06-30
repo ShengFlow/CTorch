@@ -77,6 +77,11 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/CrossEntropyNode.h
         include/AutoGrad/Nodes/SoftmaxNode.h
         include/AutoGrad/Nodes/GradAccumulator.h
+        include/AutoGrad/Nodes/LogNode.h
+        include/AutoGrad/Nodes/ExpNode.h
+        include/AutoGrad/Nodes/AbsNode.h
+        include/AutoGrad/Nodes/MinNode.h
+        include/AutoGrad/Nodes/MaxNode.h
 )
 
 set(CT-Nodes
@@ -96,6 +101,11 @@ set(CT-Nodes
         src/AutoGrad/Nodes/CrossEntropyNode.cpp
         src/AutoGrad/Nodes/SoftmaxNode.cpp
         src/AutoGrad/Nodes/GradAccumulator.cpp
+        src/AutoGrad/Nodes/LogNode.cpp
+        src/AutoGrad/Nodes/ExpNode.cpp
+        src/AutoGrad/Nodes/AbsNode.cpp
+        src/AutoGrad/Nodes/MinNode.cpp
+        src/AutoGrad/Nodes/MaxNode.cpp
 )
 
 set(CT-CPU-BASIC-OPs
@@ -115,6 +125,11 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/MSE_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/CrossEntropy_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Log_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Exp_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Abs_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Min_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Max_BASIC_kernel.cpp
 )
 set(CT-AMX-OPs
         src/kernels/AMX/MatMul_AMX_kernel.cpp
@@ -138,6 +153,11 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/ReLU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Sigmoid_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Log_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Exp_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Abs_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Min_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Max_SIMD_kernel.cpp
 )
 
 set(ctQALS

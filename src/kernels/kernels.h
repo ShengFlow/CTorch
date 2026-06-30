@@ -244,4 +244,66 @@ Tensor MAE_CUDA_kernel(const Tensor& a, const Tensor& b);
 Tensor MAE_AMX_kernel(const Tensor& a, const Tensor& b);
 Tensor MAE_MPS_kernel(const Tensor& a, const Tensor& b);
 
+/**
+ * @brief 基本Log算子实现
+ * @details 执行张量的自然对数操作
+ * @param a 输入张量
+ * @return Log结果张量
+ */
+Tensor Log_BASIC_kernel(const Tensor& a);
+Tensor Log_SIMD_kernel(const Tensor& a);
+Tensor Log_CUDA_kernel(const Tensor& a);
+Tensor Log_AMX_kernel(const Tensor& a);
+Tensor Log_MPS_kernel(const Tensor& a);
+
+/**
+ * @brief 基本Exp算子实现
+ * @details 执行张量的指数操作
+ * @param a 输入张量
+ * @return Exp结果张量
+ */
+Tensor Exp_BASIC_kernel(const Tensor& a);
+Tensor Exp_SIMD_kernel(const Tensor& a);
+Tensor Exp_CUDA_kernel(const Tensor& a);
+Tensor Exp_AMX_kernel(const Tensor& a);
+Tensor Exp_MPS_kernel(const Tensor& a);
+
+/**
+ * @brief 基本Abs算子实现
+ * @details 执行张量的绝对值操作
+ * @param a 输入张量
+ * @return Abs结果张量
+ */
+Tensor Abs_BASIC_kernel(const Tensor& a);
+Tensor Abs_SIMD_kernel(const Tensor& a);
+Tensor Abs_CUDA_kernel(const Tensor& a);
+Tensor Abs_AMX_kernel(const Tensor& a);
+Tensor Abs_MPS_kernel(const Tensor& a);
+
+/**
+ * @brief 基本Min算子实现
+ * @details 执行两个张量的逐元素最小值操作
+ * @param a 第一个输入张量
+ * @param b 第二个输入张量
+ * @return Min结果张量
+ */
+Tensor Min_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor Min_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor Min_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor Min_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor Min_MPS_kernel(const Tensor& a, const Tensor& b);
+
+/**
+ * @brief 基本Max算子实现
+ * @details 执行两个张量的逐元素最大值操作
+ * @param a 第一个输入张量
+ * @param b 第二个输入张量
+ * @return Max结果张量
+ */
+Tensor Max_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor Max_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor Max_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor Max_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor Max_MPS_kernel(const Tensor& a, const Tensor& b);
+
 #endif //KERNELS_H

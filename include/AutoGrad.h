@@ -31,6 +31,11 @@ class Node;
 #include "AutoGrad/Nodes/CrossEntropyNode.h"
 #include "AutoGrad/Nodes/SoftmaxNode.h"
 #include "AutoGrad/Nodes/GradAccumulator.h"
+#include "AutoGrad/Nodes/LogNode.h"
+#include "AutoGrad/Nodes/ExpNode.h"
+#include "AutoGrad/Nodes/AbsNode.h"
+#include "AutoGrad/Nodes/MinNode.h"
+#include "AutoGrad/Nodes/MaxNode.h"
 #include "Arena.h"
 
 namespace AutoGrad {
@@ -123,6 +128,10 @@ namespace AutoGrad {
                 registerNode<MatMulNode>(a, b, result_weak);
             } else if constexpr (OpType == op::CE) {
                 registerNode<CrossEntropyNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::Min) {
+                registerNode<MinNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::Max) {
+                registerNode<MaxNode>(a, b, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
@@ -194,6 +203,12 @@ namespace AutoGrad {
                 registerNode<TanhNode>(a, result_weak);
             } else if constexpr (OpType == op::Sigmoid) {
                 registerNode<SigmoidNode>(a, result_weak);
+            } else if constexpr (OpType == op::Log) {
+                registerNode<LogNode>(a, result_weak);
+            } else if constexpr (OpType == op::Exp) {
+                registerNode<ExpNode>(a, result_weak);
+            } else if constexpr (OpType == op::Abs) {
+                registerNode<AbsNode>(a, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());

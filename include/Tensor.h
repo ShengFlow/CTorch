@@ -809,6 +809,13 @@ class Tensor {
     Tensor max() const;
 
     /**
+     * @brief 逐元素取最大值
+     * @param other 另一个张量
+     * @return 逐元素最大值结果张量
+     */
+    Tensor max(const Tensor& other) const;
+
+    /**
      * @brief 求最小值操作
      * @param dims 要求最小值的维度列表
      * @param keepdim 是否保持原维度
@@ -829,6 +836,13 @@ class Tensor {
      * @return 最小值结果张量（标量）
      */
     Tensor min() const;
+
+    /**
+     * @brief 逐元素取最小值
+     * @param other 另一个张量
+     * @return 逐元素最小值结果张量
+     */
+    Tensor min(const Tensor& other) const;
 
     /**
      * @brief 求标准差操作
@@ -998,6 +1012,20 @@ class Tensor {
      * @return LogSoftmax结果张量
      */
     Tensor log_softmax(int dim = -1) const;
+
+    /**
+     * @brief 逐元素裁剪操作
+     * @param min_val 最小值
+     * @param max_val 最大值
+     * @return 裁剪后的张量
+     */
+    Tensor clamp(float min_val, float max_val) const;
+
+    /**
+     * @brief 从计算图分离
+     * @return 分离后的张量，不参与梯度计算
+     */
+    Tensor detach() const;
 
     /**
      * @brief 求交叉熵损失

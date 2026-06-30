@@ -43,6 +43,12 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Tanh, DeviceType::kCPU, Tanh_BASIC_kernel);
     set_unary(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_kernel);
     set_unary(op::LReLU, DeviceType::kCPU, nullptr);
+    set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
+    set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
+    set_unary(op::Abs, DeviceType::kCPU, Abs_BASIC_kernel);
+
+    set_bin(op::Min, DeviceType::kCPU, Min_BASIC_kernel);
+    set_bin(op::Max, DeviceType::kCPU, Max_BASIC_kernel);
 
     set_softmax(DeviceType::kCPU, Softmax_BASIC_kernel);
 
@@ -56,6 +62,12 @@ void CtorchScheduler::initKernels() {
     set_unary(op::ReLU, DeviceType::kSIMD, ReLU_SIMD_kernel);
     set_unary(op::Tanh, DeviceType::kSIMD, Tanh_SIMD_kernel);
     set_unary(op::Sigmoid, DeviceType::kSIMD, Sigmoid_SIMD_kernel);
+    set_unary(op::Log, DeviceType::kSIMD, Log_SIMD_kernel);
+    set_unary(op::Exp, DeviceType::kSIMD, Exp_SIMD_kernel);
+    set_unary(op::Abs, DeviceType::kSIMD, Abs_SIMD_kernel);
+
+    set_bin(op::Min, DeviceType::kSIMD, Min_SIMD_kernel);
+    set_bin(op::Max, DeviceType::kSIMD, Max_SIMD_kernel);
 
     // AMX kernels（目前只有 MatMul 有 AMX 实现）
     set_bin(op::MatMul, DeviceType::kAMX, MatMul_AMX_kernel);

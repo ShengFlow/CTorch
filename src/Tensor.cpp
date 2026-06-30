@@ -574,12 +574,12 @@ static Tensor scalarOpImpl(const Tensor& self, float scalar, OpFunc&& op_func) {
 // 比较运算模板: Tensor vs 标量
 template <typename CmpFunc>
 static Tensor cmpScalarOpImpl(const Tensor& self, float scalar, CmpFunc&& cmp) {
-    Tensor result(ShapeTag{}, self.shape(), DType::kBool, self.device());
+    Tensor result(ShapeTag{}, self.shape(), DType::kFloat, self.device());
     size_t count = self.numel();
     if (self.dtype() == DType::kFloat) {
         const float* data = self.data<float>();
-        bool* result_data = result.data<bool>();
-        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(data[i], scalar);
+        float* result_data = result.data<float>();
+        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(data[i], scalar) ? 1.0f : 0.0f;
     }
     return result;
 }
@@ -587,7 +587,7 @@ static Tensor cmpScalarOpImpl(const Tensor& self, float scalar, CmpFunc&& cmp) {
 // 比较运算模板: Tensor vs Tensor
 template <typename CmpFunc>
 static Tensor cmpTensorOpImpl(const Tensor& self, const Tensor& other, CmpFunc&& cmp) {
-    Tensor result(ShapeTag{}, self.shape(), DType::kBool, self.device());
+    Tensor result(ShapeTag{}, self.shape(), DType::kFloat, self.device());
     if (self.shape() != other.shape()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "张量形状不匹配");
     }
@@ -598,8 +598,8 @@ static Tensor cmpTensorOpImpl(const Tensor& self, const Tensor& other, CmpFunc&&
     if (self.dtype() == DType::kFloat) {
         const float* data = self.data<float>();
         const float* other_data = other.data<float>();
-        bool* result_data = result.data<bool>();
-        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(data[i], other_data[i]);
+        float* result_data = result.data<float>();
+        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(data[i], other_data[i]) ? 1.0f : 0.0f;
     }
     return result;
 }
@@ -944,6 +944,71 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         default:
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "sum: 不支持的数据类型");
     }
+    
+    return result;
+}
+
+Tensor Tensor::log() const {
+    return AutoGrad::dispatch<op::Log>(*this);
+}
+
+Tensor Tensor::exp() const {
+    return AutoGrad::dispatch<op::Exp>(*this);
+}
+
+Tensor Tensor::abs() const {
+    return AutoGrad::dispatch<op::Abs>(*this);
+}
+
+Tensor Tensor::min(const Tensor& other) const {
+    return AutoGrad::dispatch<op::Min>(*this, other);
+}
+
+Tensor Tensor::max(const Tensor& other) const {
+    return AutoGrad::dispatch<op::Max>(*this, other);
+}
+
+Tensor Tensor::mean() const {
+    Tensor result(ShapeTag{}, {}, _dtype, _device);
+    
+    if (_dtype == DType::kFloat) {
+        const float* data = _storage.data<float>();
+        float sum = 0.0f;
+        for (size_t i = 0; i < numel(); ++i) {
+            sum += data[i + _storage_offset];
+        }
+        result._storage = Storage(1, _dtype, _device);
+        float* result_data = result._storage.data<float>();
+        if (result_data) {
+            *result_data = sum / static_cast<float>(numel());
+        }
+    }
+    
+    return result;
+}
+
+Tensor Tensor::clamp(float min_val, float max_val) const {
+    Tensor result(*this);
+    result._storage = _storage.clone();
+    
+    if (_dtype == DType::kFloat) {
+        float* data = result.data<float>();
+        for (size_t i = 0; i < numel(); ++i) {
+            float val = data[i];
+            if (val < min_val) val = min_val;
+            if (val > max_val) val = max_val;
+            data[i] = val;
+        }
+    }
+    
+    return result;
+}
+
+Tensor Tensor::detach() const {
+    Tensor result(ShapeTag{}, _shape, _dtype, _device);
+    result._storage = _storage.clone();
+    result._autograd_meta._requires_grad = false;
+    result._autograd_meta._node = nullptr;
     
     return result;
 }

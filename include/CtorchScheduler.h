@@ -25,7 +25,7 @@ private:
     static constexpr size_t OP_COUNT = static_cast<size_t>(op::kCount);
     static constexpr size_t DEVICE_COUNT = static_cast<size_t>(DeviceType::kCount);
 
-    static_assert(static_cast<size_t>(op::kCount) == 22, "op enum count changed, verify kCount");
+    static_assert(static_cast<size_t>(op::kCount) == 27, "op enum count changed, verify kCount");
     static_assert(static_cast<size_t>(DeviceType::kCount) == 7, "DeviceType enum count changed, verify kCount");
 
     std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> binary_kernels_{};
