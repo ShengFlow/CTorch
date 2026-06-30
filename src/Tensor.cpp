@@ -362,9 +362,10 @@ Tensor Tensor::broadcast_to(const std::vector<size_t>& shape) const {
         for (size_t i = 0; i < dst_numel; ++i) {
             std::vector<size_t> dst_indices(target_shape.size());
             size_t temp = i;
+            // 从最后一维开始分解索引
             for (int j = static_cast<int>(target_shape.size()) - 1; j >= 0; --j) {
-                dst_indices[j] = temp / dst_strides[j];
-                temp %= dst_strides[j];
+                dst_indices[j] = temp % target_shape[j];
+                temp /= target_shape[j];
             }
 
             size_t src_idx = 0;
@@ -455,11 +456,10 @@ void Tensor::rand() {
 // 矩阵乘法
 Tensor Tensor::matmul(const Tensor& other) const {
     // 使用调度器执行矩阵乘法
-    Tensor result = AutoGrad::dispatch(*this, other, op::MatMul);
+    Tensor result = AutoGrad::dispatch<op::MatMul>(*this, other);
 
     return result;
 }
-
 
 
 // ======================= 缺失方法实现 =======================
@@ -480,25 +480,25 @@ bool Tensor::check_storage_offset() const {
 // ReLU激活函数
 Tensor Tensor::relu() const {
     // 简单实现ReLU激活函数
-    Tensor result = AutoGrad::dispatch(*this,op::ReLU);
+    Tensor result = AutoGrad::dispatch<op::ReLU>(*this);
 
     return result;
 }
 
 Tensor Tensor::dot(const Tensor &other) const{
-    Tensor result = AutoGrad::dispatch(*this,other,op::Dot);
+    Tensor result = AutoGrad::dispatch<op::Dot>(*this, other);
 
     return result;
 }
 
 Tensor Tensor::cos() const {
-    Tensor result = AutoGrad::dispatch(*this,op::Cos);
+    Tensor result = AutoGrad::dispatch<op::Cos>(*this);
 
     return result;
 }
 
 Tensor Tensor::sin() const {
-    Tensor result = AutoGrad::dispatch(*this,op::Sin);
+    Tensor result = AutoGrad::dispatch<op::Sin>(*this);
 
     return result;
 }
@@ -535,7 +535,7 @@ static Tensor binaryOpImpl(const Tensor& a, const Tensor& b) {
     if (a.device() != b.device()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT, "张量设备类型不匹配");
     }
-    return AutoGrad::dispatch(a, b, OpType);
+    return AutoGrad::dispatch<OpType>(a, b);
 }
 
 // 标量运算模板 (Tensor op float)
@@ -634,7 +634,7 @@ Tensor Tensor::operator*(float scalar) const {
 
 // 一元负号运算符
 Tensor Tensor::operator-() const {
-    return AutoGrad::dispatch(*this, op::Neg);
+    return AutoGrad::dispatch<op::Neg>(*this);
 }
 
 // 张量加法运算符
@@ -699,7 +699,7 @@ bool Tensor::check_index_bounds(const std::vector<size_t>& indices) const {
 
 // 全局的matMul函数
 Tensor matMul(const Tensor &a, const Tensor &b) {
-    return AutoGrad::dispatch(a,b,op::MatMul);
+    return AutoGrad::dispatch<op::MatMul>(a, b);
 }
 
 // 计算两个张量的广播结果
@@ -786,14 +786,14 @@ template void Tensor::checkDType<int64_t>() const;
 
 // Tanh激活函数
 Tensor Tensor::tanh() const {
-    Tensor result = AutoGrad::dispatch(*this, op::Tanh);
+    Tensor result = AutoGrad::dispatch<op::Tanh>(*this);
 
     return result;
 }
 
 // Sigmoid激活函数
 Tensor Tensor::sigmoid() const {
-    Tensor result = AutoGrad::dispatch(*this, op::Sigmoid);
+    Tensor result = AutoGrad::dispatch<op::Sigmoid>(*this);
 
     return result;
 }
@@ -856,21 +856,21 @@ Tensor Tensor::square() const {
 
 // MSE损失函数
 Tensor Tensor::mse_loss(const Tensor& target) const {
-    Tensor result = AutoGrad::dispatch(*this, target, op::MSE);
+    Tensor result = AutoGrad::dispatch<op::MSE>(*this, target);
 
     return result;
 }
 
 // CrossEntropy损失函数
 Tensor Tensor::cross_entropy(const Tensor& target) const {
-    Tensor result = AutoGrad::dispatch(*this, target, op::CE);
+    Tensor result = AutoGrad::dispatch<op::CE>(*this, target);
 
     return result;
 }
 
 // MAE损失函数
 Tensor Tensor::mae_loss(const Tensor& target) const {
-    Tensor result = AutoGrad::dispatch(*this, target, op::MAE);
+    Tensor result = AutoGrad::dispatch<op::MAE>(*this, target);
 
     return result;
 }

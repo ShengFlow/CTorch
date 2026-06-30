@@ -8,24 +8,25 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
+#include "./../../../include/CoreDefs.h"
 
 // 全局的matMul函数
-Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
+CT_HOT Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
     
     // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
+    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC MatMul_Kernel: 仅在CPU支持");
     }
     // 校验数据类型
-    if (a.dtype() != b.dtype()) {
+    if (a.dtype() != b.dtype()) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DATATYPE,"CPU-BASIC MatMul_Kernel: Tensor数据类型不匹配");
     }
 
     // 简单实现，仅支持2D张量
-    if (a.shape().size() != 2 || b.shape().size() != 2) {
+    if (a.shape().size() != 2 || b.shape().size() != 2) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "MatMul仅支持2D张量");
     }
-    if (a.shape()[1] != b.shape()[0]) {
+    if (a.shape()[1] != b.shape()[0]) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION, "矩阵维度不匹配");
     }
     

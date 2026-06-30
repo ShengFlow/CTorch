@@ -19,6 +19,7 @@
 #include <mutex>
 #include <thread>
 #include "Ctools.h"
+#include "CoreDefs.h"
 
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
@@ -430,7 +431,7 @@ public:
      * @param type 错误类型
      * @param msg 错误信息
      */
-    static void log(ErrorLevel level, ErrorPlatform platform, ErrorType type, const std::string msg) {
+    CT_COLD static void log(ErrorLevel level, ErrorPlatform platform, ErrorType type, const std::string msg) {
         Ctorch_Stats& inst = Ctorch_Stats::getInstance();
         if (inst.level == PrintLevel::MEDIUM && level == ErrorLevel::TRACE) return;
         if (inst.level == PrintLevel::MINIUM && (level == ErrorLevel::DEBUG || level == ErrorLevel::TRACE)) return ;
@@ -546,7 +547,7 @@ public:
      * @param type 错误类型
      * @param msg 错误信息
      */
-    static void error(ErrorPlatform platform, ErrorType type, const std::string& msg) {
+    CT_COLD static void error(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::ERROR, platform, type, msg);
     }
 
@@ -556,7 +557,7 @@ public:
      * @param type 错误类型
      * @param msg 错误信息
      */
-    static void warn(ErrorPlatform platform, ErrorType type, const std::string& msg) {
+    CT_COLD static void warn(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::WARN, platform, type, msg);
     }
 
@@ -566,7 +567,7 @@ public:
      * @param type 错误类型
      * @param msg 错误信息
      */
-    static void fatal(ErrorPlatform platform, ErrorType type, const std::string& msg) {
+    CT_COLD static void fatal(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         log(ErrorLevel::FATAL, platform, type, msg);
     }
 
@@ -588,7 +589,7 @@ public:
      * @param msg 错误信息
      * @throw std::runtime_error 抛出运行时异常
      */
-    static void throwException(ErrorPlatform platform, ErrorType type, const std::string& msg) {
+    CT_COLD static void throwException(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         // 首先记录错误
         log(ErrorLevel::ERROR, platform, type, msg);
         // 然后抛出异常
@@ -602,7 +603,7 @@ public:
      * @param msg 错误信息
      * @throw std::runtime_error 抛出运行时异常
      */
-    static void throwFatalException(ErrorPlatform platform, ErrorType type, const std::string& msg) {
+    CT_COLD static void throwFatalException(ErrorPlatform platform, ErrorType type, const std::string& msg) {
         // 首先记录致命错误
         log(ErrorLevel::FATAL, platform, type, msg);
         // 然后抛出异常

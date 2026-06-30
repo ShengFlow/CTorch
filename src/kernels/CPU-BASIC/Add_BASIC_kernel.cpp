@@ -8,13 +8,15 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
-Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
+#include "./../../../include/CoreDefs.h"
+
+CT_HOT Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
+    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Add_Kernel: 仅在CPU支持");
     }
     // 校验数据类型
-    if (a.dtype() != b.dtype()) {
+    if (a.dtype() != b.dtype()) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kCPU,ErrorType::DIMENSION,"CPU-BASIC Add_Kernel: Tensor数据类型不匹配");
     }
 
@@ -37,12 +39,12 @@ Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     int elem_count = a.numel();
 
     // 获取Tensor数据指针
-    const float* a_data = a.data<float>();
-    const float* b_data = b.data<float>();
+    const float* CT_RESTRICT a_data = a.data<float>();
+    const float* CT_RESTRICT b_data = b.data<float>();
 
     // 创建结果Tensor
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    float* result_data = result.data<float>();
+    float* CT_RESTRICT result_data = result.data<float>();
 
     // 支持广播的逐元素加法
     if (b_is_scalar) {

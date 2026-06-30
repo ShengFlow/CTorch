@@ -22,8 +22,11 @@ private:
     CtorchScheduler(const CtorchScheduler&);
     CtorchScheduler& operator=(const CtorchScheduler&) = delete;
 
-    static constexpr size_t OP_COUNT = static_cast<size_t>(op::Sum) + 1;
-    static constexpr size_t DEVICE_COUNT = static_cast<size_t>(DeviceType::kGENERAL) + 1;
+    static constexpr size_t OP_COUNT = static_cast<size_t>(op::kCount);
+    static constexpr size_t DEVICE_COUNT = static_cast<size_t>(DeviceType::kCount);
+
+    static_assert(static_cast<size_t>(op::kCount) == 22, "op enum count changed, verify kCount");
+    static_assert(static_cast<size_t>(DeviceType::kCount) == 7, "DeviceType enum count changed, verify kCount");
 
     std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> binary_kernels_{};
     std::array<std::array<std::atomic<UnaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> unary_kernels_{};
@@ -89,5 +92,32 @@ public:
     Tensor dispatch(const Tensor& a, const Tensor& b, op op_type);
     Tensor dispatch(const Tensor& a, op op_type);
     Tensor dispatch_softmax(const Tensor& a, int dim = -1);
+
+    template <op OpType>
+    inline Tensor dispatch(const Tensor& a, const Tensor& b) {
+        if (a.dtype() != b.dtype()) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "Ctorch_Scheduler: Tensor类型不一致");
+        }
+        if (OpType != op::Add && OpType != op::Mul && OpType != op::Sub && OpType != op::Div && OpType != op::CE && OpType != op::MatMul && a.sizes() != b.sizes()) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "Ctorch_Scheduler: Tensor形状不一致");
+        }
+
+        DeviceType target_dev = getTargetDevice(a, b);
+        BinaryKernelFunc func = selectBestBinary(OpType, target_dev, binary_kernels_);
+        if (func == nullptr) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");
+        }
+        return func(a, b);
+    }
+
+    template <op OpType>
+    inline Tensor dispatch(const Tensor& a) {
+        DeviceType target_dev = a.device();
+        UnaryKernelFunc func = selectBestUnary(OpType, target_dev, unary_kernels_);
+        if (func == nullptr) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");
+        }
+        return func(a);
+    }
 };
 #endif //CTORCH_SCHEDULER_H

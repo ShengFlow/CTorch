@@ -117,12 +117,12 @@ public:
     /**
      * @brief 默认移动构造函数
      */
-    Storage(Storage&&) = default;
+    Storage(Storage&&) noexcept = default;
     
     /**
      * @brief 默认移动赋值运算符
      */
-    Storage& operator=(Storage&&) = default;
+    Storage& operator=(Storage&&) noexcept = default;
 
     /**
      * @brief 默认构造函数
@@ -166,19 +166,19 @@ public:
      * @brief 获取存储中的元素数量
      * @return 元素数量
      */
-    size_t size() const { return _size; }
+    size_t size() const noexcept { return _size; }
 
     /**
      * @brief 获取数据类型
      * @return 数据类型
      */
-    DType dtype() const { return _dtype; }
+    DType dtype() const noexcept { return _dtype; }
 
     /**
      * @brief 获取设备类型
      * @return 设备类型
      */
-    DeviceType device() const { return _device; }
+    DeviceType device() const noexcept { return _device; }
 
     /**
      * @brief 创建存储的深拷贝
@@ -205,7 +205,7 @@ public:
      * @brief 检查存储是否为空
      * @return 如果存储为空返回true，否则返回false
      */
-    bool empty() const {
+    bool empty() const noexcept {
        return _size == 0 || !_data;
    }
 };

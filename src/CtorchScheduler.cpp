@@ -25,7 +25,7 @@ void CtorchScheduler::initKernels() {
         softmax_kernels_[static_cast<size_t>(d)].store(f, std::memory_order_relaxed);
     };
 
-    // CPU kernels
+    // CPU kernels (BASIC 作为 fallback)
     set_bin(op::Add, DeviceType::kCPU, Add_BASIC_kernel);
     set_bin(op::Sub, DeviceType::kCPU, Sub_BASIC_kernel);
     set_bin(op::Mul, DeviceType::kCPU, Mul_BASIC_kernel);
@@ -46,6 +46,17 @@ void CtorchScheduler::initKernels() {
 
     set_softmax(DeviceType::kCPU, Softmax_BASIC_kernel);
 
+    // SIMD kernels (优先于 BASIC)
+    set_bin(op::Add, DeviceType::kSIMD, Add_SIMD_kernel);
+    set_bin(op::Sub, DeviceType::kSIMD, Sub_SIMD_kernel);
+    set_bin(op::Mul, DeviceType::kSIMD, Mul_SIMD_kernel);
+    set_bin(op::Div, DeviceType::kSIMD, Div_SIMD_kernel);
+
+    set_unary(op::Neg, DeviceType::kSIMD, Neg_SIMD_kernel);
+    set_unary(op::ReLU, DeviceType::kSIMD, ReLU_SIMD_kernel);
+    set_unary(op::Tanh, DeviceType::kSIMD, Tanh_SIMD_kernel);
+    set_unary(op::Sigmoid, DeviceType::kSIMD, Sigmoid_SIMD_kernel);
+
     // AMX kernels（目前只有 MatMul 有 AMX 实现）
     set_bin(op::MatMul, DeviceType::kAMX, MatMul_AMX_kernel);
 }
@@ -56,8 +67,16 @@ BinaryKernelFunc CtorchScheduler::selectBestBinary(
 {
     size_t op_idx = static_cast<size_t>(op_type);
 
-    if (dev == DeviceType::kCPU && isDeviceAvailable(DeviceType::kAMX)) {
-        BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
+    // 优先级: AMX > SIMD > CPU(BASIC) > fallback
+    if (dev == DeviceType::kCPU) {
+        // 1. 尝试 AMX
+        if (isDeviceAvailable(DeviceType::kAMX)) {
+            BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
+                .load(std::memory_order_acquire);
+            if (func != nullptr) return func;
+        }
+        // 2. 尝试 SIMD
+        BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
     }
@@ -78,8 +97,16 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
 {
     size_t op_idx = static_cast<size_t>(op_type);
 
-    if (dev == DeviceType::kCPU && isDeviceAvailable(DeviceType::kAMX)) {
-        UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
+    // 优先级: AMX > SIMD > CPU(BASIC) > fallback
+    if (dev == DeviceType::kCPU) {
+        // 1. 尝试 AMX
+        if (isDeviceAvailable(DeviceType::kAMX)) {
+            UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
+                .load(std::memory_order_acquire);
+            if (func != nullptr) return func;
+        }
+        // 2. 尝试 SIMD
+        UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
     }

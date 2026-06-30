@@ -5,15 +5,33 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+# 最激进的编译选项
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffast-math -march=native")
+
+# LTO (链接时优化)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+
 include(FetchContent)
 
+option(FETCH_GOOGLETEST "Fetch googletest from remote" OFF)
 enable_testing()
-FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://gh-proxy.org/https://github.com/google/googletest.git
-        GIT_TAG        v1.17.0
-)
-FetchContent_MakeAvailable(googletest)
+
+if(FETCH_GOOGLETEST)
+    FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://gh-proxy.org/https://github.com/google/googletest.git
+            GIT_TAG        v1.17.0
+    )
+    FetchContent_MakeAvailable(googletest)
+else()
+    find_package(GTest QUIET)
+    if(NOT GTest_FOUND)
+        message(STATUS "googletest not found and FETCH_GOOGLETEST=OFF, skipping tests")
+        set(TEST_ENABLED OFF CACHE BOOL "Disable tests due to missing gtest" FORCE)
+    endif()
+endif()
 include(GoogleTest)
 
 set(CT-Core
@@ -54,6 +72,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/TanhNode.h
         include/AutoGrad/Nodes/SigmoidNode.h
         include/AutoGrad/Nodes/ReLUNode.h
+        include/AutoGrad/Nodes/LReLUNode.h
         include/AutoGrad/Nodes/MatMulNode.h
         include/AutoGrad/Nodes/CrossEntropyNode.h
         include/AutoGrad/Nodes/SoftmaxNode.h
@@ -72,6 +91,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/TanhNode.cpp
         src/AutoGrad/Nodes/SigmoidNode.cpp
         src/AutoGrad/Nodes/ReLUNode.cpp
+        src/AutoGrad/Nodes/LReLUNode.cpp
         src/AutoGrad/Nodes/MatMulNode.cpp
         src/AutoGrad/Nodes/CrossEntropyNode.cpp
         src/AutoGrad/Nodes/SoftmaxNode.cpp
@@ -110,6 +130,14 @@ set(CT-AMX-OPs
 # )
 
 set(CT-CPU-SIMD-OPs
+        src/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Sub_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Mul_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Div_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Neg_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/ReLU_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Sigmoid_SIMD_kernel.cpp
 )
 
 set(ctQALS
@@ -119,7 +147,7 @@ set(ctQALS
         src/ctQALS/ziggurat.cpp
 )
 
-add_library(CTorch STATIC
+add_library(CTorch OBJECT
         ${CT-Core}
         ${CT-Core-Headers}
         ${CT-CPU-BASIC-OPs}
@@ -128,6 +156,10 @@ add_library(CTorch STATIC
         ${CT-Nodes}
         ${CT-Nodes-Headers}
         ${ctQALS}
+)
+
+set_target_properties(CTorch PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION TRUE
 )
 
 # 包含头文件目录
@@ -240,6 +272,7 @@ endif()
 # target_link_libraries(ActivationLossTest PRIVATE CTorch)
 # target_link_libraries(TensorGradTest PRIVATE CTorch)
 target_link_libraries(MnistTest PRIVATE CTorch)
+target_link_libraries(MnistTest PRIVATE "-framework Accelerate")
 
 # 添加编译选项
 target_compile_options(CTorch PRIVATE

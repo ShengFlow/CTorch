@@ -8,25 +8,26 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
+#include "./../../../include/CoreDefs.h"
 #include <cmath>
 #include <algorithm>
 
-Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
+CT_HOT Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
+    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC CrossEntropy_Kernel: 仅在CPU支持");
     }
     
     // 校验数据类型
-    if (a.dtype() != b.dtype()) {
+    if (a.dtype() != b.dtype()) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                           "CPU-BASIC CrossEntropy_Kernel: 张量数据类型不一致");
     }
     
     // 实现CrossEntropy损失函数
-    const float *data_a = a.data<float>();
-    const float *data_b = b.data<float>();
+    const float* CT_RESTRICT data_a = a.data<float>();
+    const float* CT_RESTRICT data_b = b.data<float>();
     
     float cross_entropy = 0.0f;
     

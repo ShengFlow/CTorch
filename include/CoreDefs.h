@@ -67,12 +67,59 @@
 #endif
 
 /**
- * Pure marker
+ * Pure marker - const functions (no side effects, no global state access)
  */
 #if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
 #define CT_PURE __attribute__((const))
 #else
 #define CT_PURE
+#endif
+
+/**
+ * Pure Read marker - pure functions (no side effects, but may read global state)
+ */
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define CT_PURE_READ __attribute__((pure))
+#else
+#define CT_PURE_READ
+#endif
+
+/**
+ * Restrict marker - pointer aliasing hint
+ */
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define CT_RESTRICT __restrict__
+#elif defined(COMPILER_MSVC)
+#define CT_RESTRICT __restrict
+#else
+#define CT_RESTRICT
+#endif
+
+/**
+ * Hot marker - frequently executed code (function attribute)
+ */
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define CT_HOT __attribute__((hot))
+#else
+#define CT_HOT
+#endif
+
+/**
+ * Cold marker - rarely executed code (function attribute)
+ */
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define CT_COLD __attribute__((cold))
+#else
+#define CT_COLD
+#endif
+
+/**
+ * Malloc marker - function returns newly allocated memory with no aliasing
+ */
+#if defined(COMPILER_GCC) || defined(COMPILER_CLANG)
+#define CT_MALLOC __attribute__((malloc))
+#else
+#define CT_MALLOC
 #endif
 
 /**

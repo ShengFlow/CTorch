@@ -22,6 +22,7 @@ class Node;
 #include "AutoGrad/Nodes/DivNode.h"
 #include "AutoGrad/Nodes/NegNode.h"
 #include "AutoGrad/Nodes/ReLUNode.h"
+#include "AutoGrad/Nodes/LReLUNode.h"
 #include "AutoGrad/Nodes/CosNode.h"
 #include "AutoGrad/Nodes/SinNode.h"
 #include "AutoGrad/Nodes/TanhNode.h"
@@ -102,6 +103,35 @@ namespace AutoGrad {
         return result;
     }
 
+    template <op OpType>
+    inline Tensor dispatch(const Tensor& a, const Tensor& b) {
+        Tensor result = CtorchScheduler::getInstance().dispatch<OpType>(a, b);
+
+        if (EnableGrad && (a.requires_grad() || b.requires_grad())) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            if constexpr (OpType == op::Add) {
+                registerNode<AddNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::Sub) {
+                registerNode<SubNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::Mul) {
+                registerNode<MulNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::Div) {
+                registerNode<DivNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::MatMul) {
+                registerNode<MatMulNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::CE) {
+                registerNode<CrossEntropyNode>(a, b, result_weak);
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
+        return result;
+    }
+
     inline Tensor dispatch(const Tensor& a, op op_type) {
         Tensor result = CtorchScheduler::getInstance().dispatch(a, op_type);
 
@@ -115,6 +145,9 @@ namespace AutoGrad {
                     break;
                 case op::ReLU:
                     registerNode<ReLUNode>(a, result_weak);
+                    break;
+                case op::LReLU:
+                    registerNode<LReLUNode>(a, result_weak);
                     break;
                 case op::Cos:
                     registerNode<CosNode>(a, result_weak);
@@ -130,6 +163,37 @@ namespace AutoGrad {
                     break;
                 default:
                     break;
+            }
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+            }
+        }
+
+        return result;
+    }
+
+    template <op OpType>
+    inline Tensor dispatch(const Tensor& a) {
+        Tensor result = CtorchScheduler::getInstance().dispatch<OpType>(a);
+
+        if (EnableGrad && a.requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            if constexpr (OpType == op::Neg) {
+                registerNode<NegNode>(a, result_weak);
+            } else if constexpr (OpType == op::ReLU) {
+                registerNode<ReLUNode>(a, result_weak);
+            } else if constexpr (OpType == op::LReLU) {
+                registerNode<LReLUNode>(a, result_weak);
+            } else if constexpr (OpType == op::Cos) {
+                registerNode<CosNode>(a, result_weak);
+            } else if constexpr (OpType == op::Sin) {
+                registerNode<SinNode>(a, result_weak);
+            } else if constexpr (OpType == op::Tanh) {
+                registerNode<TanhNode>(a, result_weak);
+            } else if constexpr (OpType == op::Sigmoid) {
+                registerNode<SigmoidNode>(a, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());

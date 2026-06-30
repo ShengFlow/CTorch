@@ -8,22 +8,23 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
+#include "./../../../include/CoreDefs.h"
 
-Tensor Dot_BASIC_kernel(const Tensor& a, const Tensor& b) {
+CT_HOT Tensor Dot_BASIC_kernel(const Tensor& a, const Tensor& b) {
     // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
+    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                          ErrorType::DEVICE_COMPAT, "CPU-BASIC Dot_Kernel: 仅在CPU支持");
     }
 
     // 校验元素数量：必须相同
-    if (a.numel() != b.numel()) {
+    if (a.numel() != b.numel()) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU,
                          ErrorType::DIMENSION, "CPU-BASIC Dot_Kernel: Tensor元素数量不匹配");
     }
 
     // 校验数据类型
-    if (a.dtype() != b.dtype()) {
+    if (a.dtype() != b.dtype()) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU,
                          ErrorType::DATATYPE, "CPU-BASIC Dot_Kernel: Tensor数据类型不匹配");
     }
@@ -31,8 +32,8 @@ Tensor Dot_BASIC_kernel(const Tensor& a, const Tensor& b) {
     int elem_count = a.numel();
 
     // 获取Tensor数据指针
-    const float* a_data = a.data<float>();
-    const float* b_data = b.data<float>();
+    const float* CT_RESTRICT a_data = a.data<float>();
+    const float* CT_RESTRICT b_data = b.data<float>();
 
     // 计算点乘：对应元素相乘后求和
     float dot_result = 0.0f;

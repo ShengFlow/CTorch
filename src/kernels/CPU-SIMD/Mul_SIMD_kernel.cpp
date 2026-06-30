@@ -1,114 +1,198 @@
 /**
  * @file Mul_SIMD_kernel.cpp
- * @brief CPU-SIMD 乘法算子
+ * @brief CPU-SIMD 乘法算子（零拷贝广播优化）
  * @author GhostFace
  * @date 2026/02/09
  */
 
 #include "../kernels.h"
-#include "../include/Ctorch_Error.h"
-#include "../include/Tensor.h"
-#include <cmath>
+#include "../../../include/CtorchError.h"
+#include "../../../include/Tensor.h"
+#include "../../../include/CoreDefs.h"
 
 #ifdef __x86_64__
-#include <immintrin.h>  // x86 SIMD指令
+#include <immintrin.h>
 #elif defined(__aarch64__)
-#include <arm_neon.h>   // ARM NEON指令
+#include <arm_neon.h>
 #endif
 
-Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
-    // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-        Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
+static void computeBroadcastStrides(
+    const std::vector<size_t>& shape,
+    const std::vector<size_t>& target_shape,
+    std::vector<size_t>& strides) {
+    
+    size_t dims = target_shape.size();
+    strides.resize(dims);
+    
+    std::vector<size_t> padded_shape(dims, 1);
+    size_t offset = dims - shape.size();
+    for (size_t i = 0; i < shape.size(); ++i) {
+        padded_shape[offset + i] = shape[i];
+    }
+    
+    strides[dims - 1] = (padded_shape[dims - 1] == 1) ? 0 : 1;
+    for (int i = dims - 2; i >= 0; --i) {
+        strides[i] = (padded_shape[i] == 1) ? 0 : strides[i + 1] * padded_shape[i + 1];
+    }
+}
+
+CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
+    if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
+        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-SIMD Mul_Kernel: 仅在CPU支持");
     }
-
-    // 校验数据类型
-    if (a.dtype() != b.dtype()) {
-        Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::DATATYPE,
+    if (a.dtype() != b.dtype()) [[unlikely]] {
+        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::DATATYPE,
                           "CPU-SIMD Mul_Kernel: Tensor数据类型不匹配");
     }
 
-    // 检查是否需要广播
-    if (a.sizes() != b.sizes()) {
-        // 处理0D张量的情况
-        if (a.dim() == 0) {
-            // a是标量，广播到b的形状
-            Tensor a_broadcasted = a.broadcast_to(b.sizes());
-            return Mul_SIMD_kernel(a_broadcasted, b);
-        } else if (b.dim() == 0) {
-            // b是标量，广播到a的形状
-            Tensor b_broadcasted = b.broadcast_to(a.sizes());
-            return Mul_SIMD_kernel(a, b_broadcasted);
-        } else {
-            // 两个都是非0D张量，尝试广播到相同形状
-            Tensor a_broadcasted = a.broadcast_to(b.sizes());
-            Tensor b_broadcasted = b.broadcast_to(a.sizes());
+    // 形状相同：直接SIMD
+    if (a.sizes() == b.sizes()) {
+        int elem_count = a.numel();
+        const float* CT_RESTRICT a_data = a.data<float>();
+        const float* CT_RESTRICT b_data = b.data<float>();
+        
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        float* CT_RESTRICT result_data = result.data<float>();
+
+#ifdef __aarch64__
+        size_t i = 0;
+        for (; i + 3 < elem_count; i += 4) {
+            float32x4_t a_vec = vld1q_f32(&a_data[i]);
+            float32x4_t b_vec = vld1q_f32(&b_data[i]);
+            vst1q_f32(&result_data[i], vmulq_f32(a_vec, b_vec));
+        }
+        for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
+#else
+        for (int i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
+#endif
+        return result;
+    }
+
+    // 标量优化
+    if (b.numel() == 1) {
+        int elem_count = a.numel();
+        float b_val = b.data<float>()[0];
+        const float* CT_RESTRICT a_data = a.data<float>();
+        
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        float* CT_RESTRICT result_data = result.data<float>();
+        
+#ifdef __aarch64__
+        size_t i = 0;
+        float32x4_t b_vec = vdupq_n_f32(b_val);
+        for (; i + 3 < elem_count; i += 4) {
+            float32x4_t a_vec = vld1q_f32(&a_data[i]);
+            vst1q_f32(&result_data[i], vmulq_f32(a_vec, b_vec));
+        }
+        for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_val;
+#else
+        for (int i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_val;
+#endif
+        return result;
+    }
+
+    if (a.numel() == 1) {
+        int elem_count = b.numel();
+        float a_val = a.data<float>()[0];
+        const float* CT_RESTRICT b_data = b.data<float>();
+        
+        Tensor result(ShapeTag{}, b.sizes(), b.dtype(), b.device());
+        float* CT_RESTRICT result_data = result.data<float>();
+        
+#ifdef __aarch64__
+        size_t i = 0;
+        float32x4_t a_vec = vdupq_n_f32(a_val);
+        for (; i + 3 < elem_count; i += 4) {
+            float32x4_t b_vec = vld1q_f32(&b_data[i]);
+            vst1q_f32(&result_data[i], vmulq_f32(a_vec, b_vec));
+        }
+        for (; i < elem_count; ++i) result_data[i] = a_val * b_data[i];
+#else
+        for (int i = 0; i < elem_count; ++i) result_data[i] = a_val * b_data[i];
+#endif
+        return result;
+    }
+
+    // 零拷贝广播
+    size_t max_dims = std::max(a.sizes().size(), b.sizes().size());
+    std::vector<size_t> broadcast_shape(max_dims);
+    
+    for (size_t i = 0; i < max_dims; ++i) {
+        size_t a_dim = i < a.sizes().size() ? a.sizes()[a.sizes().size() - 1 - i] : 1;
+        size_t b_dim = i < b.sizes().size() ? b.sizes()[b.sizes().size() - 1 - i] : 1;
+        if (a_dim != 1 && b_dim != 1 && a_dim != b_dim) {
+            CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+                "CPU-SIMD Mul_Kernel: Tensor形状不兼容");
+        }
+        broadcast_shape[max_dims - 1 - i] = std::max(a_dim, b_dim);
+    }
+    
+    std::vector<size_t> a_strides, b_strides;
+    computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
+    computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
+    
+    Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
+    float* CT_RESTRICT result_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data<float>();
+    const float* CT_RESTRICT b_data = b.data<float>();
+    
+    size_t elem_count = result.numel();
+    
+    if (max_dims == 2) {
+        size_t rows = broadcast_shape[0];
+        size_t cols = broadcast_shape[1];
+        
+#ifdef __aarch64__
+        for (size_t i = 0; i < rows; ++i) {
+            size_t a_row_offset = i * a_strides[0];
+            size_t b_row_offset = i * b_strides[0];
             
-            // 检查广播是否成功
-            if (a_broadcasted.sizes() == b_broadcasted.sizes()) {
-                return Mul_SIMD_kernel(a_broadcasted, b_broadcasted);
-            } else {
-                Ctorch_Error::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::DIMENSION,
-                                  "CPU-SIMD Mul_Kernel: Tensor形状不兼容，无法广播");
+            size_t j = 0;
+            for (; j + 3 < cols; j += 4) {
+                size_t a_idx = a_row_offset + j * a_strides[1];
+                size_t b_idx = b_row_offset + j * b_strides[1];
+                
+                float32x4_t a_vec = vld1q_f32(&a_data[a_idx]);
+                float32x4_t b_vec = vld1q_f32(&b_data[b_idx]);
+                vst1q_f32(&result_data[i * cols + j], vmulq_f32(a_vec, b_vec));
+            }
+            for (; j < cols; ++j) {
+                size_t a_idx = a_row_offset + j * a_strides[1];
+                size_t b_idx = b_row_offset + j * b_strides[1];
+                result_data[i * cols + j] = a_data[a_idx] * b_data[b_idx];
             }
         }
-    }
-
-    int elem_count = a.numel();
-
-    // 创建结果Tensor
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-
-    // 获取Tensor数据指针
-    const float* a_data = a.data<float>();
-    const float* b_data = b.data<float>();
-    float* result_data = result.data<float>();
-
-#ifdef __x86_64__
-    // x86 SIMD优化实现
-    size_t i = 0;
-    // 处理可以向量化的部分
-    for (; i + 7 < elem_count; i += 8) {
-        // 加载8个float值
-        __m256 a_vec = _mm256_loadu_ps(&a_data[i]);
-        __m256 b_vec = _mm256_loadu_ps(&b_data[i]);
-        
-        // 执行乘法
-        __m256 result_vec = _mm256_mul_ps(a_vec, b_vec);
-        
-        // 存储结果
-        _mm256_storeu_ps(&result_data[i], result_vec);
-    }
-    // 处理剩余部分
-    for (; i < elem_count; ++i) {
-        result_data[i] = a_data[i] * b_data[i];
-    }
-#elif defined(__aarch64__)
-    // ARM NEON优化实现
-    size_t i = 0;
-    // 处理可以向量化的部分
-    for (; i + 3 < elem_count; i += 4) {
-        // 加载4个float值
-        float32x4_t a_vec = vld1q_f32(&a_data[i]);
-        float32x4_t b_vec = vld1q_f32(&b_data[i]);
-        
-        // 执行乘法
-        float32x4_t result_vec = vmulq_f32(a_vec, b_vec);
-        
-        // 存储结果
-        vst1q_f32(&result_data[i], result_vec);
-    }
-    // 处理剩余部分
-    for (; i < elem_count; ++i) {
-        result_data[i] = a_data[i] * b_data[i];
-    }
 #else
-    // 不支持SIMD的情况，使用标量实现
-    for (size_t i = 0; i < elem_count; ++i) {
-        result_data[i] = a_data[i] * b_data[i];
-    }
+        for (size_t i = 0; i < rows; ++i) {
+            size_t a_row_offset = i * a_strides[0];
+            size_t b_row_offset = i * b_strides[0];
+            
+            for (size_t j = 0; j < cols; ++j) {
+                size_t a_idx = a_row_offset + j * a_strides[1];
+                size_t b_idx = b_row_offset + j * b_strides[1];
+                result_data[i * cols + j] = a_data[a_idx] * b_data[b_idx];
+            }
+        }
 #endif
-
+    } else {
+        std::vector<size_t> indices(max_dims);
+        for (size_t i = 0; i < elem_count; ++i) {
+            size_t temp = i;
+            for (int j = max_dims - 1; j >= 0; --j) {
+                indices[j] = temp % broadcast_shape[j];
+                temp /= broadcast_shape[j];
+            }
+            
+            size_t a_idx = 0, b_idx = 0;
+            for (size_t j = 0; j < max_dims; ++j) {
+                a_idx += indices[j] * a_strides[j];
+                b_idx += indices[j] * b_strides[j];
+            }
+            
+            result_data[i] = a_data[a_idx] * b_data[b_idx];
+        }
+    }
+    
     return result;
 }

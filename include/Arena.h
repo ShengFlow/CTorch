@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include "CtorchError.h"
+#include "CoreDefs.h"
 
 /**
  * @struct Block
@@ -144,7 +145,7 @@ public:
      * @param align 对齐要求，默认最大对齐
      * @return 分配的内存指针，失败返回nullptr
      */
-    char* allocBytes(size_t bytes, size_t align = alignof(std::max_align_t));
+    CT_MALLOC char* allocBytes(size_t bytes, size_t align = alignof(std::max_align_t));
 
     /**
      * @brief 分配指定大小的内存并返回 shared_ptr（由 Arena 管理生命周期）

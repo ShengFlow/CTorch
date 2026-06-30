@@ -29,6 +29,7 @@
 #include <vector>   // 向量容器
 #include <memory>   // 智能指针
 #include <iostream> // 输入输出流
+#include "CoreDefs.h"
 
 /**
  * @def ESC_START
@@ -146,8 +147,11 @@ enum class DeviceType {
     kCUDA = 1,     ///< CUDA设备
     kMPS = 2,      ///< MPS设备
     kAMX = 3,      ///< AMX设备
-    kUNKNOWN = 4,  ///< 未知设备
-    kGENERAL = 5,  ///< 通用设备
+    kSIMD = 4,     ///< SIMD优化设备
+    kUNKNOWN = 5,  ///< 未知设备
+    kGENERAL = 6,  ///< 通用设备
+
+    kCount = 7,    ///< 设备数量（哨兵值，不参与运算）
 };
 
 /**
@@ -200,6 +204,8 @@ enum class op{
 
    // 其他操作
    Sum,        ///< 求和
+
+   kCount,     ///< 算子数量（哨兵值，不参与运算）
 };
 
 /**
@@ -240,7 +246,7 @@ ErrorPlatform DeviceTypeToErrorPlatform(const DeviceType device_type);
  * @param platforms 错误平台枚举
  * @return 对应的设备类型枚举
  */
-constexpr static inline DeviceType platform(ErrorPlatform platforms) {
+CT_PURE constexpr static inline DeviceType platform(ErrorPlatform platforms) {
     return static_cast<DeviceType>(static_cast<uint32_t>(platforms));
 }
 
@@ -249,7 +255,7 @@ constexpr static inline DeviceType platform(ErrorPlatform platforms) {
  * @param dtype 数据类型枚举
  * @return 数据类型的字符串表示
  */
-constexpr const char* dtypeToString(DType dtype) {
+CT_PURE constexpr const char* dtypeToString(DType dtype) {
     switch (dtype) {
         case DType::kFloat:  return "float32";
         case DType::kDouble: return "float64";
@@ -286,7 +292,7 @@ constexpr size_t dtypeSize(DType dtype) {
  * @param b 第二个整数
  * @return 两个整数中的最小值
  */
-inline int minx(int a, int b){
+CT_PURE inline int minx(int a, int b){
    int diff = b - a;
    return a + (diff & (diff >> 31));
 }

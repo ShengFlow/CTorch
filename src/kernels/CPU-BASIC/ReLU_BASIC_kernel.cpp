@@ -8,10 +8,11 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
+#include "./../../../include/CoreDefs.h"
 
-Tensor ReLU_BASIC_kernel(const Tensor& a) {
+CT_HOT Tensor ReLU_BASIC_kernel(const Tensor& a) {
     // 校验设备：仅支持CPU张量
-    if (a.device() != DeviceType::kCPU) {
+    if (a.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
                           "CPU-BASIC ReLU_Kernel: 仅在CPU支持");
     }
@@ -19,8 +20,8 @@ Tensor ReLU_BASIC_kernel(const Tensor& a) {
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
     size_t count = a.numel();
-    const float *a_data = a.data<float>();
-    float *result_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data<float>();
+    float* CT_RESTRICT result_data = result.data<float>();
     for (size_t i = 0; i < count; ++i) {
         result_data[i] = std::max(0.0f, a_data[i]);
     }

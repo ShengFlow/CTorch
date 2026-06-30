@@ -9,37 +9,38 @@
 #include "./../kernels.h"
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
+#include "./../../../include/CoreDefs.h"
 
-Tensor Softmax_BASIC_kernel(const Tensor &a, int dim) {
-    if (a.device() != DeviceType::kCPU) {
+CT_HOT Tensor Softmax_BASIC_kernel(const Tensor &a, int dim) {
+    if (a.device() != DeviceType::kCPU) [[unlikely]] {
         CtorchError::throwException(DeviceTypeToErrorPlatform(a.device()),
                                      ErrorType::DEVICE_COMPAT,
                                      "CPU-BASIC Softmax_Kernel: 仅在CPU支持");
     }
 
-    if (a.dtype() != DType::kFloat) {
+    if (a.dtype() != DType::kFloat) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DATATYPE,
                                      "CPU-BASIC Softmax_Kernel: 目前仅支持 float");
     }
 
     const auto &shape = a.sizes();
     size_t rank = shape.size();
-    if (rank == 0) {
+    if (rank == 0) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                      "CPU-BASIC Softmax_Kernel: 不支持标量");
     }
 
     int d = dim;
     if (d < 0) d += static_cast<int>(rank);
-    if (d < 0 || d >= static_cast<int>(rank)) {
+    if (d < 0 || d >= static_cast<int>(rank)) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                      "CPU-BASIC Softmax_Kernel: dim 越界");
     }
     size_t softmax_dim = static_cast<size_t>(d);
 
     Tensor result(ShapeTag{}, shape, a.dtype(), a.device());
-    const float *in = a.data<float>();
-    float *out      = result.data<float>();
+    const float* CT_RESTRICT in = a.data<float>();
+    float* CT_RESTRICT out      = result.data<float>();
 
     size_t outer_size = 1;
     for (size_t i = 0; i < softmax_dim; ++i) {

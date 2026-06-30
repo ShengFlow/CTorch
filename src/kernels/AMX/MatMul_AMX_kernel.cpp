@@ -16,7 +16,6 @@
 
 // 全局的matMul函数
 Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
-
   // 校验设备：仅支持CPU张量
   if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
     CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),

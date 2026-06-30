@@ -372,7 +372,7 @@ class Tensor {
      * @brief 获取是否需要梯度
      * @return 如果需要梯度返回true，否则返回false
      */
-    bool requires_grad() const { return _autograd_meta._requires_grad; }
+    bool requires_grad() const noexcept { return _autograd_meta._requires_grad; }
 
     /**
      * @brief 设置梯度需求
@@ -404,19 +404,19 @@ class Tensor {
      * @brief 获取张量的步幅
      * @return 张量的步幅向量
      */
-    [[nodiscard]] const std::vector<size_t> &strides() const { return _strides; }
+    [[nodiscard]] const std::vector<size_t> &strides() const noexcept { return _strides; }
 
     /**
      * @brief 获取张量的数据类型
      * @return 张量的数据类型
      */
-    [[nodiscard]] DType dtype() const { return _dtype; }
+    [[nodiscard]] DType dtype() const noexcept { return _dtype; }
 
     /**
      * @brief 获取张量所在的设备
      * @return 张量所在的设备
      */
-    [[nodiscard]] DeviceType device() const { return _device; }
+    [[nodiscard]] DeviceType device() const noexcept { return _device; }
 
     /**
      * @brief 获取张量的存储
@@ -434,7 +434,7 @@ class Tensor {
      * @brief 获取张量的存储偏移量
      * @return 存储中的起始偏移量
      */
-    [[nodiscard]] size_t storage_offset() const { return _storage_offset; }
+    [[nodiscard]] size_t storage_offset() const noexcept { return _storage_offset; }
 
     /**
      * @brief 检查存储偏移量是否有效
@@ -453,13 +453,13 @@ class Tensor {
      * @brief 获取张量的维度
      * @return 张量的维度数量
      */
-    [[nodiscard]] int dim() const { return static_cast<int>(_shape.size()); }
+    [[nodiscard]] int dim() const noexcept { return static_cast<int>(_shape.size()); }
 
     /**
      * @brief 获取张量的维度大小
      * @return 张量的维度大小向量
      */
-    [[nodiscard]] const std::vector<size_t> &sizes() const { return _shape; }
+    [[nodiscard]] const std::vector<size_t> &sizes() const noexcept { return _shape; }
 
     /**
      * @brief 获取张量指定维度的大小
