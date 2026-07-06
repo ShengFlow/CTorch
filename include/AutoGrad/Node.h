@@ -45,6 +45,8 @@ protected:
     std::vector<Tensor> _inputs;
     /** @brief 输出张量的弱引用 */
     std::weak_ptr<Tensor> _result;
+    /** @brief 输出张量的强引用，防止反向传播时result被释放 */
+    std::shared_ptr<Tensor> _result_owner;
     /** @brief 输出张量的形状缓存 */
     std::vector<size_t> _resultShape;
     /** @brief 依赖节点总数 */
@@ -133,15 +135,33 @@ public:
      */
     virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
 
-    /**
-     * @brief 递归恢复依赖计数
+    /** @brief 递归恢复依赖计数
      * @param visited 已访问节点集合，防止重复访问
      */
     void restoreRecursive(std::unordered_set<Node*>& visited);
 
+    /** @brief 递归清理节点引用，打破循环引用
+     * @param visited 已访问节点集合，防止重复访问
+     */
+    void clearRecursive(std::unordered_set<Node*>& visited);
+
     /** @brief 获取该节点对应的输出张量（可能为nullptr如果已被释放） */
     [[nodiscard]] std::shared_ptr<Tensor> getResult() const {
-        return _result.lock();
+        auto result = _result.lock();
+        if (!result && _result_owner) {
+            return _result_owner;
+        }
+        return result;
+    }
+
+    /** @brief 设置输出张量的强引用所有者，防止反向传播时result被释放 */
+    void setResultOwner(std::shared_ptr<Tensor> owner) {
+        _result_owner = std::move(owner);
+    }
+
+    /** @brief 清理输出张量引用，用于打破循环引用 */
+    void clearResultOwner() {
+        _result_owner.reset();
     }
 
     /** @brief 获取输出张量的形状 */

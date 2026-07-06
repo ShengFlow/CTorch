@@ -202,19 +202,23 @@ class Tensor {
           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
         _shape = {};
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+#ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
         std::string msg = oss.str();
         CTORCH_TRACE(ErrorPlatform::kCPU, msg);
+#endif
         computeStrides();
         _storage = Storage(1, _dtype, _device);
-        _autograd_meta._node = nullptr;
+        _autograd_meta._node.reset();
         if (_storage.data<float>()) {
             *_storage.data<float>() = value;
+#ifdef CTORCH_DEBUG
             std::ostringstream oss;
             oss << ">>> 标量Tensor设置完成, 存储值: " << *_storage.data<float>();
             std::string msg = oss.str();
             CTORCH_TRACE(ErrorPlatform::kCPU, msg);
+#endif
         } else {
             CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kCPU, ErrorType::MEMORY,
                               "!!! 错误: 无法分配存储");
@@ -229,7 +233,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _autograd_meta._node = nullptr;
+        _autograd_meta._node.reset();
         _shape = {values.size()};
         computeStrides();
         _storage = Storage(values.begin(), values.size(), _dtype, _device);
@@ -248,7 +252,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(dtype) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _autograd_meta._node = nullptr;
+        _autograd_meta._node.reset();
         _shape = shape;
         computeStrides();
         _storage = Storage(numel(), _dtype, _device);
@@ -268,7 +272,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(dtype) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _autograd_meta._node = nullptr;
+        _autograd_meta._node.reset();
         _shape = {size};
         computeStrides();
         _storage = Storage(size, _dtype, _device);
@@ -291,10 +295,12 @@ class Tensor {
         _autograd_meta._node = other._autograd_meta._node;
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
         _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+#ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
         std::string msg = oss.str();
         CTORCH_TRACE(ErrorPlatform::kCPU, msg);
+#endif
     }
 
     /**
@@ -313,7 +319,7 @@ class Tensor {
             _dtype            = other._dtype;
             _storage          = other._storage; // 浅拷贝：共享底层存储
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
-            _autograd_meta._node = std::const_pointer_cast<Node>(other.getRelatedNode());
+            _autograd_meta._node = other.getRelatedNode();
             _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         }
@@ -1083,6 +1089,23 @@ class Tensor {
         }
         // 返回一个与当前张量形状相同的零张量
         return Tensor(ShapeTag{}, _shape, _dtype, _device, true);
+    }
+
+    void zero_grad() {
+        if (_autograd_meta._grad) {
+            _autograd_meta._grad->zero();
+        }
+    }
+
+    float* grad_ptr() {
+        if (_autograd_meta._grad) {
+            return _autograd_meta._grad->data<float>();
+        }
+        return nullptr;
+    }
+
+    void detach_autograd() {
+        _autograd_meta._node.reset();
     }
 };
 

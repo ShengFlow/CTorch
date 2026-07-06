@@ -13,6 +13,7 @@
 #include "../../include/AutoGrad/Node.h"
 #include "../../include/CtorchError.h"
 #include "../../include/ThreadPool.h"
+#include "../../include/Arena.h"
 #include "../../include/AutoGrad.h"
 
 GradBucket &GradBucket::getInstance() {
@@ -34,22 +35,10 @@ void GradBucket::add(std::vector<GradPack>&& newPacks) {
     for (auto&& pack : newPacks) {
         const ssize_t idx = find(pack._targetNode);
         if (idx != -1) {
-            if (pack._idx >= 0 && static_cast<size_t>(pack._idx) < pack._grad.size()) {
-                if (static_cast<size_t>(pack._idx) < _packs[idx]._grad.size()) {
-                    _packs[idx]._grad[pack._idx] = _packs[idx]._grad[pack._idx] + pack._grad[pack._idx];
-                } else {
-                    if (static_cast<size_t>(pack._idx) >= _packs[idx]._grad.size()) {
-                        _packs[idx]._grad.resize(pack._idx + 1);
-                    }
-                    _packs[idx]._grad[pack._idx] = std::move(pack._grad[pack._idx]);
-                }
+            for (auto& grad : pack._grad) {
+                _packs[idx]._grad.push_back(std::move(grad));
             }
         } else {
-            if (pack._idx >= 0) {
-                if (static_cast<size_t>(pack._idx) >= pack._grad.size())
-                    pack._grad.resize(pack._idx + 1);
-            }
-            pack._idx = -1;
             _packs.push_back(std::move(pack));
         }
     }
@@ -131,8 +120,7 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     // 这样所有反向节点收到的 downStreamGrad 都与输出同形，可以直接走 element-wise/matmul 路径。
     const std::vector<size_t>& root_shape = root->getResultShape();
     Tensor grad_tensor(1.0f);
-    if (!root_shape.empty() && (root_shape.size() > 1 || (root_shape.size() == 1 && root_shape[0] != 1))) {
-        // root 不是 0D 标量，把初始 grad 广播到 root 的形状
+    if (!root_shape.empty()) {
         Tensor broadcasted(ShapeTag{}, root_shape, grad_tensor.dtype(), grad_tensor.device());
         const float scalar = grad_tensor.item<float>();
         const size_t total = broadcasted.numel();
@@ -200,6 +188,10 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     if (retainGraph) {
         std::unordered_set<Node *> restored;
         root->restoreRecursive(restored);
+    } else {
+        std::unordered_set<Node *> cleared;
+        root->clearRecursive(cleared);
+        root.reset();
     }
 
     // 恢复原始的EnableGrad值

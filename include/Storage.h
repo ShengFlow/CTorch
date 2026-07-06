@@ -50,7 +50,7 @@ private:
    std::shared_ptr<char> _data;
 
    /** @brief 小对象阈值（字节），小于此值走Arena内存池 */
-   static constexpr size_t ARENA_THRESHOLD = 64 * 1024;  // 64KB
+    static constexpr size_t ARENA_THRESHOLD = 0;  // 禁用Arena，Storage使用系统malloc
 
    /**
     * @brief 检查模板类型是否与存储类型匹配

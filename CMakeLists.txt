@@ -9,9 +9,11 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffast-math -march=native")
 
-# LTO (链接时优化)
+# LTO (链接时优化) - Thin LTO (平衡编译速度和运行时性能)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto=thin")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=thin")
 
 include(FetchContent)
 
@@ -405,7 +407,7 @@ if (${TEST_ENABLED})
         get_filename_component(TEST_NAME ${TEST} NAME_WE)
         # 每个测试文件自带 main()，不再向其注入 test_rng.cpp（曾导致 _main 重复）
         add_executable(${TEST_NAME} ${TEST})
-        target_link_libraries(${TEST_NAME} PRIVATE CTorch)
+        target_link_libraries(${TEST_NAME} PRIVATE CTorch gtest gtest_main)
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
     endforeach ()
 

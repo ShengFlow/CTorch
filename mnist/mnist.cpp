@@ -16,8 +16,8 @@ private:
     Tensor W1, b1, W2, b2, W3, b3;
     float learning_rate;
     
-    static void xavier_init(Tensor& W, size_t fan_in) {
-        float std = std::sqrt(1.0f / fan_in);
+    static void xavier_init(Tensor& W, size_t fan_in, size_t fan_out) {
+        float std = std::sqrt(2.0f / (fan_in + fan_out));
         float* data = W.data<float>();
         for (size_t i = 0; i < W.numel(); ++i) {
             float r = 2.0f * g_mnist_rng.uniform_f32() - 1.0f;
@@ -40,15 +40,17 @@ public:
         W2.requires_grad(true); b2.requires_grad(true);
         W3.requires_grad(true); b3.requires_grad(true);
         
-        xavier_init(W1, input_size);
-        xavier_init(W2, hidden1);
-        xavier_init(W3, hidden2);
+        xavier_init(W1, input_size, hidden1);
+        xavier_init(W2, hidden1, hidden2);
+        xavier_init(W3, hidden2, output_size);
         b1.zero(); b2.zero(); b3.zero();
     }
     
     Tensor forward(const Tensor& x) {
-        Tensor h1 = (x.matmul(W1) + b1).relu();
-        Tensor h2 = (h1.matmul(W2) + b2).relu();
+        Tensor z1 = x.matmul(W1) + b1;
+        Tensor h1 = z1.relu();
+        Tensor z2 = h1.matmul(W2) + b2;
+        Tensor h2 = z2.relu();
         return h2.matmul(W3) + b3;
     }
     
@@ -86,11 +88,11 @@ public:
     void update_parameters() {
         float lr = learning_rate;
         auto sgd_step = [this, lr](Tensor& param) {
-            Tensor g = param.grad();
+            float* gp = param.grad_ptr();
             float* p = param.data<float>();
-            const float* gp = g.data<float>();
             for (size_t i = 0; i < param.numel(); ++i)
                 p[i] -= gp[i] * lr;
+            std::memset(gp, 0, param.numel() * sizeof(float));
         };
         sgd_step(W1); sgd_step(b1);
         sgd_step(W2); sgd_step(b2);
@@ -236,11 +238,11 @@ int main() {
         int input_size = 784;
         int hidden1 = 128, hidden2 = 64;  // 简化：256->128, 128->64
         int output_size = 10;
-        float learning_rate = 0.001f;  // 降低学习率避免发散
+        float learning_rate = 0.001f;
         
         NeuralNetwork model(input_size, hidden1, hidden2, output_size, learning_rate);
         
-        int epochs = 5;  // 增加训练轮数，获得更好的效果
+        int epochs = 15;
         int batch_size = 128;  // 适中的batch size，平衡速度和精度
         int num_batches = static_cast<int>(train_images.shape()[0]) / batch_size;
         
@@ -262,7 +264,7 @@ int main() {
                 float batch_loss = model.train_step(batch_images, batch_labels);
                 epoch_loss += batch_loss;
                 
-                if (batch % 50 == 0 || batch == num_batches - 1) {
+                if (batch % 100 == 0 || batch == num_batches - 1) {
                     show_progress(epoch * num_batches + batch + 1, epochs * num_batches, 
                                  "E" + std::to_string(epoch + 1) + "/" + std::to_string(epochs), 
                                  batch_loss);

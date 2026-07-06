@@ -84,3 +84,19 @@ void Node::restoreRecursive(std::unordered_set<Node *>& visited) {
             if (node) node->restoreRecursive(visited);
     }
 }
+
+void Node::clearRecursive(std::unordered_set<Node *>& visited) {
+    if (!visited.count(this)) {
+        visited.insert(this);
+        clearResultOwner();
+        auto upstream_copy = _upStreamNodes;
+        auto result_copy = _result.lock();
+        for (auto &node : upstream_copy)
+            if (node) node->clearRecursive(visited);
+        _upStreamNodes.clear();
+        _inputs.clear();
+        if (result_copy) {
+            result_copy->detach_autograd();
+        }
+    }
+}

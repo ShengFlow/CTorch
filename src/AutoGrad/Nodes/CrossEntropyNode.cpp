@@ -51,6 +51,8 @@ std::vector<GradPack> CrossEntropyNode::backward(const std::vector<Tensor>& down
 
     Tensor grad_logits = grad * diff;
 
+
+
     ret.push_back(GradPack{
         _upStreamNodes[0],
         std::vector({grad_logits}),

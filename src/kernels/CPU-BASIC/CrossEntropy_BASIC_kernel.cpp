@@ -125,7 +125,9 @@ CT_HOT Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
         return Tensor();
     }
     
-    // 创建标量结果张量
-    Tensor result(cross_entropy);
+    size_t batch_size = (a.sizes().size() == 2) ? a.sizes()[0] : 1;
+    float avg_loss = cross_entropy / static_cast<float>(batch_size);
+    
+    Tensor result(avg_loss);
     return result;
 }

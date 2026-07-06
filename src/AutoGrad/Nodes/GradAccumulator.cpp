@@ -24,23 +24,31 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
     }
 
     if (auto tensor = _tensor.lock()) {
-        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Setting grad to tensor");
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Accumulating grads to tensor");
 
-        std::shared_ptr<Tensor> grad;
-        for (size_t i = 0; i < downStreamGrads.size(); i++) {
-            if (downStreamGrads[i].numel() > 0 && downStreamGrads[i].storage().data<float>() != nullptr) {
-                grad = std::make_shared<Tensor>(downStreamGrads[i]);
-                break;
+        Tensor accumulated;
+        for (const auto& g : downStreamGrads) {
+            if (g.numel() > 0 && g.storage().data<float>() != nullptr) {
+                if (accumulated.storage().size() == 0) {
+                    accumulated = g;
+                } else {
+                    accumulated = accumulated + g;
+                }
             }
         }
 
-        if (!grad) {
-            grad = std::make_shared<Tensor>(ShapeTag{}, tensor->shape(), tensor->dtype(), tensor->device());
-            grad->zero();
+        if (accumulated.numel() == 0) {
+            accumulated = Tensor(ShapeTag{}, tensor->shape(), tensor->dtype(), tensor->device());
+            accumulated.zero();
         }
 
-        tensor->setGrad(grad);
-        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Grad set successfully");
+        auto existing_grad = tensor->grad();
+        if (existing_grad.numel() > 0 && existing_grad.storage().data<float>() != nullptr) {
+            accumulated = accumulated + existing_grad;
+        }
+
+        tensor->setGrad(std::make_shared<Tensor>(accumulated));
+        CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - Grad accumulated successfully");
     } else {
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "GradAccumulator::backward - _tensor has been destroyed");
     }

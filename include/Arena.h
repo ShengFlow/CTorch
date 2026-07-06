@@ -52,6 +52,9 @@ class Arena {
     /** @brief 互斥锁，保证线程安全 */
     mutable std::mutex _mtx;
 
+    /** @brief 保留的内存块数量 */
+    static constexpr size_t KEEP_BLOCKS = 10;
+
     /**
      * @brief 添加一个新的内存块
      * @param size 内存块大小，默认1MB

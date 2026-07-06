@@ -607,12 +607,12 @@ static Tensor cmpTensorOpImpl(const Tensor& self, const Tensor& other, CmpFunc&&
 // 比较运算模板: 标量 vs Tensor (自由函数用)
 template <typename CmpFunc>
 static Tensor cmpScalarTensorOpImpl(float scalar, const Tensor& tensor, CmpFunc&& cmp) {
-    Tensor result(ShapeTag{}, tensor.shape(), DType::kBool, tensor.device());
+    Tensor result(ShapeTag{}, tensor.shape(), DType::kFloat, tensor.device());
     size_t count = tensor.numel();
     if (tensor.dtype() == DType::kFloat) {
         const float* data = tensor.data<float>();
-        bool* result_data = result.data<bool>();
-        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(scalar, data[i]);
+        float* result_data = result.data<float>();
+        for (size_t i = 0; i < count; ++i) result_data[i] = cmp(scalar, data[i]) ? 1.0f : 0.0f;
     }
     return result;
 }
@@ -875,16 +875,14 @@ Tensor Tensor::mae_loss(const Tensor& target) const {
     return result;
 }
 
-std::shared_ptr<Node> Tensor::getRelatedNode()  { return  _autograd_meta._node; }
+std::shared_ptr<Node> Tensor::getRelatedNode()  { return _autograd_meta._node; }
 std::shared_ptr<Node> Tensor::getRelatedNode() const { return _autograd_meta._node; }
 void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const { _autograd_meta._node = std::move(ptr); }
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _autograd_meta._grad = std::move(grad); }
 // 求张量的和
 Tensor Tensor::sum(int dim, bool keepdim) const {
-    // 实现sum操作
     Tensor result;
 
-    // 检查维度是否合法
     if (dim < 0) {
         dim += _shape.size();
     }
@@ -892,38 +890,46 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "sum: 维度超出范围");
     }
 
-    // 计算输出形状
     std::vector<size_t> output_shape;
     for (size_t i = 0; i < _shape.size(); ++i) {
-        if (i == static_cast<size_t>(dim) && !keepdim) {
-            continue;
+        if (i == static_cast<size_t>(dim)) {
+            if (keepdim) {
+                output_shape.push_back(1);
+            }
+        } else {
+            output_shape.push_back(_shape[i]);
         }
-        output_shape.push_back(_shape[i]);
-    }
-    if (keepdim) {
-        output_shape[dim] = 1;
     }
 
-    // 创建结果张量
     result = Tensor(ShapeTag{}, output_shape, _dtype, _device);
 
-    // 根据数据类型执行求和操作
-    size_t count = numel();
     size_t dim_size = _shape[dim];
-    size_t stride = _strides[dim];
+    size_t stride_dim = _strides[dim];
+    
+    size_t pre_dim_elements = 1;
+    for (int i = 0; i < dim; ++i) {
+        pre_dim_elements *= _shape[i];
+    }
+    
+    size_t post_dim_elements = 1;
+    for (size_t i = dim + 1; i < _shape.size(); ++i) {
+        post_dim_elements *= _shape[i];
+    }
 
     switch (_dtype) {
         case DType::kFloat: {
             const float* data = this->data<float>();
             float* result_data = result.data<float>();
             size_t result_count = result.numel();
-            for (size_t i = 0; i < result_count; ++i) {
-                float sum = 0.0f;
-                for (size_t j = 0; j < dim_size; ++j) {
-                    size_t index = i * stride * dim_size + j * stride;
-                    sum += data[index];
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    float sum = 0.0f;
+                    for (size_t j = 0; j < dim_size; ++j) {
+                        size_t index = i * dim_size * stride_dim + j * stride_dim + k;
+                        sum += data[index];
+                    }
+                    result_data[i * post_dim_elements + k] = sum;
                 }
-                result_data[i] = sum;
             }
             break;
         }
@@ -931,13 +937,15 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
             const double* data = this->data<double>();
             double* result_data = result.data<double>();
             size_t result_count = result.numel();
-            for (size_t i = 0; i < result_count; ++i) {
-                double sum = 0.0;
-                for (size_t j = 0; j < dim_size; ++j) {
-                    size_t index = i * stride * dim_size + j * stride;
-                    sum += data[index];
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    double sum = 0.0;
+                    for (size_t j = 0; j < dim_size; ++j) {
+                        size_t index = i * dim_size * stride_dim + j * stride_dim + k;
+                        sum += data[index];
+                    }
+                    result_data[i * post_dim_elements + k] = sum;
                 }
-                result_data[i] = sum;
             }
             break;
         }
@@ -945,6 +953,14 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "sum: 不支持的数据类型");
     }
     
+    return result;
+}
+
+Tensor Tensor::sum(const std::vector<int>& dims, bool keepdim) const {
+    Tensor result = *this;
+    for (int dim : dims) {
+        result = result.sum(dim, keepdim);
+    }
     return result;
 }
 
@@ -1008,7 +1024,7 @@ Tensor Tensor::detach() const {
     Tensor result(ShapeTag{}, _shape, _dtype, _device);
     result._storage = _storage.clone();
     result._autograd_meta._requires_grad = false;
-    result._autograd_meta._node = nullptr;
+    result._autograd_meta._node.reset();
     
     return result;
 }

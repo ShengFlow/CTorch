@@ -102,6 +102,7 @@ namespace AutoGrad {
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
             }
         }
 
@@ -135,6 +136,7 @@ namespace AutoGrad {
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
             }
         }
 
@@ -175,6 +177,7 @@ namespace AutoGrad {
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
             }
         }
 
@@ -212,6 +215,7 @@ namespace AutoGrad {
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
             }
         }
 
@@ -246,6 +250,7 @@ namespace AutoGrad {
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
             }
         }
 
