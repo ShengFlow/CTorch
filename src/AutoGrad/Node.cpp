@@ -15,12 +15,14 @@ void Node::increase() {
 }
 
 bool Node::decrease() {
-	const size_t old = _count.fetch_sub(1,std::memory_order_acq_rel);
-	if(old == 0) {
-	    CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Dependency count is negative");
-	    return false;
-	}
-    return old == 1;
+    size_t old = _count.load(std::memory_order_acquire);
+    while (old > 0) {
+        if (_count.compare_exchange_strong(old, old - 1, std::memory_order_acq_rel)) {
+            return old == 1;
+        }
+    }
+    CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Dependency count is negative");
+    return false;
 }
 
 

@@ -30,10 +30,19 @@ ssize_t GradBucket::find(const std::shared_ptr<Node> &target) {
     return -1;
 }
 
+ssize_t GradBucket::find(const std::shared_ptr<Node> &target, int idx) {
+    auto it = std::find_if(_packs.begin(), _packs.end(), [target, idx](const GradPack &pack) {
+        return pack._targetNode == target && pack._idx == idx;
+    });
+    if (it != _packs.end())
+        return std::distance(_packs.begin(), it);
+    return -1;
+}
+
 void GradBucket::add(std::vector<GradPack>&& newPacks) {
     std::lock_guard<std::mutex> lock(_mtx);
     for (auto&& pack : newPacks) {
-        const ssize_t idx = find(pack._targetNode);
+        const ssize_t idx = find(pack._targetNode, pack._idx);
         if (idx != -1) {
             for (auto& grad : pack._grad) {
                 _packs[idx]._grad.push_back(std::move(grad));

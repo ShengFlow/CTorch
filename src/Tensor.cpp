@@ -957,8 +957,11 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
 }
 
 Tensor Tensor::sum(const std::vector<int>& dims, bool keepdim) const {
+    std::vector<int> sorted_dims = dims;
+    std::sort(sorted_dims.begin(), sorted_dims.end(), std::greater<int>());
+    
     Tensor result = *this;
-    for (int dim : dims) {
+    for (int dim : sorted_dims) {
         result = result.sum(dim, keepdim);
     }
     return result;
@@ -1027,5 +1030,10 @@ Tensor Tensor::detach() const {
     result._autograd_meta._node.reset();
     
     return result;
+}
+
+Tensor::~Tensor() {
+    _autograd_meta._self.reset();
+    detach_autograd();
 }
 

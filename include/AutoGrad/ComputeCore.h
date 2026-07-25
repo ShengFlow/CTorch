@@ -35,6 +35,14 @@ class GradBucket {
      */
     ssize_t find(const std::shared_ptr<Node>& target);
 
+    /**
+     * @brief 查找指定节点和输入索引的梯度包索引
+     * @param target 目标节点
+     * @param idx 输入索引
+     * @return 梯度包索引，未找到返回-1
+     */
+    ssize_t find(const std::shared_ptr<Node>& target, int idx);
+
     /** @brief 私有构造函数，防止外部实例化 */
     GradBucket() = default;
   public:

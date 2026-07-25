@@ -366,7 +366,7 @@ class Tensor {
     /**
      * @brief 析构函数
      */
-    ~Tensor() = default;
+    ~Tensor();
 
     /**
      * @brief 设置梯度需求
