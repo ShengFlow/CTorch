@@ -1,4 +1,5 @@
 #include "AutoGrad/Nodes/LReLUNode.h"
+#include "../../../src/kernels/kernels.h"
 
 LReLUNode::LReLUNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
@@ -25,23 +26,33 @@ std::vector<GradPack> LReLUNode::backward(const std::vector<Tensor>& downStreamG
     
     const Tensor& x = _inputs[0];
     const Tensor& grad_out = downStreamGrads[0];
-    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
-    size_t n = x.numel();
+    Tensor grad_x;
 
-    float alpha = 0.01f;
-    auto lrelu_grad = [&](auto x_p, auto gout_p, auto gx_p) {
-        for (size_t i = 0; i < n; ++i) {
-            gx_p[i] = x_p[i] > 0 ? gout_p[i] : gout_p[i] * alpha;
-        }
-    };
-
-    switch (x.dtype()) {
-        case DType::kFloat: lrelu_grad(x.data<float>(), grad_out.data<float>(), grad_x.data<float>()); break;
-        case DType::kDouble: lrelu_grad(x.data<double>(), grad_out.data<double>(), grad_x.data<double>()); break;
-        case DType::kInt: lrelu_grad(x.data<int32_t>(), grad_out.data<int32_t>(), grad_x.data<int32_t>()); break;
-        case DType::kLong: lrelu_grad(x.data<int64_t>(), grad_out.data<int64_t>(), grad_x.data<int64_t>()); break;
-        default: break;
+    switch (x.device()) {
+        case DeviceType::kMPS:
+            grad_x = LReLU_Grad_MPS_kernel(x, grad_out);
+            break;
+        case DeviceType::kSIMD:
+            grad_x = LReLU_Grad_SIMD_kernel(x, grad_out);
+            break;
+        case DeviceType::kCPU:
+            grad_x = LReLU_Grad_BASIC_kernel(x, grad_out);
+            break;
+        case DeviceType::kAMX:
+            // AMX 不适合逐元素 unary 激活函数，降级到 SIMD
+            grad_x = LReLU_Grad_SIMD_kernel(x, grad_out);
+            break;
+        default:
+            CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::DEVICE_COMPAT,
+                               "LReLUNode::backward: 不支持的设备类型");
+            return ret;
     }
+
+#ifdef __APPLE__
+    if (x.device() == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+#endif
 
     ret.push_back(GradPack{
         _upStreamNodes[0],

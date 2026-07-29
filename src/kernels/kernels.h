@@ -217,6 +217,12 @@ Tensor LReLU_CUDA_kernel(const Tensor& a);
 Tensor LReLU_AMX_kernel(const Tensor& a);
 Tensor LReLU_MPS_kernel(const Tensor& a);
 
+Tensor LReLU_Grad_BASIC_kernel(const Tensor& x, const Tensor& grad_out);
+Tensor LReLU_Grad_SIMD_kernel(const Tensor& x, const Tensor& grad_out);
+Tensor LReLU_Grad_CUDA_kernel(const Tensor& x, const Tensor& grad_out);
+Tensor LReLU_Grad_AMX_kernel(const Tensor& x, const Tensor& grad_out);
+Tensor LReLU_Grad_MPS_kernel(const Tensor& x, const Tensor& grad_out);
+
 /**
  * @brief 基本MSE算子实现
  * @details 执行张量的MSE操作

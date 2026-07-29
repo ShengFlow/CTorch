@@ -1,7 +1,6 @@
 #include "AutoGrad/Nodes/ReLUNode.h"
 #include "CoreDefs.h"
-
-extern "C" void MPS_flush_wait(bool wait);
+#include "../../../src/kernels/kernels.h"
 
 ReLUNode::ReLUNode(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
                    const std::vector<Tensor> &inputs)

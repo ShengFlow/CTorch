@@ -7,11 +7,7 @@
 
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/Tensor.h"
-#ifdef __OBJC__
-#include "../../src/kernels/kernels.h"
-#endif
-
-extern "C" void MPS_flush_wait(bool wait);
+#include "../../../src/kernels/kernels.h"
 
 GradAccumulator::GradAccumulator(std::weak_ptr<Tensor> tensor) : _tensor(std::move(tensor)) {
     _upStreamNodes = std::vector<std::shared_ptr<Node>>();

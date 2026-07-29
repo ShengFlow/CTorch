@@ -132,6 +132,8 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/GELU_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/LReLU_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/LReLU_Grad_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
@@ -186,6 +188,7 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/Sin_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Cos_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/LReLU_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/LReLU_Grad_SIMD_kernel.cpp
 )
 
 set(ctQALS
@@ -245,9 +248,6 @@ target_link_libraries(test_relu_backward PRIVATE CTorch)
 
 add_executable(test_mnist_perf test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
-
-add_executable(test_gelu src/tests/units/AutoGrad/test_gelu.cpp)
-target_link_libraries(test_gelu PRIVATE CTorch)
 
 add_compile_options(-Wno-ignored-attributes)
 

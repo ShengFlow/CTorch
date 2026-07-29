@@ -8,6 +8,47 @@
 #include "./../include/CtorchScheduler.h"
 #include "./../include/DeviceAllocator.h"
 
+#ifdef __APPLE__
+// 前向声明 Metal 设备创建函数，避免在 .cpp 中直接 #import <Metal/Metal.h>
+// 该函数返回 id<MTLDevice>，在 C++ 侧以 void* 比较是否非空即可。
+extern "C" void* MTLCreateSystemDefaultDevice(void);
+#else
+#include <cpuid.h>
+#endif
+
+bool CtorchScheduler::isDeviceAvailable(DeviceType dev_type) {
+    switch (dev_type) {
+        case DeviceType::kCPU:
+            return true;
+        case DeviceType::kCUDA:
+            return false;
+        case DeviceType::kMPS:
+#ifdef __APPLE__
+            return MTLCreateSystemDefaultDevice() != nullptr;
+#else
+            return false;
+#endif
+        case DeviceType::kAMX:
+#ifdef __APPLE__
+            // Apple Silicon 的 AMX 通过 Accelerate 框架抽象暴露，不直接对应 x86 AMX 指令集；
+            // 当前 MatMul AMX kernel 在 macOS 上实际调用的是 Accelerate/BLAS，因此标记为可用。
+            return true;
+#else
+            // x86_64 检测 AMX_TILE (CPUID leaf 7, subleaf 0, EDX bit 24)
+            unsigned int eax, ebx, ecx, edx;
+            if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
+                return (edx & (1u << 24)) != 0;
+            }
+            return false;
+#endif
+        case DeviceType::kSIMD:
+            // SIMD 路径依赖编译器 auto-vectorization，默认在 CPU 上可用。
+            return true;
+        default:
+            return false;
+    }
+}
+
 CtorchScheduler::CtorchScheduler() {
     printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Ctorch Scheduler Started\n", getFormattedTimeMs().c_str(), getTimestampMs());
     
@@ -50,7 +91,7 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Tanh, DeviceType::kCPU, Tanh_BASIC_kernel);
     set_unary(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_kernel);
     set_unary(op::GELU, DeviceType::kCPU, GELU_BASIC_kernel);
-    set_unary(op::LReLU, DeviceType::kCPU, nullptr);
+    set_unary(op::LReLU, DeviceType::kCPU, LReLU_BASIC_kernel);
     set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
     set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
     set_unary(op::Abs, DeviceType::kCPU, Abs_BASIC_kernel);
@@ -113,7 +154,7 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Tanh, DeviceType::kMPS, Tanh_MPS_kernel);
     set_unary(op::Sigmoid, DeviceType::kMPS, Sigmoid_MPS_kernel);
     set_unary(op::GELU, DeviceType::kMPS, GELU_MPS_kernel);
-    set_unary(op::LReLU, DeviceType::kMPS, nullptr);
+    set_unary(op::LReLU, DeviceType::kMPS, LReLU_MPS_kernel);
     set_unary(op::Log, DeviceType::kMPS, Log_MPS_kernel);
     set_unary(op::Exp, DeviceType::kMPS, Exp_MPS_kernel);
     set_unary(op::Abs, DeviceType::kMPS, Abs_MPS_kernel);

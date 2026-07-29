@@ -169,6 +169,9 @@ enum class DType {
 /**
  * @enum op
  * @brief 自动微分操作符枚举
+ * @note ABI 注意：新增算子必须追加到 kCount 之前，禁止在已有值之间插入，
+ *       否则会导致已编译二进制中 op 值错位。修改后必须同步更新 CtorchScheduler.h
+ *       中的 static_assert 以及所有 backend kernel 注册表。
  */
 enum class op{
    // 基本运算

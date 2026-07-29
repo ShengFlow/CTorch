@@ -8,6 +8,7 @@
 #include "Tensor.h"
 #include "Arena.h"
 #include "AutoGrad/Nodes/AddNode.h"
+#include "../../../kernels/kernels.h"
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -19,24 +20,48 @@ constexpr float kEps = 1e-5f;
 
 int g_passed = 0;
 int g_failed = 0;
+DeviceType g_device = DeviceType::kMPS;
+
+const char* deviceName(DeviceType dev) {
+    switch (dev) {
+        case DeviceType::kCPU: return "CPU";
+        case DeviceType::kCUDA: return "CUDA";
+        case DeviceType::kMPS: return "MPS";
+        case DeviceType::kAMX: return "AMX";
+        case DeviceType::kSIMD: return "SIMD";
+        case DeviceType::kUNKNOWN: return "Unknown";
+        case DeviceType::kGENERAL: return "General";
+        case DeviceType::kCount: return "Count";
+        default: return "Unknown";
+    }
+}
+
+// 在读取 MPS buffer 前显式同步，确保 GPU kernel 已完成写入
+void syncDevice(DeviceType dev) {
+#ifdef __APPLE__
+    if (dev == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+#endif
+}
 
 #define EXPECT(cond, msg) do { \
-    if (cond) { ++g_passed; } else { ++g_failed; std::cerr << "[FAIL] " << msg << std::endl; } \
+    if (cond) { ++g_passed; } else { ++g_failed; std::cerr << "[FAIL][" << deviceName(g_device) << "] " << msg << std::endl; } \
 } while (0)
 
 #define EXPECT_NEAR_F(a, b, eps) do { \
     float av = (a), bv = (b); \
     if (std::fabs(av - bv) <= (eps)) { ++g_passed; } \
-    else { ++g_failed; std::cerr << "[FAIL] expected " << av << " ≈ " << bv << " (|diff| > " << (eps) << ")" << std::endl; } \
+    else { ++g_failed; std::cerr << "[FAIL][" << deviceName(g_device) << "] expected " << av << " ≈ " << bv << " (|diff| > " << (eps) << ")" << std::endl; } \
 } while (0)
 
 Tensor makeTensor(std::initializer_list<float> values) {
-    Tensor t(values, DeviceType::kMPS);
+    Tensor t(values, g_device);
     return t;
 }
 
 Tensor makeTensor2D(const std::vector<float>& values, size_t rows, size_t cols) {
-    Tensor t(ShapeTag{}, {rows, cols}, DType::kFloat, DeviceType::kMPS);
+    Tensor t(ShapeTag{}, {rows, cols}, DType::kFloat, g_device);
     std::copy(values.begin(), values.end(), t.data<float>());
     return t;
 }
@@ -49,6 +74,7 @@ void test_add_grad() {
     b.requires_grad(true);
     Tensor c = a + b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     const float* ga_p = ga.data<float>();
@@ -67,6 +93,7 @@ void test_mul_grad() {
     b.requires_grad(true);
     Tensor c = a * b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     const float* ga_p = ga.data<float>();
@@ -83,6 +110,7 @@ void test_sub_grad() {
     b.requires_grad(true);
     Tensor c = a - b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     const float* ga_p = ga.data<float>();
@@ -99,6 +127,7 @@ void test_div_grad() {
     b.requires_grad(true);
     Tensor c = a / b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     const float* ga_p = ga.data<float>();
@@ -117,6 +146,7 @@ void test_matmul_grad() {
     B.requires_grad(true);
     Tensor C = A.matmul(B);
     AutoGrad::backward(C.getRelatedNode(), false);
+    syncDevice(g_device);
 
     // C = A(2x3) * B(3x2) = 2x2
     // grad_C 全 1 (2x2)
@@ -162,6 +192,7 @@ void test_relu_grad() {
     a.requires_grad(true);
     Tensor b = a.relu();
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     EXPECT_NEAR_F(ga_p[0], 0.0f, kEps);
@@ -171,12 +202,29 @@ void test_relu_grad() {
     EXPECT_NEAR_F(ga_p[4], 1.0f, kEps);
 }
 
+void test_lrelu_grad() {
+    AutoGrad::EnableGrad = true;
+    Tensor a = makeTensor({-2.0f, 0.0f, 3.0f, -1.0f, 5.0f});
+    a.requires_grad(true);
+    Tensor b = a.leaky_relu(0.01f);
+    AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
+    Tensor ga = a.grad();
+    const float* ga_p = ga.data<float>();
+    EXPECT_NEAR_F(ga_p[0], 0.01f, kEps);
+    EXPECT_NEAR_F(ga_p[1], 0.01f, kEps);
+    EXPECT_NEAR_F(ga_p[2], 1.0f, kEps);
+    EXPECT_NEAR_F(ga_p[3], 0.01f, kEps);
+    EXPECT_NEAR_F(ga_p[4], 1.0f, kEps);
+}
+
 void test_neg_grad() {
     AutoGrad::EnableGrad = true;
     Tensor a = makeTensor({2.0f, -3.0f, 5.0f});
     a.requires_grad(true);
     Tensor b = -a;
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     EXPECT_NEAR_F(ga_p[0], -1.0f, kEps);
@@ -190,6 +238,7 @@ void test_sin_grad() {
     a.requires_grad(true);
     Tensor b = a.sin();
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     EXPECT_NEAR_F(ga_p[0], 1.0f, kEps);
@@ -203,6 +252,7 @@ void test_cos_grad() {
     a.requires_grad(true);
     Tensor b = a.cos();
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     EXPECT_NEAR_F(ga_p[0], 0.0f, kEps);
@@ -216,6 +266,7 @@ void test_tanh_grad() {
     a.requires_grad(true);
     Tensor b = a.tanh();
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     float t0 = std::tanh(0.0f);
@@ -233,6 +284,7 @@ void test_sigmoid_grad() {
     a.requires_grad(true);
     Tensor b = a.sigmoid();
     AutoGrad::backward(b.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor ga = a.grad();
     const float* ga_p = ga.data<float>();
     float s0 = 1.0f / (1.0f + std::exp(-0.0f));
@@ -263,12 +315,14 @@ void test_memory_tensor_copy_grad_independence() {
     b.requires_grad(true);
     Tensor c = a + b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor a_copy = a;
     auto grad_before = a.grad().data<float>();
     auto grad_copy_before = a_copy.grad().data<float>();
     EXPECT(grad_before[0] == grad_copy_before[0], "Initial grads should be equal");
     Tensor d = a_copy * makeTensor({2.0f, 3.0f});
     AutoGrad::backward(d.getRelatedNode(), false);
+    syncDevice(g_device);
     auto grad_after = a.grad().data<float>();
     auto grad_copy_after = a_copy.grad().data<float>();
     EXPECT(grad_after[0] != grad_copy_after[0], "Grads should be independent after copy");
@@ -291,14 +345,14 @@ void test_memory_tensor_move_grad() {
     b.requires_grad(true);
     Tensor c = a + b;
     AutoGrad::backward(c.getRelatedNode(), false);
+    syncDevice(g_device);
     Tensor d = std::move(a);
     EXPECT(d.grad().numel() == 2, "Moved tensor should retain grad");
 }
 
 } // namespace
 
-int main() {
-    std::cout << "=== v2 AD 引擎单元测试 ===" << std::endl;
+void run_all_tests() {
     test_add_grad();
     test_mul_grad();
     test_sub_grad();
@@ -307,6 +361,7 @@ int main() {
     test_scheduler_no_grad_propagation();
     test_scheduler_grad_propagation();
     test_relu_grad();
+    test_lrelu_grad();
     test_neg_grad();
     test_sin_grad();
     test_cos_grad();
@@ -316,6 +371,32 @@ int main() {
     test_memory_tensor_copy_grad_independence();
     test_memory_arena_clear();
     test_memory_tensor_move_grad();
+}
+
+int main() {
+    std::cout << "=== v2 AD 引擎单元测试 ===" << std::endl;
+
+    // 提前初始化 Scheduler / Allocator，确保 MPS 等后端 allocator 在创建张量前已注册
+    CtorchScheduler::getInstance();
+
+    // 在可用的后端上依次运行测试；AMX 对 unary 激活会由调度器自动降级到 SIMD
+    const DeviceType devices[] = {
+        DeviceType::kCPU,
+        DeviceType::kSIMD,
+        DeviceType::kAMX,
+        DeviceType::kMPS
+    };
+
+    for (DeviceType dev : devices) {
+        if (!CtorchScheduler::isDeviceAvailable(dev)) {
+            std::cout << "[SKIP] 设备不可用: " << deviceName(dev) << std::endl;
+            continue;
+        }
+        g_device = dev;
+        std::cout << "\n--- 设备: " << deviceName(dev) << " ---" << std::endl;
+        run_all_tests();
+    }
+
     std::cout << "\n通过: " << g_passed << " / 失败: " << g_failed << std::endl;
     return g_failed == 0 ? 0 : 1;
 }

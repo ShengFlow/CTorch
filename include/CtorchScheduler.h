@@ -25,6 +25,8 @@ private:
     static constexpr size_t OP_COUNT = static_cast<size_t>(op::kCount);
     static constexpr size_t DEVICE_COUNT = static_cast<size_t>(DeviceType::kCount);
 
+    // ABI 注意：op::kCount 改变会改变 binary_kernels_/unary_kernels_ 数组维度，
+    // 因此 static_assert 的值必须与 include/Ctools.h 中的 op::kCount 保持同步。
     static_assert(static_cast<size_t>(op::kCount) == 28, "op enum count changed, verify kCount");
     static_assert(static_cast<size_t>(DeviceType::kCount) == 7, "DeviceType enum count changed, verify kCount");
 
@@ -44,21 +46,25 @@ public:
         return instance_;
     }
 
-    static bool isDeviceAvailable(DeviceType dev_type) {
-        switch (dev_type) {
-            case DeviceType::kCPU: return true;
-            case DeviceType::kCUDA: return false;
-            case DeviceType::kMPS: return true;
-            case DeviceType::kAMX: return true;
-            default: return false;
-        }
-    }
+    static bool isDeviceAvailable(DeviceType dev_type);
 
     static DeviceType getTargetDevice(const Tensor& a, const Tensor& b) {
         if (a.device() != b.device()) {
             CtorchError::log(ErrorLevel::ERROR,ErrorPlatform::kGENERAL,ErrorType::DEVICE_COMPAT,"Ctorch_Scheduler: Tensor不在同一平台");
         }
         return a.device();
+    }
+
+    // FIXME(P1-3): MPS in-place unary kernel 的 memory overlap 修复不完全。
+    //              当前 MPS unary kernel 均假设输入/输出为不同 buffer，未经验证
+    //              支持 in-place；因此默认返回 false。详见 MEM:
+    //              skills/memories/2026-07-29/mps-inplace-unary-memory-overlap.md
+    static bool supports_unary_memory_overlap(DeviceType dev, op op_type) {
+        (void)op_type;
+        if (dev == DeviceType::kMPS) {
+            return false;
+        }
+        return false;
     }
 
     BinaryKernelFunc get_binary_kernel(op op_type, DeviceType dev) const {

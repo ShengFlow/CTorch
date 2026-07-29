@@ -21,6 +21,19 @@ kernel void relu_kernel(device float* a [[buffer(0)]],
     result[idx] = max(a[idx], 0.0f);
 }
 
+kernel void lrelu_kernel(device float* a [[buffer(0)]],
+                         device float* result [[buffer(1)]],
+                         uint idx [[thread_position_in_grid]]) {
+    result[idx] = a[idx] > 0.0f ? a[idx] : a[idx] * 0.01f;
+}
+
+kernel void lrelu_grad_kernel(device float* x [[buffer(0)]],
+                              device float* grad_out [[buffer(1)]],
+                              device float* grad_x [[buffer(2)]],
+                              uint idx [[thread_position_in_grid]]) {
+    grad_x[idx] = x[idx] > 0.0f ? grad_out[idx] : grad_out[idx] * 0.01f;
+}
+
 kernel void sigmoid_kernel(device float* a [[buffer(0)]],
                            device float* result [[buffer(1)]],
                            uint idx [[thread_position_in_grid]]) {

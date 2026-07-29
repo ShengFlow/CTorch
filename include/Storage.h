@@ -17,6 +17,9 @@
  * @class Storage
  * @brief 存储类，用于管理张量数据的底层存储
  * @details 存储类支持多种数据类型和设备类型，使用shared_ptr实现共享所有权，减少内存占用
+ * @note ABI 注意：本类为公开头文件核心类，任何成员变量布局、Deleter 行为或 sizeof 变化
+ *       都会破坏 ABI。后续若需变更分配策略，请将分配器状态封装到不暴露布局的位置
+ *       （如 StorageImpl opaque handle），或显式进行主版本升级。
  */
 class Storage {
 private:

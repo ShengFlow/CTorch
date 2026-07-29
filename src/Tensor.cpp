@@ -516,6 +516,14 @@ Tensor Tensor::relu() const {
     return result;
 }
 
+// Leaky ReLU激活函数
+Tensor Tensor::leaky_relu(float negative_slope) const {
+    // 当前 kernel 使用固定 negative_slope = 0.01f；若传入其他值会静默使用默认值
+    Tensor result = AutoGrad::dispatch<op::LReLU>(*this);
+
+    return result;
+}
+
 Tensor Tensor::dot(const Tensor &other) const {
     Tensor result = AutoGrad::dispatch<op::Dot>(*this, other);
 

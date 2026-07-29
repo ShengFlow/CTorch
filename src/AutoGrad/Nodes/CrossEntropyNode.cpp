@@ -6,8 +6,7 @@
  **/
 
 #include "AutoGrad/Nodes/CrossEntropyNode.h"
-
-extern "C" void MPS_flush_wait(bool wait);
+#include "../../../src/kernels/kernels.h"
 
 CrossEntropyNode::CrossEntropyNode(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
                                    const std::vector<Tensor> &inputs)

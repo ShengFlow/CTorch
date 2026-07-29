@@ -144,6 +144,14 @@ kernel void relu_kernel(device float* a [[buffer(0)]], device float* result [[bu
     result[id] = max(a[id], 0.0f);
 }
 
+kernel void lrelu_kernel(device float* a [[buffer(0)]], device float* result [[buffer(1)]], uint id [[thread_position_in_grid]]) {
+    result[id] = a[id] > 0.0f ? a[id] : a[id] * 0.01f;
+}
+
+kernel void lrelu_grad_kernel(device float* x [[buffer(0)]], device float* grad_out [[buffer(1)]], device float* grad_x [[buffer(2)]], uint id [[thread_position_in_grid]]) {
+    grad_x[id] = x[id] > 0.0f ? grad_out[id] : grad_out[id] * 0.01f;
+}
+
 kernel void tanh_kernel(device float* a [[buffer(0)]], device float* result [[buffer(1)]], uint id [[thread_position_in_grid]]) {
     result[id] = tanh(a[id]);
 }
@@ -962,6 +970,79 @@ CT_HOT Tensor ReLU_MPS_kernel(const Tensor& a) {
     [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
     
     return result;
+}
+
+CT_HOT Tensor LReLU_MPS_kernel(const Tensor& a) {
+    if (a.device() != DeviceType::kMPS) [[unlikely]] {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DEVICE_COMPAT, "MPS LReLU_Kernel: 仅在MPS支持");
+    }
+
+    size_t elem_count = a.numel();
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+
+    if (!a_buffer || !result_buffer) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Kernel: 无法获取Metal Buffer");
+    }
+
+    initMetal();
+    id<MTLComputePipelineState> pipeline = getPipeline("lrelu_kernel");
+    if (!pipeline) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Kernel: 无法获取pipeline");
+    }
+
+    id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:a_buffer offset:0 atIndex:0];
+    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+
+    MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
+    MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
+
+    [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
+
+    return result;
+}
+
+CT_HOT Tensor LReLU_Grad_MPS_kernel(const Tensor& x, const Tensor& grad_out) {
+    if (x.device() != DeviceType::kMPS) [[unlikely]] {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DEVICE_COMPAT, "MPS LReLU_Grad_Kernel: 仅在MPS支持");
+    }
+    if (x.sizes() != grad_out.sizes()) [[unlikely]] {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DIMENSION, "MPS LReLU_Grad_Kernel: 输入形状不匹配");
+    }
+
+    size_t elem_count = x.numel();
+    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
+
+    id<MTLBuffer> x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(x.data<float>())));
+    id<MTLBuffer> grad_out_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_out.data<float>())));
+    id<MTLBuffer> grad_x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_x.data<float>())));
+
+    if (!x_buffer || !grad_out_buffer || !grad_x_buffer) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Grad_Kernel: 无法获取Metal Buffer");
+    }
+
+    initMetal();
+    id<MTLComputePipelineState> pipeline = getPipeline("lrelu_grad_kernel");
+    if (!pipeline) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Grad_Kernel: 无法获取pipeline");
+    }
+
+    id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:x_buffer offset:0 atIndex:0];
+    [encoder setBuffer:grad_out_buffer offset:0 atIndex:1];
+    [encoder setBuffer:grad_x_buffer offset:0 atIndex:2];
+
+    MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
+    MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
+
+    [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
+
+    return grad_x;
 }
 
 CT_HOT Tensor Sin_MPS_kernel(const Tensor& a) {

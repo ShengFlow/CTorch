@@ -338,7 +338,7 @@ class Tensor {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _autograd_meta._node = other._autograd_meta._node;
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
-        _autograd_meta._grad = other._autograd_meta._grad;
+        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
 #ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
@@ -364,7 +364,7 @@ class Tensor {
             _storage          = other._storage;
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
             _autograd_meta._node = other.getRelatedNode();
-            _autograd_meta._grad = other._autograd_meta._grad;
+            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         }
         return *this;

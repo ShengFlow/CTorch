@@ -3,12 +3,11 @@
 #include "CtorchError.h"
 #include "Ctools.h"
 #include "ctQALS/Random.h"
+#include "../src/kernels/kernels.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
 #include <chrono>
-
-extern "C" void MPS_flush_wait(bool wait);
 
 static ctQALS::rng::Xoshiro256PlusPlus g_mnist_rng(42);
 static DeviceType g_device = DeviceType::kMPS;
