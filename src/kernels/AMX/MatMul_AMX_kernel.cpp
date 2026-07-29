@@ -6,7 +6,7 @@
  */
 
 // 先包含 CTorch 头文件，避免与 Accelerate 的命名冲突
-#include "./../../../include/Ctorch_Error.h"
+#include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 #include "./../kernels.h"
 
@@ -16,21 +16,25 @@
 
 // 全局的matMul函数
 Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
-
-  // 校验设备：仅支持CPU张量
-  if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
-    Ctorch_Error::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
+  // 校验设备：支持CPU和MPS张量（MPS内存是共享的）
+  if (a.device() != DeviceType::kCPU && a.device() != DeviceType::kMPS) {
+    CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                       ErrorType::DEVICE_COMPAT,
-                      "AMX MatMul_Kernel: 仅在CPU支持");
+                      "AMX MatMul_Kernel: 仅在CPU/MPS支持");
+  }
+  if (a.device() != b.device()) {
+    CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
+                      ErrorType::DEVICE_COMPAT,
+                      "AMX MatMul_Kernel: 设备类型不匹配");
   }
 
   // 仅支持2D张量
   if (a.shape().size() != 2 || b.shape().size() != 2) {
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                  "AMX MatMul仅支持2D张量");
   }
   if (a.shape()[1] != b.shape()[0]) {
-    Ctorch_Error::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
+    CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                                  "矩阵维度不匹配");
   }
 
@@ -41,49 +45,67 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
   Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device());
 
   // 检查是否是连续内存的张量 (stride为默认值)
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - a shape: [" + std::to_string(m) + ", " + std::to_string(k) + "]");
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - a strides: [" + std::to_string(a.strides()[0]) + ", " + std::to_string(a.strides()[1]) + "]");
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - b shape: [" + std::to_string(k) + ", " + std::to_string(n) + "]");
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - b strides: [" + std::to_string(b.strides()[0]) + ", " + std::to_string(b.strides()[1]) + "]");
+
   const bool a_is_contiguous = (a.strides()[0] == k && a.strides()[1] == 1);
   const bool b_is_contiguous = (b.strides()[0] == n && b.strides()[1] == 1);
-  
-  if (a_is_contiguous && b_is_contiguous) {
-    // 使用 cblas_sgemm 进行加速
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    
-    cblas_sgemm(
-        CblasRowMajor,
-        CblasNoTrans,
-        CblasNoTrans,
-        (int)m,
-        (int)n,
-        (int)k,
-        alpha,
-        a.data<float>(),
-        (int)k,
-        b.data<float>(),
-        (int)n,
-        beta,
-        result.data<float>(),
-        (int)n
-    );
-  } else {
-    // 如果不连续，回退到通用实现（非连续内存无法直接使用BLAS）
-    const std::vector<size_t> &a_strides = a.strides();
-    const std::vector<size_t> &b_strides = b.strides();
-    const std::vector<size_t> &result_strides = result.strides();
 
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - a_is_contiguous: " + std::to_string(a_is_contiguous));
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - b_is_contiguous: " + std::to_string(b_is_contiguous));
+
+  Tensor a_contig;
+  Tensor b_contig;
+  const Tensor* a_ptr = &a;
+  const Tensor* b_ptr = &b;
+
+  if (!a_is_contiguous) {
+    CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - Creating contiguous copy for a");
+    a_contig = Tensor(ShapeTag{}, {m, k}, a.dtype(), a.device());
     for (size_t i = 0; i < m; ++i) {
-      for (size_t j = 0; j < n; ++j) {
-        float sum = 0.0f;
-        for (size_t l = 0; l < k; ++l) {
-          size_t a_idx = i * a_strides[0] + l * a_strides[1];
-          size_t b_idx = l * b_strides[0] + j * b_strides[1];
-          sum += a.data<float>()[a_idx] * b.data<float>()[b_idx];
-        }
-        size_t result_idx = i * result_strides[0] + j * result_strides[1];
-        result.data<float>()[result_idx] = sum;
+      for (size_t j = 0; j < k; ++j) {
+        size_t idx = i * a.strides()[0] + j * a.strides()[1];
+        a_contig.data<float>()[i * k + j] = a.data<float>()[idx];
       }
     }
+    a_ptr = &a_contig;
   }
+
+  if (!b_is_contiguous) {
+    CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - Creating contiguous copy for b");
+    b_contig = Tensor(ShapeTag{}, {k, n}, b.dtype(), b.device());
+    for (size_t i = 0; i < k; ++i) {
+      for (size_t j = 0; j < n; ++j) {
+        size_t idx = i * b.strides()[0] + j * b.strides()[1];
+        b_contig.data<float>()[i * n + j] = b.data<float>()[idx];
+      }
+    }
+    b_ptr = &b_contig;
+  }
+
+  CTORCH_TRACE(ErrorPlatform::kAMX, "MatMul_AMX_kernel - Using cblas_sgemm for acceleration");
+  // 使用 cblas_sgemm 进行加速
+  const float alpha = 1.0f;
+  const float beta = 0.0f;
+  
+  cblas_sgemm(
+      CblasRowMajor,
+      CblasNoTrans,
+      CblasNoTrans,
+      (int)m,
+      (int)n,
+      (int)k,
+      alpha,
+      a_ptr->data<float>(),
+      (int)k,
+      b_ptr->data<float>(),
+      (int)n,
+      beta,
+      result.data<float>(),
+      (int)n
+  );
 
   return result;
 }

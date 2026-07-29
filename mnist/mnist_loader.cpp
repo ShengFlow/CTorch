@@ -2,7 +2,7 @@
 #include <fstream>
 #include <stdexcept>
 
-MNISTLoader::MNISTLoader(const std::string& dir) : data_dir(dir) {}
+MNISTLoader::MNISTLoader(const std::string& dir, DeviceType dev) : data_dir(dir), device(dev) {}
 
 std::vector<float> MNISTLoader::read_images(const std::string& filename, int& num_images, int& rows, int& cols) {
     std::ifstream file(data_dir + "/" + filename, std::ios::binary);
@@ -79,20 +79,17 @@ void MNISTLoader::load_training_data(Tensor& images, Tensor& labels) {
     int num_labels;
     std::vector<int> label_data = read_labels("train-labels-idx1-ubyte", num_labels);
     
-    // 创建图像张量: [num_images, rows*cols]
     std::vector<size_t> image_shape = {static_cast<size_t>(num_images), static_cast<size_t>(rows * cols)};
-    images = Tensor(ShapeTag{}, image_shape, DType::kFloat, DeviceType::kCPU);
-    
-    // 复制图像数据
+    images = Tensor(ShapeTag{}, image_shape, DType::kFloat, device);
+        
+    float* img_ptr = images.data<float>();
     for (size_t i = 0; i < image_data.size(); ++i) {
-        images.data<float>()[i] = image_data[i];
+        img_ptr[i] = image_data[i];
     }
-    
-    // 创建标签张量: [num_labels]
+        
     std::vector<size_t> label_shape = {static_cast<size_t>(num_labels)};
-    labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, DeviceType::kCPU);
+    labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, device);
     
-    // 复制标签数据
     for (size_t i = 0; i < label_data.size(); ++i) {
         labels.data<float>()[i] = static_cast<float>(label_data[i]);
     }
@@ -105,20 +102,16 @@ void MNISTLoader::load_test_data(Tensor& images, Tensor& labels) {
     int num_labels;
     std::vector<int> label_data = read_labels("t10k-labels-idx1-ubyte", num_labels);
     
-    // 创建图像张量: [num_images, rows*cols]
     std::vector<size_t> image_shape = {static_cast<size_t>(num_images), static_cast<size_t>(rows * cols)};
-    images = Tensor(ShapeTag{}, image_shape, DType::kFloat, DeviceType::kCPU);
-    
-    // 复制图像数据
+    images = Tensor(ShapeTag{}, image_shape, DType::kFloat, device);
+        
     for (size_t i = 0; i < image_data.size(); ++i) {
         images.data<float>()[i] = image_data[i];
     }
-    
-    // 创建标签张量: [num_labels]
+        
     std::vector<size_t> label_shape = {static_cast<size_t>(num_labels)};
-    labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, DeviceType::kCPU);
+    labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, device);
     
-    // 复制标签数据
     for (size_t i = 0; i < label_data.size(); ++i) {
         labels.data<float>()[i] = static_cast<float>(label_data[i]);
     }
