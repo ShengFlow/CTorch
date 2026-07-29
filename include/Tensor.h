@@ -123,6 +123,13 @@ class Tensor {
     // ======================= 内部辅助函数 =======================
 
     /**
+     * @brief 检查 in-place 操作是否安全
+     * @param op_name 算子名称，用于错误信息
+     * @throw CtorchError 若当前张量 requires_grad=true
+     */
+    void check_inplace_safe_(const char* op_name) const;
+
+    /**
      * @brief 计算步幅 (基于行优先顺序)
      */
     void computeStrides();
@@ -716,6 +723,13 @@ class Tensor {
     Tensor operator-() const;
 
     /**
+     * @brief 取反原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &neg_();
+
+    /**
      * @brief 比较操作符重载：大于标量
      * @param scalar 标量值
      * @return 比较结果张量，元素为布尔类型
@@ -952,16 +966,37 @@ class Tensor {
     Tensor abs() const;
 
     /**
+     * @brief 绝对值原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &abs_();
+
+    /**
      * @brief 求指数操作
      * @return 指数结果张量
      */
     Tensor exp() const;
 
     /**
+     * @brief 指数原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &exp_();
+
+    /**
      * @brief 求对数操作
      * @return 对数结果张量
      */
     Tensor log() const;
+
+    /**
+     * @brief 对数原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &log_();
 
     /**
      * @brief 求平方根操作
@@ -982,10 +1017,24 @@ class Tensor {
     Tensor sin() const;
 
     /**
+     * @brief 正弦原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &sin_();
+
+    /**
      * @brief 求余弦操作
      * @return 余弦结果张量
      */
     Tensor cos() const;
+
+    /**
+     * @brief 余弦原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &cos_();
 
     /**
      * @brief 求正切操作
@@ -1030,14 +1079,29 @@ class Tensor {
     Tensor tanh() const;
 
     /**
+     * @brief 双曲正切原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &tanh_();
+
+    /**
      * @brief 求ReLU操作
      * @return ReLU结果张量
      */
     Tensor relu() const;
 
     /**
-     * @brief 求Cos操作
-     * @return Cos 结果张量
+     * @brief ReLU原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &relu_();
+
+    /**
+     * @brief 求点乘操作
+     * @param other 另一个张量
+     * @return 点乘结果张量
      */
     Tensor dot(const Tensor &other) const;
 
@@ -1049,16 +1113,38 @@ class Tensor {
     Tensor leaky_relu(float negative_slope = 0.01f) const;
 
     /**
+     * @brief Leaky ReLU原地操作
+     * @param negative_slope 负斜率值（当前仅 0.01f 被 kernel 支持）
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &leaky_relu_(float negative_slope = 0.01f);
+
+    /**
      * @brief 求Sigmoid操作
      * @return Sigmoid结果张量
      */
     Tensor sigmoid() const;
 
     /**
+     * @brief Sigmoid原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &sigmoid_();
+
+    /**
      * @brief 求GELU操作
      * @return GELU结果张量
      */
     Tensor gelu() const;
+
+    /**
+     * @brief GELU原地操作
+     * @return 当前张量引用
+     * @details 原地修改当前张量，不追踪梯度。若当前张量 requires_grad=true 则抛异常。
+     */
+    Tensor &gelu_();
 
     /**
      * @brief 求Softmax操作

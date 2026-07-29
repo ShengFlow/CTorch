@@ -11,6 +11,7 @@
 #include "../include/AutoGrad.h"
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/DeviceAllocator.h"
+#include "../include/CtorchScheduler.h"
 #include <random>
 #include <cmath>
 #include <cstring>
@@ -172,6 +173,15 @@ template double Tensor::item<double>() const;
 template int32_t Tensor::item<int32_t>() const;
 template int64_t Tensor::item<int64_t>() const;
 template bool Tensor::item<bool>() const;
+
+void Tensor::check_inplace_safe_(const char *op_name) const {
+    if (requires_grad()) {
+        std::string msg = std::string(op_name) +
+                          "(): in-place 操作不支持 requires_grad=true 的张量，" +
+                          "请先 detach() 或 set_requires_grad(false)";
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE, msg);
+    }
+}
 
 // 索引操作
 Tensor Tensor::operator[](size_t index) const {
@@ -417,14 +427,37 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
 
 // 零初始化张量
 void Tensor::zero() {
-    if (_device == DeviceType::kMPS) {
+    // MPS kernel 目前仅支持 float32；非 float 类型或 CPU 路径直接在 host 侧 memset
+    if (_device == DeviceType::kMPS && _dtype == DType::kFloat) {
         Zero_MPS_kernel(*this);
         return;
     }
     size_t count     = numel();
     size_t elem_size = dtypeSize(_dtype);
-    void *ptr        = _storage.data<char>() + _storage_offset * elem_size;
-    std::memset(ptr, 0, count * elem_size);
+    void *ptr        = nullptr;
+    switch (_dtype) {
+    case DType::kFloat:
+        ptr = _storage.data<float>();
+        break;
+    case DType::kDouble:
+        ptr = _storage.data<double>();
+        break;
+    case DType::kInt:
+        ptr = _storage.data<int32_t>();
+        break;
+    case DType::kLong:
+        ptr = _storage.data<int64_t>();
+        break;
+    case DType::kBool:
+        ptr = _storage.data<bool>();
+        break;
+    default:
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+                                    "zero(): 未知数据类型");
+    }
+    if (ptr) {
+        std::memset(static_cast<char *>(ptr) + _storage_offset * elem_size, 0, count * elem_size);
+    }
 }
 
 // 一初始化张量
@@ -516,12 +549,27 @@ Tensor Tensor::relu() const {
     return result;
 }
 
+Tensor &Tensor::relu_() {
+    check_inplace_safe_("relu_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::ReLU);
+    return *this;
+}
+
 // Leaky ReLU激活函数
 Tensor Tensor::leaky_relu(float negative_slope) const {
-    // 当前 kernel 使用固定 negative_slope = 0.01f；若传入其他值会静默使用默认值
+    // 当前 LReLU kernel 固定 negative_slope = 0.01f；传入其他值会静默使用默认值
+    (void)negative_slope;
     Tensor result = AutoGrad::dispatch<op::LReLU>(*this);
 
     return result;
+}
+
+Tensor &Tensor::leaky_relu_(float negative_slope) {
+    check_inplace_safe_("leaky_relu_");
+    // 当前 LReLU kernel 固定 negative_slope = 0.01f；传入其他值会静默使用默认值
+    (void)negative_slope;
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::LReLU);
+    return *this;
 }
 
 Tensor Tensor::dot(const Tensor &other) const {
@@ -536,10 +584,28 @@ Tensor Tensor::cos() const {
     return result;
 }
 
+Tensor &Tensor::cos_() {
+    check_inplace_safe_("cos_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Cos);
+    return *this;
+}
+
 Tensor Tensor::sin() const {
     Tensor result = AutoGrad::dispatch<op::Sin>(*this);
 
     return result;
+}
+
+Tensor &Tensor::sin_() {
+    check_inplace_safe_("sin_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Sin);
+    return *this;
+}
+
+Tensor &Tensor::neg_() {
+    check_inplace_safe_("neg_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Neg);
+    return *this;
 }
 
 // 求和操作
@@ -888,6 +954,12 @@ Tensor Tensor::tanh() const {
     return result;
 }
 
+Tensor &Tensor::tanh_() {
+    check_inplace_safe_("tanh_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Tanh);
+    return *this;
+}
+
 // Sigmoid激活函数
 Tensor Tensor::sigmoid() const {
     Tensor result = AutoGrad::dispatch<op::Sigmoid>(*this);
@@ -895,11 +967,23 @@ Tensor Tensor::sigmoid() const {
     return result;
 }
 
+Tensor &Tensor::sigmoid_() {
+    check_inplace_safe_("sigmoid_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Sigmoid);
+    return *this;
+}
+
 // GELU激活函数
 Tensor Tensor::gelu() const {
     Tensor result = AutoGrad::dispatch<op::GELU>(*this);
 
     return result;
+}
+
+Tensor &Tensor::gelu_() {
+    check_inplace_safe_("gelu_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::GELU);
+    return *this;
 }
 
 // Softmax激活函数
@@ -1083,9 +1167,27 @@ Tensor Tensor::sum(const std::vector<int> &dims, bool keepdim) const {
 
 Tensor Tensor::log() const { return AutoGrad::dispatch<op::Log>(*this); }
 
+Tensor &Tensor::log_() {
+    check_inplace_safe_("log_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Log);
+    return *this;
+}
+
 Tensor Tensor::exp() const { return AutoGrad::dispatch<op::Exp>(*this); }
 
+Tensor &Tensor::exp_() {
+    check_inplace_safe_("exp_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Exp);
+    return *this;
+}
+
 Tensor Tensor::abs() const { return AutoGrad::dispatch<op::Abs>(*this); }
+
+Tensor &Tensor::abs_() {
+    check_inplace_safe_("abs_");
+    CtorchScheduler::getInstance().dispatch_inplace(*this, op::Abs);
+    return *this;
+}
 
 Tensor Tensor::min(const Tensor &other) const { return AutoGrad::dispatch<op::Min>(*this, other); }
 
@@ -1147,15 +1249,48 @@ Tensor Tensor::to(DeviceType target_device) const {
 
     size_t bytes = numel() * dtypeSize(_dtype);
 
+    // Storage::data<T>() 对 T=char 会触发 dtype 检查失败，因此按实际 dtype 取指针
+    const char *src = nullptr;
+    char *dst       = nullptr;
+    switch (_dtype) {
+    case DType::kFloat:
+        src = reinterpret_cast<const char *>(_storage.data<float>());
+        dst = reinterpret_cast<char *>(result._storage.data<float>());
+        break;
+    case DType::kDouble:
+        src = reinterpret_cast<const char *>(_storage.data<double>());
+        dst = reinterpret_cast<char *>(result._storage.data<double>());
+        break;
+    case DType::kInt:
+        src = reinterpret_cast<const char *>(_storage.data<int32_t>());
+        dst = reinterpret_cast<char *>(result._storage.data<int32_t>());
+        break;
+    case DType::kLong:
+        src = reinterpret_cast<const char *>(_storage.data<int64_t>());
+        dst = reinterpret_cast<char *>(result._storage.data<int64_t>());
+        break;
+    case DType::kBool:
+        src = reinterpret_cast<const char *>(_storage.data<bool>());
+        dst = reinterpret_cast<char *>(result._storage.data<bool>());
+        break;
+    default:
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+                                    "to(device): 未知数据类型");
+    }
+
+    if (!src || !dst) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                                    "to(device): 无法获取源或目标存储指针");
+    }
+
     if (_device == DeviceType::kCPU || target_device == DeviceType::kCPU) {
-        std::memcpy(result._storage.data<char>(), _storage.data<char>(), bytes);
+        std::memcpy(dst, src, bytes);
     } else {
         DeviceAllocator *allocator = AllocatorManager::getInstance().getAllocator(target_device);
         if (allocator) {
-            allocator->memcpy(result._storage.data<char>(), _storage.data<char>(), bytes,
-                              target_device, _device);
+            allocator->memcpy(dst, src, bytes, target_device, _device);
         } else {
-            std::memcpy(result._storage.data<char>(), _storage.data<char>(), bytes);
+            std::memcpy(dst, src, bytes);
         }
     }
 

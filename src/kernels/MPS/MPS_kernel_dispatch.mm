@@ -1719,6 +1719,57 @@ CT_HOT Tensor Abs_MPS_kernel(const Tensor& a) {
     return result;
 }
 
+/**
+ * @brief MPS unary in-place kernel 通用实现
+ * @param a 输入/输出张量（同一 buffer）
+ * @param kernel_name Metal shader 中对应的 kernel 名称
+ * @details 将同一 id<MTLBuffer> 同时绑定到 buffer(0) 与 buffer(1)，
+ *          依赖逐元素无跨线程依赖保证完全重叠场景下的正确性。
+ */
+static void unary_inplace_mps_kernel(Tensor& a, const char* kernel_name) {
+    if (a.device() != DeviceType::kMPS) [[unlikely]] {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DEVICE_COMPAT, "MPS in-place kernel: 仅在MPS支持");
+    }
+
+    // 注意：本 kernel 复用全局 _accumulator 的 command buffer / encoder，生命周期由 accumulator 管理。
+    // 与现有简单 unary kernel（Neg/ReLU/GELU 等）保持一致，不额外包裹 @autoreleasepool；
+    // 包裹会导致 encoder 在 pool 退出时被提前释放，触发 "released without endEncoding"。
+    size_t elem_count = a.numel();
+    id<MTLBuffer> buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
+    if (!buffer) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS in-place kernel: 无法获取Metal Buffer");
+    }
+
+    initMetal();
+    id<MTLComputePipelineState> pipeline = getPipeline(kernel_name);
+    if (!pipeline) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS in-place kernel: 无法获取pipeline");
+    }
+
+    id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:buffer offset:0 atIndex:0];
+    [encoder setBuffer:buffer offset:0 atIndex:1];
+
+    MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
+    MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
+
+    [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
+}
+
+/* ---- MPS 单输入原地算子（in-place） ---- */
+void Neg_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "neg_kernel"); }
+void Cos_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "cos_kernel"); }
+void Sin_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "sin_kernel"); }
+void ReLU_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "relu_kernel"); }
+void Tanh_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "tanh_kernel"); }
+void Sigmoid_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "sigmoid_kernel"); }
+void GELU_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "gelu_kernel"); }
+void LReLU_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "lrelu_kernel"); }
+void Log_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "log_kernel"); }
+void Exp_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "exp_kernel"); }
+void Abs_MPS_inplace(Tensor& a) { unary_inplace_mps_kernel(a, "abs_kernel"); }
+
 CT_HOT Tensor Min_MPS_kernel(const Tensor& a, const Tensor& b) {
     if (a.device() != DeviceType::kMPS || b.device() != DeviceType::kMPS) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DEVICE_COMPAT, "MPS Min_Kernel: 仅在MPS支持");

@@ -69,6 +69,10 @@ void CtorchScheduler::initKernels() {
         unary_kernels_[static_cast<size_t>(o)][static_cast<size_t>(d)]
             .store(f, std::memory_order_relaxed);
     };
+    auto set_unary_inplace = [this](op o, DeviceType d, UnaryInplaceKernelFunc f) {
+        unary_inplace_kernels_[static_cast<size_t>(o)][static_cast<size_t>(d)]
+            .store(f, std::memory_order_relaxed);
+    };
     auto set_softmax = [this](DeviceType d, Tensor (*f)(const Tensor&, int)) {
         softmax_kernels_[static_cast<size_t>(d)].store(f, std::memory_order_relaxed);
     };
@@ -95,6 +99,19 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
     set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
     set_unary(op::Abs, DeviceType::kCPU, Abs_BASIC_kernel);
+
+    // CPU in-place unary kernels (BASIC fallback)
+    set_unary_inplace(op::Neg, DeviceType::kCPU, Neg_BASIC_inplace);
+    set_unary_inplace(op::Cos, DeviceType::kCPU, Cos_BASIC_inplace);
+    set_unary_inplace(op::Sin, DeviceType::kCPU, Sin_BASIC_inplace);
+    set_unary_inplace(op::ReLU, DeviceType::kCPU, ReLU_BASIC_inplace);
+    set_unary_inplace(op::Tanh, DeviceType::kCPU, Tanh_BASIC_inplace);
+    set_unary_inplace(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_inplace);
+    set_unary_inplace(op::GELU, DeviceType::kCPU, GELU_BASIC_inplace);
+    set_unary_inplace(op::LReLU, DeviceType::kCPU, LReLU_BASIC_inplace);
+    set_unary_inplace(op::Log, DeviceType::kCPU, Log_BASIC_inplace);
+    set_unary_inplace(op::Exp, DeviceType::kCPU, Exp_BASIC_inplace);
+    set_unary_inplace(op::Abs, DeviceType::kCPU, Abs_BASIC_inplace);
 
     set_bin(op::Min, DeviceType::kCPU, Min_BASIC_kernel);
     set_bin(op::Max, DeviceType::kCPU, Max_BASIC_kernel);
@@ -158,6 +175,19 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Log, DeviceType::kMPS, Log_MPS_kernel);
     set_unary(op::Exp, DeviceType::kMPS, Exp_MPS_kernel);
     set_unary(op::Abs, DeviceType::kMPS, Abs_MPS_kernel);
+
+    // MPS in-place unary kernels (P1-3)
+    set_unary_inplace(op::Neg, DeviceType::kMPS, Neg_MPS_inplace);
+    set_unary_inplace(op::Cos, DeviceType::kMPS, Cos_MPS_inplace);
+    set_unary_inplace(op::Sin, DeviceType::kMPS, Sin_MPS_inplace);
+    set_unary_inplace(op::ReLU, DeviceType::kMPS, ReLU_MPS_inplace);
+    set_unary_inplace(op::Tanh, DeviceType::kMPS, Tanh_MPS_inplace);
+    set_unary_inplace(op::Sigmoid, DeviceType::kMPS, Sigmoid_MPS_inplace);
+    set_unary_inplace(op::GELU, DeviceType::kMPS, GELU_MPS_inplace);
+    set_unary_inplace(op::LReLU, DeviceType::kMPS, LReLU_MPS_inplace);
+    set_unary_inplace(op::Log, DeviceType::kMPS, Log_MPS_inplace);
+    set_unary_inplace(op::Exp, DeviceType::kMPS, Exp_MPS_inplace);
+    set_unary_inplace(op::Abs, DeviceType::kMPS, Abs_MPS_inplace);
 
     set_softmax(DeviceType::kMPS, Softmax_MPS_kernel);
 }
@@ -224,6 +254,38 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
     return func;
 }
 
+UnaryInplaceKernelFunc CtorchScheduler::selectBestUnaryInplace(
+    op op_type, DeviceType dev,
+    const std::array<std::array<std::atomic<UnaryInplaceKernelFunc>, DEVICE_COUNT>, OP_COUNT>& table)
+{
+    size_t op_idx = static_cast<size_t>(op_type);
+
+    // MPS 张量必须走 MPS kernel
+    if (dev == DeviceType::kMPS) {
+        UnaryInplaceKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kMPS)]
+            .load(std::memory_order_acquire);
+        if (func != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
+            return func;
+        }
+        return nullptr;
+    }
+
+    // CPU/AMX/SIMD 张量：优先 AMX -> SIMD -> BASIC；当前仅 BASIC 实现 in-place，
+    // 因此实际会回退到 CPU BASIC。未来可按算子补充 AMX/SIMD in-place 实现。
+    if (isDeviceAvailable(DeviceType::kAMX)) {
+        UnaryInplaceKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
+            .load(std::memory_order_acquire);
+        if (func != nullptr) return func;
+    }
+
+    UnaryInplaceKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+        .load(std::memory_order_acquire);
+    if (func != nullptr) return func;
+
+    func = table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
+    return func;
+}
+
 Tensor CtorchScheduler::dispatch(const Tensor& a, const Tensor& b, op op_type) {
     if (a.dtype() != b.dtype()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::DATATYPE,"Ctorch_Scheduler: Tensor类型不一致");
@@ -249,6 +311,21 @@ Tensor CtorchScheduler::dispatch(const Tensor& a, op op_type) {
         CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Kernel");
     }
     return target_kernel(a);
+}
+
+void CtorchScheduler::dispatch_inplace(Tensor& a, op op_type) {
+    if (!supports_unary_memory_overlap(a.device(), op_type)) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API,
+            "Ctorch_Scheduler: 该算子/设备不支持 in-place");
+    }
+
+    DeviceType target_dev = a.device();
+    UnaryInplaceKernelFunc target_kernel = selectBestUnaryInplace(op_type, target_dev, unary_inplace_kernels_);
+
+    if (target_kernel == nullptr) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的 in-place Kernel");
+    }
+    target_kernel(a);
 }
 
 Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {

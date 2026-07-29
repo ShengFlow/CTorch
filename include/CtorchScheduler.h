@@ -32,6 +32,7 @@ private:
 
     std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> binary_kernels_{};
     std::array<std::array<std::atomic<UnaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> unary_kernels_{};
+    std::array<std::array<std::atomic<UnaryInplaceKernelFunc>, DEVICE_COUNT>, OP_COUNT> unary_inplace_kernels_{};
     std::array<std::atomic<Tensor (*)(const Tensor&, int)>, DEVICE_COUNT> softmax_kernels_{};
 
     void initKernels();
@@ -40,6 +41,8 @@ private:
         const std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT>& table);
     static UnaryKernelFunc selectBestUnary(op op_type, DeviceType dev,
         const std::array<std::array<std::atomic<UnaryKernelFunc>, DEVICE_COUNT>, OP_COUNT>& table);
+    static UnaryInplaceKernelFunc selectBestUnaryInplace(op op_type, DeviceType dev,
+        const std::array<std::array<std::atomic<UnaryInplaceKernelFunc>, DEVICE_COUNT>, OP_COUNT>& table);
 public:
     static CtorchScheduler& getInstance() {
         static CtorchScheduler instance_;
@@ -55,16 +58,26 @@ public:
         return a.device();
     }
 
-    // FIXME(P1-3): MPS in-place unary kernel 的 memory overlap 修复不完全。
-    //              当前 MPS unary kernel 均假设输入/输出为不同 buffer，未经验证
-    //              支持 in-place；因此默认返回 false。详见 MEM:
-    //              skills/memories/2026-07-29/mps-inplace-unary-memory-overlap.md
+    // P1-3: MPS in-place unary kernel memory overlap 支持。
+    // 仅对逐元素 unary 算子返回 true；Softmax/Sum/Min/Max 等含规约或二元语义的算子返回 false。
     static bool supports_unary_memory_overlap(DeviceType dev, op op_type) {
-        (void)op_type;
-        if (dev == DeviceType::kMPS) {
-            return false;
+        (void)dev;
+        switch (op_type) {
+            case op::Neg:
+            case op::Cos:
+            case op::Sin:
+            case op::ReLU:
+            case op::Tanh:
+            case op::Sigmoid:
+            case op::GELU:
+            case op::LReLU:
+            case op::Log:
+            case op::Exp:
+            case op::Abs:
+                return true;
+            default:
+                return false;
         }
-        return false;
     }
 
     BinaryKernelFunc get_binary_kernel(op op_type, DeviceType dev) const {
@@ -74,6 +87,11 @@ public:
 
     UnaryKernelFunc get_unary_kernel(op op_type, DeviceType dev) const {
         return unary_kernels_[static_cast<size_t>(op_type)][static_cast<size_t>(dev)]
+            .load(std::memory_order_acquire);
+    }
+
+    UnaryInplaceKernelFunc get_unary_inplace_kernel(op op_type, DeviceType dev) const {
+        return unary_inplace_kernels_[static_cast<size_t>(op_type)][static_cast<size_t>(dev)]
             .load(std::memory_order_acquire);
     }
 
@@ -91,12 +109,18 @@ public:
             .store(new_kernel, std::memory_order_release);
     }
 
+    void replace_unary_inplace_kernel(op op_type, DeviceType dev, UnaryInplaceKernelFunc new_kernel) {
+        unary_inplace_kernels_[static_cast<size_t>(op_type)][static_cast<size_t>(dev)]
+            .store(new_kernel, std::memory_order_release);
+    }
+
     void replace_softmax_kernel(DeviceType dev, Tensor (*new_kernel)(const Tensor&, int)) {
         softmax_kernels_[static_cast<size_t>(dev)].store(new_kernel, std::memory_order_release);
     }
 
     Tensor dispatch(const Tensor& a, const Tensor& b, op op_type);
     Tensor dispatch(const Tensor& a, op op_type);
+    void dispatch_inplace(Tensor& a, op op_type);
     Tensor dispatch_softmax(const Tensor& a, int dim = -1);
 
     template <op OpType>

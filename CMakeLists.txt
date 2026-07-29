@@ -145,6 +145,7 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/Abs_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Min_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Max_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/unary_inplace_BASIC_kernels.cpp
 )
 set(CT-AMX-OPs
         src/kernels/AMX/MatMul_AMX_kernel.cpp
@@ -228,26 +229,34 @@ target_link_libraries(CTorch PUBLIC "-framework Foundation")
 
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 
-add_executable(test_matmul_stride test_matmul_stride.cpp)
+# Standalone test executables (migrated from repo root to src/tests/standalone)
+add_executable(test_matmul_stride src/tests/standalone/test_matmul_stride.cpp)
 target_link_libraries(test_matmul_stride PRIVATE CTorch)
+target_include_directories(test_matmul_stride PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_cross_entropy test_cross_entropy.cpp)
+add_executable(test_cross_entropy src/tests/standalone/test_cross_entropy.cpp)
 target_link_libraries(test_cross_entropy PRIVATE CTorch)
+target_include_directories(test_cross_entropy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_grad_accum test_grad_accum.cpp test_mps_flush.mm)
+add_executable(test_grad_accum src/tests/standalone/test_grad_accum.cpp src/tests/standalone/test_mps_flush.mm)
 target_link_libraries(test_grad_accum PRIVATE CTorch)
+target_include_directories(test_grad_accum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_sgd_sync test_sgd_sync.cpp)
+add_executable(test_sgd_sync src/tests/standalone/test_sgd_sync.cpp)
 target_link_libraries(test_sgd_sync PRIVATE CTorch)
+target_include_directories(test_sgd_sync PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_mnist_step test_mnist_step.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+add_executable(test_mnist_step src/tests/standalone/test_mnist_step.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_mnist_step PRIVATE CTorch)
+target_include_directories(test_mnist_step PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_relu_backward test_relu_backward.cpp)
+add_executable(test_relu_backward src/tests/standalone/test_relu_backward.cpp)
 target_link_libraries(test_relu_backward PRIVATE CTorch)
+target_include_directories(test_relu_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_mnist_perf test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
+target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_compile_options(-Wno-ignored-attributes)
 

@@ -31,6 +31,13 @@ typedef Tensor (*BinaryKernelFunc)(const Tensor& a, const Tensor& b);
 typedef Tensor (*UnaryKernelFunc)(const Tensor& a);
 
 /**
+ * @brief 单输入原地算子函数指针类型
+ * @details 用于表示原地修改输入张量的算子，如 relu_、leaky_relu_ 等
+ * @param a 输入张量（被原地修改）
+ */
+typedef void (*UnaryInplaceKernelFunc)(Tensor& a);
+
+/**
  * @brief 基本加法算子实现
  * @details 执行两个张量的元素级加法操作
  * @param a 第一个输入张量
@@ -297,6 +304,41 @@ Tensor Abs_SIMD_kernel(const Tensor& a);
 Tensor Abs_CUDA_kernel(const Tensor& a);
 Tensor Abs_AMX_kernel(const Tensor& a);
 Tensor Abs_MPS_kernel(const Tensor& a);
+
+/* ---- 单输入原地算子（in-place） ---- */
+
+void Neg_BASIC_inplace(Tensor& a);
+void Neg_MPS_inplace(Tensor& a);
+
+void Cos_BASIC_inplace(Tensor& a);
+void Cos_MPS_inplace(Tensor& a);
+
+void Sin_BASIC_inplace(Tensor& a);
+void Sin_MPS_inplace(Tensor& a);
+
+void ReLU_BASIC_inplace(Tensor& a);
+void ReLU_MPS_inplace(Tensor& a);
+
+void Tanh_BASIC_inplace(Tensor& a);
+void Tanh_MPS_inplace(Tensor& a);
+
+void Sigmoid_BASIC_inplace(Tensor& a);
+void Sigmoid_MPS_inplace(Tensor& a);
+
+void GELU_BASIC_inplace(Tensor& a);
+void GELU_MPS_inplace(Tensor& a);
+
+void LReLU_BASIC_inplace(Tensor& a);
+void LReLU_MPS_inplace(Tensor& a);
+
+void Log_BASIC_inplace(Tensor& a);
+void Log_MPS_inplace(Tensor& a);
+
+void Exp_BASIC_inplace(Tensor& a);
+void Exp_MPS_inplace(Tensor& a);
+
+void Abs_BASIC_inplace(Tensor& a);
+void Abs_MPS_inplace(Tensor& a);
 
 /**
  * @brief 基本Min算子实现

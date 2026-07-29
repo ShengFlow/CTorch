@@ -350,6 +350,73 @@ void test_memory_tensor_move_grad() {
     EXPECT(d.grad().numel() == 2, "Moved tensor should retain grad");
 }
 
+void test_tensor_to_same_device() {
+    Tensor a = makeTensor({1.0f, 2.0f, 3.0f});
+    a.requires_grad(true);
+    Tensor b = a.to(g_device);
+
+    EXPECT(b.shape() == a.shape(), "to(same_device) should preserve shape");
+    EXPECT(b.dtype() == a.dtype(), "to(same_device) should preserve dtype");
+    EXPECT(b.device() == g_device, "to(same_device) should keep device");
+    EXPECT(b.requires_grad() == a.requires_grad(),
+           "to(same_device) should preserve requires_grad");
+
+    syncDevice(g_device);
+    const float* a_p = a.data<float>();
+    const float* b_p = b.data<float>();
+    EXPECT_NEAR_F(a_p[0], b_p[0], kEps);
+    EXPECT_NEAR_F(a_p[1], b_p[1], kEps);
+    EXPECT_NEAR_F(a_p[2], b_p[2], kEps);
+}
+
+void test_tensor_to_dtype() {
+    Tensor a = makeTensor({1.0f, 2.0f, 3.0f});
+    Tensor b = a.to(DType::kDouble);
+    Tensor c = b.to(DType::kFloat);
+
+    EXPECT(b.dtype() == DType::kDouble, "to(kDouble) should set dtype");
+    EXPECT(c.dtype() == DType::kFloat, "to(kFloat) should restore dtype");
+    EXPECT(c.shape() == a.shape(), "dtype conversion should preserve shape");
+
+    syncDevice(g_device);
+    const float* a_p = a.data<float>();
+    const float* c_p = c.data<float>();
+    EXPECT_NEAR_F(a_p[0], c_p[0], kEps);
+    EXPECT_NEAR_F(a_p[1], c_p[1], kEps);
+    EXPECT_NEAR_F(a_p[2], c_p[2], kEps);
+}
+
+void test_tensor_to_cross_device_and_back() {
+    if (g_device == DeviceType::kCPU) {
+        // CPU<->CPU 已在 same_device 中覆盖
+        return;
+    }
+
+    Tensor a = makeTensor({1.0f, 2.0f, 3.0f});
+    a.requires_grad(true);
+
+    Tensor on_cpu = a.to(DeviceType::kCPU);
+    EXPECT(on_cpu.device() == DeviceType::kCPU, "to(kCPU) should move to CPU");
+    EXPECT(on_cpu.shape() == a.shape(), "cross-device to should preserve shape");
+    EXPECT(on_cpu.requires_grad() == a.requires_grad(),
+           "cross-device to should preserve requires_grad");
+
+    // CPU 上可直接读取；对 MPS 源张量，to(kCPU) 内部若走 memcpy 仍需同步
+    syncDevice(DeviceType::kCPU);
+    const float* cpu_p = on_cpu.data<float>();
+    EXPECT_NEAR_F(cpu_p[0], 1.0f, kEps);
+    EXPECT_NEAR_F(cpu_p[1], 2.0f, kEps);
+    EXPECT_NEAR_F(cpu_p[2], 3.0f, kEps);
+
+    Tensor back = on_cpu.to(g_device);
+    EXPECT(back.device() == g_device, "to(original_device) should move back");
+    syncDevice(g_device);
+    const float* back_p = back.data<float>();
+    EXPECT_NEAR_F(back_p[0], 1.0f, kEps);
+    EXPECT_NEAR_F(back_p[1], 2.0f, kEps);
+    EXPECT_NEAR_F(back_p[2], 3.0f, kEps);
+}
+
 } // namespace
 
 void run_all_tests() {
@@ -371,6 +438,9 @@ void run_all_tests() {
     test_memory_tensor_copy_grad_independence();
     test_memory_arena_clear();
     test_memory_tensor_move_grad();
+    test_tensor_to_same_device();
+    test_tensor_to_dtype();
+    test_tensor_to_cross_device_and_back();
 }
 
 int main() {
