@@ -13,8 +13,8 @@ bool test_mul_node_backward() {
         std::cout << "=== 测试 MulNode 反向传播 ===" << std::endl;
         
         // 创建输入张量
-        Tensor a(2.0f);
-        Tensor b(3.0f);
+        Tensor a(2.0f, DeviceType::kMPS);
+        Tensor b(3.0f, DeviceType::kMPS);
         a.requires_grad(true);
         b.requires_grad(true);
         
@@ -69,8 +69,8 @@ bool test_matmul_node_backward() {
         std::cout << "\n=== 测试 MatMul 反向传播 ===" << std::endl;
         
         // 创建矩阵
-        Tensor A(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
-        Tensor B(ShapeTag{}, {3, 2}, DType::kFloat, DeviceType::kCPU);
+        Tensor A(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kMPS);
+        Tensor B(ShapeTag{}, {3, 2}, DType::kFloat, DeviceType::kMPS);
         
         // 填充数据
         float* A_data = A.data<float>();

@@ -14,8 +14,8 @@ bool test_mul_node_simple() {
 
         AutoGrad::EnableGrad = true;
 
-        Tensor a(2.0f);
-        Tensor b(3.0f);
+        Tensor a(2.0f, DeviceType::kMPS);
+        Tensor b(3.0f, DeviceType::kMPS);
 
         a.requires_grad(true);
         b.requires_grad(true);

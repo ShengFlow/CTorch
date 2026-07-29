@@ -8,7 +8,10 @@
 #include <cmath>
 #include <chrono>
 
+extern "C" void MPS_flush_wait(bool wait);
+
 static ctQALS::rng::Xoshiro256PlusPlus g_mnist_rng(42);
+static DeviceType g_device = DeviceType::kMPS;
 
 // 两隐藏层 MLP: 784 -> 256(ReLU) -> 128(ReLU) -> 10
 class NeuralNetwork {
@@ -28,12 +31,12 @@ private:
 public:
     NeuralNetwork(int input_size, int hidden1, int hidden2, int output_size, float lr) : 
         learning_rate(lr) {
-        W1 = Tensor(ShapeTag{}, {static_cast<size_t>(input_size), static_cast<size_t>(hidden1)}, DType::kFloat, DeviceType::kCPU);
-        b1 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1)}, DType::kFloat, DeviceType::kCPU);
-        W2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1), static_cast<size_t>(hidden2)}, DType::kFloat, DeviceType::kCPU);
-        b2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2)}, DType::kFloat, DeviceType::kCPU);
-        W3 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2), static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
-        b3 = Tensor(ShapeTag{}, {static_cast<size_t>(output_size)}, DType::kFloat, DeviceType::kCPU);
+        W1 = Tensor(ShapeTag{}, {static_cast<size_t>(input_size), static_cast<size_t>(hidden1)}, DType::kFloat, g_device);
+        b1 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1)}, DType::kFloat, g_device);
+        W2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden1), static_cast<size_t>(hidden2)}, DType::kFloat, g_device);
+        b2 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2)}, DType::kFloat, g_device);
+        W3 = Tensor(ShapeTag{}, {static_cast<size_t>(hidden2), static_cast<size_t>(output_size)}, DType::kFloat, g_device);
+        b3 = Tensor(ShapeTag{}, {static_cast<size_t>(output_size)}, DType::kFloat, g_device);
         
         // 设置 requires_grad
         W1.requires_grad(true); b1.requires_grad(true);
@@ -59,14 +62,12 @@ public:
         
         Tensor logits = forward(x);
         
-        // 预分配 one-hot 张量
         static Tensor y_one_hot_cache;
         std::vector<size_t> one_hot_shape = {batch_size, 10};
         if (y_one_hot_cache.sizes() != one_hot_shape) {
-            y_one_hot_cache = Tensor(ShapeTag{}, one_hot_shape, DType::kFloat, DeviceType::kCPU);
+            y_one_hot_cache = Tensor(ShapeTag{}, one_hot_shape, DType::kFloat, g_device);
         }
         
-        // 快速填充 one-hot：先清零，再设置对应位置
         std::memset(y_one_hot_cache.data<float>(), 0, batch_size * 10 * sizeof(float));
         const float* y_data = y.data<float>();
         float* one_hot_data = y_one_hot_cache.data<float>();
@@ -87,21 +88,42 @@ public:
     
     void update_parameters() {
         float lr = learning_rate;
-        auto sgd_step = [this, lr](Tensor& param) {
-            float* gp = param.grad_ptr();
-            float* p = param.data<float>();
-            for (size_t i = 0; i < param.numel(); ++i)
-                p[i] -= gp[i] * lr;
-            std::memset(gp, 0, param.numel() * sizeof(float));
-        };
-        sgd_step(W1); sgd_step(b1);
-        sgd_step(W2); sgd_step(b2);
-        sgd_step(W3); sgd_step(b3);
+        if (g_device == DeviceType::kMPS) {
+            // 把 6 个参数的 SGD+zero 合并到一个 command buffer，只 wait 一次。
+            MPS_flush_wait(true);
+            MPS_update_begin();
+            SGD_Step_Zero_MPS_kernel(W1, W1.grad(), lr);
+            SGD_Step_Zero_MPS_kernel(b1, b1.grad(), lr);
+            SGD_Step_Zero_MPS_kernel(W2, W2.grad(), lr);
+            SGD_Step_Zero_MPS_kernel(b2, b2.grad(), lr);
+            SGD_Step_Zero_MPS_kernel(W3, W3.grad(), lr);
+            SGD_Step_Zero_MPS_kernel(b3, b3.grad(), lr);
+            MPS_update_end();
+        } else {
+            auto sgd_step = [this, lr](Tensor& param) {
+                float* gp = param.grad_ptr();
+                float* p = param.data<float>();
+                for (size_t i = 0; i < param.numel(); ++i)
+                    p[i] -= gp[i] * lr;
+            };
+            sgd_step(W1); sgd_step(b1);
+            sgd_step(W2); sgd_step(b2);
+            sgd_step(W3); sgd_step(b3);
+
+            W1.zero_grad(); b1.zero_grad();
+            W2.zero_grad(); b2.zero_grad();
+            W3.zero_grad(); b3.zero_grad();
+        }
     }
     
     // 预测（这里不需要计算梯度，手动实现按行 softmax，确保每个样本的10类概率和为1）
     Tensor predict(const Tensor& x) {
         Tensor logits = forward(x);  // [batch_size, 10]
+#ifdef __APPLE__
+        if (logits.device() == DeviceType::kMPS) {
+            MPS_flush_wait(true);
+        }
+#endif
         std::vector<size_t> shape = logits.sizes();
         if (shape.size() != 2 || shape[1] != 10) {
             // 防御性检查：如果形状不符合预期，直接返回 logits
@@ -175,18 +197,16 @@ void get_batch(const Tensor& images, const Tensor& labels, int batch_size, int b
     size_t image_bytes = actual_batch_size * feature_size * sizeof(float);
     size_t label_bytes = actual_batch_size * sizeof(float);
     
-    // 预分配或调整大小
     std::vector<size_t> image_shape = {static_cast<size_t>(actual_batch_size), feature_size};
     std::vector<size_t> label_shape = {static_cast<size_t>(actual_batch_size)};
     
     if (batch_images.sizes() != image_shape) {
-        batch_images = Tensor(ShapeTag{}, image_shape, DType::kFloat, DeviceType::kCPU);
+        batch_images = Tensor(ShapeTag{}, image_shape, DType::kFloat, g_device);
     }
     if (batch_labels.sizes() != label_shape) {
-        batch_labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, DeviceType::kCPU);
+        batch_labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, g_device);
     }
     
-    // 直接内存拷贝
     std::memcpy(batch_images.data<float>(), 
                 images.data<float>() + start * feature_size, 
                 image_bytes);
@@ -223,11 +243,14 @@ int main() {
         // MINIUM=少输出, FULL=显示TRACE(含阶段3、W2梯度验证)
         CtorchError::setPrintLevel(PrintLevel::MINIUM);
         
+        // 先初始化调度器，确保分配器已注册
+        CtorchScheduler::getInstance();
+        
         // 设置随机种子（使用 ctQALS Xoshiro256++，种子 42，在全局 g_mnist_rng 中设置）
         
         // 加载MNIST数据
 
-        MNISTLoader loader(".");
+        MNISTLoader loader(".", g_device);
         Tensor train_images, train_labels;
         Tensor test_images, test_labels;
         loader.load_training_data(train_images, train_labels);
@@ -236,7 +259,7 @@ int main() {
         std::cout << "MNIST 加载完成 | 训练:" << train_images.shape()[0] << " 测试:" << test_images.shape()[0] << std::endl;
         
         int input_size = 784;
-        int hidden1 = 128, hidden2 = 64;  // 简化：256->128, 128->64
+        int hidden1 = 256, hidden2 = 128;
         int output_size = 10;
         float learning_rate = 0.001f;
         

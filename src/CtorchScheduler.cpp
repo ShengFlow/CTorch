@@ -6,9 +6,16 @@
  */
 
 #include "./../include/CtorchScheduler.h"
+#include "./../include/DeviceAllocator.h"
 
 CtorchScheduler::CtorchScheduler() {
     printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Ctorch Scheduler Started\n", getFormattedTimeMs().c_str(), getTimestampMs());
+    
+    AllocatorManager::getInstance().registerAllocator(
+        DeviceType::kCPU, std::make_unique<CPUAllocator>());
+    AllocatorManager::getInstance().registerAllocator(
+        DeviceType::kMPS, std::make_unique<MPSAllocator>());
+    
     initKernels();
 }
 
@@ -42,6 +49,7 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Sin, DeviceType::kCPU, Sin_BASIC_kernel);
     set_unary(op::Tanh, DeviceType::kCPU, Tanh_BASIC_kernel);
     set_unary(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_kernel);
+    set_unary(op::GELU, DeviceType::kCPU, GELU_BASIC_kernel);
     set_unary(op::LReLU, DeviceType::kCPU, nullptr);
     set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
     set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
@@ -62,15 +70,55 @@ void CtorchScheduler::initKernels() {
     set_unary(op::ReLU, DeviceType::kSIMD, ReLU_SIMD_kernel);
     set_unary(op::Tanh, DeviceType::kSIMD, Tanh_SIMD_kernel);
     set_unary(op::Sigmoid, DeviceType::kSIMD, Sigmoid_SIMD_kernel);
+    set_unary(op::GELU, DeviceType::kSIMD, GELU_SIMD_kernel);
     set_unary(op::Log, DeviceType::kSIMD, Log_SIMD_kernel);
     set_unary(op::Exp, DeviceType::kSIMD, Exp_SIMD_kernel);
     set_unary(op::Abs, DeviceType::kSIMD, Abs_SIMD_kernel);
 
     set_bin(op::Min, DeviceType::kSIMD, Min_SIMD_kernel);
     set_bin(op::Max, DeviceType::kSIMD, Max_SIMD_kernel);
+    set_bin(op::MatMul, DeviceType::kSIMD, MatMul_SIMD_kernel);
+    set_bin(op::Dot, DeviceType::kSIMD, Dot_SIMD_kernel);
+    set_bin(op::MSE, DeviceType::kSIMD, MSE_SIMD_kernel);
+    set_bin(op::CE, DeviceType::kSIMD, CrossEntropy_SIMD_kernel);
+    set_bin(op::MAE, DeviceType::kSIMD, MAE_SIMD_kernel);
+
+    set_unary(op::Sin, DeviceType::kSIMD, Sin_SIMD_kernel);
+    set_unary(op::Cos, DeviceType::kSIMD, Cos_SIMD_kernel);
+    set_unary(op::LReLU, DeviceType::kSIMD, LReLU_SIMD_kernel);
+
+    set_softmax(DeviceType::kSIMD, Softmax_SIMD_kernel);
 
     // AMX kernels（目前只有 MatMul 有 AMX 实现）
     set_bin(op::MatMul, DeviceType::kAMX, MatMul_AMX_kernel);
+    set_unary(op::GELU, DeviceType::kAMX, GELU_AMX_kernel);
+
+    // MPS kernels
+    set_bin(op::Add, DeviceType::kMPS, Add_MPS_kernel);
+    set_bin(op::Sub, DeviceType::kMPS, Sub_MPS_kernel);
+    set_bin(op::Mul, DeviceType::kMPS, Mul_MPS_kernel);
+    set_bin(op::Div, DeviceType::kMPS, Div_MPS_kernel);
+    set_bin(op::MatMul, DeviceType::kMPS, MatMul_MPS_kernel);
+    set_bin(op::Dot, DeviceType::kMPS, Dot_MPS_kernel);
+    set_bin(op::MSE, DeviceType::kMPS, MSE_MPS_kernel);
+    set_bin(op::CE, DeviceType::kMPS, CrossEntropy_MPS_kernel);
+    set_bin(op::MAE, DeviceType::kMPS, MAE_MPS_kernel);
+    set_bin(op::Min, DeviceType::kMPS, Min_MPS_kernel);
+    set_bin(op::Max, DeviceType::kMPS, Max_MPS_kernel);
+
+    set_unary(op::Neg, DeviceType::kMPS, Neg_MPS_kernel);
+    set_unary(op::ReLU, DeviceType::kMPS, ReLU_MPS_kernel);
+    set_unary(op::Cos, DeviceType::kMPS, Cos_MPS_kernel);
+    set_unary(op::Sin, DeviceType::kMPS, Sin_MPS_kernel);
+    set_unary(op::Tanh, DeviceType::kMPS, Tanh_MPS_kernel);
+    set_unary(op::Sigmoid, DeviceType::kMPS, Sigmoid_MPS_kernel);
+    set_unary(op::GELU, DeviceType::kMPS, GELU_MPS_kernel);
+    set_unary(op::LReLU, DeviceType::kMPS, nullptr);
+    set_unary(op::Log, DeviceType::kMPS, Log_MPS_kernel);
+    set_unary(op::Exp, DeviceType::kMPS, Exp_MPS_kernel);
+    set_unary(op::Abs, DeviceType::kMPS, Abs_MPS_kernel);
+
+    set_softmax(DeviceType::kMPS, Softmax_MPS_kernel);
 }
 
 BinaryKernelFunc CtorchScheduler::selectBestBinary(
@@ -79,25 +127,26 @@ BinaryKernelFunc CtorchScheduler::selectBestBinary(
 {
     size_t op_idx = static_cast<size_t>(op_type);
 
-    // 优先级: AMX > SIMD > CPU(BASIC) > fallback
-    if (dev == DeviceType::kCPU) {
-        // 1. 尝试 AMX
-        if (isDeviceAvailable(DeviceType::kAMX)) {
-            BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
-                .load(std::memory_order_acquire);
-            if (func != nullptr) return func;
+    // MPS 张量必须走 MPS kernel
+    if (dev == DeviceType::kMPS) {
+        BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kMPS)]
+            .load(std::memory_order_acquire);
+        if (func != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
+            return func;
         }
-        // 2. 尝试 SIMD
-        BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+        return nullptr;
+    }
+
+    // CPU/AMX/SIMD 张量：优先 AMX -> SIMD -> BASIC
+    if (isDeviceAvailable(DeviceType::kAMX)) {
+        BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
     }
 
-    size_t dev_idx = static_cast<size_t>(dev);
-    BinaryKernelFunc func = table[op_idx][dev_idx].load(std::memory_order_acquire);
-    if (func != nullptr && isDeviceAvailable(dev)) {
-        return func;
-    }
+    BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+        .load(std::memory_order_acquire);
+    if (func != nullptr) return func;
 
     func = table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     return func;
@@ -109,25 +158,26 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
 {
     size_t op_idx = static_cast<size_t>(op_type);
 
-    // 优先级: AMX > SIMD > CPU(BASIC) > fallback
-    if (dev == DeviceType::kCPU) {
-        // 1. 尝试 AMX
-        if (isDeviceAvailable(DeviceType::kAMX)) {
-            UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
-                .load(std::memory_order_acquire);
-            if (func != nullptr) return func;
+    // MPS 张量必须走 MPS kernel
+    if (dev == DeviceType::kMPS) {
+        UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kMPS)]
+            .load(std::memory_order_acquire);
+        if (func != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
+            return func;
         }
-        // 2. 尝试 SIMD
-        UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+        return nullptr;
+    }
+
+    // CPU/AMX/SIMD 张量：优先 AMX -> SIMD -> BASIC
+    if (isDeviceAvailable(DeviceType::kAMX)) {
+        UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
     }
 
-    size_t dev_idx = static_cast<size_t>(dev);
-    UnaryKernelFunc func = table[op_idx][dev_idx].load(std::memory_order_acquire);
-    if (func != nullptr && isDeviceAvailable(dev)) {
-        return func;
-    }
+    UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+        .load(std::memory_order_acquire);
+    if (func != nullptr) return func;
 
     func = table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     return func;
@@ -163,7 +213,17 @@ Tensor CtorchScheduler::dispatch(const Tensor& a, op op_type) {
 Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
     DeviceType target_dev = a.device();
 
-    if (target_dev == DeviceType::kCPU && isDeviceAvailable(DeviceType::kAMX)) {
+    if (target_dev == DeviceType::kMPS) {
+        auto mps_kernel = softmax_kernels_[static_cast<size_t>(DeviceType::kMPS)]
+            .load(std::memory_order_acquire);
+        if (mps_kernel != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
+            return mps_kernel(a, dim);
+        }
+        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的MPS Softmax Kernel");
+    }
+
+    // CPU 路径：AMX -> SIMD -> BASIC
+    if (isDeviceAvailable(DeviceType::kAMX)) {
         auto amx_kernel = softmax_kernels_[static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (amx_kernel != nullptr) {
@@ -171,16 +231,18 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
         }
     }
 
-    size_t dev_idx = static_cast<size_t>(target_dev);
-    auto target_kernel = softmax_kernels_[dev_idx].load(std::memory_order_acquire);
-
-    if (target_kernel == nullptr || !isDeviceAvailable(target_dev)) {
-        target_kernel = softmax_kernels_[static_cast<size_t>(DeviceType::kCPU)]
-            .load(std::memory_order_acquire);
+    auto simd_kernel = softmax_kernels_[static_cast<size_t>(DeviceType::kSIMD)]
+        .load(std::memory_order_acquire);
+    if (simd_kernel != nullptr) {
+        return simd_kernel(a, dim);
     }
 
-    if (target_kernel == nullptr) {
-        CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
+    auto cpu_kernel = softmax_kernels_[static_cast<size_t>(DeviceType::kCPU)]
+        .load(std::memory_order_acquire);
+    if (cpu_kernel != nullptr) {
+        return cpu_kernel(a, dim);
     }
-    return target_kernel(a, dim);
+
+    CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
+    return Tensor();
 }

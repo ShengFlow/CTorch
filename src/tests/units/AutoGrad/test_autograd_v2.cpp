@@ -31,12 +31,12 @@ int g_failed = 0;
 } while (0)
 
 Tensor makeTensor(std::initializer_list<float> values) {
-    Tensor t(values);
+    Tensor t(values, DeviceType::kMPS);
     return t;
 }
 
 Tensor makeTensor2D(const std::vector<float>& values, size_t rows, size_t cols) {
-    Tensor t(ShapeTag{}, {rows, cols}, DType::kFloat, DeviceType::kCPU);
+    Tensor t(ShapeTag{}, {rows, cols}, DType::kFloat, DeviceType::kMPS);
     std::copy(values.begin(), values.end(), t.data<float>());
     return t;
 }

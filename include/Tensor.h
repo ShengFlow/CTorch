@@ -226,12 +226,55 @@ class Tensor {
     }
 
     /**
+     * @brief 标量构造函数（带设备参数）
+     * @param value 标量值
+     * @param device 设备类型
+     */
+    Tensor(float value, DeviceType device)
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(device), _dtype(DType::kFloat) {
+        _shape = {1};
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+#ifdef CTORCH_DEBUG
+        std::ostringstream oss;
+        oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value << ", 设备: " << static_cast<int>(device);
+        std::string msg = oss.str();
+        CTORCH_TRACE(DeviceTypeToErrorPlatform(device), msg);
+#endif
+        computeStrides();
+        _storage = Storage(1, _dtype, _device);
+        _autograd_meta._node.reset();
+        if (_storage.data<float>()) {
+            *_storage.data<float>() = value;
+#ifdef CTORCH_DEBUG
+            std::ostringstream oss;
+            oss << ">>> 标量Tensor设置完成, 存储值: " << *_storage.data<float>();
+            std::string msg = oss.str();
+            CTORCH_TRACE(DeviceTypeToErrorPlatform(device), msg);
+#endif
+        } else {
+            CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(device), ErrorType::MEMORY,
+                              "!!! 错误: 无法分配存储");
+        }
+    }
+
+    /**
      * @brief 初始化列表构造函数
      * @param values 初始化列表
      */
     Tensor(std::initializer_list<float> values)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node.reset();
+        _shape = {values.size()};
+        computeStrides();
+        _storage = Storage(values.begin(), values.size(), _dtype, _device);
+    }
+
+    Tensor(std::initializer_list<float> values, DeviceType device)
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(device), _dtype(DType::kFloat) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _autograd_meta._node.reset();
         _shape = {values.size()};
@@ -283,18 +326,19 @@ class Tensor {
     /**
      * @brief 拷贝构造函数
      * @param other 被拷贝的张量
-     * @details 新对象会分配新的张量ID和深拷贝存储
+     * @details 新对象分配新的张量ID，但与原张量共享底层存储（浅拷贝）。
+     *          需要深拷贝时请显式调用 clone()。
      */
     Tensor(const Tensor &other)
         : tensor_id_(global_tensor_id++),
           _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(other._storage), // 浅拷贝：共享底层存储
+          _storage(other._storage),
           _shape(other._shape) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _autograd_meta._node = other._autograd_meta._node;
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
-        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+        _autograd_meta._grad = other._autograd_meta._grad;
 #ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
@@ -307,7 +351,7 @@ class Tensor {
      * @brief 赋值操作符
      * @param other 被赋值的张量
      * @return 引用当前对象
-     * @details 深拷贝存储并分配新的张量ID
+     * @details 与原张量共享底层存储（浅拷贝）。需要深拷贝时请显式调用 clone()。
      */
     Tensor &operator=(const Tensor &other) {
         if (this != &other) {
@@ -317,10 +361,10 @@ class Tensor {
             _storage_offset   = other._storage_offset;
             _device           = other._device;
             _dtype            = other._dtype;
-            _storage          = other._storage; // 浅拷贝：共享底层存储
+            _storage          = other._storage;
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
             _autograd_meta._node = other.getRelatedNode();
-            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+            _autograd_meta._grad = other._autograd_meta._grad;
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         }
         return *this;
@@ -423,6 +467,13 @@ class Tensor {
      * @return 张量所在的设备
      */
     [[nodiscard]] DeviceType device() const noexcept { return _device; }
+
+    /**
+     * @brief 将张量移动到指定设备
+     * @param target_device 目标设备
+     * @return 移动到目标设备后的新张量
+     */
+    Tensor to(DeviceType target_device) const;
 
     /**
      * @brief 获取张量的存储
@@ -1002,6 +1053,12 @@ class Tensor {
      * @return Sigmoid结果张量
      */
     Tensor sigmoid() const;
+
+    /**
+     * @brief 求GELU操作
+     * @return GELU结果张量
+     */
+    Tensor gelu() const;
 
     /**
      * @brief 求Softmax操作

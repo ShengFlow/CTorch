@@ -16,11 +16,16 @@
 
 // 全局的matMul函数
 Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
-  // 校验设备：仅支持CPU张量
-  if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) {
+  // 校验设备：支持CPU和MPS张量（MPS内存是共享的）
+  if (a.device() != DeviceType::kCPU && a.device() != DeviceType::kMPS) {
     CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                       ErrorType::DEVICE_COMPAT,
-                      "AMX MatMul_Kernel: 仅在CPU支持");
+                      "AMX MatMul_Kernel: 仅在CPU/MPS支持");
+  }
+  if (a.device() != b.device()) {
+    CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
+                      ErrorType::DEVICE_COMPAT,
+                      "AMX MatMul_Kernel: 设备类型不匹配");
   }
 
   // 仅支持2D张量

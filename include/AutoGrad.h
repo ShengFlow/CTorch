@@ -27,6 +27,7 @@ class Node;
 #include "AutoGrad/Nodes/SinNode.h"
 #include "AutoGrad/Nodes/TanhNode.h"
 #include "AutoGrad/Nodes/SigmoidNode.h"
+#include "AutoGrad/Nodes/GELUNode.h"
 #include "AutoGrad/Nodes/MatMulNode.h"
 #include "AutoGrad/Nodes/CrossEntropyNode.h"
 #include "AutoGrad/Nodes/SoftmaxNode.h"
@@ -170,10 +171,13 @@ namespace AutoGrad {
                     registerNode<TanhNode>(a, result_weak);
                     break;
                 case op::Sigmoid:
-                    registerNode<SigmoidNode>(a, result_weak);
-                    break;
-                default:
-                    break;
+                registerNode<SigmoidNode>(a, result_weak);
+                break;
+            case op::GELU:
+                registerNode<GELUNode>(a, result_weak);
+                break;
+            default:
+                break;
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
@@ -206,6 +210,8 @@ namespace AutoGrad {
                 registerNode<TanhNode>(a, result_weak);
             } else if constexpr (OpType == op::Sigmoid) {
                 registerNode<SigmoidNode>(a, result_weak);
+            } else if constexpr (OpType == op::GELU) {
+                registerNode<GELUNode>(a, result_weak);
             } else if constexpr (OpType == op::Log) {
                 registerNode<LogNode>(a, result_weak);
             } else if constexpr (OpType == op::Exp) {

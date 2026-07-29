@@ -181,6 +181,18 @@ Tensor Sigmoid_AMX_kernel(const Tensor& a);
 Tensor Sigmoid_MPS_kernel(const Tensor& a);
 
 /**
+ * @brief 基本GELU算子实现
+ * @details 执行张量的GELU操作
+ * @param a 输入张量
+ * @return GELU结果张量
+ */
+Tensor GELU_BASIC_kernel(const Tensor& a);
+Tensor GELU_SIMD_kernel(const Tensor& a);
+Tensor GELU_CUDA_kernel(const Tensor& a);
+Tensor GELU_AMX_kernel(const Tensor& a);
+Tensor GELU_MPS_kernel(const Tensor& a);
+
+/**
  * @brief 基本Softmax算子实现
  * @details 执行张量的Softmax操作
  * @param a 输入张量
@@ -305,5 +317,17 @@ Tensor Max_SIMD_kernel(const Tensor& a, const Tensor& b);
 Tensor Max_CUDA_kernel(const Tensor& a, const Tensor& b);
 Tensor Max_AMX_kernel(const Tensor& a, const Tensor& b);
 Tensor Max_MPS_kernel(const Tensor& a, const Tensor& b);
+
+extern "C" void Zero_MPS_kernel(const Tensor& a);
+extern "C" void SGD_Step_MPS_kernel(const Tensor& param, const Tensor& grad, float lr);
+extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad, float lr);
+extern "C" void MPS_update_begin();
+extern "C" void MPS_update_end();
+extern "C" void MPS_flush_wait(bool wait);
+extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
+
+#ifdef __OBJC__
+void MPS_flush(bool wait = true);
+#endif
 
 #endif //KERNELS_H

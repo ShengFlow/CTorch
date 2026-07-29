@@ -10,10 +10,14 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffast-math -march=native")
 
 # LTO (链接时优化) - Thin LTO (平衡编译速度和运行时性能)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto=thin")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=thin")
+# 通过 CT_ENABLE_LTO 开关控制，默认开启；关闭后可做 no-LTO 基线/PGO 对照实验
+option(CT_ENABLE_LTO "Enable Link-Time Optimization (Thin LTO)" ON)
+if(CT_ENABLE_LTO)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -flto=thin")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -flto=thin")
+endif()
 
 include(FetchContent)
 
@@ -46,6 +50,8 @@ set(CT-Core
         src/Arena.cpp
         src/Assertion.cpp
         src/AutoGrad.cpp
+        src/MetalDevice.mm
+        src/DeviceAllocator/MPSAllocator.mm
 )
 
 set(CT-Core-Headers
@@ -59,6 +65,8 @@ set(CT-Core-Headers
         include/AutoGrad/ComputeCore.h
         include/Arena.h
         include/AutoGrad.h
+        include/DeviceAllocator.h
+        include/MetalDevice.h
         include/ctQALS/ctQALS.h
 )
 
@@ -73,6 +81,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/CosNode.h
         include/AutoGrad/Nodes/TanhNode.h
         include/AutoGrad/Nodes/SigmoidNode.h
+        include/AutoGrad/Nodes/GELUNode.h
         include/AutoGrad/Nodes/ReLUNode.h
         include/AutoGrad/Nodes/LReLUNode.h
         include/AutoGrad/Nodes/MatMulNode.h
@@ -97,6 +106,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/CosNode.cpp
         src/AutoGrad/Nodes/TanhNode.cpp
         src/AutoGrad/Nodes/SigmoidNode.cpp
+        src/AutoGrad/Nodes/GELUNode.cpp
         src/AutoGrad/Nodes/ReLUNode.cpp
         src/AutoGrad/Nodes/LReLUNode.cpp
         src/AutoGrad/Nodes/MatMulNode.cpp
@@ -121,6 +131,7 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/Sin_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Tanh_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Sigmoid_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/GELU_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Softmax_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/MatMul_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Dot_BASIC_kernel.cpp
@@ -135,6 +146,11 @@ set(CT-CPU-BASIC-OPs
 )
 set(CT-AMX-OPs
         src/kernels/AMX/MatMul_AMX_kernel.cpp
+        src/kernels/AMX/GELU_AMX_kernel.cpp
+)
+
+set(CT-MPS-OPs
+        src/kernels/MPS/MPS_kernel_dispatch.mm
 )
 
 # 暂时禁用CPU-SIMD相关文件，因为需要AVX指令集支持
@@ -155,11 +171,21 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/ReLU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Sigmoid_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/GELU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Log_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Exp_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Abs_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Min_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Max_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/MatMul_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Dot_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/MSE_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/MAE_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/CrossEntropy_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Softmax_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Sin_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Cos_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/LReLU_SIMD_kernel.cpp
 )
 
 set(ctQALS
@@ -175,13 +201,14 @@ add_library(CTorch OBJECT
         ${CT-CPU-BASIC-OPs}
         ${CT-CPU-SIMD-OPs}
         ${CT-AMX-OPs}
+        ${CT-MPS-OPs}
         ${CT-Nodes}
         ${CT-Nodes-Headers}
         ${ctQALS}
 )
 
 set_target_properties(CTorch PROPERTIES
-        INTERPROCEDURAL_OPTIMIZATION TRUE
+        INTERPROCEDURAL_OPTIMIZATION ${CT_ENABLE_LTO}
 )
 
 # 包含头文件目录
@@ -193,8 +220,34 @@ add_compile_options(-march=native)
 
 # 链接 Accelerate 框架（用于 AMX BLAS 加速）
 target_link_libraries(CTorch PUBLIC "-framework Accelerate")
+target_link_libraries(CTorch PUBLIC "-framework Metal")
+target_link_libraries(CTorch PUBLIC "-framework Foundation")
 
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+
+add_executable(test_matmul_stride test_matmul_stride.cpp)
+target_link_libraries(test_matmul_stride PRIVATE CTorch)
+
+add_executable(test_cross_entropy test_cross_entropy.cpp)
+target_link_libraries(test_cross_entropy PRIVATE CTorch)
+
+add_executable(test_grad_accum test_grad_accum.cpp test_mps_flush.mm)
+target_link_libraries(test_grad_accum PRIVATE CTorch)
+
+add_executable(test_sgd_sync test_sgd_sync.cpp)
+target_link_libraries(test_sgd_sync PRIVATE CTorch)
+
+add_executable(test_mnist_step test_mnist_step.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(test_mnist_step PRIVATE CTorch)
+
+add_executable(test_relu_backward test_relu_backward.cpp)
+target_link_libraries(test_relu_backward PRIVATE CTorch)
+
+add_executable(test_mnist_perf test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(test_mnist_perf PRIVATE CTorch)
+
+add_executable(test_gelu src/tests/units/AutoGrad/test_gelu.cpp)
+target_link_libraries(test_gelu PRIVATE CTorch)
 
 add_compile_options(-Wno-ignored-attributes)
 

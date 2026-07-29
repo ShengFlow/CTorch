@@ -8,8 +8,8 @@ bool test_mul_broadcast_scalar_vector() {
     try {
         std::cout << "=== 测试 MulNode 广播: 标量 × 向量 ===" << std::endl;
         
-        Tensor a(2.0f);
-        Tensor b(ShapeTag{}, {3}, DType::kFloat, DeviceType::kCPU);
+        Tensor a(2.0f, DeviceType::kMPS);
+        Tensor b(ShapeTag{}, {3}, DType::kFloat, DeviceType::kMPS);
         b.data<float>()[0] = 1.0f;
         b.data<float>()[1] = 2.0f;
         b.data<float>()[2] = 3.0f;
@@ -35,11 +35,11 @@ bool test_mul_broadcast_scalar_vector() {
         Tensor grad_a = a.grad();
         Tensor grad_b = b.grad();
         
-        std::cout << "梯度: grad_a = " << grad_a.item<float>() << ", grad_b = [" << grad_b.data<float>()[0] << ", " << grad_b.data<float>()[1] << ", " << grad_b.data<float>()[2] << "]" << std::endl;
+        std::cout << "梯度: grad_a = " << grad_a.data<float>()[0] << ", grad_b = [" << grad_b.data<float>()[0] << ", " << grad_b.data<float>()[1] << ", " << grad_b.data<float>()[2] << "]" << std::endl;
         
         float expected_grad_a = 1.0f + 2.0f + 3.0f;
-        if (std::abs(grad_a.item<float>() - expected_grad_a) > 1e-6) {
-            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.item<float>() << std::endl;
+        if (std::abs(grad_a.data<float>()[0] - expected_grad_a) > 1e-6) {
+            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.data<float>()[0] << std::endl;
             return false;
         }
         
@@ -63,16 +63,16 @@ bool test_mul_broadcast_scalar_matrix() {
     try {
         std::cout << "\n=== 测试 MulNode 广播: 标量 × 矩阵 ===" << std::endl;
         
-        Tensor a(2.0f);
+        Tensor a(2.0f, DeviceType::kMPS);
         
-        Tensor b(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        Tensor b(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kMPS);
         b.data<float>()[0] = 1.0f; b.data<float>()[1] = 2.0f; b.data<float>()[2] = 3.0f;
         b.data<float>()[3] = 4.0f; b.data<float>()[4] = 5.0f; b.data<float>()[5] = 6.0f;
         
         a.requires_grad(true);
         b.requires_grad(true);
         
-        std::cout << "输入: a = " << a.item<float>() << std::endl;
+        std::cout << "输入: a = " << a.data<float>()[0] << std::endl;
         std::cout << "输入: b = [[1,2,3],[4,5,6]]" << std::endl;
         
         Tensor c = a * b;
@@ -94,13 +94,13 @@ bool test_mul_broadcast_scalar_matrix() {
         Tensor grad_a = a.grad();
         Tensor grad_b = b.grad();
         
-        std::cout << "梯度: grad_a = " << grad_a.item<float>() << std::endl;
+        std::cout << "梯度: grad_a = " << grad_a.data<float>()[0] << std::endl;
         std::cout << "梯度: grad_b = [[2,2,2],[2,2,2]]" << std::endl;
         
         float expected_grad_a = 1.0f + 2.0f + 3.0f + 4.0f + 5.0f + 6.0f;
         
-        if (std::abs(grad_a.item<float>() - expected_grad_a) > 1e-6) {
-            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.item<float>() << std::endl;
+        if (std::abs(grad_a.data<float>()[0] - expected_grad_a) > 1e-6) {
+            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.data<float>()[0] << std::endl;
             return false;
         }
         
@@ -124,17 +124,17 @@ bool test_div_broadcast_scalar_vector() {
     try {
         std::cout << "\n=== 测试 DivNode 广播: 向量 ÷ 标量 ===" << std::endl;
         
-        Tensor a(ShapeTag{}, {3}, DType::kFloat, DeviceType::kCPU);
+        Tensor a(ShapeTag{}, {3}, DType::kFloat, DeviceType::kMPS);
         a.data<float>()[0] = 6.0f;
         a.data<float>()[1] = 8.0f;
         a.data<float>()[2] = 10.0f;
         
-        Tensor b(2.0f);
+        Tensor b(2.0f, DeviceType::kMPS);
         
         a.requires_grad(true);
         b.requires_grad(true);
         
-        std::cout << "输入: a = [" << a.data<float>()[0] << ", " << a.data<float>()[1] << ", " << a.data<float>()[2] << "], b = " << b.item<float>() << std::endl;
+        std::cout << "输入: a = [" << a.data<float>()[0] << ", " << a.data<float>()[1] << ", " << a.data<float>()[2] << "], b = " << b.data<float>()[0] << std::endl;
         
         Tensor c = a / b;
         
@@ -153,7 +153,7 @@ bool test_div_broadcast_scalar_vector() {
         Tensor grad_b = b.grad();
         
         std::cout << "梯度: grad_a = [" << grad_a.data<float>()[0] << ", " << grad_a.data<float>()[1] << ", " << grad_a.data<float>()[2] << "]" << std::endl;
-        std::cout << "梯度: grad_b = " << grad_b.item<float>() << std::endl;
+        std::cout << "梯度: grad_b = " << grad_b.data<float>()[0] << std::endl;
         
         float expected_grad_b = -(6.0f/(2.0f*2.0f) + 8.0f/(2.0f*2.0f) + 10.0f/(2.0f*2.0f));
         
@@ -164,8 +164,8 @@ bool test_div_broadcast_scalar_vector() {
             }
         }
         
-        if (std::abs(grad_b.item<float>() - expected_grad_b) > 1e-6) {
-            std::cout << "❌ grad_b 错误: 期望 " << expected_grad_b << ", 实际 " << grad_b.item<float>() << std::endl;
+        if (std::abs(grad_b.data<float>()[0] - expected_grad_b) > 1e-6) {
+            std::cout << "❌ grad_b 错误: 期望 " << expected_grad_b << ", 实际 " << grad_b.data<float>()[0] << std::endl;
             return false;
         }
         
@@ -182,8 +182,8 @@ bool test_div_broadcast_vector_scalar() {
     try {
         std::cout << "\n=== 测试 DivNode 广播: 标量 ÷ 向量 ===" << std::endl;
         
-        Tensor a(12.0f);
-        Tensor b(ShapeTag{}, {3}, DType::kFloat, DeviceType::kCPU);
+        Tensor a(12.0f, DeviceType::kMPS);
+        Tensor b(ShapeTag{}, {3}, DType::kFloat, DeviceType::kMPS);
         b.data<float>()[0] = 2.0f;
         b.data<float>()[1] = 3.0f;
         b.data<float>()[2] = 4.0f;
@@ -191,7 +191,7 @@ bool test_div_broadcast_vector_scalar() {
         a.requires_grad(true);
         b.requires_grad(true);
         
-        std::cout << "输入: a = " << a.item<float>() << ", b = [" << b.data<float>()[0] << ", " << b.data<float>()[1] << ", " << b.data<float>()[2] << "]" << std::endl;
+        std::cout << "输入: a = " << a.data<float>()[0] << ", b = [" << b.data<float>()[0] << ", " << b.data<float>()[1] << ", " << b.data<float>()[2] << "]" << std::endl;
         
         Tensor c = a / b;
         
@@ -209,13 +209,13 @@ bool test_div_broadcast_vector_scalar() {
         Tensor grad_a = a.grad();
         Tensor grad_b = b.grad();
         
-        std::cout << "梯度: grad_a = " << grad_a.item<float>() << std::endl;
+        std::cout << "梯度: grad_a = " << grad_a.data<float>()[0] << std::endl;
         std::cout << "梯度: grad_b = [" << grad_b.data<float>()[0] << ", " << grad_b.data<float>()[1] << ", " << grad_b.data<float>()[2] << "]" << std::endl;
         
         float expected_grad_a = 1.0f/2.0f + 1.0f/3.0f + 1.0f/4.0f;
         
-        if (std::abs(grad_a.item<float>() - expected_grad_a) > 1e-6) {
-            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.item<float>() << std::endl;
+        if (std::abs(grad_a.data<float>()[0] - expected_grad_a) > 1e-6) {
+            std::cout << "❌ grad_a 错误: 期望 " << expected_grad_a << ", 实际 " << grad_a.data<float>()[0] << std::endl;
             return false;
         }
         

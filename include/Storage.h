@@ -11,7 +11,7 @@
 #define STORAGE_H
 #include "Ctools.h"
 #include "CtorchError.h"
-#include "Arena.h"
+#include "DeviceAllocator.h"
 
 /**
  * @class Storage
@@ -45,12 +45,23 @@ private:
     * @details 使用shared_ptr<char>实现共享所有权，避免手动delete问题
     * 使用char*能够最大限度节省内存并支持存储任意类型的数据
     * 同等tensor可以共用一块内存，减少不必要的内存占用
-    * 小对象使用Arena内存池分配，大对象使用系统malloc
+    * 内存分配通过DeviceAllocator接口实现，支持多设备
     */
    std::shared_ptr<char> _data;
 
-   /** @brief 小对象阈值（字节），小于此值走Arena内存池 */
-    static constexpr size_t ARENA_THRESHOLD = 0;  // 禁用Arena，Storage使用系统malloc
+   struct Deleter {
+       DeviceType _device;
+       void operator()(char* ptr) const {
+           if (ptr) {
+               DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(_device);
+               if (allocator) {
+                   allocator->deallocate(ptr, _device);
+               } else {
+                   std::free(ptr);
+               }
+           }
+       }
+   };
 
    /**
     * @brief 检查模板类型是否与存储类型匹配
@@ -80,9 +91,14 @@ public:
         : _size(size), _dtype(dtype), _device(device) {
         if (size > 0) {
             size_t bytes = size * dtypeSize(dtype);
-            if (device == DeviceType::kCPU && bytes <= ARENA_THRESHOLD) {
-                _data = Arena::getInstance().allocShared(bytes);
-            } else {
+            DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(device);
+            if (allocator) {
+                char* ptr = static_cast<char*>(allocator->allocate(bytes, device));
+                if (ptr) {
+                    _data = std::shared_ptr<char>(ptr, Deleter{device});
+                }
+            }
+            if (!_data) {
                 _data = std::shared_ptr<char>(new char[bytes], std::default_delete<char[]>());
             }
         }
@@ -105,14 +121,25 @@ public:
     }
 
     /**
-     * @brief 默认拷贝构造函数（浅拷贝）
+     * @brief 拷贝构造函数（浅拷贝，共享底层数据）
+     * @details 需要深拷贝时请显式调用 clone()。
      */
-    Storage(const Storage&) = default;
-    
+    Storage(const Storage& other)
+        : _size(other._size), _dtype(other._dtype), _device(other._device), _data(other._data) {}
+
     /**
-     * @brief 默认拷贝赋值运算符（浅拷贝）
+     * @brief 拷贝赋值运算符（浅拷贝，共享底层数据）
+     * @details 需要深拷贝时请显式调用 clone()。
      */
-    Storage& operator=(const Storage&) = default;
+    Storage& operator=(const Storage& other) {
+        if (this != &other) {
+            _size = other._size;
+            _dtype = other._dtype;
+            _device = other._device;
+            _data = other._data;
+        }
+        return *this;
+    }
 
     /**
      * @brief 默认移动构造函数
@@ -186,8 +213,15 @@ public:
      */
     Storage clone() const {
         Storage new_storage(_size, _dtype, _device);
-        if (_size > 0 && _data) {
-            std::memcpy(new_storage._data.get(), _data.get(), _size * dtypeSize(_dtype));
+        if (_size > 0 && _data && new_storage._data) {
+            DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(_device);
+            if (allocator) {
+                allocator->memcpy(new_storage._data.get(), _data.get(),
+                    _size * dtypeSize(_dtype), _device, _device);
+            } else {
+                std::memcpy(new_storage._data.get(), _data.get(),
+                    _size * dtypeSize(_dtype));
+            }
         }
         return new_storage;
     }
