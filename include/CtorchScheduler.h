@@ -25,10 +25,14 @@ private:
     static constexpr size_t OP_COUNT = static_cast<size_t>(op::kCount);
     static constexpr size_t DEVICE_COUNT = static_cast<size_t>(DeviceType::kCount);
 
-    // ABI 注意：op::kCount 改变会改变 binary_kernels_/unary_kernels_ 数组维度，
-    // 因此 static_assert 的值必须与 include/Ctools.h 中的 op::kCount 保持同步。
-    static_assert(static_cast<size_t>(op::kCount) == 28, "op enum count changed, verify kCount");
-    static_assert(static_cast<size_t>(DeviceType::kCount) == 7, "DeviceType enum count changed, verify kCount");
+    // ABI 门控：op::kCount / DeviceType::kCount 改变会改变 kernel 查找表维度。
+    // 以下硬编码数字是 ABI 变更的强制检查点。新增枚举值时必须同步更新此处，
+    // 否则编译失败，防止调度表维度与注册逻辑错位。
+    // 详见 ABI_POLICY.md 第 3.2 节“新增算子 ABI 检查清单”。
+    static_assert(static_cast<size_t>(op::kCount) == 28,
+                  "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md)");
+    static_assert(static_cast<size_t>(DeviceType::kCount) == 7,
+                  "DeviceType::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md)");
 
     std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> binary_kernels_{};
     std::array<std::array<std::atomic<UnaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> unary_kernels_{};

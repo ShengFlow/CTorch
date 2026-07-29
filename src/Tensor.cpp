@@ -24,6 +24,10 @@ std::atomic<size_t> Tensor::global_tensor_id(1);
 
 // ======================= Tensor类实现 =======================
 
+std::shared_ptr<Node> Tensor::createGradAccumulator(const std::shared_ptr<Tensor> &self) {
+    return std::make_shared<GradAccumulator>(self);
+}
+
 /**
  * @brief 设置梯度需求
  * @param key 是否需要梯度

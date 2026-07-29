@@ -20,6 +20,7 @@
  * @note ABI 注意：本类为公开头文件核心类，任何成员变量布局、Deleter 行为或 sizeof 变化
  *       都会破坏 ABI。后续若需变更分配策略，请将分配器状态封装到不暴露布局的位置
  *       （如 StorageImpl opaque handle），或显式进行主版本升级。
+ *       本项目当前不保证 ABI 稳定性，但禁止静默 ABI 破坏；详见 ABI_POLICY.md。
  */
 class Storage {
 private:
@@ -145,14 +146,28 @@ public:
     }
 
     /**
-     * @brief 默认移动构造函数
+     * @brief 移动构造函数
+     * @details 转移底层数据所有权，并将源 Storage 置为空（size=0，data=nullptr）
      */
-    Storage(Storage&&) noexcept = default;
-    
+    Storage(Storage&& other) noexcept
+        : _size(other._size), _dtype(other._dtype), _device(other._device), _data(std::move(other._data)) {
+        other._size = 0;
+    }
+
     /**
-     * @brief 默认移动赋值运算符
+     * @brief 移动赋值运算符
+     * @details 转移底层数据所有权，并将源 Storage 置为空
      */
-    Storage& operator=(Storage&&) noexcept = default;
+    Storage& operator=(Storage&& other) noexcept {
+        if (this != &other) {
+            _size = other._size;
+            _dtype = other._dtype;
+            _device = other._device;
+            _data = std::move(other._data);
+            other._size = 0;
+        }
+        return *this;
+    }
 
     /**
      * @brief 默认构造函数

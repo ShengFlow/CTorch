@@ -1720,15 +1720,47 @@ CT_HOT Tensor Abs_MPS_kernel(const Tensor& a) {
 }
 
 /**
+ * @brief 判断张量是否为严格连续（strict contiguous）且从 storage 起始位置开始
+ * @details MPS in-place kernel 当前按 [0, numel) 线性读写 buffer，因此要求：
+ *          1. storage_offset == 0（能从 MPS_getBuffer 查到 buffer）；
+ *          2. strides 满足行优先连续布局。
+ *          不满足时必须在调用端拒绝，否则会出现非连续/偏移位置被错误覆盖。
+ */
+static bool is_strict_contiguous(const Tensor& t) {
+    if (t.storage_offset() != 0) {
+        return false;
+    }
+    const auto& shape = t.shape();
+    const auto& strides = t.strides();
+    if (shape.empty()) {
+        return true;
+    }
+    size_t expected = 1;
+    for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
+        if (strides[i] != expected) {
+            return false;
+        }
+        expected *= shape[i];
+    }
+    return true;
+}
+
+/**
  * @brief MPS unary in-place kernel 通用实现
  * @param a 输入/输出张量（同一 buffer）
  * @param kernel_name Metal shader 中对应的 kernel 名称
  * @details 将同一 id<MTLBuffer> 同时绑定到 buffer(0) 与 buffer(1)，
  *          依赖逐元素无跨线程依赖保证完全重叠场景下的正确性。
+ *          调用前会检查张量是否 strict contiguous，否则抛异常。
  */
 static void unary_inplace_mps_kernel(Tensor& a, const char* kernel_name) {
     if (a.device() != DeviceType::kMPS) [[unlikely]] {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::DEVICE_COMPAT, "MPS in-place kernel: 仅在MPS支持");
+    }
+
+    if (!is_strict_contiguous(a)) {
+        CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::MEMORY,
+            "MPS in-place kernel: 输入张量必须 contiguous 且 storage_offset == 0");
     }
 
     // 注意：本 kernel 复用全局 _accumulator 的 command buffer / encoder，生命周期由 accumulator 管理。

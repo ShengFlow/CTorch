@@ -130,6 +130,12 @@ class Tensor {
     void check_inplace_safe_(const char* op_name) const;
 
     /**
+     * @brief 为当前张量创建 GradAccumulator 节点
+     * @details 定义放在 Tensor.cpp，避免 Tensor.h 与 GradAccumulator.h 循环包含
+     */
+    static std::shared_ptr<Node> createGradAccumulator(const std::shared_ptr<Tensor>& self);
+
+    /**
      * @brief 计算步幅 (基于行优先顺序)
      */
     void computeStrides();
@@ -343,9 +349,11 @@ class Tensor {
           _storage(other._storage),
           _shape(other._shape) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
-        _autograd_meta._node = other._autograd_meta._node;
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
-        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
+        if (_autograd_meta._requires_grad) {
+            _autograd_meta._node = createGradAccumulator(_autograd_meta._self);
+        }
 #ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor拷贝构造, 新ID: " << tensor_id_ << ", 原ID: " << other.tensor_id_;
@@ -370,9 +378,12 @@ class Tensor {
             _dtype            = other._dtype;
             _storage          = other._storage;
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
-            _autograd_meta._node = other.getRelatedNode();
-            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(*other._autograd_meta._grad) : nullptr;
+            _autograd_meta._node.reset();
+            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+            if (_autograd_meta._requires_grad) {
+                _autograd_meta._node = createGradAccumulator(_autograd_meta._self);
+            }
         }
         return *this;
     }
@@ -389,6 +400,9 @@ class Tensor {
           _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         other.tensor_id_ = 0;
+        other._shape.clear();
+        other._strides.clear();
+        other._storage_offset = 0;
     }
 
     /**
@@ -410,6 +424,9 @@ class Tensor {
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
 
             other.tensor_id_ = 0;
+            other._shape.clear();
+            other._strides.clear();
+            other._storage_offset = 0;
         }
         return *this;
     }
@@ -548,6 +565,9 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> [[nodiscard]] const T *data() const {
+        if (_storage.empty()) {
+            return nullptr;
+        }
         if (!check_storage_offset()) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
@@ -562,6 +582,9 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> T *data() {
+        if (_storage.empty()) {
+            return nullptr;
+        }
         if (!check_storage_offset()) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
