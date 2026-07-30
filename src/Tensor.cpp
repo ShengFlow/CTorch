@@ -12,6 +12,11 @@
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/DeviceAllocator.h"
 #include "../include/CtorchScheduler.h"
+
+#ifdef __APPLE__
+extern "C" void MPS_flush_wait(bool wait);
+#endif
+
 #include <random>
 #include <cmath>
 #include <cstring>
@@ -163,6 +168,15 @@ template <typename T> T Tensor::item() const {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                                     "张量不是标量");
     }
+
+#ifdef __APPLE__
+    // MPS 路径使用 command buffer 累加器异步执行；在读取标量值前必须显式同步，
+    // 否则可能读到未完成的写入（如 0 或旧值）。
+    if (_device == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+#endif
+
     const T *data_ptr = _storage.data<T>();
     if (!data_ptr) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,

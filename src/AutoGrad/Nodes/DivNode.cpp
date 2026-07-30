@@ -35,69 +35,42 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
 
     const Tensor& grad = downStreamGrads[0];
     
-    Tensor grad1 = grad / denominator;
-    if (numerator.dim() < grad1.dim()) {
-        std::vector<size_t> input_shape = numerator.sizes();
-        std::vector<size_t> grad_shape = grad1.sizes();
-        
+    auto compute_reduce_dims = [](const std::vector<size_t>& input_shape,
+                                  const std::vector<size_t>& grad_shape) {
         std::vector<int> reduce_dims;
-        size_t dim_diff = grad1.dim() - numerator.dim();
-        
-        for (size_t d = 0; d < grad1.dim(); ++d) {
-            size_t input_dim_size;
-            if (d < dim_diff) {
-                input_dim_size = 1;
-            } else {
-                input_dim_size = input_shape[d - dim_diff];
-            }
-            size_t grad_dim_size = grad_shape[d];
-            
+        size_t in_dims = input_shape.size();
+        size_t g_dims = grad_shape.size();
+        for (size_t d = 0; d < g_dims; ++d) {
+            size_t grad_dim_size = grad_shape[g_dims - 1 - d];
+            size_t input_dim_size = (d < in_dims) ? input_shape[in_dims - 1 - d] : 1;
             if (input_dim_size == 1 && grad_dim_size > 1) {
-                reduce_dims.push_back(static_cast<int>(d));
+                reduce_dims.push_back(static_cast<int>(g_dims - 1 - d));
             }
         }
-        
-        if (!reduce_dims.empty()) {
-            grad1 = grad1.sum(reduce_dims);
-        }
+        return reduce_dims;
+    };
+
+    Tensor grad1 = grad / denominator;
+    std::vector<int> reduce_dims1 = compute_reduce_dims(numerator.sizes(), grad1.sizes());
+    if (!reduce_dims1.empty()) {
+        grad1 = grad1.sum(reduce_dims1);
     }
-    if (grad1.dim() > numerator.dim()) {
+    if (grad1.sizes() != numerator.sizes()) {
         grad1 = grad1.reshape(numerator.sizes());
     }
-    
+
     ret.push_back(GradPack{
         _upStreamNodes[0],
         std::vector({grad1}),
         0
     });
-    
+
     Tensor grad2 = -(_inputs[0] / (denominator * denominator)) * grad;
-    if (denominator.dim() < grad2.dim()) {
-        std::vector<size_t> input_shape = denominator.sizes();
-        std::vector<size_t> grad_shape = grad2.sizes();
-        
-        std::vector<int> reduce_dims;
-        size_t dim_diff = grad2.dim() - denominator.dim();
-        
-        for (size_t d = 0; d < grad2.dim(); ++d) {
-            size_t input_dim_size;
-            if (d < dim_diff) {
-                input_dim_size = 1;
-            } else {
-                input_dim_size = input_shape[d - dim_diff];
-            }
-            size_t grad_dim_size = grad_shape[d];
-            
-            if (input_dim_size == 1 && grad_dim_size > 1) {
-                reduce_dims.push_back(static_cast<int>(d));
-            }
-        }
-        
-        if (!reduce_dims.empty()) {
-            grad2 = grad2.sum(reduce_dims);
-        }
+    std::vector<int> reduce_dims2 = compute_reduce_dims(denominator.sizes(), grad2.sizes());
+    if (!reduce_dims2.empty()) {
+        grad2 = grad2.sum(reduce_dims2);
     }
-    if (grad2.dim() > denominator.dim()) {
+    if (grad2.sizes() != denominator.sizes()) {
         grad2 = grad2.reshape(denominator.sizes());
     }
     

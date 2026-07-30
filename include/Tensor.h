@@ -18,6 +18,7 @@
 #include "Storage.h"
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h> // 使用Apple的BLAS实现
+extern "C" void MPS_flush_wait(bool wait);
 #endif
 
 #include <initializer_list>
@@ -572,6 +573,13 @@ class Tensor {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
         }
+#ifdef __APPLE__
+        // MPS 路径异步执行；通过 data() 暴露主机指针前必须确保 GPU 写入已完成，
+        // 否则调用者可能读到未初始化的值（如 0）。
+        if (_device == DeviceType::kMPS) {
+            MPS_flush_wait(true);
+        }
+#endif
         return _storage.data<T>() + _storage_offset;
     }
 
@@ -589,6 +597,12 @@ class Tensor {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                          "张量存储偏移量无效");
         }
+#ifdef __APPLE__
+        // MPS 路径异步执行；通过 data() 暴露主机指针前必须确保 GPU 写入已完成。
+        if (_device == DeviceType::kMPS) {
+            MPS_flush_wait(true);
+        }
+#endif
         return _storage.data<T>() + _storage_offset;
     }
 

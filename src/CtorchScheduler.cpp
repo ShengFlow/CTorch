@@ -52,11 +52,8 @@ bool CtorchScheduler::isDeviceAvailable(DeviceType dev_type) {
 CtorchScheduler::CtorchScheduler() {
     printf(ESC_START COLOR_INFO"[INFO]  " ESC_END "[%s %" PRIu64 "] Ctorch Scheduler Started\n", getFormattedTimeMs().c_str(), getTimestampMs());
     
-    AllocatorManager::getInstance().registerAllocator(
-        DeviceType::kCPU, std::make_unique<CPUAllocator>());
-    AllocatorManager::getInstance().registerAllocator(
-        DeviceType::kMPS, std::make_unique<MPSAllocator>());
-    
+    // Allocator 现在由 AllocatorManager::getAllocator() 延迟初始化，
+    // 避免 Storage 构造早于 CtorchScheduler 单例时无法获取 MPS buffer。
     initKernels();
 }
 

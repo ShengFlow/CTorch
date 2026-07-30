@@ -84,11 +84,7 @@ public:
         _allocators[device] = std::move(allocator);
     }
 
-    DeviceAllocator* getAllocator(DeviceType device) {
-        std::lock_guard<std::mutex> lock(_mtx);
-        auto it = _allocators.find(device);
-        return it != _allocators.end() ? it->second.get() : nullptr;
-    }
+    DeviceAllocator* getAllocator(DeviceType device);
 };
 
 #endif // CTORCH_DEVICE_ALLOCATOR_H

@@ -52,6 +52,7 @@ set(CT-Core
         src/AutoGrad.cpp
         src/MetalDevice.mm
         src/DeviceAllocator/MPSAllocator.mm
+        src/DeviceAllocator/AllocatorManager.cpp
 )
 
 set(CT-Core-Headers
