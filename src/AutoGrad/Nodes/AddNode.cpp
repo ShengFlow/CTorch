@@ -6,8 +6,11 @@
  **/
 
 #include "AutoGrad/Nodes/AddNode.h"
+#include "AutoGrad/Nodes/BroadcastUtils.h"
 #include "Tensor.h"
 #include "Ctools.h"
+
+using ctorch::autograd::compute_broadcast_reduce_dims;
 
 AddNode::AddNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
@@ -31,37 +34,18 @@ std::vector<GradPack> AddNode::backward(const std::vector<Tensor>& downStreamGra
     for (size_t i = 0; i < _inputs.size(); ++i) {
         const Tensor& input = _inputs[i];
         Tensor grad_input = grad;
-        
-        if (input.dim() < grad.dim()) {
-            std::vector<size_t> input_shape = input.sizes();
-            std::vector<size_t> grad_shape = grad.sizes();
-            
-            std::vector<int> reduce_dims;
-            size_t dim_diff = grad.dim() - input.dim();
-            
-            for (size_t d = 0; d < grad.dim(); ++d) {
-                size_t input_dim_size;
-                if (d < dim_diff) {
-                    input_dim_size = 1;
-                } else {
-                    input_dim_size = input_shape[d - dim_diff];
-                }
-                size_t grad_dim_size = grad_shape[d];
-                
-                if (input_dim_size == 1 && grad_dim_size > 1) {
-                    reduce_dims.push_back(static_cast<int>(d));
-                }
-            }
-            
-            if (!reduce_dims.empty()) {
-                grad_input = grad.sum(reduce_dims);
-            }
+
+        // 处理广播：将 grad 在 input shape 为 1 而 grad shape 大于 1 的维度上求和。
+        // 对齐到最右边，避免依赖 dim() 相等（标量 Tensor 的 shape 可能是 {1}）。
+        std::vector<int> reduce_dims = compute_broadcast_reduce_dims(input.sizes(), grad.sizes());
+        if (!reduce_dims.empty()) {
+            grad_input = grad_input.sum(reduce_dims);
         }
-        
-        if (grad_input.dim() > input.dim()) {
+
+        if (grad_input.sizes() != input.sizes()) {
             grad_input = grad_input.reshape(input.sizes());
         }
-        
+
         ret.push_back(GradPack{
             _upStreamNodes[i],
             std::vector({grad_input}),

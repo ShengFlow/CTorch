@@ -1,4 +1,7 @@
 #include "AutoGrad/Nodes/DivNode.h"
+#include "AutoGrad/Nodes/BroadcastUtils.h"
+
+using ctorch::autograd::compute_broadcast_reduce_dims;
 
 DivNode::DivNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
@@ -25,6 +28,10 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
     
     const Tensor& numerator = _inputs[0];
     const Tensor& denominator = _inputs[1];
+
+    // 零除检查：在 MPS 路径下，denominator.data<float>() 会先触发 MPS_flush_wait(true)，
+    // 把 GPU buffer 同步到 host 后再读取。该检查在异步后端上是性能热点，未来可下放到
+    // MPS shader 中通过 inf/nan 输出做后验检查。
     const float* denom_data = denominator.data<float>();
     for (size_t i = 0; i < denominator.numel(); ++i) {
         if (denom_data[i] == 0.0f) {
@@ -35,23 +42,8 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
 
     const Tensor& grad = downStreamGrads[0];
     
-    auto compute_reduce_dims = [](const std::vector<size_t>& input_shape,
-                                  const std::vector<size_t>& grad_shape) {
-        std::vector<int> reduce_dims;
-        size_t in_dims = input_shape.size();
-        size_t g_dims = grad_shape.size();
-        for (size_t d = 0; d < g_dims; ++d) {
-            size_t grad_dim_size = grad_shape[g_dims - 1 - d];
-            size_t input_dim_size = (d < in_dims) ? input_shape[in_dims - 1 - d] : 1;
-            if (input_dim_size == 1 && grad_dim_size > 1) {
-                reduce_dims.push_back(static_cast<int>(g_dims - 1 - d));
-            }
-        }
-        return reduce_dims;
-    };
-
     Tensor grad1 = grad / denominator;
-    std::vector<int> reduce_dims1 = compute_reduce_dims(numerator.sizes(), grad1.sizes());
+    std::vector<int> reduce_dims1 = compute_broadcast_reduce_dims(numerator.sizes(), grad1.sizes());
     if (!reduce_dims1.empty()) {
         grad1 = grad1.sum(reduce_dims1);
     }
@@ -66,7 +58,7 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
     });
 
     Tensor grad2 = -(_inputs[0] / (denominator * denominator)) * grad;
-    std::vector<int> reduce_dims2 = compute_reduce_dims(denominator.sizes(), grad2.sizes());
+    std::vector<int> reduce_dims2 = compute_broadcast_reduce_dims(denominator.sizes(), grad2.sizes());
     if (!reduce_dims2.empty()) {
         grad2 = grad2.sum(reduce_dims2);
     }

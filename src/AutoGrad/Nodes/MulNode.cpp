@@ -6,6 +6,9 @@
  **/
 
 #include "AutoGrad/Nodes/MulNode.h"
+#include "AutoGrad/Nodes/BroadcastUtils.h"
+
+using ctorch::autograd::compute_broadcast_reduce_dims;
 
 MulNode::MulNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,const std::vector<Tensor>& inputs) 
     : Node(upStreamNodes, inputs) {}
@@ -39,18 +42,7 @@ std::vector<GradPack> MulNode::backward(const std::vector<Tensor>& downStreamGra
 
         // 处理广播：将 grad_input 在 input shape 为 1 而 grad shape 大于 1 的维度上求和。
         // 对齐到最右边，避免依赖 dim() 相等（标量 Tensor 的 shape 可能是 {1}）。
-        std::vector<size_t> input_shape = input.sizes();
-        std::vector<size_t> grad_shape = grad_input.sizes();
-        std::vector<int> reduce_dims;
-        size_t in_dims = input_shape.size();
-        size_t g_dims = grad_shape.size();
-        for (size_t d = 0; d < g_dims; ++d) {
-            size_t grad_dim_size = grad_shape[g_dims - 1 - d];
-            size_t input_dim_size = (d < in_dims) ? input_shape[in_dims - 1 - d] : 1;
-            if (input_dim_size == 1 && grad_dim_size > 1) {
-                reduce_dims.push_back(static_cast<int>(g_dims - 1 - d));
-            }
-        }
+        std::vector<int> reduce_dims = compute_broadcast_reduce_dims(input.sizes(), grad_input.sizes());
         if (!reduce_dims.empty()) {
             grad_input = grad_input.sum(reduce_dims);
         }

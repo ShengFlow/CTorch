@@ -19,6 +19,7 @@
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h> // 使用Apple的BLAS实现
 extern "C" void MPS_flush_wait(bool wait);
+extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
 #endif
 
 #include <initializer_list>
@@ -560,12 +561,12 @@ class Tensor {
     // ======================= 数据访问 =======================
 
     /**
-     * @brief 获取常量原始数据指针
+     * @brief 获取只读原始数据指针（MPS 路径会显式同步）
      * @tparam T 数据类型
      * @return 常量数据指针
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
-    template <typename T> [[nodiscard]] const T *data() const {
+    template <typename T> [[nodiscard]] const T *data_read() const {
         if (_storage.empty()) {
             return nullptr;
         }
@@ -574,7 +575,7 @@ class Tensor {
                                          "张量存储偏移量无效");
         }
 #ifdef __APPLE__
-        // MPS 路径异步执行；通过 data() 暴露主机指针前必须确保 GPU 写入已完成，
+        // MPS 路径异步执行；通过 data_read() 暴露主机指针前必须确保 GPU 写入已完成，
         // 否则调用者可能读到未初始化的值（如 0）。
         if (_device == DeviceType::kMPS) {
             MPS_flush_wait(true);
@@ -584,12 +585,48 @@ class Tensor {
     }
 
     /**
-     * @brief 获取可修改的原始数据指针
+     * @brief 获取可写原始数据指针（MPS 路径会自动 mark modified）
      * @tparam T 数据类型
      * @return 可修改的数据指针
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
-    template <typename T> T *data() {
+    template <typename T> T *data_write() {
+        if (_storage.empty()) {
+            return nullptr;
+        }
+        if (!check_storage_offset()) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                                         "张量存储偏移量无效");
+        }
+        T* ptr = _storage.data<T>() + _storage_offset;
+#ifdef __APPLE__
+        // MPS 路径下 host 写入 shared buffer 后需通知 Metal，使后续 GPU kernel 能看到更新。
+        // 注意：data_write() 调用即视为写入意图，即使调用者未实际写入也会产生一次 mark，
+        // 这是保证正确性的保守做法。
+        if (_device == DeviceType::kMPS) {
+            MPS_markBufferModified(ptr, numel() * sizeof(T));
+        }
+#endif
+        return ptr;
+    }
+
+    /**
+     * @brief 获取常量原始数据指针（兼容别名，等价于 data_read()）
+     * @deprecated 请优先使用 data_read() / data_write() 以明确读写语义
+     * @tparam T 数据类型
+     * @return 常量数据指针
+     */
+    template <typename T> [[nodiscard]] const T *data() const {
+        return data_read<T>();
+    }
+
+    /**
+     * @brief 获取可修改的原始数据指针（兼容别名，MPS 路径仍会同步）
+     * @deprecated 请优先使用 data_read() / data_write() 以明确读写语义
+     * @tparam T 数据类型
+     * @return 可修改的数据指针
+     */
+    template <typename T> [[nodiscard]] T *data() {
         if (_storage.empty()) {
             return nullptr;
         }
@@ -598,12 +635,12 @@ class Tensor {
                                          "张量存储偏移量无效");
         }
 #ifdef __APPLE__
-        // MPS 路径异步执行；通过 data() 暴露主机指针前必须确保 GPU 写入已完成。
+        // 保持兼容：非 const data() 仍先同步再返回指针，避免迁移期间读到旧值。
         if (_device == DeviceType::kMPS) {
             MPS_flush_wait(true);
         }
 #endif
-        return _storage.data<T>() + _storage_offset;
+        return data_write<T>();
     }
 
     /**

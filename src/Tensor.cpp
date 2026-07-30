@@ -13,10 +13,6 @@
 #include "../include/DeviceAllocator.h"
 #include "../include/CtorchScheduler.h"
 
-#ifdef __APPLE__
-extern "C" void MPS_flush_wait(bool wait);
-#endif
-
 #include <random>
 #include <cmath>
 #include <cstring>
@@ -169,20 +165,13 @@ template <typename T> T Tensor::item() const {
                                     "张量不是标量");
     }
 
-#ifdef __APPLE__
-    // MPS 路径使用 command buffer 累加器异步执行；在读取标量值前必须显式同步，
-    // 否则可能读到未完成的写入（如 0 或旧值）。
-    if (_device == DeviceType::kMPS) {
-        MPS_flush_wait(true);
-    }
-#endif
-
-    const T *data_ptr = _storage.data<T>();
+    // data_read() 在 MPS 路径会自动同步，无需在这里重复 flush。
+    const T *data_ptr = data_read<T>();
     if (!data_ptr) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                                     "张量数据为null");
     }
-    return data_ptr[_storage_offset];
+    return data_ptr[0];
 }
 
 // 显式实例化常用的item()模板
@@ -706,17 +695,11 @@ template <typename CmpFunc>
 static Tensor cmpScalarOpImpl(const Tensor &self, float scalar, CmpFunc &&cmp) {
     Tensor result(ShapeTag{}, self.shape(), DType::kFloat, self.device());
     if (self.dtype() == DType::kFloat) {
-        if (self.device() == DeviceType::kMPS) {
-            MPS_flush_wait(true);
-        }
         size_t count       = self.numel();
-        const float *data  = self.data<float>();
-        float *result_data = result.data<float>();
+        const float *data  = self.data_read<float>();
+        float *result_data = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(data[i], scalar) ? 1.0f : 0.0f;
-        if (self.device() == DeviceType::kMPS) {
-            MPS_markBufferModified(static_cast<void *>(result_data), count * sizeof(float));
-        }
     }
     return result;
 }
@@ -734,18 +717,12 @@ static Tensor cmpTensorOpImpl(const Tensor &self, const Tensor &other, CmpFunc &
                                     "张量数据类型不匹配");
     }
     if (self.dtype() == DType::kFloat) {
-        if (self.device() == DeviceType::kMPS || other.device() == DeviceType::kMPS) {
-            MPS_flush_wait(true);
-        }
         size_t count            = self.numel();
-        const float *data       = self.data<float>();
-        const float *other_data = other.data<float>();
-        float *result_data      = result.data<float>();
+        const float *data       = self.data_read<float>();
+        const float *other_data = other.data_read<float>();
+        float *result_data      = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(data[i], other_data[i]) ? 1.0f : 0.0f;
-        if (result.device() == DeviceType::kMPS) {
-            MPS_markBufferModified(static_cast<void *>(result_data), count * sizeof(float));
-        }
     }
     return result;
 }
@@ -755,17 +732,11 @@ template <typename CmpFunc>
 static Tensor cmpScalarTensorOpImpl(float scalar, const Tensor &tensor, CmpFunc &&cmp) {
     Tensor result(ShapeTag{}, tensor.shape(), DType::kFloat, tensor.device());
     if (tensor.dtype() == DType::kFloat) {
-        if (tensor.device() == DeviceType::kMPS) {
-            MPS_flush_wait(true);
-        }
         size_t count       = tensor.numel();
-        const float *data  = tensor.data<float>();
-        float *result_data = result.data<float>();
+        const float *data  = tensor.data_read<float>();
+        float *result_data = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(scalar, data[i]) ? 1.0f : 0.0f;
-        if (tensor.device() == DeviceType::kMPS) {
-            MPS_markBufferModified(static_cast<void *>(result_data), count * sizeof(float));
-        }
     }
     return result;
 }

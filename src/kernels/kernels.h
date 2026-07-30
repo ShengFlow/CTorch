@@ -371,7 +371,6 @@ extern "C" void SGD_Step_MPS_kernel(const Tensor& param, const Tensor& grad, flo
 extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad, float lr);
 extern "C" void MPS_update_begin();
 extern "C" void MPS_update_end();
-extern "C" void MPS_flush_wait(bool wait);
 extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
 
 #ifdef __OBJC__
