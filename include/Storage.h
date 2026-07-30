@@ -12,6 +12,7 @@
 #include "Ctools.h"
 #include "CtorchError.h"
 #include "DeviceAllocator.h"
+#include <climits>
 
 /**
  * @class Storage
@@ -94,7 +95,12 @@ public:
     Storage(size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
         : _size(size), _dtype(dtype), _device(device) {
         if (size > 0) {
-            size_t bytes = size * dtypeSize(dtype);
+            size_t elem_size = dtypeSize(dtype);
+            if (elem_size > 0 && size > SIZE_MAX / elem_size) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                                            "Storage size overflow: requested element count too large");
+            }
+            size_t bytes = size * elem_size;
             DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(device);
             if (allocator) {
                 char* ptr = static_cast<char*>(allocator->allocate(bytes, device));
