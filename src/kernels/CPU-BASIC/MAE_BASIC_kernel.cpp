@@ -30,8 +30,8 @@ CT_HOT Tensor MAE_BASIC_kernel(const Tensor& a, const Tensor& b) {
     
     // 实现MAE损失函数
     size_t count = a.numel();
-    const float* CT_RESTRICT data_a = a.data<float>();
-    const float* CT_RESTRICT data_b = b.data<float>();
+    const float* CT_RESTRICT data_a = a.data_read<float>();
+    const float* CT_RESTRICT data_b = b.data_read<float>();
     
     float sum_absolute_error = 0.0f;
     for (size_t i = 0; i < count; ++i) {

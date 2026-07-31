@@ -29,15 +29,15 @@ CT_HOT Tensor Dot_BASIC_kernel(const Tensor& a, const Tensor& b) {
                          ErrorType::DATATYPE, "CPU-BASIC Dot_Kernel: Tensor数据类型不匹配");
     }
 
-    int elem_count = a.numel();
+    size_t elem_count = a.numel();
 
     // 获取Tensor数据指针
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
 
     // 计算点乘：对应元素相乘后求和
     float dot_result = 0.0f;
-    for (int i = 0; i < elem_count; ++i) {
+    for (size_t i = 0; i < elem_count; ++i) {
         dot_result += a_data[i] * b_data[i];
     }
 

@@ -43,41 +43,66 @@ void MPSAllocator::memcpy(void* dst, const void* src, size_t bytes,
 }
 
 extern "C" id<MTLBuffer> MPS_getBuffer(void* ptr) {
-    MPSAllocator* allocator = static_cast<MPSAllocator*>(
-        AllocatorManager::getInstance().getAllocator(DeviceType::kMPS));
-    if (!allocator) {
+    std::shared_ptr<DeviceAllocator> allocator =
+        AllocatorManager::getInstance().getAllocator(DeviceType::kMPS);
+    if (!allocator || ptr == nullptr) {
         return nil;
     }
-    MPSAllocatorImpl* impl = static_cast<MPSAllocatorImpl*>(allocator->getImpl());
+    MPSAllocator* mps_alloc = static_cast<MPSAllocator*>(allocator.get());
+    MPSAllocatorImpl* impl = static_cast<MPSAllocatorImpl*>(mps_alloc->getImpl());
     std::lock_guard<std::mutex> lock(impl->mapMutex);
-    
+
     auto it = impl->bufferMap.find(ptr);
     if (it != impl->bufferMap.end()) {
         return it->second;
     }
-    
-    static bool not_found = true;
-    if (not_found) {
-        not_found = false;
+
+    // Fallback: ptr may point inside a buffer (e.g., a view with storage_offset > 0).
+    // BufferMap keys are base pointers returned by [buffer contents], so scan for the
+    // containing buffer. This is O(n) but only runs on lookup miss.
+    for (auto& pair : impl->bufferMap) {
+        void* base = pair.first;
+        id<MTLBuffer> buffer = pair.second;
+        if (ptr >= base && ptr < static_cast<char*>(base) + [buffer length]) {
+            return buffer;
+        }
+    }
+
+    static std::once_flag print_once;
+    std::call_once(print_once, [&]() {
         std::cout << "[DEBUG] MPS_getBuffer: ptr=" << ptr << " not found! map size=" << impl->bufferMap.size() << std::endl;
         for (auto& pair : impl->bufferMap) {
             std::cout << "[DEBUG] MPS_getBuffer: key=" << pair.first << std::endl;
         }
-    }
-    
+    });
+
     return nil;
 }
 
 extern "C" void MPS_markBufferModified(void* ptr, size_t bytes) {
-    MPSAllocator* allocator = static_cast<MPSAllocator*>(
-        AllocatorManager::getInstance().getAllocator(DeviceType::kMPS));
-    if (!allocator) {
+    std::shared_ptr<DeviceAllocator> allocator =
+        AllocatorManager::getInstance().getAllocator(DeviceType::kMPS);
+    if (!allocator || ptr == nullptr || bytes == 0) {
         return;
     }
-    MPSAllocatorImpl* impl = static_cast<MPSAllocatorImpl*>(allocator->getImpl());
+    MPSAllocator* mps_alloc = static_cast<MPSAllocator*>(allocator.get());
+    MPSAllocatorImpl* impl = static_cast<MPSAllocatorImpl*>(mps_alloc->getImpl());
     std::lock_guard<std::mutex> lock(impl->mapMutex);
+
     auto it = impl->bufferMap.find(ptr);
     if (it != impl->bufferMap.end()) {
         [it->second didModifyRange:NSMakeRange(0, bytes)];
+        return;
+    }
+
+    // Fallback: ptr may point inside a buffer (e.g., a view with storage_offset > 0).
+    for (auto& pair : impl->bufferMap) {
+        void* base = pair.first;
+        id<MTLBuffer> buffer = pair.second;
+        if (ptr >= base && ptr < static_cast<char*>(base) + [buffer length]) {
+            size_t offset = static_cast<char*>(ptr) - static_cast<char*>(base);
+            [buffer didModifyRange:NSMakeRange(offset, bytes)];
+            return;
+        }
     }
 }

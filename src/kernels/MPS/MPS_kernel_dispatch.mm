@@ -252,17 +252,23 @@ kernel void cross_entropy_kernel(device float* logits [[buffer(0)]],
             loss -= target * log(prob + 1e-10f);
         }
     } else {
-        uint target_class = (uint)targets[id];
-        float max_val = logits[id * num_classes];
-        for (uint i = 1; i < num_classes; ++i) {
-            max_val = max(max_val, logits[id * num_classes + i]);
+        // 对类别索引进行边界校验：负值或 >= num_classes 均为非法。
+        // 使用 int 转换保留负号，再与 [0, num_classes) 比较，防止越界读取 logits。
+        int target_class = (int)targets[id];
+        if (target_class < 0 || target_class >= (int)num_classes) {
+            loss = 0.0f;
+        } else {
+            float max_val = logits[id * num_classes];
+            for (uint i = 1; i < num_classes; ++i) {
+                max_val = max(max_val, logits[id * num_classes + i]);
+            }
+            float sum_exp = 0.0f;
+            for (uint i = 0; i < num_classes; ++i) {
+                sum_exp += exp(logits[id * num_classes + i] - max_val);
+            }
+            float prob = exp(logits[id * num_classes + target_class] - max_val) / sum_exp;
+            loss = -log(prob + 1e-10f);
         }
-        float sum_exp = 0.0f;
-        for (uint i = 0; i < num_classes; ++i) {
-            sum_exp += exp(logits[id * num_classes + i] - max_val);
-        }
-        float prob = exp(logits[id * num_classes + target_class] - max_val) / sum_exp;
-        loss = -log(prob + 1e-10f);
     }
     result[id] = loss;
 }
@@ -432,9 +438,12 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Add_Kernel: 无法获取Metal Buffer");
@@ -448,9 +457,9 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
         MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -475,15 +484,16 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
     for (size_t s : broadcast_shape) elem_count *= s;
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     Tensor a_broadcast = a;
     Tensor b_broadcast = b;
     
     if (a.sizes() != broadcast_shape) {
         a_broadcast = Tensor(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-        float* ab_data = a_broadcast.data<float>();
-        const float* a_data = a.data<float>();
+        float* ab_data = a_broadcast.data_write<float>();
+        const float* a_data = a.data_read<float>();
         std::vector<size_t> a_strides;
         computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -499,8 +509,8 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     if (b.sizes() != broadcast_shape) {
         b_broadcast = Tensor(ShapeTag{}, broadcast_shape, b.dtype(), b.device());
-        float* bb_data = b_broadcast.data<float>();
-        const float* b_data = b.data<float>();
+        float* bb_data = b_broadcast.data_write<float>();
+        const float* b_data = b.data_read<float>();
         std::vector<size_t> b_strides;
         computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -514,8 +524,10 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
         }
     }
     
-    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.data<float>())));
-    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.data<float>())));
+    size_t ab_offset = a_broadcast.storage_offset() * dtypeSize(a_broadcast.dtype());
+    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.storage().data<float>())));
+    size_t bb_offset = b_broadcast.storage_offset() * dtypeSize(b_broadcast.dtype());
+    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.storage().data<float>())));
     
     if (!ab_buffer || !bb_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Add_Kernel: 无法获取broadcast Metal Buffer");
@@ -529,9 +541,9 @@ CT_HOT Tensor Add_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:ab_buffer offset:0 atIndex:0];
-    [encoder setBuffer:bb_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:ab_buffer offset:ab_offset atIndex:0];
+    [encoder setBuffer:bb_buffer offset:bb_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -553,9 +565,12 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Sub_Kernel: 无法获取Metal Buffer");
@@ -569,9 +584,9 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
         MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -596,15 +611,16 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
     for (size_t s : broadcast_shape) elem_count *= s;
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     Tensor a_broadcast = a;
     Tensor b_broadcast = b;
     
     if (a.sizes() != broadcast_shape) {
         a_broadcast = Tensor(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-        float* ab_data = a_broadcast.data<float>();
-        const float* a_data = a.data<float>();
+        float* ab_data = a_broadcast.data_write<float>();
+        const float* a_data = a.data_read<float>();
         std::vector<size_t> a_strides;
         computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -620,8 +636,8 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     if (b.sizes() != broadcast_shape) {
         b_broadcast = Tensor(ShapeTag{}, broadcast_shape, b.dtype(), b.device());
-        float* bb_data = b_broadcast.data<float>();
-        const float* b_data = b.data<float>();
+        float* bb_data = b_broadcast.data_write<float>();
+        const float* b_data = b.data_read<float>();
         std::vector<size_t> b_strides;
         computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -635,8 +651,10 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
         }
     }
     
-    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.data<float>())));
-    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.data<float>())));
+    size_t ab_offset = a_broadcast.storage_offset() * dtypeSize(a_broadcast.dtype());
+    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.storage().data<float>())));
+    size_t bb_offset = b_broadcast.storage_offset() * dtypeSize(b_broadcast.dtype());
+    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.storage().data<float>())));
     
     if (!ab_buffer || !bb_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Sub_Kernel: 无法获取broadcast Metal Buffer");
@@ -650,9 +668,9 @@ CT_HOT Tensor Sub_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:ab_buffer offset:0 atIndex:0];
-    [encoder setBuffer:bb_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:ab_buffer offset:ab_offset atIndex:0];
+    [encoder setBuffer:bb_buffer offset:bb_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -674,9 +692,12 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Mul_Kernel: 无法获取Metal Buffer");
@@ -690,9 +711,9 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
         MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -717,15 +738,16 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
     for (size_t s : broadcast_shape) elem_count *= s;
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     Tensor a_broadcast = a;
     Tensor b_broadcast = b;
     
     if (a.sizes() != broadcast_shape) {
         a_broadcast = Tensor(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-        float* ab_data = a_broadcast.data<float>();
-        const float* a_data = a.data<float>();
+        float* ab_data = a_broadcast.data_write<float>();
+        const float* a_data = a.data_read<float>();
         std::vector<size_t> a_strides;
         computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -741,8 +763,8 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     if (b.sizes() != broadcast_shape) {
         b_broadcast = Tensor(ShapeTag{}, broadcast_shape, b.dtype(), b.device());
-        float* bb_data = b_broadcast.data<float>();
-        const float* b_data = b.data<float>();
+        float* bb_data = b_broadcast.data_write<float>();
+        const float* b_data = b.data_read<float>();
         std::vector<size_t> b_strides;
         computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -756,8 +778,10 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
         }
     }
     
-    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.data<float>())));
-    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.data<float>())));
+    size_t ab_offset = a_broadcast.storage_offset() * dtypeSize(a_broadcast.dtype());
+    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.storage().data<float>())));
+    size_t bb_offset = b_broadcast.storage_offset() * dtypeSize(b_broadcast.dtype());
+    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.storage().data<float>())));
     
     if (!ab_buffer || !bb_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Mul_Kernel: 无法获取broadcast Metal Buffer");
@@ -771,9 +795,9 @@ CT_HOT Tensor Mul_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:ab_buffer offset:0 atIndex:0];
-    [encoder setBuffer:bb_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:ab_buffer offset:ab_offset atIndex:0];
+    [encoder setBuffer:bb_buffer offset:bb_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -795,9 +819,12 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Div_Kernel: 无法获取Metal Buffer");
@@ -811,9 +838,9 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
         MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -838,15 +865,16 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
     for (size_t s : broadcast_shape) elem_count *= s;
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     Tensor a_broadcast = a;
     Tensor b_broadcast = b;
     
     if (a.sizes() != broadcast_shape) {
         a_broadcast = Tensor(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-        float* ab_data = a_broadcast.data<float>();
-        const float* a_data = a.data<float>();
+        float* ab_data = a_broadcast.data_write<float>();
+        const float* a_data = a.data_read<float>();
         std::vector<size_t> a_strides;
         computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -862,8 +890,8 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     if (b.sizes() != broadcast_shape) {
         b_broadcast = Tensor(ShapeTag{}, broadcast_shape, b.dtype(), b.device());
-        float* bb_data = b_broadcast.data<float>();
-        const float* b_data = b.data<float>();
+        float* bb_data = b_broadcast.data_write<float>();
+        const float* b_data = b.data_read<float>();
         std::vector<size_t> b_strides;
         computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
         for (size_t i = 0; i < elem_count; ++i) {
@@ -877,8 +905,10 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
         }
     }
     
-    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.data<float>())));
-    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.data<float>())));
+    size_t ab_offset = a_broadcast.storage_offset() * dtypeSize(a_broadcast.dtype());
+    id<MTLBuffer> ab_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a_broadcast.storage().data<float>())));
+    size_t bb_offset = b_broadcast.storage_offset() * dtypeSize(b_broadcast.dtype());
+    id<MTLBuffer> bb_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b_broadcast.storage().data<float>())));
     
     if (!ab_buffer || !bb_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Div_Kernel: 无法获取broadcast Metal Buffer");
@@ -892,9 +922,9 @@ CT_HOT Tensor Div_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:ab_buffer offset:0 atIndex:0];
-    [encoder setBuffer:bb_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:ab_buffer offset:ab_offset atIndex:0];
+    [encoder setBuffer:bb_buffer offset:bb_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -912,8 +942,10 @@ CT_HOT Tensor Neg_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Neg_Kernel: 无法获取Metal Buffer");
@@ -927,8 +959,8 @@ CT_HOT Tensor Neg_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -946,8 +978,10 @@ CT_HOT Tensor ReLU_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS ReLU_Kernel: 无法获取Metal Buffer");
@@ -961,8 +995,8 @@ CT_HOT Tensor ReLU_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -980,8 +1014,10 @@ CT_HOT Tensor LReLU_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
 
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Kernel: 无法获取Metal Buffer");
@@ -995,8 +1031,8 @@ CT_HOT Tensor LReLU_MPS_kernel(const Tensor& a) {
 
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
 
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1017,9 +1053,12 @@ CT_HOT Tensor LReLU_Grad_MPS_kernel(const Tensor& x, const Tensor& grad_out) {
     size_t elem_count = x.numel();
     Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
 
-    id<MTLBuffer> x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(x.data<float>())));
-    id<MTLBuffer> grad_out_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_out.data<float>())));
-    id<MTLBuffer> grad_x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_x.data<float>())));
+    size_t x_offset = x.storage_offset() * dtypeSize(x.dtype());
+    id<MTLBuffer> x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(x.storage().data<float>())));
+    size_t grad_out_offset = grad_out.storage_offset() * dtypeSize(grad_out.dtype());
+    id<MTLBuffer> grad_out_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_out.storage().data<float>())));
+    size_t grad_x_offset = grad_x.storage_offset() * dtypeSize(grad_x.dtype());
+    id<MTLBuffer> grad_x_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(grad_x.storage().data<float>())));
 
     if (!x_buffer || !grad_out_buffer || !grad_x_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS LReLU_Grad_Kernel: 无法获取Metal Buffer");
@@ -1033,9 +1072,9 @@ CT_HOT Tensor LReLU_Grad_MPS_kernel(const Tensor& x, const Tensor& grad_out) {
 
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:x_buffer offset:0 atIndex:0];
-    [encoder setBuffer:grad_out_buffer offset:0 atIndex:1];
-    [encoder setBuffer:grad_x_buffer offset:0 atIndex:2];
+    [encoder setBuffer:x_buffer offset:x_offset atIndex:0];
+    [encoder setBuffer:grad_out_buffer offset:grad_out_offset atIndex:1];
+    [encoder setBuffer:grad_x_buffer offset:grad_x_offset atIndex:2];
 
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1053,8 +1092,10 @@ CT_HOT Tensor Sin_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Sin_Kernel: 无法获取Metal Buffer");
@@ -1068,8 +1109,8 @@ CT_HOT Tensor Sin_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1087,8 +1128,10 @@ CT_HOT Tensor Cos_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Cos_Kernel: 无法获取Metal Buffer");
@@ -1102,8 +1145,8 @@ CT_HOT Tensor Cos_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1121,8 +1164,10 @@ CT_HOT Tensor Tanh_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Tanh_Kernel: 无法获取Metal Buffer");
@@ -1136,8 +1181,8 @@ CT_HOT Tensor Tanh_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1155,8 +1200,10 @@ CT_HOT Tensor Sigmoid_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Sigmoid_Kernel: 无法获取Metal Buffer");
@@ -1170,8 +1217,8 @@ CT_HOT Tensor Sigmoid_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1189,8 +1236,10 @@ CT_HOT Tensor GELU_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS GELU_Kernel: 无法获取Metal Buffer");
@@ -1204,8 +1253,8 @@ CT_HOT Tensor GELU_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1238,9 +1287,12 @@ CT_HOT Tensor MatMul_MPS_kernel(const Tensor& a, const Tensor& b) {
 
         Tensor result(ShapeTag{}, {M, N}, a.dtype(), a.device());
 
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
 
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS MatMul_Kernel: 无法获取Metal Buffer");
@@ -1277,9 +1329,9 @@ CT_HOT Tensor MatMul_MPS_kernel(const Tensor& a, const Tensor& b) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         [encoder setBuffer:m_buffer offset:0 atIndex:3];
         [encoder setBuffer:k_buffer offset:0 atIndex:4];
         [encoder setBuffer:n_buffer offset:0 atIndex:5];
@@ -1315,8 +1367,10 @@ CT_HOT Tensor Softmax_MPS_kernel(const Tensor& a, int dim) {
         
         Tensor result(ShapeTag{}, sizes, a.dtype(), a.device());
 
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Softmax_Kernel: 无法获取Metal Buffer");
@@ -1342,8 +1396,8 @@ CT_HOT Tensor Softmax_MPS_kernel(const Tensor& a, int dim) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:result_buffer offset:0 atIndex:1];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
         [encoder setBuffer:batch_size_buffer offset:0 atIndex:2];
         [encoder setBuffer:hidden_size_buffer offset:0 atIndex:3];
         
@@ -1373,14 +1427,17 @@ CT_HOT Tensor CrossEntropy_MPS_kernel(const Tensor& input, const Tensor& target)
         size_t num_classes = input.size(1);
         
         Tensor result(ShapeTag{}, {batch_size}, input.dtype(), input.device());
-        float* result_data = result.data<float>();
+        float* result_data = result.data_write<float>();
         for (size_t i = 0; i < batch_size; ++i) {
             result_data[i] = 0.0f;
         }
 
-        id<MTLBuffer> input_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(input.data<float>())));
-        id<MTLBuffer> target_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(target.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t input_offset = input.storage_offset() * dtypeSize(input.dtype());
+        id<MTLBuffer> input_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(input.storage().data<float>())));
+        size_t target_offset = target.storage_offset() * dtypeSize(target.dtype());
+        id<MTLBuffer> target_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(target.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!input_buffer || !target_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS CrossEntropy_Kernel: 无法获取Metal Buffer");
@@ -1402,9 +1459,9 @@ CT_HOT Tensor CrossEntropy_MPS_kernel(const Tensor& input, const Tensor& target)
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:input_buffer offset:0 atIndex:0];
-        [encoder setBuffer:target_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:input_buffer offset:input_offset atIndex:0];
+        [encoder setBuffer:target_buffer offset:target_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         [encoder setBuffer:batch_size_buffer offset:0 atIndex:3];
         [encoder setBuffer:num_classes_buffer offset:0 atIndex:4];
         [encoder setBuffer:is_one_hot_buffer offset:0 atIndex:5];
@@ -1423,7 +1480,7 @@ CT_HOT Tensor CrossEntropy_MPS_kernel(const Tensor& input, const Tensor& target)
         }
         
         Tensor final_result(ShapeTag{}, {1}, input.dtype(), input.device());
-        final_result.data<float>()[0] = total_loss / batch_size;
+        final_result.data_write<float>()[0] = total_loss / batch_size;
         
         return final_result;
     }
@@ -1447,12 +1504,15 @@ CT_HOT Tensor Dot_MPS_kernel(const Tensor& a, const Tensor& b) {
         size_t elem_count = a.numel();
         
         Tensor result(ShapeTag{}, {1}, a.dtype(), a.device());
-        float* result_data = result.data<float>();
+        float* result_data = result.data_write<float>();
         result_data[0] = 0.0f;
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Dot_Kernel: 无法获取Metal Buffer");
@@ -1470,9 +1530,9 @@ CT_HOT Tensor Dot_MPS_kernel(const Tensor& a, const Tensor& b) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         [encoder setBuffer:params_buffer offset:0 atIndex:3];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
@@ -1503,14 +1563,17 @@ CT_HOT Tensor MSE_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, {elem_count}, a.dtype(), a.device());
-        float* result_data = result.data<float>();
+        float* result_data = result.data_write<float>();
         for (size_t i = 0; i < elem_count; ++i) {
             result_data[i] = 0.0f;
         }
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS MSE_Kernel: 无法获取Metal Buffer");
@@ -1528,9 +1591,9 @@ CT_HOT Tensor MSE_MPS_kernel(const Tensor& a, const Tensor& b) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         [encoder setBuffer:n_buffer offset:0 atIndex:3];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
@@ -1546,7 +1609,7 @@ CT_HOT Tensor MSE_MPS_kernel(const Tensor& a, const Tensor& b) {
             total += result_data[i];
         }
         Tensor final_result(ShapeTag{}, {1}, a.dtype(), a.device());
-        final_result.data<float>()[0] = total / elem_count;
+        final_result.data_write<float>()[0] = total / elem_count;
         
         return final_result;
     }
@@ -1568,14 +1631,17 @@ CT_HOT Tensor MAE_MPS_kernel(const Tensor& a, const Tensor& b) {
         
         size_t elem_count = a.numel();
         Tensor result(ShapeTag{}, {elem_count}, a.dtype(), a.device());
-        float* result_data = result.data<float>();
+        float* result_data = result.data_write<float>();
         for (size_t i = 0; i < elem_count; ++i) {
             result_data[i] = 0.0f;
         }
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+        size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+        id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+        size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+        id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
         
         if (!a_buffer || !b_buffer || !result_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS MAE_Kernel: 无法获取Metal Buffer");
@@ -1593,9 +1659,9 @@ CT_HOT Tensor MAE_MPS_kernel(const Tensor& a, const Tensor& b) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
-        [encoder setBuffer:b_buffer offset:0 atIndex:1];
-        [encoder setBuffer:result_buffer offset:0 atIndex:2];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+        [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+        [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
         [encoder setBuffer:n_buffer offset:0 atIndex:3];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
@@ -1611,7 +1677,7 @@ CT_HOT Tensor MAE_MPS_kernel(const Tensor& a, const Tensor& b) {
             total += result_data[i];
         }
         Tensor final_result(ShapeTag{}, {1}, a.dtype(), a.device());
-        final_result.data<float>()[0] = total / elem_count;
+        final_result.data_write<float>()[0] = total / elem_count;
         
         return final_result;
     }
@@ -1625,8 +1691,10 @@ CT_HOT Tensor Log_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Log_Kernel: 无法获取Metal Buffer");
@@ -1640,8 +1708,8 @@ CT_HOT Tensor Log_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1659,8 +1727,10 @@ CT_HOT Tensor Exp_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Exp_Kernel: 无法获取Metal Buffer");
@@ -1674,8 +1744,8 @@ CT_HOT Tensor Exp_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1693,8 +1763,10 @@ CT_HOT Tensor Abs_MPS_kernel(const Tensor& a) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Abs_Kernel: 无法获取Metal Buffer");
@@ -1708,8 +1780,8 @@ CT_HOT Tensor Abs_MPS_kernel(const Tensor& a) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:result_buffer offset:0 atIndex:1];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:1];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1767,7 +1839,7 @@ static void unary_inplace_mps_kernel(Tensor& a, const char* kernel_name) {
     // 与现有简单 unary kernel（Neg/ReLU/GELU 等）保持一致，不额外包裹 @autoreleasepool；
     // 包裹会导致 encoder 在 pool 退出时被提前释放，触发 "released without endEncoding"。
     size_t elem_count = a.numel();
-    id<MTLBuffer> buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
+    id<MTLBuffer> buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data_read<float>())));
     if (!buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS in-place kernel: 无法获取Metal Buffer");
     }
@@ -1816,9 +1888,12 @@ CT_HOT Tensor Min_MPS_kernel(const Tensor& a, const Tensor& b) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+    id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !b_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Min_Kernel: 无法获取Metal Buffer");
@@ -1832,9 +1907,9 @@ CT_HOT Tensor Min_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:b_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1858,9 +1933,12 @@ CT_HOT Tensor Max_MPS_kernel(const Tensor& a, const Tensor& b) {
     size_t elem_count = a.numel();
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     
-    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
-    id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.data<float>())));
-    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.data<float>())));
+    size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+    id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
+    size_t b_offset = b.storage_offset() * dtypeSize(b.dtype());
+    id<MTLBuffer> b_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(b.storage().data<float>())));
+    size_t result_offset = result.storage_offset() * dtypeSize(result.dtype());
+    id<MTLBuffer> result_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(result.storage().data<float>())));
     
     if (!a_buffer || !b_buffer || !result_buffer) {
         CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Max_Kernel: 无法获取Metal Buffer");
@@ -1874,9 +1952,9 @@ CT_HOT Tensor Max_MPS_kernel(const Tensor& a, const Tensor& b) {
     
     id<MTLComputeCommandEncoder> encoder = _accumulator.getEncoder();
     [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:a_buffer offset:0 atIndex:0];
-    [encoder setBuffer:b_buffer offset:0 atIndex:1];
-    [encoder setBuffer:result_buffer offset:0 atIndex:2];
+    [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
+    [encoder setBuffer:b_buffer offset:b_offset atIndex:1];
+    [encoder setBuffer:result_buffer offset:result_offset atIndex:2];
     
     MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
     MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1894,7 +1972,8 @@ extern "C" void Zero_MPS_kernel(const Tensor& a) {
         
         size_t elem_count = a.numel();
         
-        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.data<float>())));
+        size_t a_offset = a.storage_offset() * dtypeSize(a.dtype());
+        id<MTLBuffer> a_buffer = MPS_getBuffer(const_cast<void*>(static_cast<const void*>(a.storage().data<float>())));
         
         if (!a_buffer) {
             CtorchError::throwException(ErrorPlatform::kMPS, ErrorType::PLATFORM_API, "MPS Zero_Kernel: 无法获取Metal Buffer");
@@ -1909,7 +1988,7 @@ extern "C" void Zero_MPS_kernel(const Tensor& a) {
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:a_buffer offset:0 atIndex:0];
+        [encoder setBuffer:a_buffer offset:a_offset atIndex:0];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
         MTLSize gridSize = MTLSizeMake(elem_count, 1, 1);
@@ -1931,8 +2010,10 @@ extern "C" void SGD_Step_MPS_kernel(const Tensor& param, const Tensor& grad, flo
         
         size_t elem_count = param.numel();
         
-        void* param_ptr = const_cast<void*>(static_cast<const void*>(param.data<float>()));
-        void* grad_ptr = const_cast<void*>(static_cast<const void*>(grad.data<float>()));
+        size_t param_offset = param.storage_offset() * dtypeSize(param.dtype());
+        void* param_ptr = const_cast<void*>(static_cast<const void*>(param.storage().data<float>()));
+        size_t grad_offset = grad.storage_offset() * dtypeSize(grad.dtype());
+        void* grad_ptr = const_cast<void*>(static_cast<const void*>(grad.storage().data<float>()));
         id<MTLBuffer> param_buffer = MPS_getBuffer(param_ptr);
         id<MTLBuffer> grad_buffer = MPS_getBuffer(grad_ptr);
         
@@ -1952,8 +2033,8 @@ extern "C" void SGD_Step_MPS_kernel(const Tensor& param, const Tensor& grad, flo
         id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:param_buffer offset:0 atIndex:0];
-        [encoder setBuffer:grad_buffer offset:0 atIndex:1];
+        [encoder setBuffer:param_buffer offset:param_offset atIndex:0];
+        [encoder setBuffer:grad_buffer offset:grad_offset atIndex:1];
         [encoder setBuffer:lr_buffer offset:0 atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);
@@ -1975,8 +2056,10 @@ extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad
         
         size_t elem_count = param.numel();
         
-        void* param_ptr = const_cast<void*>(static_cast<const void*>(param.data<float>()));
-        void* grad_ptr = const_cast<void*>(static_cast<const void*>(grad.data<float>()));
+        size_t param_offset = param.storage_offset() * dtypeSize(param.dtype());
+        void* param_ptr = const_cast<void*>(static_cast<const void*>(param.storage().data<float>()));
+        size_t grad_offset = grad.storage_offset() * dtypeSize(grad.dtype());
+        void* grad_ptr = const_cast<void*>(static_cast<const void*>(grad.storage().data<float>()));
         id<MTLBuffer> param_buffer = MPS_getBuffer(param_ptr);
         id<MTLBuffer> grad_buffer = MPS_getBuffer(grad_ptr);
         
@@ -1997,8 +2080,8 @@ extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad
         id<MTLCommandBuffer> commandBuffer = own_command_buffer ? [_commandQueue commandBuffer] : _updateCommandBuffer;
         id<MTLComputeCommandEncoder> encoder = own_command_buffer ? [commandBuffer computeCommandEncoder] : _updateEncoder;
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:param_buffer offset:0 atIndex:0];
-        [encoder setBuffer:grad_buffer offset:0 atIndex:1];
+        [encoder setBuffer:param_buffer offset:param_offset atIndex:0];
+        [encoder setBuffer:grad_buffer offset:grad_offset atIndex:1];
         [encoder setBuffer:lr_buffer offset:0 atIndex:2];
         
         MTLSize threadGroupSize = MTLSizeMake(256, 1, 1);

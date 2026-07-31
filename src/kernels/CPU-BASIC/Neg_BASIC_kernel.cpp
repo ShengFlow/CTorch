@@ -15,17 +15,17 @@ CT_HOT Tensor Neg_BASIC_kernel(const Tensor& a) {
         CtorchError::log(ErrorLevel::ERROR,DeviceTypeToErrorPlatform(a.device()),ErrorType::DEVICE_COMPAT,"CPU-BASIC Neg_Kernel: 仅在CPU支持");
     }
 
-    int elem_count = a.numel();
+    size_t elem_count = a.numel();
 
     // 获取Tensor数据指针
-    const float* CT_RESTRICT a_data = a.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
 
     // 创建结果Tensor
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    float* CT_RESTRICT result_data = result.data<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
 
     //  朴素逐元素加法
-    for (int i = 0; i < elem_count; ++i) {
+    for (size_t i = 0; i < elem_count; ++i) {
         result_data[i] = -a_data[i];
     }
     return result;

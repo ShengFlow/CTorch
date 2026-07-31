@@ -55,12 +55,12 @@ private:
    std::shared_ptr<char> _data;
 
    struct Deleter {
+       std::shared_ptr<DeviceAllocator> _allocator;
        DeviceType _device;
        void operator()(char* ptr) const {
            if (ptr) {
-               DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(_device);
-               if (allocator) {
-                   allocator->deallocate(ptr, _device);
+               if (_allocator) {
+                   _allocator->deallocate(ptr, _device);
                } else {
                    std::free(ptr);
                }
@@ -101,11 +101,11 @@ public:
                                             "Storage size overflow: requested element count too large");
             }
             size_t bytes = size * elem_size;
-            DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(device);
+            std::shared_ptr<DeviceAllocator> allocator = AllocatorManager::getInstance().getAllocator(device);
             if (allocator) {
                 char* ptr = static_cast<char*>(allocator->allocate(bytes, device));
                 if (ptr) {
-                    _data = std::shared_ptr<char>(ptr, Deleter{device});
+                    _data = std::shared_ptr<char>(ptr, Deleter{allocator, device});
                 }
             }
             if (!_data) {
@@ -238,7 +238,7 @@ public:
     Storage clone() const {
         Storage new_storage(_size, _dtype, _device);
         if (_size > 0 && _data && new_storage._data) {
-            DeviceAllocator* allocator = AllocatorManager::getInstance().getAllocator(_device);
+            std::shared_ptr<DeviceAllocator> allocator = AllocatorManager::getInstance().getAllocator(_device);
             if (allocator) {
                 allocator->memcpy(new_storage._data.get(), _data.get(),
                     _size * dtypeSize(_dtype), _device, _device);

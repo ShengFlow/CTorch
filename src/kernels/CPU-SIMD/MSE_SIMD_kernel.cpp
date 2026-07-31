@@ -25,8 +25,8 @@ Tensor MSE_SIMD_kernel(const Tensor& a, const Tensor& b) {
     }
 
     size_t n = a.numel();
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
     float sum = 0.0f;
 
     #pragma omp simd reduction(+:sum)

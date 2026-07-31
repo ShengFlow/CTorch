@@ -55,11 +55,11 @@ CT_HOT Tensor Min_SIMD_kernel(const Tensor& a, const Tensor& b) {
     // 形状相同：直接 SIMD
     if (a.sizes() == b.sizes()) {
         size_t count = a.numel();
-        const float* CT_RESTRICT a_data = a.data<float>();
-        const float* CT_RESTRICT b_data = b.data<float>();
+        const float* CT_RESTRICT a_data = a.data_read<float>();
+        const float* CT_RESTRICT b_data = b.data_read<float>();
         
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-        float* CT_RESTRICT result_data = result.data<float>();
+        float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __x86_64__
         size_t i = 0;
@@ -102,9 +102,9 @@ CT_HOT Tensor Min_SIMD_kernel(const Tensor& a, const Tensor& b) {
     computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    float* CT_RESTRICT result_data = result.data<float>();
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
     
     size_t elem_count = result.numel();
     

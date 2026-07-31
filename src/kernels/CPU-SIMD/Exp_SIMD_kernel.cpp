@@ -25,8 +25,8 @@ CT_HOT Tensor Exp_SIMD_kernel(const Tensor& a) {
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     size_t count = a.numel();
-    const float* CT_RESTRICT a_data = a.data<float>();
-    float* CT_RESTRICT result_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __x86_64__
     // x86: SVML 向量化 exp（如果可用）

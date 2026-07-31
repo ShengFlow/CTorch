@@ -26,8 +26,8 @@ CT_HOT Tensor CrossEntropy_BASIC_kernel(const Tensor& a, const Tensor& b) {
     }
     
     // 实现CrossEntropy损失函数
-    const float* CT_RESTRICT data_a = a.data<float>();
-    const float* CT_RESTRICT data_b = b.data<float>();
+    const float* CT_RESTRICT data_a = a.data_read<float>();
+    const float* CT_RESTRICT data_b = b.data_read<float>();
     
     float cross_entropy = 0.0f;
     

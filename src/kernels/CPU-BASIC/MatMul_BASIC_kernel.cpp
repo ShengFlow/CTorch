@@ -47,10 +47,10 @@ CT_HOT Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
                 // 使用步长访问数据，支持转置后的张量
                 size_t a_idx = i * a_strides[0] + l * a_strides[1];
                 size_t b_idx = l * b_strides[0] + j * b_strides[1];
-                sum += a.data<float>()[a_idx] * b.data<float>()[b_idx];
+                sum += a.data_read<float>()[a_idx] * b.data_read<float>()[b_idx];
             }
             size_t result_idx = i * result_strides[0] + j * result_strides[1];
-            result.data<float>()[result_idx] = sum;
+            result.data_write<float>()[result_idx] = sum;
         }
     }
     

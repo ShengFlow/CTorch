@@ -65,7 +65,7 @@ public:
 
 class AllocatorManager {
 private:
-    std::unordered_map<DeviceType, std::unique_ptr<DeviceAllocator>> _allocators;
+    std::unordered_map<DeviceType, std::shared_ptr<DeviceAllocator>> _allocators;
     mutable std::mutex _mtx;
 
     AllocatorManager() = default;
@@ -79,12 +79,12 @@ public:
     AllocatorManager(const AllocatorManager&) = delete;
     AllocatorManager& operator=(const AllocatorManager&) = delete;
 
-    void registerAllocator(DeviceType device, std::unique_ptr<DeviceAllocator> allocator) {
+    void registerAllocator(DeviceType device, std::shared_ptr<DeviceAllocator> allocator) {
         std::lock_guard<std::mutex> lock(_mtx);
         _allocators[device] = std::move(allocator);
     }
 
-    DeviceAllocator* getAllocator(DeviceType device);
+    std::shared_ptr<DeviceAllocator> getAllocator(DeviceType device);
 };
 
 #endif // CTORCH_DEVICE_ALLOCATOR_H

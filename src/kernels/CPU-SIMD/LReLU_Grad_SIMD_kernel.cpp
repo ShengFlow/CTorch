@@ -23,9 +23,9 @@ CT_HOT Tensor LReLU_Grad_SIMD_kernel(const Tensor& x, const Tensor& grad_out) {
     constexpr float negative_slope = 0.01f;
     Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
     size_t n = x.numel();
-    const float* CT_RESTRICT x_p = x.data<float>();
-    const float* CT_RESTRICT gout_p = grad_out.data<float>();
-    float* CT_RESTRICT gx_p = grad_x.data<float>();
+    const float* CT_RESTRICT x_p = x.data_read<float>();
+    const float* CT_RESTRICT gout_p = grad_out.data_read<float>();
+    float* CT_RESTRICT gx_p = grad_x.data_write<float>();
 
     #pragma omp simd
     for (size_t i = 0; i < n; ++i) {

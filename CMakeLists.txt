@@ -259,6 +259,36 @@ add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mn
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
 target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# (SECURITY_SENSITIVE) Red-team PoC: Storage integer overflow
+add_executable(poc_storage_integer_overflow src/tests/standalone/poc_storage_integer_overflow.cpp)
+target_link_libraries(poc_storage_integer_overflow PRIVATE CTorch)
+target_include_directories(poc_storage_integer_overflow PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# (SECURITY_SENSITIVE) Red-team PoC: Tensor numel()/computeStrides() integer overflow
+add_executable(poc_tensor_numel_overflow src/tests/standalone/poc_tensor_numel_overflow.cpp)
+target_link_libraries(poc_tensor_numel_overflow PRIVATE CTorch)
+target_include_directories(poc_tensor_numel_overflow PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# (SECURITY_SENSITIVE) Red-team PoC: MPS CrossEntropy target out-of-bounds read
+add_executable(poc_mps_crossentropy_target_oob src/tests/standalone/poc_mps_crossentropy_target_oob.cpp)
+target_link_libraries(poc_mps_crossentropy_target_oob PRIVATE CTorch)
+target_include_directories(poc_mps_crossentropy_target_oob PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# (SECURITY_SENSITIVE) Red-team PoC: MPS view storage_offset buffer lookup failure
+add_executable(poc_mps_storage_offset_lookup src/tests/standalone/poc_mps_storage_offset_lookup.cpp)
+target_link_libraries(poc_mps_storage_offset_lookup PRIVATE CTorch)
+target_include_directories(poc_mps_storage_offset_lookup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# (SECURITY_SENSITIVE) Red-team PoC: CPU kernel int elem_count narrowing
+add_executable(poc_cpu_kernel_int_narrowing src/tests/standalone/poc_cpu_kernel_int_narrowing.cpp)
+target_link_libraries(poc_cpu_kernel_int_narrowing PRIVATE CTorch)
+target_include_directories(poc_cpu_kernel_int_narrowing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# (SECURITY_SENSITIVE) Red-team PoC: Storage::Deleter exit-time UAF
+add_executable(poc_storage_deleter_uaf src/tests/standalone/poc_storage_deleter_uaf.cpp)
+target_link_libraries(poc_storage_deleter_uaf PRIVATE CTorch)
+target_include_directories(poc_storage_deleter_uaf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_compile_options(-Wno-ignored-attributes)
 
 # Discover all GDB pretty-printer Python modules in scripts/

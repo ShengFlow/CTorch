@@ -145,7 +145,7 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         bucket.add(std::vector({std::move(primary)}));
     } else {
         Tensor cpu_tensor(ShapeTag{}, root_shape, DType::kFloat, DeviceType::kCPU, false);
-        float* p = cpu_tensor.data<float>();
+        float* p = cpu_tensor.data_write<float>();
         std::fill(p, p + cpu_tensor.numel(), 1.0f);
         Tensor grad_tensor = cpu_tensor.to(root_device);
         GradPack primary = {root, std::vector({grad_tensor}), -1};

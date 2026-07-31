@@ -62,7 +62,7 @@ Tensor makeTensor(std::initializer_list<float> values) {
 
 Tensor makeTensor2D(const std::vector<float>& values, size_t rows, size_t cols) {
     Tensor t(ShapeTag{}, {rows, cols}, DType::kFloat, g_device);
-    std::copy(values.begin(), values.end(), t.data<float>());
+    std::copy(values.begin(), values.end(), t.data_write<float>());
     return t;
 }
 
@@ -77,8 +77,8 @@ void test_add_grad() {
     syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
-    const float* ga_p = ga.data<float>();
-    const float* gb_p = gb.data<float>();
+    const float* ga_p = ga.data_read<float>();
+    const float* gb_p = gb.data_read<float>();
     for (int i = 0; i < 3; ++i) {
         EXPECT_NEAR_F(ga_p[i], 1.0f, kEps);
         EXPECT_NEAR_F(gb_p[i], 1.0f, kEps);
@@ -96,8 +96,8 @@ void test_mul_grad() {
     syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
-    const float* ga_p = ga.data<float>();
-    const float* gb_p = gb.data<float>();
+    const float* ga_p = ga.data_read<float>();
+    const float* gb_p = gb.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 4.0f, kEps); EXPECT_NEAR_F(ga_p[1], 5.0f, kEps);
     EXPECT_NEAR_F(gb_p[0], 2.0f, kEps); EXPECT_NEAR_F(gb_p[1], 3.0f, kEps);
 }
@@ -113,8 +113,8 @@ void test_sub_grad() {
     syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
-    const float* ga_p = ga.data<float>();
-    const float* gb_p = gb.data<float>();
+    const float* ga_p = ga.data_read<float>();
+    const float* gb_p = gb.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 1.0f, kEps); EXPECT_NEAR_F(ga_p[1], 1.0f, kEps);
     EXPECT_NEAR_F(gb_p[0], -1.0f, kEps); EXPECT_NEAR_F(gb_p[1], -1.0f, kEps);
 }
@@ -130,8 +130,8 @@ void test_div_grad() {
     syncDevice(g_device);
     Tensor ga = a.grad();
     Tensor gb = b.grad();
-    const float* ga_p = ga.data<float>();
-    const float* gb_p = gb.data<float>();
+    const float* ga_p = ga.data_read<float>();
+    const float* gb_p = gb.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 0.5f, kEps);
     EXPECT_NEAR_F(ga_p[1], 0.25f, kEps);
     EXPECT_NEAR_F(gb_p[0], -1.5f, kEps);
@@ -158,8 +158,8 @@ void test_matmul_grad() {
     const float expected_grad_B[] = {5, 5, 7, 7, 9, 9};
     Tensor ga = A.grad();
     Tensor gb = B.grad();
-    const float* ga_p = ga.data<float>();
-    const float* gb_p = gb.data<float>();
+    const float* ga_p = ga.data_read<float>();
+    const float* gb_p = gb.data_read<float>();
     for (int i = 0; i < 6; ++i) {
         EXPECT_NEAR_F(ga_p[i], expected_grad_A[i], kEps);
         EXPECT_NEAR_F(gb_p[i], expected_grad_B[i], kEps);
@@ -194,7 +194,7 @@ void test_relu_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 0.0f, kEps);
     EXPECT_NEAR_F(ga_p[1], 0.0f, kEps);
     EXPECT_NEAR_F(ga_p[2], 1.0f, kEps);
@@ -210,7 +210,7 @@ void test_lrelu_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 0.01f, kEps);
     EXPECT_NEAR_F(ga_p[1], 0.01f, kEps);
     EXPECT_NEAR_F(ga_p[2], 1.0f, kEps);
@@ -226,7 +226,7 @@ void test_neg_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], -1.0f, kEps);
     EXPECT_NEAR_F(ga_p[1], -1.0f, kEps);
     EXPECT_NEAR_F(ga_p[2], -1.0f, kEps);
@@ -240,7 +240,7 @@ void test_sin_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 1.0f, kEps);
     EXPECT_NEAR_F(ga_p[1], 0.0f, kEps);
     EXPECT_NEAR_F(ga_p[2], -1.0f, kEps);
@@ -254,7 +254,7 @@ void test_cos_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     EXPECT_NEAR_F(ga_p[0], 0.0f, kEps);
     EXPECT_NEAR_F(ga_p[1], -1.0f, kEps);
     EXPECT_NEAR_F(ga_p[2], 0.0f, kEps);
@@ -268,7 +268,7 @@ void test_tanh_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     float t0 = std::tanh(0.0f);
     float t1 = std::tanh(1.0f);
     float t2 = std::tanh(-1.0f);
@@ -286,7 +286,7 @@ void test_sigmoid_grad() {
     AutoGrad::backward(b.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor ga = a.grad();
-    const float* ga_p = ga.data<float>();
+    const float* ga_p = ga.data_read<float>();
     float s0 = 1.0f / (1.0f + std::exp(-0.0f));
     float s1 = 1.0f / (1.0f + std::exp(-1.0f));
     float s2 = 1.0f / (1.0f + std::exp(1.0f));
@@ -317,14 +317,14 @@ void test_memory_tensor_copy_grad_independence() {
     AutoGrad::backward(c.getRelatedNode(), false);
     syncDevice(g_device);
     Tensor a_copy = a;
-    auto grad_before = a.grad().data<float>();
-    auto grad_copy_before = a_copy.grad().data<float>();
+    auto grad_before = a.grad().data_read<float>();
+    auto grad_copy_before = a_copy.grad().data_read<float>();
     EXPECT(grad_before[0] == grad_copy_before[0], "Initial grads should be equal");
     Tensor d = a_copy * makeTensor({2.0f, 3.0f});
     AutoGrad::backward(d.getRelatedNode(), false);
     syncDevice(g_device);
-    auto grad_after = a.grad().data<float>();
-    auto grad_copy_after = a_copy.grad().data<float>();
+    auto grad_after = a.grad().data_read<float>();
+    auto grad_copy_after = a_copy.grad().data_read<float>();
     EXPECT(grad_after[0] != grad_copy_after[0], "Grads should be independent after copy");
 }
 
@@ -362,8 +362,8 @@ void test_tensor_to_same_device() {
            "to(same_device) should preserve requires_grad");
 
     syncDevice(g_device);
-    const float* a_p = a.data<float>();
-    const float* b_p = b.data<float>();
+    const float* a_p = a.data_read<float>();
+    const float* b_p = b.data_read<float>();
     EXPECT_NEAR_F(a_p[0], b_p[0], kEps);
     EXPECT_NEAR_F(a_p[1], b_p[1], kEps);
     EXPECT_NEAR_F(a_p[2], b_p[2], kEps);
@@ -379,8 +379,8 @@ void test_tensor_to_dtype() {
     EXPECT(c.shape() == a.shape(), "dtype conversion should preserve shape");
 
     syncDevice(g_device);
-    const float* a_p = a.data<float>();
-    const float* c_p = c.data<float>();
+    const float* a_p = a.data_read<float>();
+    const float* c_p = c.data_read<float>();
     EXPECT_NEAR_F(a_p[0], c_p[0], kEps);
     EXPECT_NEAR_F(a_p[1], c_p[1], kEps);
     EXPECT_NEAR_F(a_p[2], c_p[2], kEps);
@@ -403,7 +403,7 @@ void test_tensor_to_cross_device_and_back() {
 
     // CPU 上可直接读取；对 MPS 源张量，to(kCPU) 内部若走 memcpy 仍需同步
     syncDevice(DeviceType::kCPU);
-    const float* cpu_p = on_cpu.data<float>();
+    const float* cpu_p = on_cpu.data_read<float>();
     EXPECT_NEAR_F(cpu_p[0], 1.0f, kEps);
     EXPECT_NEAR_F(cpu_p[1], 2.0f, kEps);
     EXPECT_NEAR_F(cpu_p[2], 3.0f, kEps);
@@ -411,7 +411,7 @@ void test_tensor_to_cross_device_and_back() {
     Tensor back = on_cpu.to(g_device);
     EXPECT(back.device() == g_device, "to(original_device) should move back");
     syncDevice(g_device);
-    const float* back_p = back.data<float>();
+    const float* back_p = back.data_read<float>();
     EXPECT_NEAR_F(back_p[0], 1.0f, kEps);
     EXPECT_NEAR_F(back_p[1], 2.0f, kEps);
     EXPECT_NEAR_F(back_p[2], 3.0f, kEps);

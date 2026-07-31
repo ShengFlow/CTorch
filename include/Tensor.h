@@ -604,7 +604,12 @@ class Tensor {
         // 注意：data_write() 调用即视为写入意图，即使调用者未实际写入也会产生一次 mark，
         // 这是保证正确性的保守做法。
         if (_device == DeviceType::kMPS) {
-            MPS_markBufferModified(ptr, numel() * sizeof(T));
+            size_t n = numel();
+            if (sizeof(T) != 0 && n > SIZE_MAX / sizeof(T)) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                                            "data_write: byte count overflow");
+            }
+            MPS_markBufferModified(ptr, n * sizeof(T));
         }
 #endif
         return ptr;

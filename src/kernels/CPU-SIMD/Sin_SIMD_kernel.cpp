@@ -18,8 +18,8 @@ Tensor Sin_SIMD_kernel(const Tensor& a) {
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     size_t n = a.numel();
-    const float* CT_RESTRICT src = a.data<float>();
-    float* CT_RESTRICT dst = result.data<float>();
+    const float* CT_RESTRICT src = a.data_read<float>();
+    float* CT_RESTRICT dst = result.data_write<float>();
 
     #pragma omp simd
     for (size_t i = 0; i < n; ++i) {

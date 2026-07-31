@@ -60,8 +60,8 @@ Tensor Sigmoid_SIMD_kernel(const Tensor& a) {
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
     size_t count = a.numel();
-    const float* a_data = a.data<float>();
-    float* result_data = result.data<float>();
+    const float* a_data = a.data_read<float>();
+    float* result_data = result.data_write<float>();
 
 #if defined(__x86_64__) || defined(__i386__)
     #if defined(__AVX2__) && defined(__FMA__)

@@ -48,12 +48,12 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
 
     // 形状相同：直接SIMD
     if (a.sizes() == b.sizes()) {
-        int elem_count = a.numel();
-        const float* CT_RESTRICT a_data = a.data<float>();
-        const float* CT_RESTRICT b_data = b.data<float>();
+        size_t elem_count = a.numel();
+        const float* CT_RESTRICT a_data = a.data_read<float>();
+        const float* CT_RESTRICT b_data = b.data_read<float>();
         
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-        float* CT_RESTRICT result_data = result.data<float>();
+        float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __aarch64__
         size_t i = 0;
@@ -64,19 +64,19 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         }
         for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
 #else
-        for (int i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
+        for (size_t i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
 #endif
         return result;
     }
 
     // 标量优化
     if (b.numel() == 1) {
-        int elem_count = a.numel();
-        float b_val = b.data<float>()[0];
-        const float* CT_RESTRICT a_data = a.data<float>();
+        size_t elem_count = a.numel();
+        float b_val = b.data_read<float>()[0];
+        const float* CT_RESTRICT a_data = a.data_read<float>();
         
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-        float* CT_RESTRICT result_data = result.data<float>();
+        float* CT_RESTRICT result_data = result.data_write<float>();
         
 #ifdef __aarch64__
         size_t i = 0;
@@ -87,18 +87,18 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         }
         for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_val;
 #else
-        for (int i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_val;
+        for (size_t i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_val;
 #endif
         return result;
     }
 
     if (a.numel() == 1) {
-        int elem_count = b.numel();
-        float a_val = a.data<float>()[0];
-        const float* CT_RESTRICT b_data = b.data<float>();
+        size_t elem_count = b.numel();
+        float a_val = a.data_read<float>()[0];
+        const float* CT_RESTRICT b_data = b.data_read<float>();
         
         Tensor result(ShapeTag{}, b.sizes(), b.dtype(), b.device());
-        float* CT_RESTRICT result_data = result.data<float>();
+        float* CT_RESTRICT result_data = result.data_write<float>();
         
 #ifdef __aarch64__
         size_t i = 0;
@@ -109,7 +109,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         }
         for (; i < elem_count; ++i) result_data[i] = a_val * b_data[i];
 #else
-        for (int i = 0; i < elem_count; ++i) result_data[i] = a_val * b_data[i];
+        for (size_t i = 0; i < elem_count; ++i) result_data[i] = a_val * b_data[i];
 #endif
         return result;
     }
@@ -133,9 +133,9 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
     computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
     
     Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
-    float* CT_RESTRICT result_data = result.data<float>();
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
     
     size_t elem_count = result.numel();
     

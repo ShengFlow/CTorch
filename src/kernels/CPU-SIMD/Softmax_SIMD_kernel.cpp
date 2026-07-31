@@ -28,8 +28,8 @@ Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
     }
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    const float* src = a.data<float>();
-    float* dst = result.data<float>();
+    const float* src = a.data_read<float>();
+    float* dst = result.data_write<float>();
     const auto& shape = a.sizes();
 
     size_t outer = 1;

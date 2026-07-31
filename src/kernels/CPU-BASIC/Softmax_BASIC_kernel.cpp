@@ -39,8 +39,8 @@ CT_HOT Tensor Softmax_BASIC_kernel(const Tensor &a, int dim) {
     size_t softmax_dim = static_cast<size_t>(d);
 
     Tensor result(ShapeTag{}, shape, a.dtype(), a.device());
-    const float* CT_RESTRICT in = a.data<float>();
-    float* CT_RESTRICT out      = result.data<float>();
+    const float* CT_RESTRICT in = a.data_read<float>();
+    float* CT_RESTRICT out      = result.data_write<float>();
 
     size_t outer_size = 1;
     for (size_t i = 0; i < softmax_dim; ++i) {

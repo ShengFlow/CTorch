@@ -47,14 +47,14 @@ inline float gelu_derivative_reference(float x) {
 
 Tensor make_tensor_cpu(const std::vector<float>& values) {
     Tensor t(ShapeTag{}, {values.size()}, DType::kFloat, DeviceType::kCPU);
-    std::copy(values.begin(), values.end(), t.data<float>());
+    std::copy(values.begin(), values.end(), t.data_write<float>());
     return t;
 }
 
 Tensor make_tensor_mps(const std::vector<float>& values) {
     Tensor t(ShapeTag{}, {values.size()}, DType::kFloat, DeviceType::kMPS);
-    std::copy(values.begin(), values.end(), t.data<float>());
-    MPS_markBufferModified(static_cast<void*>(t.data<float>()), values.size() * sizeof(float));
+    std::copy(values.begin(), values.end(), t.data_write<float>());
+    MPS_markBufferModified(static_cast<void*>(t.data_write<float>()), values.size() * sizeof(float));
     return t;
 }
 
@@ -63,7 +63,7 @@ void test_cpu_forward_reference() {
     Tensor a = make_tensor_cpu(inputs);
     Tensor b = a.gelu();
 
-    const float* out = b.data<float>();
+    const float* out = b.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         EXPECT_NEAR_F(out[i], gelu_reference(inputs[i]), kEps);
     }
@@ -77,7 +77,7 @@ void test_cpu_backward_reference() {
     AutoGrad::backward(b.getRelatedNode(), false);
 
     Tensor ga = a.grad();
-    const float* grad = ga.data<float>();
+    const float* grad = ga.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         EXPECT_NEAR_F(grad[i], gelu_derivative_reference(inputs[i]), kEps);
     }
@@ -93,7 +93,7 @@ void test_cpu_backward_numerical() {
     AutoGrad::backward(b.getRelatedNode(), false);
 
     Tensor ga = a.grad();
-    const float* grad = ga.data<float>();
+    const float* grad = ga.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         float x = inputs[i];
         float num_grad = (gelu_reference(x + delta) - gelu_reference(x - delta)) / (2.0f * delta);
@@ -112,8 +112,8 @@ void test_mps_forward_vs_cpu() {
     // (SYNC) 读取 MPS 结果前 flush accumulator
     MPS_flush_wait(true);
 
-    const float* cpu_out = b_cpu.data<float>();
-    const float* mps_out = b_mps.data<float>();
+    const float* cpu_out = b_cpu.data_read<float>();
+    const float* mps_out = b_mps.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         EXPECT_NEAR_F(mps_out[i], cpu_out[i], kEps);
     }
@@ -136,8 +136,8 @@ void test_mps_backward_vs_cpu() {
 
     Tensor ga_cpu = a_cpu.grad();
     Tensor ga_mps = a_mps.grad();
-    const float* cpu_grad = ga_cpu.data<float>();
-    const float* mps_grad = ga_mps.data<float>();
+    const float* cpu_grad = ga_cpu.data_read<float>();
+    const float* mps_grad = ga_mps.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         EXPECT_NEAR_F(mps_grad[i], cpu_grad[i], kEps);
     }
@@ -157,7 +157,7 @@ void test_mps_backward_through_matmul() {
     MPS_flush_wait(true);
 
     Tensor ga = a.grad();
-    const float* grad = ga.data<float>();
+    const float* grad = ga.data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         float expected = gelu_derivative_reference(inputs[i]) * 2.0f;
         EXPECT_NEAR_F(grad[i], expected, kEps);
@@ -175,8 +175,8 @@ void test_cpu_random_consistency() {
     Tensor b = a.gelu();
     AutoGrad::backward(b.getRelatedNode(), false);
 
-    const float* out = b.data<float>();
-    const float* grad = a.grad().data<float>();
+    const float* out = b.data_read<float>();
+    const float* grad = a.grad().data_read<float>();
     for (size_t i = 0; i < inputs.size(); ++i) {
         EXPECT_NEAR_F(out[i], gelu_reference(inputs[i]), kEps);
         EXPECT_NEAR_F(grad[i], gelu_derivative_reference(inputs[i]), kEps);

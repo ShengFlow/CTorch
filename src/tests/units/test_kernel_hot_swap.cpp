@@ -27,22 +27,22 @@ static int g_fail = 0;
 // 构造一个 NxN 的单位矩阵（行主序）
 static Tensor makeIdentity(size_t n) {
     Tensor t(ShapeTag{}, {n, n}, DType::kFloat, DeviceType::kCPU);
-    std::memset(t.data<float>(), 0, n * n * sizeof(float));
-    for (size_t i = 0; i < n; ++i) t.data<float>()[i * n + i] = 1.0f;
+    std::memset(t.data_write<float>(), 0, n * n * sizeof(float));
+    for (size_t i = 0; i < n; ++i) t.data_write<float>()[i * n + i] = 1.0f;
     return t;
 }
 
 // 构造一个全 1 矩阵
 static Tensor makeOnes(size_t n) {
     Tensor t(ShapeTag{}, {n, n}, DType::kFloat, DeviceType::kCPU);
-    for (size_t i = 0; i < n * n; ++i) t.data<float>()[i] = 1.0f;
+    for (size_t i = 0; i < n * n; ++i) t.data_write<float>()[i] = 1.0f;
     return t;
 }
 
 static bool matmulEqual(const Tensor& a, const Tensor& b, float tol = 1e-4f) {
     if (a.sizes() != b.sizes()) return false;
     for (size_t i = 0; i < a.numel(); ++i) {
-        if (std::abs(a.data<float>()[i] - b.data<float>()[i]) > tol) return false;
+        if (std::abs(a.data_read<float>()[i] - b.data_read<float>()[i]) > tol) return false;
     }
     return true;
 }

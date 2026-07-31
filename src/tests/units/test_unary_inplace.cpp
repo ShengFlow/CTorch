@@ -24,14 +24,14 @@ protected:
     }
 
     static void fill_tensor(Tensor& t, const std::vector<float>& values) {
-        float* p = t.data<float>();
+        float* p = t.data_write<float>();
         for (size_t i = 0; i < values.size(); ++i) {
             p[i] = values[i];
         }
     }
 
     static std::vector<float> read_tensor(const Tensor& t) {
-        const float* p = t.data<float>();
+        const float* p = t.data_read<float>();
         std::vector<float> out(t.numel());
         for (size_t i = 0; i < out.size(); ++i) {
             out[i] = p[i];

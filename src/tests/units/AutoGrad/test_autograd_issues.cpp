@@ -45,8 +45,8 @@ TEST(AutoDiffTest, LogGradCorrectness) {
     AutoGrad::backward(b.getRelatedNode(), false);
     Tensor ga = a.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], 1.0f / 2.0f, kEps) << "Log grad for 2.0 should be 0.5";
-    EXPECT_NEAR(ga.data<float>()[1], 1.0f / 4.0f, kEps) << "Log grad for 4.0 should be 0.25";
+    EXPECT_NEAR(ga.data_read<float>()[0], 1.0f / 2.0f, kEps) << "Log grad for 2.0 should be 0.5";
+    EXPECT_NEAR(ga.data_read<float>()[1], 1.0f / 4.0f, kEps) << "Log grad for 4.0 should be 0.25";
 }
 
 TEST(AutoDiffTest, ExpGradCorrectness) {
@@ -60,8 +60,8 @@ TEST(AutoDiffTest, ExpGradCorrectness) {
     AutoGrad::backward(b.getRelatedNode(), false);
     Tensor ga = a.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], std::exp(1.0f), kEps) << "Exp grad for 1.0 should be e";
-    EXPECT_NEAR(ga.data<float>()[1], std::exp(2.0f), kEps) << "Exp grad for 2.0 should be e^2";
+    EXPECT_NEAR(ga.data_read<float>()[0], std::exp(1.0f), kEps) << "Exp grad for 1.0 should be e";
+    EXPECT_NEAR(ga.data_read<float>()[1], std::exp(2.0f), kEps) << "Exp grad for 2.0 should be e^2";
 }
 
 TEST(AutoDiffTest, AbsGradCorrectness) {
@@ -75,8 +75,8 @@ TEST(AutoDiffTest, AbsGradCorrectness) {
     AutoGrad::backward(b.getRelatedNode(), false);
     Tensor ga = a.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], 1.0f, kEps) << "Abs grad for positive should be 1";
-    EXPECT_NEAR(ga.data<float>()[1], -1.0f, kEps) << "Abs grad for negative should be -1";
+    EXPECT_NEAR(ga.data_read<float>()[0], 1.0f, kEps) << "Abs grad for positive should be 1";
+    EXPECT_NEAR(ga.data_read<float>()[1], -1.0f, kEps) << "Abs grad for negative should be -1";
 }
 
 TEST(AutoDiffTest, SharedParameterGradAccumulation) {
@@ -94,7 +94,7 @@ TEST(AutoDiffTest, SharedParameterGradAccumulation) {
     AutoGrad::backward(z.getRelatedNode(), false);
     Tensor gw = w.grad();
     
-    EXPECT_NEAR(gw.data<float>()[0], 3.0f + 4.0f, kEps) 
+    EXPECT_NEAR(gw.data_read<float>()[0], 3.0f + 4.0f, kEps) 
         << "Shared param grad should accumulate: 3 + 4 = 7";
 }
 
@@ -112,8 +112,8 @@ TEST(AutoDiffTest, RetainGraphMultipleBackward) {
     AutoGrad::backward(b.getRelatedNode(), false);
     Tensor ga2 = a.grad();
     
-    EXPECT_NEAR(ga1.data<float>()[0], 4.0f, kEps) << "First backward should give 4";
-    EXPECT_NEAR(ga2.data<float>()[0], 4.0f, kEps) << "Second backward should also give 4";
+    EXPECT_NEAR(ga1.data_read<float>()[0], 4.0f, kEps) << "First backward should give 4";
+    EXPECT_NEAR(ga2.data_read<float>()[0], 4.0f, kEps) << "Second backward should also give 4";
 }
 
 TEST(AutoDiffTest, ChainRuleComplex) {
@@ -134,7 +134,7 @@ TEST(AutoDiffTest, ChainRuleComplex) {
     float dw_dz = std::exp(std::sin(y_val));
     float expected_grad = dw_dz * dz_dy * dy_dx;
     
-    EXPECT_NEAR(gx.data<float>()[0], expected_grad, kEps) << "Chain rule should give correct gradient";
+    EXPECT_NEAR(gx.data_read<float>()[0], expected_grad, kEps) << "Chain rule should give correct gradient";
 }
 
 TEST(AutoDiffTest, MinGradCorrectness) {
@@ -152,10 +152,10 @@ TEST(AutoDiffTest, MinGradCorrectness) {
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], 0.0f, kEps) << "a[0]=3 > b[0]=2, so grad_a[0]=0";
-    EXPECT_NEAR(ga.data<float>()[1], 1.0f, kEps) << "a[1]=1 < b[1]=4, so grad_a[1]=1";
-    EXPECT_NEAR(gb.data<float>()[0], 1.0f, kEps) << "b[0]=2 < a[0]=3, so grad_b[0]=1";
-    EXPECT_NEAR(gb.data<float>()[1], 0.0f, kEps) << "b[1]=4 > a[1]=1, so grad_b[1]=0";
+    EXPECT_NEAR(ga.data_read<float>()[0], 0.0f, kEps) << "a[0]=3 > b[0]=2, so grad_a[0]=0";
+    EXPECT_NEAR(ga.data_read<float>()[1], 1.0f, kEps) << "a[1]=1 < b[1]=4, so grad_a[1]=1";
+    EXPECT_NEAR(gb.data_read<float>()[0], 1.0f, kEps) << "b[0]=2 < a[0]=3, so grad_b[0]=1";
+    EXPECT_NEAR(gb.data_read<float>()[1], 0.0f, kEps) << "b[1]=4 > a[1]=1, so grad_b[1]=0";
 }
 
 TEST(AutoDiffTest, MaxGradCorrectness) {
@@ -173,10 +173,10 @@ TEST(AutoDiffTest, MaxGradCorrectness) {
     Tensor ga = a.grad();
     Tensor gb = b.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], 1.0f, kEps) << "a[0]=3 > b[0]=2, so grad_a[0]=1";
-    EXPECT_NEAR(ga.data<float>()[1], 0.0f, kEps) << "a[1]=1 < b[1]=4, so grad_a[1]=0";
-    EXPECT_NEAR(gb.data<float>()[0], 0.0f, kEps) << "b[0]=2 < a[0]=3, so grad_b[0]=0";
-    EXPECT_NEAR(gb.data<float>()[1], 1.0f, kEps) << "b[1]=4 > a[1]=1, so grad_b[1]=1";
+    EXPECT_NEAR(ga.data_read<float>()[0], 1.0f, kEps) << "a[0]=3 > b[0]=2, so grad_a[0]=1";
+    EXPECT_NEAR(ga.data_read<float>()[1], 0.0f, kEps) << "a[1]=1 < b[1]=4, so grad_a[1]=0";
+    EXPECT_NEAR(gb.data_read<float>()[0], 0.0f, kEps) << "b[0]=2 < a[0]=3, so grad_b[0]=0";
+    EXPECT_NEAR(gb.data_read<float>()[1], 1.0f, kEps) << "b[1]=4 > a[1]=1, so grad_b[1]=1";
 }
 
 TEST(AutoDiffTest, SoftmaxGradCorrectness) {
@@ -190,9 +190,9 @@ TEST(AutoDiffTest, SoftmaxGradCorrectness) {
     AutoGrad::backward(b.getRelatedNode(), false);
     Tensor ga = a.grad();
     
-    EXPECT_NEAR(ga.data<float>()[0], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
-    EXPECT_NEAR(ga.data<float>()[1], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
-    EXPECT_NEAR(ga.data<float>()[2], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
+    EXPECT_NEAR(ga.data_read<float>()[0], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
+    EXPECT_NEAR(ga.data_read<float>()[1], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
+    EXPECT_NEAR(ga.data_read<float>()[2], 0.0f, 1e-4f) << "Softmax grad for sum loss should be 0";
 }
 
 int main(int argc, char **argv) {

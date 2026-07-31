@@ -10,8 +10,8 @@ CT_HOT Tensor Abs_BASIC_kernel(const Tensor& a) {
     }
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    const float* CT_RESTRICT in = a.data<float>();
-    float* CT_RESTRICT out = result.data<float>();
+    const float* CT_RESTRICT in = a.data_read<float>();
+    float* CT_RESTRICT out = result.data_write<float>();
 
     size_t count = a.numel();
     for (size_t i = 0; i < count; ++i) {

@@ -21,8 +21,8 @@ CT_HOT Tensor Tanh_BASIC_kernel(const Tensor &a) {
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
 
     size_t count = a.numel();
-    const float* CT_RESTRICT a_data = a.data<float>();
-    float* CT_RESTRICT result_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         float exp_x     = std::exp(a_data[i]);
         float exp_neg_x = std::exp(-a_data[i]);

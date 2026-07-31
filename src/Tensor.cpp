@@ -16,6 +16,29 @@
 #include <random>
 #include <cmath>
 #include <cstring>
+#include <climits>
+
+namespace {
+/**
+ * @brief 检查 size_t 乘法是否溢出，溢出时抛出 MEMORY 异常
+ */
+inline size_t checked_mul(size_t a, size_t b, const char *msg) {
+    if (a != 0 && b > SIZE_MAX / a) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, msg);
+    }
+    return a * b;
+}
+
+/**
+ * @brief 检查 size_t 加法是否溢出，溢出时抛出 MEMORY 异常
+ */
+inline size_t checked_add(size_t a, size_t b, const char *msg) {
+    if (b > SIZE_MAX - a) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY, msg);
+    }
+    return a + b;
+}
+} // namespace
 
 /**
  * @var Tensor::global_tensor_id
@@ -57,7 +80,12 @@ size_t Tensor::numel() const {
     if (_shape.empty()) {
         return 1; // 标量张量的元素数量为1
     }
-    return std::accumulate(_shape.begin(), _shape.end(), 1ULL, std::multiplies<>());
+    size_t prod = 1;
+    for (size_t dim : _shape) {
+        prod = checked_mul(prod, dim,
+                           "Tensor numel overflow: shape product exceeds addressable memory");
+    }
+    return prod;
 }
 
 /**
@@ -103,7 +131,9 @@ void Tensor::computeStrides() {
     }
     _strides.back() = 1;
     for (int i = static_cast<int>(_shape.size()) - 2; i >= 0; --i) {
-        _strides[i] = _strides[i + 1] * _shape[i + 1];
+        _strides[i] =
+            checked_mul(_strides[i + 1], _shape[i + 1],
+                        "Tensor stride overflow: stride product exceeds addressable memory");
     }
 }
 
@@ -123,9 +153,15 @@ size_t Tensor::computeStorageIndex(std::initializer_list<size_t> indices) const 
     auto strides_it = _strides.begin();
     for (; indices_it != indices.end() && strides_it != _strides.end();
          ++indices_it, ++strides_it) {
-        index += *indices_it * *strides_it;
+        size_t term =
+            checked_mul(*indices_it, *strides_it,
+                        "Tensor storage index overflow: index term exceeds addressable memory");
+        index = checked_add(
+            index, term,
+            "Tensor storage index overflow: accumulated index exceeds addressable memory");
     }
-    return index + _storage_offset;
+    return checked_add(index, _storage_offset,
+                       "Tensor storage index overflow: offset exceeds addressable memory");
 }
 
 // 检查数据类型是否匹配
@@ -202,9 +238,11 @@ Tensor Tensor::operator[](size_t index) const {
     }
 
     Tensor result(*this);
-    result._shape   = {1};
-    result._strides = {0};
-    result._storage_offset += index * _strides[0];
+    result._shape          = {1};
+    result._strides        = {0};
+    result._storage_offset = checked_add(
+        result._storage_offset, checked_mul(index, _strides[0], "Tensor index offset overflow"),
+        "Tensor storage offset overflow");
     return result;
 }
 
@@ -227,38 +265,38 @@ Tensor Tensor::to(DType dtype) const {
         if (!src_data)
             return;
         if (dtype == DType::kFloat) {
-            float *dst = result._storage.data<float>();
+            float *dst = result.data_write<float>();
             if (dst) {
                 for (size_t i = 0; i < n; ++i) {
-                    dst[i] = static_cast<float>(src_data[i + _storage_offset]);
+                    dst[i] = static_cast<float>(src_data[i]);
                 }
             }
         } else if (dtype == DType::kDouble) {
-            double *dst = result._storage.data<double>();
+            double *dst = result.data_write<double>();
             if (dst) {
                 for (size_t i = 0; i < n; ++i) {
-                    dst[i] = static_cast<double>(src_data[i + _storage_offset]);
+                    dst[i] = static_cast<double>(src_data[i]);
                 }
             }
         } else if (dtype == DType::kInt) {
-            int32_t *dst = result._storage.data<int32_t>();
+            int32_t *dst = result.data_write<int32_t>();
             if (dst) {
                 for (size_t i = 0; i < n; ++i) {
-                    dst[i] = static_cast<int32_t>(src_data[i + _storage_offset]);
+                    dst[i] = static_cast<int32_t>(src_data[i]);
                 }
             }
         } else if (dtype == DType::kLong) {
-            int64_t *dst = result._storage.data<int64_t>();
+            int64_t *dst = result.data_write<int64_t>();
             if (dst) {
                 for (size_t i = 0; i < n; ++i) {
-                    dst[i] = static_cast<int64_t>(src_data[i + _storage_offset]);
+                    dst[i] = static_cast<int64_t>(src_data[i]);
                 }
             }
         } else if (dtype == DType::kBool) {
-            bool *dst = result._storage.data<bool>();
+            bool *dst = result.data_write<bool>();
             if (dst) {
                 for (size_t i = 0; i < n; ++i) {
-                    dst[i] = static_cast<bool>(src_data[i + _storage_offset]);
+                    dst[i] = static_cast<bool>(src_data[i]);
                 }
             }
         }
@@ -266,19 +304,19 @@ Tensor Tensor::to(DType dtype) const {
 
     switch (_dtype) {
     case DType::kFloat:
-        convert(_storage.data<float>());
+        convert(this->data_read<float>());
         break;
     case DType::kDouble:
-        convert(_storage.data<double>());
+        convert(this->data_read<double>());
         break;
     case DType::kInt:
-        convert(_storage.data<int32_t>());
+        convert(this->data_read<int32_t>());
         break;
     case DType::kLong:
-        convert(_storage.data<int64_t>());
+        convert(this->data_read<int64_t>());
         break;
     case DType::kBool:
-        convert(_storage.data<bool>());
+        convert(this->data_read<bool>());
         break;
     default:
         break;
@@ -312,8 +350,12 @@ Tensor Tensor::reshape(std::initializer_list<size_t> new_shape) const {
 
 // 重塑张量形状
 Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
-    size_t new_numel =
-        std::accumulate(new_shape.begin(), new_shape.end(), 1ULL, std::multiplies<>());
+    size_t new_numel = 1;
+    for (size_t dim : new_shape) {
+        new_numel =
+            checked_mul(new_numel, dim,
+                        "Tensor reshape overflow: new shape product exceeds addressable memory");
+    }
     if (new_numel != numel()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                                     "新形状元素数量不同");
@@ -381,28 +423,45 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
     size_t src_numel = numel();
     size_t dst_numel = result.numel();
 
+    if (_device == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+
     if (src_numel == 1) {
-        size_t elem_size    = dtypeSize(_dtype);
-        const char *src_ptr = _storage.data<char>() + _storage_offset * elem_size;
+        size_t elem_size = dtypeSize(_dtype);
+        size_t src_byte_offset =
+            checked_mul(_storage_offset, elem_size,
+                        "Tensor broadcast_to source byte offset overflow");
+        const char *src_ptr = _storage.data<char>() + src_byte_offset;
         char *dst_ptr       = result._storage.data<char>();
         for (size_t i = 0; i < dst_numel; ++i) {
             std::memcpy(dst_ptr + i * elem_size, src_ptr, elem_size);
+        }
+        if (_device == DeviceType::kMPS) {
+            size_t dst_bytes = checked_mul(dst_numel, elem_size,
+                                           "Tensor broadcast_to destination bytes overflow");
+            MPS_markBufferModified(static_cast<void *>(dst_ptr), dst_bytes);
         }
     } else {
         std::vector<size_t> src_strides(current_shape.size());
         src_strides.back() = 1;
         for (int i = static_cast<int>(current_shape.size()) - 2; i >= 0; --i) {
-            src_strides[i] = src_strides[i + 1] * current_shape[i + 1];
+            src_strides[i] = checked_mul(src_strides[i + 1], current_shape[i + 1],
+                                         "Tensor broadcast_to stride overflow");
         }
 
         std::vector<size_t> dst_strides(target_shape.size());
         dst_strides.back() = 1;
         for (int i = static_cast<int>(target_shape.size()) - 2; i >= 0; --i) {
-            dst_strides[i] = dst_strides[i + 1] * target_shape[i + 1];
+            dst_strides[i] = checked_mul(dst_strides[i + 1], target_shape[i + 1],
+                                         "Tensor broadcast_to stride overflow");
         }
 
-        size_t elem_size     = dtypeSize(_dtype);
-        const char *src_base = _storage.data<char>() + _storage_offset * elem_size;
+        size_t elem_size = dtypeSize(_dtype);
+        size_t src_byte_offset =
+            checked_mul(_storage_offset, elem_size,
+                        "Tensor broadcast_to source byte offset overflow");
+        const char *src_base = _storage.data<char>() + src_byte_offset;
         char *dst_base       = result._storage.data<char>();
 
         for (size_t i = 0; i < dst_numel; ++i) {
@@ -417,7 +476,10 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
             size_t src_idx = 0;
             for (size_t j = 0; j < current_shape.size(); ++j) {
                 size_t idx = (current_shape[j] == 1) ? 0 : dst_indices[j];
-                src_idx += idx * src_strides[j];
+                size_t term =
+                    checked_mul(idx, src_strides[j], "Tensor broadcast_to index term overflow");
+                src_idx =
+                    checked_add(src_idx, term, "Tensor broadcast_to index accumulation overflow");
             }
 
             if (src_idx >= src_numel) {
@@ -426,6 +488,11 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
             }
 
             std::memcpy(dst_base + i * elem_size, src_base + src_idx * elem_size, elem_size);
+        }
+        if (_device == DeviceType::kMPS) {
+            size_t dst_bytes = checked_mul(dst_numel, elem_size,
+                                           "Tensor broadcast_to destination bytes overflow");
+            MPS_markBufferModified(static_cast<void *>(dst_base), dst_bytes);
         }
     }
 
@@ -439,31 +506,36 @@ void Tensor::zero() {
         Zero_MPS_kernel(*this);
         return;
     }
-    size_t count     = numel();
-    size_t elem_size = dtypeSize(_dtype);
-    void *ptr        = nullptr;
+    size_t count = numel();
     switch (_dtype) {
-    case DType::kFloat:
-        ptr = _storage.data<float>();
+    case DType::kFloat: {
+        float *ptr = data_write<float>();
+        if (ptr) std::memset(ptr, 0, count * sizeof(float));
         break;
-    case DType::kDouble:
-        ptr = _storage.data<double>();
+    }
+    case DType::kDouble: {
+        double *ptr = data_write<double>();
+        if (ptr) std::memset(ptr, 0, count * sizeof(double));
         break;
-    case DType::kInt:
-        ptr = _storage.data<int32_t>();
+    }
+    case DType::kInt: {
+        int32_t *ptr = data_write<int32_t>();
+        if (ptr) std::memset(ptr, 0, count * sizeof(int32_t));
         break;
-    case DType::kLong:
-        ptr = _storage.data<int64_t>();
+    }
+    case DType::kLong: {
+        int64_t *ptr = data_write<int64_t>();
+        if (ptr) std::memset(ptr, 0, count * sizeof(int64_t));
         break;
-    case DType::kBool:
-        ptr = _storage.data<bool>();
+    }
+    case DType::kBool: {
+        bool *ptr = data_write<bool>();
+        if (ptr) std::memset(ptr, 0, count * sizeof(bool));
         break;
+    }
     default:
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                                     "zero(): 未知数据类型");
-    }
-    if (ptr) {
-        std::memset(static_cast<char *>(ptr) + _storage_offset * elem_size, 0, count * elem_size);
     }
 }
 
@@ -472,27 +544,27 @@ void Tensor::ones() {
     // 简单实现，将所有元素设为1
     size_t count = numel();
     if (_dtype == DType::kFloat) {
-        float *data = _storage.data<float>();
+        float *data = data_write<float>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = 1.0f;
         }
     } else if (_dtype == DType::kDouble) {
-        double *data = _storage.data<double>();
+        double *data = data_write<double>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = 1.0;
         }
     } else if (_dtype == DType::kInt) {
-        int32_t *data = _storage.data<int32_t>();
+        int32_t *data = data_write<int32_t>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = 1;
         }
     } else if (_dtype == DType::kLong) {
-        int64_t *data = _storage.data<int64_t>();
+        int64_t *data = data_write<int64_t>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = 1;
         }
     } else if (_dtype == DType::kBool) {
-        bool *data = _storage.data<bool>();
+        bool *data = data_write<bool>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = true;
         }
@@ -514,12 +586,12 @@ void Tensor::rand() {
     std::uniform_real_distribution<double> distribution_double(0.0, 1.0);
 
     if (_dtype == DType::kFloat) {
-        float *data = _storage.data<float>();
+        float *data = data_write<float>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = distribution_float(generator);
         }
     } else if (_dtype == DType::kDouble) {
-        double *data = _storage.data<double>();
+        double *data = data_write<double>();
         for (size_t i = 0; i < count; ++i) {
             data[i] = distribution_double(generator);
         }
@@ -620,15 +692,12 @@ Tensor Tensor::sum() const {
     Tensor result(ShapeTag{}, {1}, _dtype, _device);
 
     if (_dtype == DType::kFloat) {
-        if (_device == DeviceType::kMPS) {
-            MPS_flush_wait(true);
-        }
-        const float *data = _storage.data<float>();
+        const float *data = this->data_read<float>();
         float sum         = 0.0f;
         for (size_t i = 0; i < numel(); ++i) {
-            sum += data[i + _storage_offset];
+            sum += data[i];
         }
-        float *result_data = result.data<float>();
+        float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = sum;
         }
@@ -660,25 +729,25 @@ static Tensor scalarOpImpl(const Tensor &self, float scalar, OpFunc &&op_func) {
     size_t count     = self.numel();
     switch (self.dtype()) {
     case DType::kFloat: {
-        float *data = result.data<float>();
+        float *data = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             op_func(data[i], scalar);
         break;
     }
     case DType::kDouble: {
-        double *data = result.data<double>();
+        double *data = result.data_write<double>();
         for (size_t i = 0; i < count; ++i)
             op_func(data[i], static_cast<double>(scalar));
         break;
     }
     case DType::kInt: {
-        int32_t *data = result.data<int32_t>();
+        int32_t *data = result.data_write<int32_t>();
         for (size_t i = 0; i < count; ++i)
             op_func(data[i], static_cast<int32_t>(scalar));
         break;
     }
     case DType::kLong: {
-        int64_t *data = result.data<int64_t>();
+        int64_t *data = result.data_write<int64_t>();
         for (size_t i = 0; i < count; ++i)
             op_func(data[i], static_cast<int64_t>(scalar));
         break;
@@ -983,15 +1052,18 @@ Tensor Tensor::max() const {
     Tensor result(ShapeTag{}, {}, _dtype, _device);
 
     if (_dtype == DType::kFloat) {
-        const float *data = _storage.data<float>();
-        float max_val     = data[0];
+        const float *data = this->data_read<float>();
+        if (!data || numel() == 0) {
+            return result;
+        }
+        float max_val = data[0];
         for (size_t i = 1; i < numel(); ++i) {
-            if (data[i + _storage_offset] > max_val) {
-                max_val = data[i + _storage_offset];
+            if (data[i] > max_val) {
+                max_val = data[i];
             }
         }
-        result._storage    = Storage(1, _dtype, _device);
-        float *result_data = result._storage.data<float>();
+        result._storage     = Storage(1, _dtype, _device);
+        float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = max_val;
         }
@@ -1005,15 +1077,18 @@ Tensor Tensor::min() const {
     Tensor result(ShapeTag{}, {}, _dtype, _device);
 
     if (_dtype == DType::kFloat) {
-        const float *data = _storage.data<float>();
-        float min_val     = data[0];
+        const float *data = this->data_read<float>();
+        if (!data || numel() == 0) {
+            return result;
+        }
+        float min_val = data[0];
         for (size_t i = 1; i < numel(); ++i) {
-            if (data[i + _storage_offset] < min_val) {
-                min_val = data[i + _storage_offset];
+            if (data[i] < min_val) {
+                min_val = data[i];
             }
         }
-        result._storage    = Storage(1, _dtype, _device);
-        float *result_data = result._storage.data<float>();
+        result._storage     = Storage(1, _dtype, _device);
+        float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = min_val;
         }
@@ -1106,8 +1181,8 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
 
     switch (_dtype) {
     case DType::kFloat: {
-        const float *data  = this->data<float>();
-        float *result_data = result.data<float>();
+        const float *data  = this->data_read<float>();
+        float *result_data = result.data_write<float>();
         for (size_t i = 0; i < pre_dim_elements; ++i) {
             for (size_t k = 0; k < post_dim_elements; ++k) {
                 float sum = 0.0f;
@@ -1121,8 +1196,8 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         break;
     }
     case DType::kDouble: {
-        const double *data  = this->data<double>();
-        double *result_data = result.data<double>();
+        const double *data  = this->data_read<double>();
+        double *result_data = result.data_write<double>();
         for (size_t i = 0; i < pre_dim_elements; ++i) {
             for (size_t k = 0; k < post_dim_elements; ++k) {
                 double sum = 0.0;
@@ -1186,13 +1261,16 @@ Tensor Tensor::mean() const {
     Tensor result(ShapeTag{}, {}, _dtype, _device);
 
     if (_dtype == DType::kFloat) {
-        const float *data = _storage.data<float>();
-        float sum         = 0.0f;
-        for (size_t i = 0; i < numel(); ++i) {
-            sum += data[i + _storage_offset];
+        const float *data = this->data_read<float>();
+        if (!data || numel() == 0) {
+            return result;
         }
-        result._storage    = Storage(1, _dtype, _device);
-        float *result_data = result._storage.data<float>();
+        float sum = 0.0f;
+        for (size_t i = 0; i < numel(); ++i) {
+            sum += data[i];
+        }
+        result._storage     = Storage(1, _dtype, _device);
+        float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = sum / static_cast<float>(numel());
         }
@@ -1206,7 +1284,7 @@ Tensor Tensor::clamp(float min_val, float max_val) const {
     result._storage = _storage.clone();
 
     if (_dtype == DType::kFloat) {
-        float *data = result.data<float>();
+        float *data = result.data_write<float>();
         for (size_t i = 0; i < numel(); ++i) {
             float val = data[i];
             if (val < min_val)
@@ -1236,7 +1314,8 @@ Tensor Tensor::to(DeviceType target_device) const {
 
     Tensor result(ShapeTag{}, _shape, _dtype, target_device);
 
-    size_t bytes = numel() * dtypeSize(_dtype);
+    size_t bytes = checked_mul(numel(), dtypeSize(_dtype),
+                               "Tensor to(device) byte count overflow");
 
     // Storage::data<T>() 对 T=char 会触发 dtype 检查失败，因此按实际 dtype 取指针
     const char *src = nullptr;
@@ -1272,15 +1351,24 @@ Tensor Tensor::to(DeviceType target_device) const {
                                     "to(device): 无法获取源或目标存储指针");
     }
 
+    if (_device == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+
     if (_device == DeviceType::kCPU || target_device == DeviceType::kCPU) {
         std::memcpy(dst, src, bytes);
     } else {
-        DeviceAllocator *allocator = AllocatorManager::getInstance().getAllocator(target_device);
+        std::shared_ptr<DeviceAllocator> allocator =
+            AllocatorManager::getInstance().getAllocator(target_device);
         if (allocator) {
             allocator->memcpy(dst, src, bytes, target_device, _device);
         } else {
             std::memcpy(dst, src, bytes);
         }
+    }
+
+    if (target_device == DeviceType::kMPS) {
+        MPS_markBufferModified(static_cast<void*>(dst), bytes);
     }
 
     result._autograd_meta._requires_grad = _autograd_meta._requires_grad;

@@ -29,10 +29,10 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
     const Tensor& numerator = _inputs[0];
     const Tensor& denominator = _inputs[1];
 
-    // 零除检查：在 MPS 路径下，denominator.data<float>() 会先触发 MPS_flush_wait(true)，
+    // 零除检查：在 MPS 路径下，denominator.data_read<float>() 会先触发 MPS_flush_wait(true)，
     // 把 GPU buffer 同步到 host 后再读取。该检查在异步后端上是性能热点，未来可下放到
     // MPS shader 中通过 inf/nan 输出做后验检查。
-    const float* denom_data = denominator.data<float>();
+    const float* denom_data = denominator.data_read<float>();
     for (size_t i = 0; i < denominator.numel(); ++i) {
         if (denom_data[i] == 0.0f) {
             CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "DivNode: 分母为零");

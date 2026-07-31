@@ -29,7 +29,7 @@ inline void check_cpu(const Tensor& a, const char* name) {
 void Neg_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Neg");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = -data[i];
     }
@@ -38,7 +38,7 @@ void Neg_BASIC_inplace(Tensor& a) {
 void Cos_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Cos");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::cos(data[i]);
     }
@@ -47,7 +47,7 @@ void Cos_BASIC_inplace(Tensor& a) {
 void Sin_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Sin");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::sin(data[i]);
     }
@@ -56,7 +56,7 @@ void Sin_BASIC_inplace(Tensor& a) {
 void ReLU_BASIC_inplace(Tensor& a) {
     check_cpu(a, "ReLU");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::max(0.0f, data[i]);
     }
@@ -65,7 +65,7 @@ void ReLU_BASIC_inplace(Tensor& a) {
 void Tanh_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Tanh");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::tanh(data[i]);
     }
@@ -74,7 +74,7 @@ void Tanh_BASIC_inplace(Tensor& a) {
 void Sigmoid_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Sigmoid");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = 1.0f / (1.0f + std::exp(-data[i]));
     }
@@ -83,7 +83,7 @@ void Sigmoid_BASIC_inplace(Tensor& a) {
 void GELU_BASIC_inplace(Tensor& a) {
     check_cpu(a, "GELU");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         float x = data[i];
         float v = 0.7978845608f * (x + 0.044715f * x * x * x);
@@ -94,7 +94,7 @@ void GELU_BASIC_inplace(Tensor& a) {
 void LReLU_BASIC_inplace(Tensor& a) {
     check_cpu(a, "LReLU");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = data[i] > 0.0f ? data[i] : data[i] * 0.01f;
     }
@@ -103,7 +103,7 @@ void LReLU_BASIC_inplace(Tensor& a) {
 void Log_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Log");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::log(data[i]);
     }
@@ -112,7 +112,7 @@ void Log_BASIC_inplace(Tensor& a) {
 void Exp_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Exp");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::exp(data[i]);
     }
@@ -121,7 +121,7 @@ void Exp_BASIC_inplace(Tensor& a) {
 void Abs_BASIC_inplace(Tensor& a) {
     check_cpu(a, "Abs");
     size_t count = a.numel();
-    float* data = a.data<float>();
+    float* data = a.data_write<float>();
     for (size_t i = 0; i < count; ++i) {
         data[i] = std::fabs(data[i]);
     }

@@ -18,9 +18,9 @@ CT_HOT Tensor Min_BASIC_kernel(const Tensor& a, const Tensor& b) {
     }
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
-    float* CT_RESTRICT result_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
 
     size_t count = a.numel();
     for (size_t i = 0; i < count; ++i) {

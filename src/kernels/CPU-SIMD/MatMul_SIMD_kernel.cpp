@@ -36,9 +36,9 @@ Tensor MatMul_SIMD_kernel(const Tensor& a, const Tensor& b) {
     Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device());
     result.zero();
 
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
-    float* CT_RESTRICT r_data = result.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
+    float* CT_RESTRICT r_data = result.data_write<float>();
 
     const auto& a_strides = a.strides();
     const auto& b_strides = b.strides();

@@ -22,7 +22,7 @@ static std::vector<float> make_values(size_t n) {
 }
 
 static void fill_tensor(Tensor& t, const std::vector<float>& values) {
-    float* p = t.data<float>();
+    float* p = t.data_write<float>();
     for (size_t i = 0; i < values.size(); ++i) {
         p[i] = values[i];
     }
@@ -118,8 +118,8 @@ TEST(TensorSemantics, CopySharesStorage) {
     fill_tensor(a, values);
 
     Tensor b(a);
-    b.data<float>()[0] = 999.0f;
-    EXPECT_EQ(a.data<float>()[0], 999.0f);
+    b.data_write<float>()[0] = 999.0f;
+    EXPECT_EQ(a.data_read<float>()[0], 999.0f);
 }
 
 TEST(TensorSemantics, CopyAssignmentSharesStorage) {
@@ -129,8 +129,8 @@ TEST(TensorSemantics, CopyAssignmentSharesStorage) {
 
     Tensor c(ShapeTag{}, {1}, DType::kFloat, DeviceType::kCPU);
     c = a;
-    c.data<float>()[0] = 888.0f;
-    EXPECT_EQ(a.data<float>()[0], 888.0f);
+    c.data_write<float>()[0] = 888.0f;
+    EXPECT_EQ(a.data_read<float>()[0], 888.0f);
 }
 
 TEST(TensorSemantics, CopyDeepCopiesGrad) {
@@ -143,15 +143,15 @@ TEST(TensorSemantics, CopyDeepCopiesGrad) {
     AutoGrad::backward(b.getRelatedNode(), false);
 
     // a 的 grad 应为全 1
-    EXPECT_EQ(a.grad().data<float>()[0], 1.0f);
+    EXPECT_EQ(a.grad().data_read<float>()[0], 1.0f);
 
     Tensor a_copy(a);
-    EXPECT_EQ(a_copy.grad().data<float>()[0], 1.0f);
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 1.0f);
 
     // 清零 a 的 grad，若 a_copy.grad 是深拷贝则不应受影响
     a.zero_grad();
-    EXPECT_EQ(a.grad().data<float>()[0], 0.0f);
-    EXPECT_EQ(a_copy.grad().data<float>()[0], 1.0f);
+    EXPECT_EQ(a.grad().data_read<float>()[0], 0.0f);
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 1.0f);
 }
 
 TEST(TensorSemantics, MoveConstructInvalidatesSource) {
@@ -162,9 +162,9 @@ TEST(TensorSemantics, MoveConstructInvalidatesSource) {
     Tensor b(std::move(a));
     // 空 shape 在 numel() 中按标量返回 1，因此这里检查 shape 已清空且 data 为空
     EXPECT_TRUE(a.shape().empty());
-    EXPECT_EQ(a.data<float>(), nullptr);
+    EXPECT_EQ(a.data_read<float>(), nullptr);
     EXPECT_EQ(b.numel(), 4u);
-    EXPECT_EQ(b.data<float>()[0], values[0]);
+    EXPECT_EQ(b.data_read<float>()[0], values[0]);
 }
 
 TEST(TensorSemantics, MoveAssignmentInvalidatesSource) {
@@ -175,7 +175,7 @@ TEST(TensorSemantics, MoveAssignmentInvalidatesSource) {
     Tensor c(ShapeTag{}, {1}, DType::kFloat, DeviceType::kCPU);
     c = std::move(a);
     EXPECT_TRUE(a.shape().empty());
-    EXPECT_EQ(a.data<float>(), nullptr);
+    EXPECT_EQ(a.data_read<float>(), nullptr);
     EXPECT_EQ(c.numel(), 4u);
 }
 
@@ -186,8 +186,8 @@ TEST(TensorSemantics, ViewModificationReflectsOnBase) {
 
     // 通过拷贝构造创建视图（共享 storage）
     Tensor view(a);
-    view.data<float>()[2] = 123.0f;
-    EXPECT_EQ(a.data<float>()[2], 123.0f);
+    view.data_write<float>()[2] = 123.0f;
+    EXPECT_EQ(a.data_read<float>()[2], 123.0f);
 }
 
 TEST(TensorSemantics, CloneIsIndependent) {
@@ -196,8 +196,8 @@ TEST(TensorSemantics, CloneIsIndependent) {
     fill_tensor(a, values);
 
     Tensor b = a.clone();
-    b.data<float>()[0] = 777.0f;
-    EXPECT_NE(a.data<float>()[0], 777.0f);
+    b.data_write<float>()[0] = 777.0f;
+    EXPECT_NE(a.data_read<float>()[0], 777.0f);
 }
 
 TEST(TensorSemantics, GradIndependenceAfterCopy) {
@@ -207,7 +207,7 @@ TEST(TensorSemantics, GradIndependenceAfterCopy) {
 
     Tensor b = a + 0.0f;
     AutoGrad::backward(b.getRelatedNode(), false);
-    EXPECT_EQ(a.grad().data<float>()[0], 1.0f);
+    EXPECT_EQ(a.grad().data_read<float>()[0], 1.0f);
 
     Tensor a_copy(a);
     // 对 a_copy 做新的前向 + backward，不应影响 a 已有的 grad
@@ -215,9 +215,9 @@ TEST(TensorSemantics, GradIndependenceAfterCopy) {
     AutoGrad::backward(c.getRelatedNode(), false);
 
     // a 的 grad 保持为 1（来自 b 的 backward）
-    EXPECT_EQ(a.grad().data<float>()[0], 1.0f);
+    EXPECT_EQ(a.grad().data_read<float>()[0], 1.0f);
     // a_copy 的 grad 累加为 2（b 的 grad 深拷贝 + c 的 backward）
-    EXPECT_EQ(a_copy.grad().data<float>()[0], 2.0f);
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 2.0f);
 }
 
 TEST(TensorSemantics, CopyMoveChain) {
@@ -228,12 +228,12 @@ TEST(TensorSemantics, CopyMoveChain) {
     Tensor b(a);              // copy
     Tensor c(std::move(b));   // move from copy
     Tensor d(c);              // copy from moved-to
-    d.data<float>()[0] = 111.0f;
+    d.data_write<float>()[0] = 111.0f;
 
-    EXPECT_EQ(a.data<float>()[0], 111.0f);
-    EXPECT_EQ(c.data<float>()[0], 111.0f);
+    EXPECT_EQ(a.data_read<float>()[0], 111.0f);
+    EXPECT_EQ(c.data_read<float>()[0], 111.0f);
     EXPECT_TRUE(b.shape().empty());
-    EXPECT_EQ(b.data<float>(), nullptr);
+    EXPECT_EQ(b.data_read<float>(), nullptr);
 }
 
 // ======================= Tensor 设备迁移语义 =======================
@@ -245,7 +245,7 @@ TEST(TensorSemantics, ToSameDeviceReturnsAliasLikeCopy) {
 
     Tensor b = a.to(DeviceType::kCPU);
     EXPECT_EQ(b.device(), DeviceType::kCPU);
-    EXPECT_EQ(b.data<float>()[0], values[0]);
+    EXPECT_EQ(b.data_read<float>()[0], values[0]);
 }
 
 TEST(TensorSemantics, ToCrossDeviceAndBack) {
@@ -263,7 +263,7 @@ TEST(TensorSemantics, ToCrossDeviceAndBack) {
     Tensor cpu_t2 = mps_t.to(DeviceType::kCPU);
     MPS_flush_wait(true);
     EXPECT_EQ(cpu_t2.device(), DeviceType::kCPU);
-    EXPECT_EQ(cpu_t2.data<float>()[0], values[0]);
+    EXPECT_EQ(cpu_t2.data_read<float>()[0], values[0]);
 }
 
 // ======================= Node / GradPack 生命周期 =======================

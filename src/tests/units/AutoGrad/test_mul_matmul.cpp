@@ -73,8 +73,8 @@ bool test_matmul_node_backward() {
         Tensor B(ShapeTag{}, {3, 2}, DType::kFloat, DeviceType::kMPS);
         
         // 填充数据
-        float* A_data = A.data<float>();
-        float* B_data = B.data<float>();
+        float* A_data = A.data_write<float>();
+        float* B_data = B.data_write<float>();
         
         // A = [[1, 2, 3], [4, 5, 6]]
         A_data[0] = 1.0f; A_data[1] = 2.0f; A_data[2] = 3.0f;
@@ -95,30 +95,30 @@ bool test_matmul_node_backward() {
         Tensor C = A.matmul(B);
         
         std::cout << "矩阵 C = A * B:" << std::endl;
-        std::cout << "[[" << C.data<float>()[0] << ", " << C.data<float>()[1] << "]" << std::endl;
-        std::cout << " [" << C.data<float>()[2] << ", " << C.data<float>()[3] << "]]" << std::endl;
+        std::cout << "[[" << C.data_read<float>()[0] << ", " << C.data_read<float>()[1] << "]" << std::endl;
+        std::cout << " [" << C.data_read<float>()[2] << ", " << C.data_read<float>()[3] << "]]" << std::endl;
         
         // 验证前向计算结果
         // 期望: [[1*7+2*9+3*11, 1*8+2*10+3*12], [4*7+5*9+6*11, 4*8+5*10+6*12]]
         //      = [[7+18+33, 8+20+36], [28+45+66, 32+50+72]]
         //      = [[58, 64], [139, 154]]
-        if (std::abs(C.data<float>()[0] - 58.0f) > 1e-6) {
-            std::cout << "❌ 前向计算错误: C[0,0] 期望 58.0, 实际 " << C.data<float>()[0] << std::endl;
+        if (std::abs(C.data_read<float>()[0] - 58.0f) > 1e-6) {
+            std::cout << "❌ 前向计算错误: C[0,0] 期望 58.0, 实际 " << C.data_read<float>()[0] << std::endl;
             return false;
         }
         
-        if (std::abs(C.data<float>()[1] - 64.0f) > 1e-6) {
-            std::cout << "❌ 前向计算错误: C[0,1] 期望 64.0, 实际 " << C.data<float>()[1] << std::endl;
+        if (std::abs(C.data_read<float>()[1] - 64.0f) > 1e-6) {
+            std::cout << "❌ 前向计算错误: C[0,1] 期望 64.0, 实际 " << C.data_read<float>()[1] << std::endl;
             return false;
         }
         
-        if (std::abs(C.data<float>()[2] - 139.0f) > 1e-6) {
-            std::cout << "❌ 前向计算错误: C[1,0] 期望 139.0, 实际 " << C.data<float>()[2] << std::endl;
+        if (std::abs(C.data_read<float>()[2] - 139.0f) > 1e-6) {
+            std::cout << "❌ 前向计算错误: C[1,0] 期望 139.0, 实际 " << C.data_read<float>()[2] << std::endl;
             return false;
         }
         
-        if (std::abs(C.data<float>()[3] - 154.0f) > 1e-6) {
-            std::cout << "❌ 前向计算错误: C[1,1] 期望 154.0, 实际 " << C.data<float>()[3] << std::endl;
+        if (std::abs(C.data_read<float>()[3] - 154.0f) > 1e-6) {
+            std::cout << "❌ 前向计算错误: C[1,1] 期望 154.0, 实际 " << C.data_read<float>()[3] << std::endl;
             return false;
         }
         
@@ -130,13 +130,13 @@ bool test_matmul_node_backward() {
         Tensor grad_B = B.grad();
         
         std::cout << "\n梯度 grad_A:" << std::endl;
-        std::cout << "[[" << grad_A.data<float>()[0] << ", " << grad_A.data<float>()[1] << ", " << grad_A.data<float>()[2] << "]" << std::endl;
-        std::cout << " [" << grad_A.data<float>()[3] << ", " << grad_A.data<float>()[4] << ", " << grad_A.data<float>()[5] << "]]" << std::endl;
+        std::cout << "[[" << grad_A.data_read<float>()[0] << ", " << grad_A.data_read<float>()[1] << ", " << grad_A.data_read<float>()[2] << "]" << std::endl;
+        std::cout << " [" << grad_A.data_read<float>()[3] << ", " << grad_A.data_read<float>()[4] << ", " << grad_A.data_read<float>()[5] << "]]" << std::endl;
         
         std::cout << "梯度 grad_B:" << std::endl;
-        std::cout << "[[" << grad_B.data<float>()[0] << ", " << grad_B.data<float>()[1] << "]" << std::endl;
-        std::cout << " [" << grad_B.data<float>()[2] << ", " << grad_B.data<float>()[3] << "]" << std::endl;
-        std::cout << " [" << grad_B.data<float>()[4] << ", " << grad_B.data<float>()[5] << "]]" << std::endl;
+        std::cout << "[[" << grad_B.data_read<float>()[0] << ", " << grad_B.data_read<float>()[1] << "]" << std::endl;
+        std::cout << " [" << grad_B.data_read<float>()[2] << ", " << grad_B.data_read<float>()[3] << "]" << std::endl;
+        std::cout << " [" << grad_B.data_read<float>()[4] << ", " << grad_B.data_read<float>()[5] << "]]" << std::endl;
         
         // 验证梯度
         // 理论值: grad_A = grad_C * B^T, grad_B = A^T * grad_C
@@ -147,8 +147,8 @@ bool test_matmul_node_backward() {
         // 验证 grad_A
         float expected_grad_A[] = {15, 19, 23, 15, 19, 23};
         for (int i = 0; i < 6; i++) {
-            if (std::abs(grad_A.data<float>()[i] - expected_grad_A[i]) > 1e-6) {
-                std::cout << "❌ grad_A 错误: grad_A[" << i << "] 期望 " << expected_grad_A[i] << ", 实际 " << grad_A.data<float>()[i] << std::endl;
+            if (std::abs(grad_A.data_read<float>()[i] - expected_grad_A[i]) > 1e-6) {
+                std::cout << "❌ grad_A 错误: grad_A[" << i << "] 期望 " << expected_grad_A[i] << ", 实际 " << grad_A.data_read<float>()[i] << std::endl;
                 return false;
             }
         }
@@ -156,8 +156,8 @@ bool test_matmul_node_backward() {
         // 验证 grad_B
         float expected_grad_B[] = {5, 5, 7, 7, 9, 9};
         for (int i = 0; i < 6; i++) {
-            if (std::abs(grad_B.data<float>()[i] - expected_grad_B[i]) > 1e-6) {
-                std::cout << "❌ grad_B 错误: grad_B[" << i << "] 期望 " << expected_grad_B[i] << ", 实际 " << grad_B.data<float>()[i] << std::endl;
+            if (std::abs(grad_B.data_read<float>()[i] - expected_grad_B[i]) > 1e-6) {
+                std::cout << "❌ grad_B 错误: grad_B[" << i << "] 期望 " << expected_grad_B[i] << ", 实际 " << grad_B.data_read<float>()[i] << std::endl;
                 return false;
             }
         }

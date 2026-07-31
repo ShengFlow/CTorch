@@ -67,7 +67,7 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
     for (size_t i = 0; i < m; ++i) {
       for (size_t j = 0; j < k; ++j) {
         size_t idx = i * a.strides()[0] + j * a.strides()[1];
-        a_contig.data<float>()[i * k + j] = a.data<float>()[idx];
+        a_contig.data_write<float>()[i * k + j] = a.data_read<float>()[idx];
       }
     }
     a_ptr = &a_contig;
@@ -79,7 +79,7 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
     for (size_t i = 0; i < k; ++i) {
       for (size_t j = 0; j < n; ++j) {
         size_t idx = i * b.strides()[0] + j * b.strides()[1];
-        b_contig.data<float>()[i * n + j] = b.data<float>()[idx];
+        b_contig.data_write<float>()[i * n + j] = b.data_read<float>()[idx];
       }
     }
     b_ptr = &b_contig;
@@ -98,12 +98,12 @@ Tensor MatMul_AMX_kernel(const Tensor &a, const Tensor &b) {
       (int)n,
       (int)k,
       alpha,
-      a_ptr->data<float>(),
+      a_ptr->data_read<float>(),
       (int)k,
-      b_ptr->data<float>(),
+      b_ptr->data_read<float>(),
       (int)n,
       beta,
-      result.data<float>(),
+      result.data_write<float>(),
       (int)n
   );
 

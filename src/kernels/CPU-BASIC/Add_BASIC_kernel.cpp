@@ -36,36 +36,36 @@ CT_HOT Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     }
     
     // 支持广播：使用a的形状作为结果形状
-    int elem_count = a.numel();
+    size_t elem_count = a.numel();
 
     // 获取Tensor数据指针
-    const float* CT_RESTRICT a_data = a.data<float>();
-    const float* CT_RESTRICT b_data = b.data<float>();
+    const float* CT_RESTRICT a_data = a.data_read<float>();
+    const float* CT_RESTRICT b_data = b.data_read<float>();
 
     // 创建结果Tensor
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
-    float* CT_RESTRICT result_data = result.data<float>();
+    float* CT_RESTRICT result_data = result.data_write<float>();
 
     // 支持广播的逐元素加法
     if (b_is_scalar) {
         // b是标量，广播到a的所有元素
         float b_val = b_data[0];
-        for (int i = 0; i < elem_count; ++i) {
+        for (size_t i = 0; i < elem_count; ++i) {
             result_data[i] = a_data[i] + b_val;
         }
     } else if (can_broadcast) {
         // b是一维张量，a是二维张量，且b的长度等于a的列数
-        int batch_size = a.sizes()[0];
-        int hidden_size = a.sizes()[1];
-        for (int i = 0; i < batch_size; ++i) {
-            for (int j = 0; j < hidden_size; ++j) {
-                int idx = i * hidden_size + j;
+        size_t batch_size = a.sizes()[0];
+        size_t hidden_size = a.sizes()[1];
+        for (size_t i = 0; i < batch_size; ++i) {
+            for (size_t j = 0; j < hidden_size; ++j) {
+                size_t idx = i * hidden_size + j;
                 result_data[idx] = a_data[idx] + b_data[j];
             }
         }
     } else {
         // 形状相同的情况
-        for (int i = 0; i < elem_count; ++i) {
+        for (size_t i = 0; i < elem_count; ++i) {
             result_data[i] = a_data[i] + b_data[i];
         }
     }

@@ -51,9 +51,9 @@ std::vector<GradPack> GELUNode::backward(const std::vector<Tensor> &downStreamGr
     Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
 
     size_t count               = x.numel();
-    const float *x_data        = x.data<float>();
-    const float *grad_out_data = grad_out.data<float>();
-    float *grad_x_data         = grad_x.data<float>();
+    const float *x_data        = x.data_read<float>();
+    const float *grad_out_data = grad_out.data_read<float>();
+    float *grad_x_data         = grad_x.data_write<float>();
 
     for (size_t i = 0; i < count; ++i) {
         grad_x_data[i] = grad_out_data[i] * gelu_derivative_scalar(x_data[i]);

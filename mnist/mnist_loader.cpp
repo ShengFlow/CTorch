@@ -82,7 +82,7 @@ void MNISTLoader::load_training_data(Tensor& images, Tensor& labels) {
     std::vector<size_t> image_shape = {static_cast<size_t>(num_images), static_cast<size_t>(rows * cols)};
     images = Tensor(ShapeTag{}, image_shape, DType::kFloat, device);
         
-    float* img_ptr = images.data<float>();
+    float* img_ptr = images.data_write<float>();
     for (size_t i = 0; i < image_data.size(); ++i) {
         img_ptr[i] = image_data[i];
     }
@@ -91,7 +91,7 @@ void MNISTLoader::load_training_data(Tensor& images, Tensor& labels) {
     labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, device);
     
     for (size_t i = 0; i < label_data.size(); ++i) {
-        labels.data<float>()[i] = static_cast<float>(label_data[i]);
+        labels.data_write<float>()[i] = static_cast<float>(label_data[i]);
     }
 }
 
@@ -106,13 +106,13 @@ void MNISTLoader::load_test_data(Tensor& images, Tensor& labels) {
     images = Tensor(ShapeTag{}, image_shape, DType::kFloat, device);
         
     for (size_t i = 0; i < image_data.size(); ++i) {
-        images.data<float>()[i] = image_data[i];
+        images.data_write<float>()[i] = image_data[i];
     }
         
     std::vector<size_t> label_shape = {static_cast<size_t>(num_labels)};
     labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, device);
     
     for (size_t i = 0; i < label_data.size(); ++i) {
-        labels.data<float>()[i] = static_cast<float>(label_data[i]);
+        labels.data_write<float>()[i] = static_cast<float>(label_data[i]);
     }
 }

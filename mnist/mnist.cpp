@@ -20,7 +20,7 @@ private:
     
     static void xavier_init(Tensor& W, size_t fan_in, size_t fan_out) {
         float std = std::sqrt(2.0f / (fan_in + fan_out));
-        float* data = W.data<float>();
+        float* data = W.data_write<float>();
         for (size_t i = 0; i < W.numel(); ++i) {
             float r = 2.0f * g_mnist_rng.uniform_f32() - 1.0f;
             data[i] = r * std;
@@ -67,9 +67,9 @@ public:
             y_one_hot_cache = Tensor(ShapeTag{}, one_hot_shape, DType::kFloat, g_device);
         }
         
-        std::memset(y_one_hot_cache.data<float>(), 0, batch_size * 10 * sizeof(float));
-        const float* y_data = y.data<float>();
-        float* one_hot_data = y_one_hot_cache.data<float>();
+        std::memset(y_one_hot_cache.data_write<float>(), 0, batch_size * 10 * sizeof(float));
+        const float* y_data = y.data_read<float>();
+        float* one_hot_data = y_one_hot_cache.data_write<float>();
         for (size_t i = 0; i < batch_size; ++i) {
             int lab = static_cast<int>(y_data[i]);
             one_hot_data[i * 10 + lab] = 1.0f;
@@ -101,7 +101,7 @@ public:
         } else {
             auto sgd_step = [this, lr](Tensor& param) {
                 float* gp = param.grad_ptr();
-                float* p = param.data<float>();
+                float* p = param.data_write<float>();
                 for (size_t i = 0; i < param.numel(); ++i)
                     p[i] -= gp[i] * lr;
             };
@@ -132,8 +132,8 @@ public:
         size_t num_classes = shape[1];
         
         Tensor y_pred(ShapeTag{}, shape, logits.dtype(), logits.device());
-        const float* in = logits.data<float>();
-        float* out = y_pred.data<float>();
+        const float* in = logits.data_read<float>();
+        float* out = y_pred.data_write<float>();
         
         for (size_t i = 0; i < batch_size; ++i) {
             // 数值稳定的 softmax：先减去该样本的最大值
@@ -169,7 +169,7 @@ float calculate_accuracy(const Tensor& y_pred, const Tensor& y_true) {
         int pred_label = 0;
         float max_prob = -1.0f;
         for (int j = 0; j < 10; ++j) {
-            float prob = y_pred.data<float>()[i * 10 + j];
+            float prob = y_pred.data_read<float>()[i * 10 + j];
             if (prob > max_prob) {
                 max_prob = prob;
                 pred_label = j;
@@ -177,7 +177,7 @@ float calculate_accuracy(const Tensor& y_pred, const Tensor& y_true) {
         }
         
         // 比较预测标签和真实标签
-        int true_label = static_cast<int>(y_true.data<float>()[i]);
+        int true_label = static_cast<int>(y_true.data_read<float>()[i]);
         if (pred_label == true_label) {
             correct++;
         }
@@ -206,11 +206,11 @@ void get_batch(const Tensor& images, const Tensor& labels, int batch_size, int b
         batch_labels = Tensor(ShapeTag{}, label_shape, DType::kFloat, g_device);
     }
     
-    std::memcpy(batch_images.data<float>(), 
-                images.data<float>() + start * feature_size, 
+    std::memcpy(batch_images.data_write<float>(), 
+                images.data_read<float>() + start * feature_size, 
                 image_bytes);
-    std::memcpy(batch_labels.data<float>(), 
-                labels.data<float>() + start, 
+    std::memcpy(batch_labels.data_write<float>(), 
+                labels.data_read<float>() + start, 
                 label_bytes);
 }
 

@@ -10,8 +10,8 @@ int main() {
     
     // 填充一些值
     for (int i = 0; i < 6; i++) {
-        a.data<float>()[i] = i + 1;
-        b.data<float>()[i] = i + 1;
+        a.data_write<float>()[i] = i + 1;
+        b.data_write<float>()[i] = i + 1;
     }
     
     // 打印形状和 strides

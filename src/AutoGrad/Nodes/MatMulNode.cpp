@@ -50,7 +50,7 @@ std::vector<GradPack> MatMulNode::backward(const std::vector<Tensor>& downStream
             Tensor broadcasted(ShapeTag{}, result_shape, grad.dtype(), grad.device());
             const float scalar = grad.item<float>();
             const size_t total = broadcasted.numel();
-            float* p = broadcasted.data<float>();
+            float* p = broadcasted.data_write<float>();
             for (size_t i = 0; i < total; ++i) p[i] = scalar;
             grad = broadcasted;
         }
