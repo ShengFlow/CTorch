@@ -15,6 +15,7 @@
 #include "CtorchError.h"
 #include "Tensor.h"
 #include "./../src/kernels/kernels.h"
+#include "JIT/C3KernelRegistry.h"
 
 class CtorchScheduler{
 private:
@@ -137,6 +138,15 @@ public:
         }
 
         DeviceType target_dev = getTargetDevice(a, b);
+
+        // C3 JIT 热替换优先查询：若已安装 C3 kernel，优先使用
+        {
+            auto c3_result = ct::jit::C3KernelRegistry::getInstance().tryExecute(OpType, a, b);
+            if (c3_result.has_value()) {
+                return c3_result.value();
+            }
+        }
+
         BinaryKernelFunc func = selectBestBinary(OpType, target_dev, binary_kernels_);
         if (func == nullptr) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");

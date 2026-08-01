@@ -53,6 +53,9 @@ set(CT-Core
         src/MetalDevice.mm
         src/DeviceAllocator/MPSAllocator.mm
         src/DeviceAllocator/AllocatorManager.cpp
+        src/JIT/Graph.cpp
+        src/JIT/HandwrittenKernelGen.cpp
+        src/JIT/JITEngine.cpp
 )
 
 set(CT-Core-Headers
@@ -69,6 +72,10 @@ set(CT-Core-Headers
         include/DeviceAllocator.h
         include/MetalDevice.h
         include/ctQALS/ctQALS.h
+        include/JIT/JITEngine.h
+        include/JIT/Graph.h
+        include/JIT/Tracer.h
+        include/JIT/C3KernelRegistry.h
 )
 
 set(CT-Nodes-Headers
@@ -259,6 +266,11 @@ add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mn
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
 target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# (SECURITY_SENSITIVE) MNIST Loader security regression tests
+add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(test_mnist_loader_security PRIVATE CTorch)
+target_include_directories(test_mnist_loader_security PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # (SECURITY_SENSITIVE) Red-team PoC: Storage integer overflow
 add_executable(poc_storage_integer_overflow src/tests/standalone/poc_storage_integer_overflow.cpp)
 target_link_libraries(poc_storage_integer_overflow PRIVATE CTorch)
@@ -417,8 +429,14 @@ endif()
 
 option(TEST_ENABLED "Enable tests?" ON)
 if (${TEST_ENABLED})
+    # Homebrew gtest include path (macOS)
+    if(APPLE AND EXISTS /opt/homebrew/include/gtest/gtest.h)
+        include_directories(/opt/homebrew/include)
+        link_directories(/opt/homebrew/lib)
+    endif()
     set(TEST_GROUP_Storage src/tests/units/Storage/*.cpp)
     set(TEST_GROUP_Tensor src/tests/units/Tensor/*.cpp)
+    set(TEST_GROUP_JIT src/tests/units/JIT/*.cpp)
     file(GLOB_RECURSE ALL_TEST src/tests/units/*.cpp)
 
     if (NOT ALL_TEST)
