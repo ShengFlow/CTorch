@@ -428,18 +428,17 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
     }
 
     if (src_numel == 1) {
-        size_t elem_size = dtypeSize(_dtype);
-        size_t src_byte_offset =
-            checked_mul(_storage_offset, elem_size,
-                        "Tensor broadcast_to source byte offset overflow");
-        const char *src_ptr = _storage.data<char>() + src_byte_offset;
-        char *dst_ptr       = result._storage.data<char>();
+        size_t elem_size       = dtypeSize(_dtype);
+        size_t src_byte_offset = checked_mul(_storage_offset, elem_size,
+                                             "Tensor broadcast_to source byte offset overflow");
+        const char *src_ptr    = _storage.data<char>() + src_byte_offset;
+        char *dst_ptr          = result._storage.data<char>();
         for (size_t i = 0; i < dst_numel; ++i) {
             std::memcpy(dst_ptr + i * elem_size, src_ptr, elem_size);
         }
         if (_device == DeviceType::kMPS) {
-            size_t dst_bytes = checked_mul(dst_numel, elem_size,
-                                           "Tensor broadcast_to destination bytes overflow");
+            size_t dst_bytes =
+                checked_mul(dst_numel, elem_size, "Tensor broadcast_to destination bytes overflow");
             MPS_markBufferModified(static_cast<void *>(dst_ptr), dst_bytes);
         }
     } else {
@@ -457,12 +456,11 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
                                          "Tensor broadcast_to stride overflow");
         }
 
-        size_t elem_size = dtypeSize(_dtype);
-        size_t src_byte_offset =
-            checked_mul(_storage_offset, elem_size,
-                        "Tensor broadcast_to source byte offset overflow");
-        const char *src_base = _storage.data<char>() + src_byte_offset;
-        char *dst_base       = result._storage.data<char>();
+        size_t elem_size       = dtypeSize(_dtype);
+        size_t src_byte_offset = checked_mul(_storage_offset, elem_size,
+                                             "Tensor broadcast_to source byte offset overflow");
+        const char *src_base   = _storage.data<char>() + src_byte_offset;
+        char *dst_base         = result._storage.data<char>();
 
         for (size_t i = 0; i < dst_numel; ++i) {
             std::vector<size_t> dst_indices(target_shape.size());
@@ -490,8 +488,8 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
             std::memcpy(dst_base + i * elem_size, src_base + src_idx * elem_size, elem_size);
         }
         if (_device == DeviceType::kMPS) {
-            size_t dst_bytes = checked_mul(dst_numel, elem_size,
-                                           "Tensor broadcast_to destination bytes overflow");
+            size_t dst_bytes =
+                checked_mul(dst_numel, elem_size, "Tensor broadcast_to destination bytes overflow");
             MPS_markBufferModified(static_cast<void *>(dst_base), dst_bytes);
         }
     }
@@ -510,27 +508,32 @@ void Tensor::zero() {
     switch (_dtype) {
     case DType::kFloat: {
         float *ptr = data_write<float>();
-        if (ptr) std::memset(ptr, 0, count * sizeof(float));
+        if (ptr)
+            std::memset(ptr, 0, count * sizeof(float));
         break;
     }
     case DType::kDouble: {
         double *ptr = data_write<double>();
-        if (ptr) std::memset(ptr, 0, count * sizeof(double));
+        if (ptr)
+            std::memset(ptr, 0, count * sizeof(double));
         break;
     }
     case DType::kInt: {
         int32_t *ptr = data_write<int32_t>();
-        if (ptr) std::memset(ptr, 0, count * sizeof(int32_t));
+        if (ptr)
+            std::memset(ptr, 0, count * sizeof(int32_t));
         break;
     }
     case DType::kLong: {
         int64_t *ptr = data_write<int64_t>();
-        if (ptr) std::memset(ptr, 0, count * sizeof(int64_t));
+        if (ptr)
+            std::memset(ptr, 0, count * sizeof(int64_t));
         break;
     }
     case DType::kBool: {
         bool *ptr = data_write<bool>();
-        if (ptr) std::memset(ptr, 0, count * sizeof(bool));
+        if (ptr)
+            std::memset(ptr, 0, count * sizeof(bool));
         break;
     }
     default:
@@ -617,8 +620,17 @@ Tensor::Tensor()
     computeStrides();
 }
 
-// 检查存储偏移是否有效
-bool Tensor::check_storage_offset() const { return _storage_offset < _storage.size(); }
+// 检查存储偏移是否有效：必须保证 offset + numel() <= storage.size()
+bool Tensor::check_storage_offset() const {
+    if (_storage_offset >= _storage.size()) {
+        return false;
+    }
+    const size_t n = numel();
+    if (n == 0) {
+        return true;
+    }
+    return (_storage.size() - _storage_offset) >= n;
+}
 
 // ReLU激活函数
 Tensor Tensor::relu() const {
@@ -1062,7 +1074,7 @@ Tensor Tensor::max() const {
                 max_val = data[i];
             }
         }
-        result._storage     = Storage(1, _dtype, _device);
+        result._storage    = Storage(1, _dtype, _device);
         float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = max_val;
@@ -1087,7 +1099,7 @@ Tensor Tensor::min() const {
                 min_val = data[i];
             }
         }
-        result._storage     = Storage(1, _dtype, _device);
+        result._storage    = Storage(1, _dtype, _device);
         float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = min_val;
@@ -1269,7 +1281,7 @@ Tensor Tensor::mean() const {
         for (size_t i = 0; i < numel(); ++i) {
             sum += data[i];
         }
-        result._storage     = Storage(1, _dtype, _device);
+        result._storage    = Storage(1, _dtype, _device);
         float *result_data = result.data_write<float>();
         if (result_data) {
             *result_data = sum / static_cast<float>(numel());
@@ -1314,8 +1326,7 @@ Tensor Tensor::to(DeviceType target_device) const {
 
     Tensor result(ShapeTag{}, _shape, _dtype, target_device);
 
-    size_t bytes = checked_mul(numel(), dtypeSize(_dtype),
-                               "Tensor to(device) byte count overflow");
+    size_t bytes = checked_mul(numel(), dtypeSize(_dtype), "Tensor to(device) byte count overflow");
 
     // Storage::data<T>() 对 T=char 会触发 dtype 检查失败，因此按实际 dtype 取指针
     const char *src = nullptr;
@@ -1368,7 +1379,7 @@ Tensor Tensor::to(DeviceType target_device) const {
     }
 
     if (target_device == DeviceType::kMPS) {
-        MPS_markBufferModified(static_cast<void*>(dst), bytes);
+        MPS_markBufferModified(static_cast<void *>(dst), bytes);
     }
 
     result._autograd_meta._requires_grad = _autograd_meta._requires_grad;

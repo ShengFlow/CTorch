@@ -21,6 +21,16 @@ endif()
 
 include(FetchContent)
 
+# ---- LLVM / MLIR (Phase 1: JIT 后端) ----
+option(CT_ENABLE_MLIR "Enable MLIR/LLVM JIT backend for C3" ON)
+if(CT_ENABLE_MLIR)
+    set(LLVM_DIR /opt/homebrew/opt/llvm/lib/cmake/llvm)
+    set(MLIR_DIR /opt/homebrew/opt/llvm/lib/cmake/mlir)
+    find_package(LLVM REQUIRED CONFIG)
+    find_package(MLIR REQUIRED CONFIG)
+    message(STATUS "MLIR backend enabled (LLVM ${LLVM_PACKAGE_VERSION})")
+endif()
+
 option(FETCH_GOOGLETEST "Fetch googletest from remote" OFF)
 enable_testing()
 
@@ -53,10 +63,15 @@ set(CT-Core
         src/MetalDevice.mm
         src/DeviceAllocator/MPSAllocator.mm
         src/DeviceAllocator/AllocatorManager.cpp
-        src/JIT/Graph.cpp
-        src/JIT/HandwrittenKernelGen.cpp
-        src/JIT/JITEngine.cpp
+        src/C3/Graph.cpp
+        src/C3/HandwrittenKernelGen.cpp
+        src/C3/C3Engine.cpp
 )
+
+# MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
+if(CT_ENABLE_MLIR)
+    list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
+endif()
 
 set(CT-Core-Headers
         include/Tensor.h
@@ -72,10 +87,10 @@ set(CT-Core-Headers
         include/DeviceAllocator.h
         include/MetalDevice.h
         include/ctQALS/ctQALS.h
-        include/JIT/JITEngine.h
-        include/JIT/Graph.h
-        include/JIT/Tracer.h
-        include/JIT/C3KernelRegistry.h
+        include/C3/C3Engine.h
+        include/C3/Graph.h
+        include/C3/Tracer.h
+        include/C3/C3KernelRegistry.h
 )
 
 set(CT-Nodes-Headers
@@ -227,7 +242,36 @@ set_target_properties(CTorch PROPERTIES
 target_include_directories(CTorch
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# MLIR/LLVM 头文件与链接
+if(CT_ENABLE_MLIR)
+    target_include_directories(CTorch SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
+    target_include_directories(CTorch SYSTEM PUBLIC ${MLIR_INCLUDE_DIRS})
+    target_compile_definitions(CTorch PUBLIC CT_ENABLE_MLIR=1)
+    target_link_libraries(CTorch PUBLIC
+        MLIRIR
+        MLIRPass
+        MLIRTransforms
+        MLIRSupport
+        MLIRArithDialect
+        MLIRSCFDialect
+        MLIRFuncDialect
+        MLIRMemRefDialect
+        MLIRLLVMDialect
+        MLIRArithToLLVM
+        MLIRArithAttrToLLVMConversion
+        MLIRSCFToControlFlow
+        MLIRControlFlowToLLVM
+        MLIRMemRefToLLVM
+        MLIRFuncToLLVM
+        MLIRReconcileUnrealizedCasts
+        MLIRLLVMToLLVMIRTranslation
+        MLIRBuiltinToLLVMIRTranslation
+        MLIRExecutionEngine
+    )
+endif()
 add_compile_options(-march=native)
 
 # 链接 Accelerate 框架（用于 AMX BLAS 加速）
@@ -436,7 +480,7 @@ if (${TEST_ENABLED})
     endif()
     set(TEST_GROUP_Storage src/tests/units/Storage/*.cpp)
     set(TEST_GROUP_Tensor src/tests/units/Tensor/*.cpp)
-    set(TEST_GROUP_JIT src/tests/units/JIT/*.cpp)
+    set(TEST_GROUP_C3 src/tests/units/C3/*.cpp)
     file(GLOB_RECURSE ALL_TEST src/tests/units/*.cpp)
 
     if (NOT ALL_TEST)

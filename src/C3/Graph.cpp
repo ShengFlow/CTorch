@@ -6,16 +6,18 @@
  * @date 2026/7/31
  */
 
-#include "../../include/JIT/Graph.h"
+#include "../../include/C3/Graph.h"
 
 #include <algorithm>
 #include <cassert>
 #include <queue>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace ct {
-namespace jit {
+namespace c3 {
 
 // ======================= 辅助函数 =======================
 
@@ -227,6 +229,185 @@ Graph Graph::canonicalize(const CanonicalizeRules& rules) const {
     return result;
 }
 
+// ======================= fuse（算子融合） =======================
+
+Graph Graph::fuse() const {
+    // 辅助函数：判断节点是否为逐元素操作
+    auto is_elementwise = [](const NodeVariant& op) -> bool {
+        return std::visit([](auto&& arg) -> bool {
+            using T = std::decay_t<decltype(arg)>;
+            return std::is_same_v<T, AddNode> || std::is_same_v<T, SubNode> ||
+                   std::is_same_v<T, MulNode> || std::is_same_v<T, DivNode> ||
+                   std::is_same_v<T, NegNode> || std::is_same_v<T, ReLUNode>;
+        }, op);
+    };
+
+    // 步骤 1: 计算每个节点的消费者数量
+    std::vector<size_t> consumer_count(nodes_.size(), 0);
+    for (const auto& node : nodes_) {
+        for (size_t in_id : node.inputs) {
+            if (validNodeId(in_id)) consumer_count[in_id]++;
+        }
+    }
+
+    // 步骤 2: 从每个输出出发，反向遍历构建融合链
+    std::vector<std::vector<size_t>> fusion_chains;
+    std::vector<bool> fused(nodes_.size(), false);
+
+    for (size_t out_id : outputs_) {
+        if (fused[out_id]) continue;
+
+        std::vector<size_t> chain;
+        size_t current = out_id;
+
+        while (true) {
+            if (fused[current]) break;
+            const Node& node = nodes_[current];
+            if (!is_elementwise(node.op)) break;
+            // 非输出节点且有多消费者，不能融合
+            if (consumer_count[current] > 1 && current != out_id) break;
+
+            chain.push_back(current);
+
+            // 继续向前遍历第一个非 Const 输入
+            bool found_next = false;
+            for (size_t in_id : node.inputs) {
+                if (!validNodeId(in_id)) continue;
+                if (std::holds_alternative<ConstNode>(nodes_[in_id].op)) continue;
+                if (fused[in_id]) continue;
+                // 如果前驱节点有多个消费者，停止向前
+                if (consumer_count[in_id] > 1) continue;
+                current = in_id;
+                found_next = true;
+                break;
+            }
+            if (!found_next) break;
+        }
+
+        if (chain.size() >= 2) {
+            // 反转链条为输入→输出方向
+            std::reverse(chain.begin(), chain.end());
+            fusion_chains.push_back(chain);
+            for (size_t id : chain) fused[id] = true;
+        }
+    }
+
+    // 步骤 3: 构建新图
+    Graph result;
+    std::vector<size_t> new_id_map(nodes_.size(), SIZE_MAX);
+
+    // 先添加输入节点
+    for (size_t in_id : inputs_) {
+        new_id_map[in_id] = result.addInput(nodes_[in_id].out_desc);
+    }
+
+    // 收集融合链起始节点
+    std::unordered_set<size_t> chain_start_ids;
+    for (const auto& chain : fusion_chains) {
+        if (!chain.empty()) chain_start_ids.insert(chain[0]);
+    }
+
+    // 拓扑排序
+    std::vector<size_t> topo_order;
+    {
+        std::vector<size_t> in_degree(nodes_.size(), 0);
+        for (const auto& node : nodes_) {
+            for (size_t o : node.outputs) {
+                if (o < nodes_.size()) in_degree[o]++;
+            }
+        }
+        std::queue<size_t> q;
+        for (size_t i = 0; i < nodes_.size(); ++i) {
+            if (in_degree[i] == 0) q.push(i);
+        }
+        while (!q.empty()) {
+            size_t cur = q.front(); q.pop();
+            topo_order.push_back(cur);
+            for (size_t o : nodes_[cur].outputs) {
+                if (--in_degree[o] == 0) q.push(o);
+            }
+        }
+    }
+
+    // 添加节点
+    for (size_t node_id : topo_order) {
+        bool is_input = false;
+        for (size_t in_id : inputs_) {
+            if (in_id == node_id) { is_input = true; break; }
+        }
+        if (is_input) continue;
+
+        // 跳过已融合节点（非起始节点）
+        if (fused[node_id] && chain_start_ids.find(node_id) == chain_start_ids.end()) continue;
+
+        // 找到包含此节点的融合链
+        const std::vector<size_t>* chain = nullptr;
+        for (auto& c : fusion_chains) {
+            if (!c.empty() && c[0] == node_id) { chain = &c; break; }
+        }
+
+        if (chain) {
+            // 构建 FusedNode
+            FusedNode fused_node;
+            std::set<size_t> chain_set(chain->begin(), chain->end());
+            std::set<size_t> external_inputs;
+
+            for (size_t cid : *chain) {
+                const Node& node = nodes_[cid];
+                fused_node.ops.push_back(node.op);
+                fused_node.op_inputs.push_back(node.inputs);
+                for (size_t in_id : node.inputs) {
+                    if (chain_set.find(in_id) == chain_set.end()) {
+                        external_inputs.insert(in_id);
+                    }
+                }
+            }
+
+            std::vector<size_t> new_inputs;
+            for (size_t ext_id : external_inputs) {
+                if (new_id_map[ext_id] != SIZE_MAX) {
+                    new_inputs.push_back(new_id_map[ext_id]);
+                    fused_node.arg_descs.push_back(nodes_[ext_id].out_desc);
+                    fused_node.arg_node_ids.push_back(ext_id);
+                }
+            }
+            fused_node.out_desc = nodes_[chain->back()].out_desc;
+
+            new_id_map[node_id] = result.addNode(fused_node, new_inputs, fused_node.out_desc);
+        } else {
+            // 普通节点
+            const Node& node = nodes_[node_id];
+            std::vector<size_t> new_inputs;
+            for (size_t in_id : node.inputs) {
+                if (new_id_map[in_id] != SIZE_MAX) {
+                    new_inputs.push_back(new_id_map[in_id]);
+                }
+            }
+            new_id_map[node_id] = result.addNode(node.op, new_inputs, node.out_desc);
+        }
+    }
+
+    // 标记输出
+    for (size_t out_id : outputs_) {
+        size_t mapped_id = new_id_map[out_id];
+        // 如果输出节点在融合链中，找到链起始节点的映射
+        if (mapped_id == SIZE_MAX) {
+            for (auto& chain : fusion_chains) {
+                auto it = std::find(chain.begin(), chain.end(), out_id);
+                if (it != chain.end()) {
+                    mapped_id = new_id_map[chain[0]];
+                    break;
+                }
+            }
+        }
+        if (mapped_id != SIZE_MAX) {
+            result.markOutput(mapped_id);
+        }
+    }
+
+    return result;
+}
+
 // ======================= 验证 =======================
 
 bool Graph::isValid() const {
@@ -271,13 +452,23 @@ std::string Graph::toString() const {
     for (size_t i = 0; i < nodes_.size(); ++i) {
         const auto& node = nodes_[i];
 
-        // 检查是否为输入节点
         bool is_input = (std::find(inputs_.begin(), inputs_.end(), i) != inputs_.end());
         bool is_output = (std::find(outputs_.begin(), outputs_.end(), i) != outputs_.end());
 
         ss << "  [" << i << "] ";
         if (is_input) ss << "INPUT ";
-        ss << nodeName(node.op);
+
+        if (std::holds_alternative<FusedNode>(node.op)) {
+            const auto& fnode = std::get<FusedNode>(node.op);
+            ss << "Fused(";
+            for (size_t j = 0; j < fnode.ops.size(); ++j) {
+                if (j > 0) ss << " -> ";
+                ss << nodeName(fnode.ops[j]);
+            }
+            ss << ")";
+        } else {
+            ss << nodeName(node.op);
+        }
 
         if (!node.inputs.empty()) {
             ss << " (";
@@ -306,5 +497,5 @@ std::string Graph::toString() const {
     return ss.str();
 }
 
-} // namespace jit
+} // namespace c3
 } // namespace ct

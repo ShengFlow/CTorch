@@ -2,17 +2,21 @@
 #define MNIST_LOADER_H
 
 #include "../include/Tensor.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 
 class MNISTLoader {
 private:
-    std::string data_dir;
+    std::filesystem::path data_dir;
     DeviceType device;
-    
+
+    // 将 filename 解析为 data_dir 下的安全绝对路径，阻止路径穿越
+    std::filesystem::path safe_path(const std::string& filename) const;
+
     // 读取MNIST图像文件
     std::vector<float> read_images(const std::string& filename, int& num_images, int& rows, int& cols);
-    
+
     // 读取MNIST标签文件
     std::vector<int> read_labels(const std::string& filename, int& num_labels);
     

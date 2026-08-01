@@ -8,8 +8,8 @@
  * @date 2026/7/31
  */
 
-#ifndef CTORCH_JIT_GRAPH_H
-#define CTORCH_JIT_GRAPH_H
+#ifndef CTORCH_C3_GRAPH_H
+#define CTORCH_C3_GRAPH_H
 
 #include <cstddef>
 #include <cstdint>
@@ -21,7 +21,7 @@
 #include "../Ctools.h"
 
 namespace ct {
-namespace jit {
+namespace c3 {
 
 // ======================= 张量描述符 =======================
 
@@ -115,6 +115,15 @@ struct NegNode {
 };
 
 /**
+ * @struct ReLUNode
+ * @brief 一元 ReLU 激活节点：out = max(0, x)
+ */
+struct ReLUNode {
+    static constexpr const char* name = "ReLU";
+    TensorDesc in_desc;
+};
+
+/**
  * @struct ConstNode
  * @brief 常量节点（用于常量折叠）：value = scalar
  * @details 仅用于 canonicalize 阶段的常量折叠，不参与实际 kernel 执行。
@@ -125,6 +134,9 @@ struct ConstNode {
     double value = 0.0;
 };
 
+// 前向声明：FusedNode 包含 NodeVariant，而 NodeVariant 包含 FusedNode
+struct FusedNode;
+
 // ======================= 节点类型 variant =======================
 
 /**
@@ -134,7 +146,23 @@ struct ConstNode {
  *          - 图遍历（canonicalize）使用 std::visit 比虚函数模式更高效且显式
  *          - 新增算子类型只需扩展 variant，不破坏现有代码
  */
-using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ConstNode>;
+using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ReLUNode, ConstNode, FusedNode>;
+
+/**
+ * @struct FusedNode
+ * @brief 融合节点：将多个逐元素操作合并为单个 kernel
+ * @details 融合后，所有 ops 在单次循环中按顺序执行，消除中间张量的内存分配和读写。
+ *          例如 (x + y) * z 的融合链：ops[0]=Add(x,y), ops[1]=Mul(tmp,z)。
+ *          arg_descs 记录融合节点的外部输入描述符，顺序与 Graph 输入一致。
+ */
+struct FusedNode {
+    static constexpr const char* name = "Fused";
+    std::vector<NodeVariant> ops;         ///< 操作序列（按执行顺序）
+    std::vector<std::vector<size_t>> op_inputs; ///< 每个 op 的原始输入节点 ID（用于 kernel 生成时映射）
+    std::vector<TensorDesc> arg_descs;    ///< 外部输入张量描述符（去重后）
+    std::vector<size_t> arg_node_ids;     ///< 外部输入对应的原始节点 ID
+    TensorDesc out_desc;                  ///< 输出张量描述符
+};
 
 // ======================= 图节点 =======================
 
@@ -220,6 +248,16 @@ public:
      */
     Graph canonicalize(const CanonicalizeRules& rules = CanonicalizeRules::defaults()) const;
 
+    /**
+     * @brief 算子融合：将相邻的逐元素操作合并为 FusedNode
+     * @return 融合后的新图
+     * @details 从每个输出节点出发，反向遍历生产者链。若节点是逐元素操作
+     *          （Add/Sub/Mul/Div/Neg）且输出仅被一个下游节点消费，则加入融合组。
+     *          遇到非逐元素操作（MatMul）或多消费者节点时结束当前融合组。
+     *          融合组包含 ≥2 个操作时替换为单个 FusedNode。
+     */
+    Graph fuse() const;
+
     // ======================= 访问器 =======================
 
     [[nodiscard]] const std::vector<size_t>& inputs() const { return inputs_; }
@@ -245,7 +283,7 @@ private:
     bool validNodeId(size_t id) const { return id < nodes_.size(); }
 };
 
-} // namespace jit
+} // namespace c3
 } // namespace ct
 
-#endif // CTORCH_JIT_GRAPH_H
+#endif // CTORCH_C3_GRAPH_H

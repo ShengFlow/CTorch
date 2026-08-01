@@ -12,8 +12,8 @@
  * @date 2026/7/31
  */
 
-#ifndef CTORCH_JIT_TRACER_H
-#define CTORCH_JIT_TRACER_H
+#ifndef CTORCH_C3_TRACER_H
+#define CTORCH_C3_TRACER_H
 
 #include "Graph.h"
 
@@ -23,7 +23,7 @@
 #include <vector>
 
 namespace ct {
-namespace jit {
+namespace c3 {
 
 // ======================= 前向声明 =======================
 
@@ -335,7 +335,7 @@ inline ProxyTensor operator/(float lhs, const ProxyTensor& rhs) {
     return ProxyTensor(t, result_handle);
 }
 
-} // namespace jit
+} // namespace c3
 } // namespace ct
 
-#endif // CTORCH_JIT_TRACER_H
+#endif // CTORCH_C3_TRACER_H

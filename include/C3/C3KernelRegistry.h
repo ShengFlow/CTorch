@@ -6,7 +6,7 @@
  *          未命中或执行失败时自动回退到 eager 路径。
  *
  *          热替换流程：
- *          1. JITEngine::compile 生成 C3 kernel
+ *          1. C3Engine::compile 生成 C3 kernel
  *          2. 用户调用 C3KernelRegistry::install 注册
  *          3. 调度器下次 dispatch 时自动使用 C3 kernel（原子可见性）
  *          4. 若 C3 kernel 执行失败（异常），自动回退 eager 并记录
@@ -17,8 +17,8 @@
  * @date 2026/7/31
  */
 
-#ifndef CTORCH_JIT_C3_KERNEL_REGISTRY_H
-#define CTORCH_JIT_C3_KERNEL_REGISTRY_H
+#ifndef CTORCH_C3_C3_KERNEL_REGISTRY_H
+#define CTORCH_C3_C3_KERNEL_REGISTRY_H
 
 #include "Graph.h"
 
@@ -35,7 +35,7 @@
 #include "../Tensor.h"
 
 namespace ct {
-namespace jit {
+namespace c3 {
 
 // ======================= C3 Kernel 函数指针类型 =======================
 
@@ -50,6 +50,14 @@ namespace jit {
  * @param N MatMul N 维度（逐元素操作时忽略）
  */
 using C3KernelFunc = void (*)(const float*, const float*, float*, size_t, size_t, size_t, size_t);
+
+/**
+ * @brief C3 融合 kernel 函数指针签名
+ * @param inputs 输入数据指针数组（长度 = num_inputs）
+ * @param out 输出数据指针
+ * @param n 元素总数
+ */
+using FusedKernelFunc = void (*)(const float* const*, float*, size_t);
 
 // ======================= 内核形状签名 =======================
 
@@ -232,7 +240,7 @@ private:
     std::atomic<size_t> miss_count_{0};
 };
 
-} // namespace jit
+} // namespace c3
 } // namespace ct
 
-#endif // CTORCH_JIT_C3_KERNEL_REGISTRY_H
+#endif // CTORCH_C3_C3_KERNEL_REGISTRY_H

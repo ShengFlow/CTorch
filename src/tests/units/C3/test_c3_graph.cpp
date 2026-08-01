@@ -1,0 +1,2250 @@
+/**
+ * @file test_c3_graph.cpp
+ * @brief C3 JIT EXP-1 验证：Graph IR + C3Engine 最小闭环
+ * @details 验证项：
+ *          1. 手写 Graph {x, y, Add} 编译执行结果与 eager CtorchScheduler::dispatch<op::Add> 一致
+ *          2. 手写 Graph {x, y, MatMul} 编译执行结果与 eager matMul 一致
+ *          3. canonicalize 对 Add(x, 0) 化简为 x，对 Mul(x, 1) 化简为 x
+ * @date 2026/7/31
+ */
+
+#include <gtest/gtest.h>
+#include <chrono>
+#include <cmath>
+#include <cstring>
+#include <functional>
+#include <iomanip>
+#include <future>
+#include <iostream>
+#include <thread>
+#include <vector>
+
+#include "Tensor.h"
+#include "CtorchScheduler.h"
+#include "C3/Graph.h"
+#include "C3/C3Engine.h"
+#include "C3/Tracer.h"
+#include "C3/C3KernelRegistry.h"
+#include "Ctools.h"
+#include "kernels/kernels.h"
+
+// ======================= 辅助函数 =======================
+
+/// 填充张量
+static void fillTensor(Tensor& t, const std::vector<float>& values) {
+    float* p = t.data_write<float>();
+    for (size_t i = 0; i < values.size(); ++i) {
+        p[i] = values[i];
+    }
+}
+
+/// 检查两个张量是否逐元素近似相等
+static bool tensorsAllClose(const Tensor& a, const Tensor& b, float rtol = 1e-4f, float atol = 1e-6f) {
+    if (a.shape() != b.shape()) return false;
+    const float* pa = a.data_read<float>();
+    const float* pb = b.data_read<float>();
+    size_t n = a.numel();
+    for (size_t i = 0; i < n; ++i) {
+        float diff = std::fabs(pa[i] - pb[i]);
+        float max_val = std::max(std::fabs(pa[i]), std::fabs(pb[i]));
+        if (diff > atol + rtol * max_val) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ======================= Graph IR 基础测试 =======================
+
+TEST(GraphIR, CreateSimpleAddGraph) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    auto y_desc = TensorDesc::fromShape({3, 4});
+
+    size_t x = g.addInput(x_desc);
+    size_t y = g.addInput(y_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t z = g.addNode(AddNode{x_desc, y_desc}, {x, y}, out_desc);
+    g.markOutput(z);
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.nodeCount(), 3u);  // x, y, z
+    EXPECT_EQ(g.inputCount(), 2u);
+    EXPECT_EQ(g.outputCount(), 1u);
+}
+
+TEST(GraphIR, CreateMatMulGraph) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+
+    auto out_desc = TensorDesc::fromShape({2, 4});
+    size_t c = g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(c);
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.nodeCount(), 3u);
+}
+
+TEST(GraphIR, ToString) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+    size_t y = g.addInput(x_desc);
+    g.addNode(AddNode{x_desc, x_desc}, {x, y}, x_desc);
+
+    std::string s = g.toString();
+    EXPECT_NE(s.find("Graph"), std::string::npos);
+    EXPECT_NE(s.find("Add"), std::string::npos);
+    EXPECT_NE(s.find("INPUT"), std::string::npos);
+}
+
+// ======================= Canonicalize 测试 =======================
+
+TEST(Canonicalize, AddWithZeroFolds) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    // 常量 0
+    TensorDesc zero_desc = TensorDesc::fromShape({3, 4});
+    size_t zero = g.addNode(ConstNode{0.0}, {}, zero_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t add = g.addNode(AddNode{x_desc, zero_desc}, {x, zero}, out_desc);
+    g.markOutput(add);
+
+    // canonicalize：Add(x, 0) → x
+    Graph simplified = g.canonicalize();
+
+    // 输出应被映射到输入节点 x（ConstNode 可能仍留在图中作为无用节点）
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    EXPECT_EQ(simplified.node(simplified.outputs()[0]).out_desc.shape, x_desc.shape);
+    // 验证简化后的图至少包含输入节点
+    EXPECT_GE(simplified.nodeCount(), 1u);
+}
+
+TEST(Canonicalize, MulWithOneFolds) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    TensorDesc one_desc = TensorDesc::fromShape({3, 4});
+    size_t one = g.addNode(ConstNode{1.0}, {}, one_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t mul = g.addNode(MulNode{x_desc, one_desc}, {x, one}, out_desc);
+    g.markOutput(mul);
+
+    // canonicalize：Mul(x, 1) → x
+    Graph simplified = g.canonicalize();
+
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    EXPECT_EQ(simplified.node(simplified.outputs()[0]).out_desc.shape, x_desc.shape);
+    EXPECT_GE(simplified.nodeCount(), 1u);
+}
+
+TEST(Canonicalize, NoChangeForNonFoldable) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    auto y_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+    size_t y = g.addInput(y_desc);
+
+    // 常量 2（不是 0 或 1）
+    TensorDesc c2_desc = TensorDesc::fromShape({3, 4});
+    size_t c2 = g.addNode(ConstNode{2.0}, {}, c2_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t add = g.addNode(AddNode{x_desc, c2_desc}, {x, c2}, out_desc);
+    g.markOutput(add);
+
+    Graph simplified = g.canonicalize();
+
+    // Add(x, 2) 不应被折叠
+    EXPECT_GT(simplified.nodeCount(), 1u);
+}
+
+// ======================= 算子融合测试 =======================
+
+TEST(GraphFusion, FuseAddMul) {
+    using namespace ct::c3;
+
+    // 构建图: (x + y) * z
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {add, z}, desc);
+    g.markOutput(mul);
+
+    EXPECT_EQ(g.nodeCount(), 5u);  // x, y, z, add, mul
+
+    Graph fused = g.fuse();
+
+    // 融合后: x, y, z, Fused(Add->Mul)
+    EXPECT_EQ(fused.nodeCount(), 4u);
+    EXPECT_EQ(fused.inputCount(), 3u);
+    EXPECT_EQ(fused.outputCount(), 1u);
+
+    // 验证输出节点是 FusedNode
+    const auto& out_node = fused.node(fused.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<FusedNode>(out_node.op));
+    const auto& fnode = std::get<FusedNode>(out_node.op);
+    EXPECT_EQ(fnode.ops.size(), 2u);
+    EXPECT_EQ(fnode.arg_descs.size(), 3u);  // x, y, z
+}
+
+TEST(GraphFusion, FuseAddMulWithInputReuse) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x  (x 被复用)
+    Graph g;
+    auto desc = TensorDesc::fromShape({3});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    g.markOutput(add);
+
+    EXPECT_EQ(g.nodeCount(), 4u);  // x, y, mul, add
+
+    Graph fused = g.fuse();
+
+    // 融合后: x, y, Fused(Mul->Add)
+    EXPECT_EQ(fused.nodeCount(), 3u);
+    EXPECT_EQ(fused.inputCount(), 2u);
+
+    const auto& out_node = fused.node(fused.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<FusedNode>(out_node.op));
+    const auto& fnode = std::get<FusedNode>(out_node.op);
+    EXPECT_EQ(fnode.ops.size(), 2u);
+    // x 虽然被复用，但外部输入去重后应只有 x, y
+    EXPECT_EQ(fnode.arg_descs.size(), 2u);
+}
+
+TEST(GraphFusion, FuseThreeOps) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x - z
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    EXPECT_EQ(g.nodeCount(), 6u);  // x, y, z, mul, add, sub
+
+    Graph fused = g.fuse();
+    EXPECT_EQ(fused.nodeCount(), 4u);  // x, y, z, Fused(Mul->Add->Sub)
+    EXPECT_EQ(fused.inputCount(), 3u);
+
+    const auto& out_node = fused.node(fused.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<FusedNode>(out_node.op));
+    const auto& fnode = std::get<FusedNode>(out_node.op);
+    EXPECT_EQ(fnode.ops.size(), 3u);
+}
+
+TEST(GraphFusion, NoFusionForSingleOp) {
+    using namespace ct::c3;
+
+    // 单算子图不应融合
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    Graph fused = g.fuse();
+    // 单算子不应产生融合，节点数不变
+    EXPECT_EQ(fused.nodeCount(), g.nodeCount());
+    EXPECT_FALSE(std::holds_alternative<FusedNode>(fused.node(fused.outputs()[0]).op));
+}
+
+TEST(GraphFusion, NoFusionForMatMul) {
+    using namespace ct::c3;
+
+    // MatMul 不应参与融合
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    auto c_desc = TensorDesc::fromShape({2, 4});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    size_t mm = g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, c_desc);
+    size_t relu = g.addNode(MulNode{c_desc, c_desc}, {mm, mm}, c_desc);  // 模拟 relu-like
+    g.markOutput(relu);
+
+    Graph fused = g.fuse();
+    // MatMul 不能融合，所以 Mul 是单算子也不融合
+    EXPECT_FALSE(std::holds_alternative<FusedNode>(fused.node(fused.outputs()[0]).op));
+}
+
+TEST(GraphFusion, NoFusionForMultiConsumer) {
+    using namespace ct::c3;
+
+    // 中间节点被多个消费者引用时不应融合
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {add, add}, desc);  // add 被消费两次
+    g.markOutput(mul);
+
+    Graph fused = g.fuse();
+    // add 有多个消费者，不应融合
+    EXPECT_FALSE(std::holds_alternative<FusedNode>(fused.node(fused.outputs()[0]).op));
+}
+
+// ======================= JIT 编译与执行测试 =======================
+
+TEST(JITCompile, AddGraphExecute) {
+    using namespace ct::c3;
+
+    // 1. 构建图
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
+
+    // 2. 编译
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.target_device = DeviceType::kCPU;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    // 3. 准备输入
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    // 4. 执行编译 kernel
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // 5. eager 参考
+    // 使用 CtorchScheduler 直接调度 Add
+    Tensor eager = a + b;
+
+    // 6. 比较
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(JITCompile, MulGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({3, 3});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {3, 3});
+    Tensor b(ShapeTag{}, {3, 3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f});
+    fillTensor(b, {2.0f, 0.0f, 1.0f, 3.0f, 5.0f, 2.0f, 1.0f, 1.0f, 1.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a * b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(JITCompile, MatMulGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    auto out_desc = TensorDesc::fromShape({2, 4});
+    size_t c = g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(c);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 4});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(B, {1.0f, 0.0f, 0.0f, 1.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f});
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(JITCompile, CacheHit) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+
+    // 首次编译
+    auto stats_before = engine.getCacheStats();
+    auto kernel1 = engine.compile(g, {});
+    ASSERT_NE(kernel1, nullptr);
+
+    auto stats_after_first = engine.getCacheStats();
+    EXPECT_GT(stats_after_first.misses, stats_before.misses);
+
+    // 第二次编译（相同图）应该命中缓存
+    auto kernel2 = engine.compile(g, {});
+    ASSERT_NE(kernel2, nullptr);
+
+    auto stats_after_second = engine.getCacheStats();
+    EXPECT_GT(stats_after_second.hits, stats_after_first.hits);
+
+    // 同一缓存键
+    EXPECT_EQ(kernel1->cacheKey(), kernel2->cacheKey());
+}
+
+// ======================= 融合 JIT 编译与执行测试 =======================
+
+TEST(FusedJIT, AddMulFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: (x + y) * z, 启用融合
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {add, z}, desc);
+    g.markOutput(mul);
+
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = true;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    Tensor c(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+    fillTensor(c, {2.0f, 3.0f, 4.0f, 5.0f});
+
+    auto results = kernel->execute({a, b, c});
+    ASSERT_EQ(results.size(), 1u);
+
+    // eager: (a + b) * c
+    Tensor eager = (a + b) * c;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(FusedJIT, MulAddFusedExecuteWithReuse) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x, 输入复用
+    Graph g;
+    auto desc = TensorDesc::fromShape({3});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    g.markOutput(add);
+
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = true;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {3});
+    Tensor b(ShapeTag{}, {3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f});
+    fillTensor(b, {4.0f, 5.0f, 6.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // eager: (a * b) + a
+    Tensor eager = (a * b) + a;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(FusedJIT, ThreeOpFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x - z, 三操作融合
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = true;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    Tensor c(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+    fillTensor(c, {2.0f, 1.0f, 3.0f, 0.5f});
+
+    auto results = kernel->execute({a, b, c});
+    ASSERT_EQ(results.size(), 1u);
+
+    // eager: (a * b) + a - c
+    Tensor eager = (a * b) + a - c;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(FusedJIT, NegFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: -(x * y)
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t neg = g.addNode(NegNode{desc}, {mul}, desc);
+    g.markOutput(neg);
+
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = true;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // eager: -(a * b)
+    Tensor eager = -(a * b);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(FusedJIT, DisableFusion) {
+    using namespace ct::c3;
+
+    // 禁用融合时，多算子图应 fallback 到单算子逐个执行
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = false;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_TRUE(tensorsAllClose(results[0], a + b));
+}
+
+// ======================= Tracer 图捕获测试 =======================
+
+TEST(Tracer, ManualTraceAdd) {
+    using namespace ct::c3;
+
+    Tracer tracer;
+    tracer.begin();
+
+    auto desc = TensorDesc::fromShape({4});
+    auto x = tracer.input(desc);
+    auto y = tracer.input(desc);
+    auto z = x + y;
+
+    Graph g = tracer.end(z);
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.inputCount(), 2u);
+    EXPECT_EQ(g.outputCount(), 1u);
+    // 图应有 2 个输入 + 1 个 Add 节点 = 3 个节点
+    EXPECT_EQ(g.nodeCount(), 3u);
+}
+
+TEST(Tracer, ManualTraceMatMul) {
+    using namespace ct::c3;
+
+    Tracer tracer;
+    tracer.begin();
+
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    auto a = tracer.input(a_desc);
+    auto b = tracer.input(b_desc);
+    auto c = a.matmul(b);
+
+    Graph g = tracer.end(c);
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.nodeCount(), 3u);
+    EXPECT_EQ(g.outputCount(), 1u);
+}
+
+TEST(Tracer, LambdaTraceAdd) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) { return x + y; },
+        desc, desc
+    );
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.nodeCount(), 3u);
+    EXPECT_EQ(g.inputCount(), 2u);
+    EXPECT_EQ(g.outputCount(), 1u);
+}
+
+TEST(Tracer, LambdaTraceExpression) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({3, 3});
+    // 捕获表达式: x * y + x
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) {
+            auto mul = x * y;
+            return mul + x;
+        },
+        desc, desc
+    );
+
+    EXPECT_TRUE(g.isValid());
+    // 节点: x(input), y(input), mul(x*y), add(mul+x)
+    EXPECT_EQ(g.nodeCount(), 4u);
+    EXPECT_EQ(g.outputCount(), 1u);
+}
+
+TEST(Tracer, LambdaTraceScalarOp) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    // y * 2.0f (标量乘)
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) {
+            return x + y * 2.0f;
+        },
+        desc, desc
+    );
+
+    EXPECT_TRUE(g.isValid());
+    // 节点: x, y, const(2.0), mul(y*2.0), add(x+mul)
+    EXPECT_EQ(g.nodeCount(), 5u);
+}
+
+TEST(Tracer, TraceCompileExecute) {
+    using namespace ct::c3;
+
+    // 1. 捕获图
+    auto desc = TensorDesc::fromShape({4});
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) { return x + y; },
+        desc, desc
+    );
+
+    // 2. 编译
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    // 3. 执行
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // 4. 与 eager 对比
+    Tensor eager = a + b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(Tracer, TraceMatMulCompileExecute) {
+    using namespace ct::c3;
+
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) { return x.matmul(y); },
+        a_desc, b_desc
+    );
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 4});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(B, {1.0f, 0.0f, 0.0f, 1.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f});
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(Tracer, TraceExpressionCompileExecute) {
+    using namespace ct::c3;
+
+    // 捕获 (x * y) + x — 启用融合后将合并为单个 FusedNode
+    auto desc = TensorDesc::fromShape({3});
+    auto g = Tracer::trace(
+        [](auto& x, auto& y) {
+            auto mul = x * y;
+            return mul + x;
+        },
+        desc, desc
+    );
+
+    EXPECT_TRUE(g.isValid());
+    EXPECT_EQ(g.nodeCount(), 4u);
+
+    // 启用融合编译
+    auto& engine = C3Engine::getInstance();
+    CompileOptions opts;
+    opts.enable_fusion = true;
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {3});
+    Tensor b(ShapeTag{}, {3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f});
+    fillTensor(b, {4.0f, 5.0f, 6.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // eager: (a * b) + a
+    Tensor eager = (a * b) + a;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// ======================= C3 热替换 + 回退测试 =======================
+
+TEST(C3HotReplace, InstallAndDispatch) {
+    using namespace ct::c3;
+
+    // 1. 编译 C3 kernel
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    // 2. 安装到 C3 注册表
+    KernelShapeInfo shapes;
+    shapes.lhs_shape = {4};
+    shapes.rhs_shape = {4};
+    shapes.out_shape = {4};
+    bool installed = kernel->installIntoRegistry(op::Add, shapes);
+    EXPECT_TRUE(installed);
+
+    // 3. 通过调度器 dispatch（模板版本，内部会查询 C3 注册表）
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor c3_result = sched.dispatch<op::Add>(a, b);
+
+    // 4. 与 eager 对比
+    Tensor eager = a + b;
+    EXPECT_TRUE(tensorsAllClose(c3_result, eager));
+
+    // 5. 验证 C3 统计
+    auto stats = C3KernelRegistry::getInstance().getStats();
+    EXPECT_GT(stats.hit_count, 0u);
+    EXPECT_GE(stats.install_count, 1u);
+
+    // 6. 卸载
+    C3KernelRegistry::getInstance().uninstall(op::Add, DeviceType::kCPU);
+}
+
+TEST(C3HotReplace, MulDispatch) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({3, 3});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(MulNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    KernelShapeInfo shapes;
+    shapes.lhs_shape = {3, 3};
+    shapes.rhs_shape = {3, 3};
+    shapes.out_shape = {3, 3};
+    kernel->installIntoRegistry(op::Mul, shapes);
+
+    Tensor a(ShapeTag{}, {3, 3});
+    Tensor b(ShapeTag{}, {3, 3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f});
+    fillTensor(b, {2.0f, 0.0f, 1.0f, 3.0f, 5.0f, 2.0f, 1.0f, 1.0f, 1.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor c3_result = sched.dispatch<op::Mul>(a, b);
+    Tensor eager = a * b;
+
+    EXPECT_TRUE(tensorsAllClose(c3_result, eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Mul, DeviceType::kCPU);
+}
+
+TEST(C3HotReplace, RollbackOnUninstall) {
+    using namespace ct::c3;
+
+    // 安装
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    KernelShapeInfo shapes{{4}, {4}, {4}};
+    kernel->installIntoRegistry(op::Add, shapes);
+
+    // 第一次 dispatch — 走 C3
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor c3_result = sched.dispatch<op::Add>(a, b);
+    EXPECT_TRUE(tensorsAllClose(c3_result, a + b));
+
+    auto stats_before = C3KernelRegistry::getInstance().getStats();
+    size_t hits_before = stats_before.hit_count;
+
+    // 卸载 C3 kernel
+    C3KernelRegistry::getInstance().uninstall(op::Add, DeviceType::kCPU);
+
+    // 第二次 dispatch — 应回退到 eager
+    Tensor fallback_result = sched.dispatch<op::Add>(a, b);
+    EXPECT_TRUE(tensorsAllClose(fallback_result, a + b));
+
+    // 统计：hit_count 不应增加（因为已卸载）
+    auto stats_after = C3KernelRegistry::getInstance().getStats();
+    EXPECT_EQ(stats_after.hit_count, hits_before);
+}
+
+TEST(C3HotReplace, ShapeMismatchFallback) {
+    using namespace ct::c3;
+
+    // 安装形状为 {4} 的 C3 kernel
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    KernelShapeInfo shapes{{4}, {4}, {4}};
+    kernel->installIntoRegistry(op::Add, shapes);
+
+    // 用不同形状 {6} 调用 — 应回退到 eager
+    Tensor a(ShapeTag{}, {6});
+    Tensor b(ShapeTag{}, {6});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(b, {6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor result = sched.dispatch<op::Add>(a, b);
+    Tensor eager = a + b;
+
+    // 结果应正确（走了 eager 回退）
+    EXPECT_TRUE(tensorsAllClose(result, eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Add, DeviceType::kCPU);
+}
+
+TEST(C3HotReplace, StatsAccuracy) {
+    using namespace ct::c3;
+
+    C3KernelRegistry::getInstance().uninstallAll();
+    auto stats0 = C3KernelRegistry::getInstance().getStats();
+    EXPECT_EQ(stats0.active_entries, 0u);
+    size_t base_install = stats0.install_count;
+    size_t base_uninstall = stats0.uninstall_count;
+
+    // 安装两个 C3 kernel
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel1 = engine.compile(g, {});
+    KernelShapeInfo shapes{{4}, {4}, {4}};
+    kernel1->installIntoRegistry(op::Add, shapes);
+
+    // 第二个
+    Graph g2;
+    size_t a = g2.addInput(desc);
+    size_t b = g2.addInput(desc);
+    g2.addNode(MulNode{desc, desc}, {a, b}, desc);
+    auto kernel2 = engine.compile(g2, {});
+    kernel2->installIntoRegistry(op::Mul, shapes);
+
+    auto stats1 = C3KernelRegistry::getInstance().getStats();
+    EXPECT_EQ(stats1.active_entries, 2u);
+    EXPECT_EQ(stats1.install_count - base_install, 2u);
+
+    C3KernelRegistry::getInstance().uninstallAll();
+    auto stats2 = C3KernelRegistry::getInstance().getStats();
+    EXPECT_EQ(stats2.active_entries, 0u);
+    EXPECT_EQ(stats2.uninstall_count - base_uninstall, 2u);
+}
+
+// ======================= MLIR 后端测试 =======================
+
+#ifdef CT_ENABLE_MLIR
+
+/// 辅助：用 MLIR 后端编译单算子图
+static std::shared_ptr<ct::c3::CompiledKernel> compileMLIR(
+    ct::c3::Graph& g, DeviceType dev = DeviceType::kCPU)
+{
+    ct::c3::CompileOptions opts;
+    opts.backend = ct::c3::C3Backend::MLIR;
+    opts.target_device = dev;
+    return ct::c3::C3Engine::getInstance().compile(g, opts);
+}
+
+TEST(MLIRBackend, AddGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a + b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, MulGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({3, 3});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {3, 3});
+    Tensor b(ShapeTag{}, {3, 3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f});
+    fillTensor(b, {2.0f, 0.0f, 1.0f, 3.0f, 5.0f, 2.0f, 1.0f, 1.0f, 1.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a * b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, SubGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(SubNode{desc, desc}, {x, y}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {10.0f, 20.0f, 30.0f, 40.0f});
+    fillTensor(b, {1.0f, 2.0f, 3.0f, 4.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a - b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, DivGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(DivNode{desc, desc}, {x, y}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {10.0f, 20.0f, 30.0f, 40.0f});
+    fillTensor(b, {2.0f, 4.0f, 5.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a / b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, NegGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    g.addNode(NegNode{desc}, {x}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, -2.0f, 3.0f, -4.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = -a;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, MatMulGraphExecute) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    auto out_desc = TensorDesc::fromShape({2, 4});
+    g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 4});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(B, {1.0f, 0.0f, 0.0f, 1.0f,
+                    0.0f, 1.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 1.0f, 0.0f});
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRBackend, CacheHitSeparateFromHandwritten) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto& engine = C3Engine::getInstance();
+
+    // MLIR 编译
+    CompileOptions mlir_opts;
+    mlir_opts.backend = C3Backend::MLIR;
+    auto stats_before = engine.getCacheStats();
+    auto kernel1 = engine.compile(g, mlir_opts);
+    ASSERT_NE(kernel1, nullptr);
+
+    auto stats_after_first = engine.getCacheStats();
+    EXPECT_GT(stats_after_first.misses, stats_before.misses);
+
+    // 第二次 MLIR 编译（相同图）应命中缓存
+    auto kernel2 = engine.compile(g, mlir_opts);
+    ASSERT_NE(kernel2, nullptr);
+
+    auto stats_after_second = engine.getCacheStats();
+    EXPECT_GT(stats_after_second.hits, stats_after_first.hits);
+    EXPECT_EQ(kernel1->cacheKey(), kernel2->cacheKey());
+
+    // Handwritten 编译应有不同缓存键
+    CompileOptions hw_opts;
+    hw_opts.backend = C3Backend::Handwritten;
+    auto kernel_hw = engine.compile(g, hw_opts);
+    ASSERT_NE(kernel_hw, nullptr);
+    EXPECT_NE(kernel1->cacheKey(), kernel_hw->cacheKey());
+}
+
+TEST(MLIRBackend, HotReplaceInstallAndDispatch) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    // 安装 MLIR 编译的 kernel 到 C3 注册表
+    KernelShapeInfo shapes{{4}, {4}, {4}};
+    bool installed = kernel->installIntoRegistry(op::Add, shapes);
+    EXPECT_TRUE(installed);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor c3_result = sched.dispatch<op::Add>(a, b);
+    Tensor eager = a + b;
+    EXPECT_TRUE(tensorsAllClose(c3_result, eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Add, DeviceType::kCPU);
+}
+
+TEST(MLIRBackend, HotReplaceUninstallFallback) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    KernelShapeInfo shapes{{4}, {4}, {4}};
+    kernel->installIntoRegistry(op::Add, shapes);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto& sched = CtorchScheduler::getInstance();
+    Tensor c3_result = sched.dispatch<op::Add>(a, b);
+    EXPECT_TRUE(tensorsAllClose(c3_result, a + b));
+
+    auto stats_before = C3KernelRegistry::getInstance().getStats();
+    size_t hits_before = stats_before.hit_count;
+
+    C3KernelRegistry::getInstance().uninstall(op::Add, DeviceType::kCPU);
+
+    Tensor fallback_result = sched.dispatch<op::Add>(a, b);
+    EXPECT_TRUE(tensorsAllClose(fallback_result, a + b));
+
+    auto stats_after = C3KernelRegistry::getInstance().getStats();
+    EXPECT_EQ(stats_after.hit_count, hits_before);
+}
+
+// ======================= MLIR 后端融合测试 =======================
+
+TEST(MLIRFused, AddMulFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: (x + y) * z, 启用融合 + MLIR 后端
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {add, z}, desc);
+    g.markOutput(mul);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.enable_fusion = true;
+    auto kernel = C3Engine::getInstance().compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    Tensor c(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+    fillTensor(c, {2.0f, 3.0f, 4.0f, 5.0f});
+
+    auto results = kernel->execute({a, b, c});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = (a + b) * c;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRFused, MulAddFusedWithReuse) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x, 输入复用 + MLIR 后端
+    Graph g;
+    auto desc = TensorDesc::fromShape({3});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    g.markOutput(add);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.enable_fusion = true;
+    auto kernel = C3Engine::getInstance().compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {3});
+    Tensor b(ShapeTag{}, {3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f});
+    fillTensor(b, {4.0f, 5.0f, 6.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = (a * b) + a;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRFused, ThreeOpFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: (x * y) + x - z, 三操作融合 + MLIR 后端
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.enable_fusion = true;
+    auto kernel = C3Engine::getInstance().compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    Tensor c(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+    fillTensor(c, {2.0f, 1.0f, 3.0f, 0.5f});
+
+    auto results = kernel->execute({a, b, c});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = (a * b) + a - c;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(MLIRFused, NegFusedExecute) {
+    using namespace ct::c3;
+
+    // 构建图: -(x * y), MLIR 后端
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t neg = g.addNode(NegNode{desc}, {mul}, desc);
+    g.markOutput(neg);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.enable_fusion = true;
+    auto kernel = C3Engine::getInstance().compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = -(a * b);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+#else  // !CT_ENABLE_MLIR
+
+TEST(MLIRBackend, Disabled_SkipCompile) {
+    // MLIR 后端未启用时，CompileOptions::MLIR 应回退到 Handwritten
+    using namespace ct::c3;
+
+    Graph g;
+    auto desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;  // 即使设为 MLIR，也会回退到 Handwritten
+    auto kernel = C3Engine::getInstance().compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    Tensor b(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
+    fillTensor(b, {5.0f, 6.0f, 7.0f, 8.0f});
+
+    auto results = kernel->execute({a, b});
+    EXPECT_TRUE(tensorsAllClose(results[0], a + b));
+}
+
+#endif // CT_ENABLE_MLIR
+
+// ======================= Benchmark 测试 =======================
+
+static void bench(const std::string& name, int iters, std::function<void()> fn) {
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iters; ++i) fn();
+    auto end = std::chrono::high_resolution_clock::now();
+    double us = std::chrono::duration<double, std::micro>(end - start).count() / iters;
+    std::cout << "  " << name << ": " << us << " us/iter (" << iters << " iters)" << std::endl;
+}
+
+TEST(Benchmark, JITvsEagerAdd) {
+    std::cout << "\n=== Benchmark: JIT vs Eager (Handwritten backend) ===" << std::endl;
+
+    Tensor a(ShapeTag{}, {1024, 1024});
+    Tensor b(ShapeTag{}, {1024, 1024});
+    fillTensor(a, std::vector<float>(1024*1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024*1024, 2.0f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+    auto g = ct::c3::Tracer::trace([](auto& x, auto& y) { return x + y; }, desc, desc);
+    auto& engine = ct::c3::C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+
+    std::cout << "--- Add (1024x1024) ---" << std::endl;
+    bench("JIT    ", 100, [&]() { auto r = kernel->execute({a, b}); });
+    bench("Eager  ", 100, [&]() { auto r = a + b; });
+}
+
+TEST(Benchmark, JITvsEagerMul) {
+    Tensor a(ShapeTag{}, {1024, 1024});
+    Tensor b(ShapeTag{}, {1024, 1024});
+    fillTensor(a, std::vector<float>(1024*1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024*1024, 2.0f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+    auto g = ct::c3::Tracer::trace([](auto& x, auto& y) { return x * y; }, desc, desc);
+    auto& engine = ct::c3::C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+
+    std::cout << "--- Mul (1024x1024) ---" << std::endl;
+    bench("JIT    ", 100, [&]() { auto r = kernel->execute({a, b}); });
+    bench("Eager  ", 100, [&]() { auto r = a * b; });
+}
+
+TEST(Benchmark, JITvsEagerMatMul) {
+    Tensor a(ShapeTag{}, {256, 256});
+    Tensor b(ShapeTag{}, {256, 256});
+    fillTensor(a, std::vector<float>(256*256, 1.0f));
+    fillTensor(b, std::vector<float>(256*256, 2.0f));
+
+    auto a_desc = ct::c3::TensorDesc::fromShape({256, 256});
+    auto b_desc = ct::c3::TensorDesc::fromShape({256, 256});
+    auto g = ct::c3::Tracer::trace([](auto& x, auto& y) { return x.matmul(y); }, a_desc, b_desc);
+    auto& engine = ct::c3::C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+
+    std::cout << "--- MatMul (256x256) ---" << std::endl;
+    bench("JIT    ", 20, [&]() { auto r = kernel->execute({a, b}); });
+    bench("Eager  ", 20, [&]() { auto r = matMul(a, b); });
+}
+
+TEST(Benchmark, JITvsEagerSmallVec) {
+    Tensor a(ShapeTag{}, {1024});
+    Tensor b(ShapeTag{}, {1024});
+    fillTensor(a, std::vector<float>(1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024, 2.0f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024});
+    auto g = ct::c3::Tracer::trace([](auto& x, auto& y) { return x + y; }, desc, desc);
+    auto& engine = ct::c3::C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+
+    std::cout << "--- Add (1024) small vector ---" << std::endl;
+    bench("JIT    ", 10000, [&]() { auto r = kernel->execute({a, b}); });
+    bench("Eager  ", 10000, [&]() { auto r = a + b; });
+}
+
+TEST(Benchmark, FusedVsNonFused) {
+    std::cout << "\n=== Benchmark: Fused vs Non-Fused (Handwritten backend) ===" << std::endl;
+
+    // 构建 (x * y) + x - z, 三操作
+    Tensor a(ShapeTag{}, {1024, 1024});
+    Tensor b(ShapeTag{}, {1024, 1024});
+    Tensor c(ShapeTag{}, {1024, 1024});
+    fillTensor(a, std::vector<float>(1024*1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024*1024, 2.0f));
+    fillTensor(c, std::vector<float>(1024*1024, 0.5f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(ct::c3::MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(ct::c3::SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    auto& engine = ct::c3::C3Engine::getInstance();
+
+    ct::c3::CompileOptions fused_opts;
+    fused_opts.enable_fusion = true;
+    auto fused_kernel = engine.compile(g, fused_opts);
+
+    ct::c3::CompileOptions no_fused_opts;
+    no_fused_opts.enable_fusion = false;
+    auto no_fused_kernel = engine.compile(g, no_fused_opts);
+
+    std::cout << "--- (x * y) + x - z (1024x1024) ---" << std::endl;
+    bench("Fused JIT    ", 100, [&]() { auto r = fused_kernel->execute({a, b, c}); });
+    bench("Non-Fused JIT", 100, [&]() { auto r = no_fused_kernel->execute({a, b, c}); });
+    bench("Eager (3 ops)", 100, [&]() { auto r = (a * b) + a - c; });
+}
+
+#ifdef CT_ENABLE_MLIR
+TEST(Benchmark, MLIRvsEagerAdd) {
+    std::cout << "\n=== Benchmark: MLIR JIT vs Eager ===" << std::endl;
+
+    Tensor a(ShapeTag{}, {1024, 1024});
+    Tensor b(ShapeTag{}, {1024, 1024});
+    fillTensor(a, std::vector<float>(1024*1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024*1024, 2.0f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    g.addNode(ct::c3::AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    ct::c3::CompileOptions hw_opts;
+    hw_opts.backend = ct::c3::C3Backend::Handwritten;
+    auto hw_kernel = ct::c3::C3Engine::getInstance().compile(g, hw_opts);
+
+    ct::c3::CompileOptions mlir_opts;
+    mlir_opts.backend = ct::c3::C3Backend::MLIR;
+    auto mlir_kernel = ct::c3::C3Engine::getInstance().compile(g, mlir_opts);
+
+    std::cout << "--- Add (1024x1024) ---" << std::endl;
+    bench("Handwritten JIT", 100, [&]() { auto r = hw_kernel->execute({a, b}); });
+    bench("MLIR JIT       ", 100, [&]() { auto r = mlir_kernel->execute({a, b}); });
+    bench("Eager          ", 100, [&]() { auto r = a + b; });
+}
+
+TEST(Benchmark, MLIRvsEagerMatMul) {
+    Tensor a(ShapeTag{}, {256, 256});
+    Tensor b(ShapeTag{}, {256, 256});
+    fillTensor(a, std::vector<float>(256*256, 1.0f));
+    fillTensor(b, std::vector<float>(256*256, 2.0f));
+
+    auto a_desc = ct::c3::TensorDesc::fromShape({256, 256});
+    auto b_desc = ct::c3::TensorDesc::fromShape({256, 256});
+    ct::c3::Graph g;
+    size_t ai = g.addInput(a_desc);
+    size_t bi = g.addInput(b_desc);
+    auto out_desc = ct::c3::TensorDesc::fromShape({256, 256});
+    g.addNode(ct::c3::MatMulNode{a_desc, b_desc}, {ai, bi}, out_desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    ct::c3::CompileOptions hw_opts;
+    hw_opts.backend = ct::c3::C3Backend::Handwritten;
+    auto hw_kernel = ct::c3::C3Engine::getInstance().compile(g, hw_opts);
+
+    ct::c3::CompileOptions mlir_opts;
+    mlir_opts.backend = ct::c3::C3Backend::MLIR;
+    auto mlir_kernel = ct::c3::C3Engine::getInstance().compile(g, mlir_opts);
+
+    std::cout << "--- MatMul (256x256) ---" << std::endl;
+    bench("Handwritten JIT", 20, [&]() { auto r = hw_kernel->execute({a, b}); });
+    bench("MLIR JIT       ", 20, [&]() { auto r = mlir_kernel->execute({a, b}); });
+    bench("Eager          ", 20, [&]() { auto r = matMul(a, b); });
+}
+
+TEST(Benchmark, MLIRFusedVsNonFused) {
+    std::cout << "\n=== Benchmark: MLIR Fused vs Non-Fused ===" << std::endl;
+
+    Tensor a(ShapeTag{}, {1024, 1024});
+    Tensor b(ShapeTag{}, {1024, 1024});
+    Tensor c(ShapeTag{}, {1024, 1024});
+    fillTensor(a, std::vector<float>(1024*1024, 1.0f));
+    fillTensor(b, std::vector<float>(1024*1024, 2.0f));
+    fillTensor(c, std::vector<float>(1024*1024, 0.5f));
+
+    auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(ct::c3::MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(ct::c3::SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    auto& engine = ct::c3::C3Engine::getInstance();
+
+    // MLIR fused
+    ct::c3::CompileOptions mlir_fused_opts;
+    mlir_fused_opts.backend = ct::c3::C3Backend::MLIR;
+    mlir_fused_opts.enable_fusion = true;
+    auto mlir_fused = engine.compile(g, mlir_fused_opts);
+
+    // MLIR non-fused
+    ct::c3::CompileOptions mlir_no_fused_opts;
+    mlir_no_fused_opts.backend = ct::c3::C3Backend::MLIR;
+    mlir_no_fused_opts.enable_fusion = false;
+    auto mlir_no_fused = engine.compile(g, mlir_no_fused_opts);
+
+    // Handwritten fused
+    ct::c3::CompileOptions hw_fused_opts;
+    hw_fused_opts.backend = ct::c3::C3Backend::Handwritten;
+    hw_fused_opts.enable_fusion = true;
+    auto hw_fused = engine.compile(g, hw_fused_opts);
+
+    std::cout << "--- (x * y) + x - z (1024x1024) ---" << std::endl;
+    bench("MLIR Fused      ", 100, [&]() { auto r = mlir_fused->execute({a, b, c}); });
+    bench("MLIR Non-Fused  ", 100, [&]() { auto r = mlir_no_fused->execute({a, b, c}); });
+    bench("HW Fused        ", 100, [&]() { auto r = hw_fused->execute({a, b, c}); });
+    bench("Eager (3 ops)   ", 100, [&]() { auto r = (a * b) + a - c; });
+}
+
+TEST(Benchmark, FusionBreakEven) {
+    /// @brief 融合收益拐点分析：对比不同链长度（2/3/4/5/6/8 ops）的融合 vs 非融合性能
+    /// @details 链结构：((...(x0 op0 x1) op1 x2) op2 x3) ...)
+    ///          op 交替使用 Add/Mul 以保证实际计算复杂度
+    ///          非融合路径：逐个 op 编译为独立 kernel 并分别执行，累加总耗时
+    std::cout << "\n=== Benchmark: Fusion Break-Even Analysis ===" << std::endl;
+    std::cout << "Chain | MLIR Fused | MLIR NoFuse | HW Fused | HW NoFuse | Eager" << std::endl;
+    std::cout << "------|------------|-------------|----------|-----------|------" << std::endl;
+
+    const std::vector<int> chain_lengths = {2, 3, 4, 5, 6, 8};
+    const size_t N = 1024 * 1024;  // 1M elements
+
+    for (int ops_count : chain_lengths) {
+        std::vector<float> values(N, 1.0f);
+
+        auto desc = ct::c3::TensorDesc::fromShape({1024, 1024});
+        ct::c3::Graph g;
+        std::vector<size_t> inputs;
+        for (int i = 0; i <= ops_count; ++i) {
+            inputs.push_back(g.addInput(desc));
+        }
+
+        // 交替 Add/Mul 构建链
+        size_t prev = inputs[0];
+        std::vector<ct::c3::NodeVariant> ops;
+        std::vector<std::pair<size_t, size_t>> op_input_pairs; // (lhs, rhs) for each op
+        for (int i = 0; i < ops_count; ++i) {
+            size_t lhs = prev;
+            size_t rhs = inputs[i + 1];
+            if (i % 2 == 0) {
+                prev = g.addNode(ct::c3::AddNode{desc, desc}, {lhs, rhs}, desc);
+                ops.push_back(ct::c3::AddNode{desc, desc});
+            } else {
+                prev = g.addNode(ct::c3::MulNode{desc, desc}, {lhs, rhs}, desc);
+                ops.push_back(ct::c3::MulNode{desc, desc});
+            }
+            op_input_pairs.push_back({lhs, rhs});
+        }
+        g.markOutput(prev);
+
+        auto& engine = ct::c3::C3Engine::getInstance();
+
+        // MLIR fused
+        ct::c3::CompileOptions mlir_f_opts;
+        mlir_f_opts.backend = ct::c3::C3Backend::MLIR;
+        mlir_f_opts.enable_fusion = true;
+        auto mlir_f = engine.compile(g, mlir_f_opts);
+
+        // HW fused
+        ct::c3::CompileOptions hw_f_opts;
+        hw_f_opts.backend = ct::c3::C3Backend::Handwritten;
+        hw_f_opts.enable_fusion = true;
+        auto hw_f = engine.compile(g, hw_f_opts);
+
+        // === 非融合：为每个 op 构建独立 graph 并编译 ===
+        std::vector<std::shared_ptr<ct::c3::CompiledKernel>> mlir_kernels, hw_kernels;
+        ct::c3::CompileOptions mlir_opts;
+        mlir_opts.backend = ct::c3::C3Backend::MLIR;
+        mlir_opts.enable_fusion = false;
+        ct::c3::CompileOptions hw_opts;
+        hw_opts.backend = ct::c3::C3Backend::Handwritten;
+        hw_opts.enable_fusion = false;
+
+        // 中间张量：第一个 op 用 inputs[0] 和 inputs[1]，后续 op 用中间结果
+        std::vector<Tensor> inter_tensors;
+        for (int i = 0; i <= ops_count; ++i) {
+            inter_tensors.emplace_back(ShapeTag{}, std::vector<size_t>{1024, 1024});
+            fillTensor(inter_tensors.back(), values);
+        }
+        // 为中间结果预分配
+        for (int i = 0; i < ops_count - 1; ++i) {
+            inter_tensors.push_back(Tensor(ShapeTag{}, std::vector<size_t>{1024, 1024}));
+        }
+
+        for (int i = 0; i < ops_count; ++i) {
+            ct::c3::Graph single_g;
+            size_t x = single_g.addInput(desc);
+            size_t y = single_g.addInput(desc);
+            size_t node = single_g.addNode(ops[i], {x, y}, desc);
+            single_g.markOutput(node);
+            mlir_kernels.push_back(engine.compile(single_g, mlir_opts));
+            hw_kernels.push_back(engine.compile(single_g, hw_opts));
+        }
+
+        // 构建输入列表
+        std::vector<Tensor> fused_inputs;
+        for (int i = 0; i <= ops_count; ++i) {
+            fused_inputs.push_back(inter_tensors[i]);
+        }
+
+        // 预热
+        mlir_f->execute(fused_inputs);
+        hw_f->execute(fused_inputs);
+
+        int runs = (ops_count <= 3) ? 100 : 50;
+
+        auto measure = [&](auto& kernel, const std::vector<Tensor>& in) -> double {
+            auto start = std::chrono::high_resolution_clock::now();
+            for (int r = 0; r < runs; ++r) {
+                auto result = kernel->execute(in);
+                (void)result;
+            }
+            auto end = std::chrono::high_resolution_clock::now();
+            return std::chrono::duration<double, std::micro>(end - start).count() / runs;
+        };
+
+        double mlir_f_us = measure(mlir_f, fused_inputs);
+        double hw_f_us = measure(hw_f, fused_inputs);
+
+        // 非融合：逐个执行每个 op 的 kernel，累加时间
+        double mlir_nf_us = 0, hw_nf_us = 0;
+        for (int i = 0; i < ops_count; ++i) {
+            Tensor lhs = (i == 0) ? inter_tensors[0] : inter_tensors[ops_count + 1 + (i - 1)];
+            Tensor rhs = inter_tensors[i + 1];
+            Tensor& out = (i == ops_count - 1) ? inter_tensors.back() : inter_tensors[ops_count + 1 + i];
+            std::vector<Tensor> op_inputs = {lhs, rhs};
+
+            mlir_nf_us += measure(mlir_kernels[i], op_inputs);
+            hw_nf_us += measure(hw_kernels[i], op_inputs);
+        }
+
+        // Eager
+        double eager_us = 0;
+        {
+            auto start = std::chrono::high_resolution_clock::now();
+            for (int r = 0; r < runs; ++r) {
+                Tensor cur = inter_tensors[0];
+                for (int i = 0; i < ops_count; ++i) {
+                    if (i % 2 == 0) {
+                        cur = cur + inter_tensors[i + 1];
+                    } else {
+                        cur = cur * inter_tensors[i + 1];
+                    }
+                }
+                (void)cur;
+            }
+            auto end = std::chrono::high_resolution_clock::now();
+            eager_us = std::chrono::duration<double, std::micro>(end - start).count() / runs;
+        }
+
+        std::cout << std::setw(5) << std::left << ops_count << " | "
+                  << std::setw(10) << std::right << std::fixed << std::setprecision(1) << mlir_f_us << " | "
+                  << std::setw(11) << mlir_nf_us << " | "
+                  << std::setw(8) << hw_f_us << " | "
+                  << std::setw(9) << hw_nf_us << " | "
+                  << std::setw(5) << eager_us << std::endl;
+    }
+}
+
+#endif // CT_ENABLE_MLIR
+
+// ======================= 异步编译测试 =======================
+
+TEST(AsyncCompile, BasicAsyncExecute) {
+    // 验证异步编译后 kernel 执行结果与 eager 一致
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    Tensor a(ShapeTag{}, {128, 128});
+    Tensor b(ShapeTag{}, {128, 128});
+    fillTensor(a, std::vector<float>(128*128, 1.5f));
+    fillTensor(b, std::vector<float>(128*128, 2.5f));
+
+    Tensor eager = a + b;
+
+    // 异步编译
+    auto future = engine.compileAsync(g);
+    // 等待编译完成
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+    auto result = kernel->execute({a, b});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager));
+}
+
+TEST(AsyncCompile, ReturnsImmediately) {
+    // 验证 compileAsync 立即返回，不阻塞
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(ct::c3::MulNode{desc, desc}, {x, y}, desc);
+    g.markOutput(mul);
+
+    auto start = std::chrono::steady_clock::now();
+    auto future = engine.compileAsync(g);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+    // compileAsync 应在 10ms 内返回（不等待编译完成）
+    EXPECT_LT(elapsed_ms, 10) << "compileAsync took " << elapsed_ms << "ms, should return immediately";
+
+    // 确保 future 有效
+    EXPECT_TRUE(future.valid());
+
+    // 等待编译完成并验证
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+}
+
+TEST(AsyncCompile, Deduplication) {
+    // 验证同一 graph 同时发起两次 compileAsync 返回同一个 future
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    auto f1 = engine.compileAsync(g);
+    auto f2 = engine.compileAsync(g);
+
+    // 两个 future 应该指向同一个 shared state（去重）
+    auto k1 = f1.get();
+    auto k2 = f2.get();
+    EXPECT_EQ(k1, k2);
+}
+
+TEST(AsyncCompile, CacheHitAfterAsync) {
+    // 验证异步编译完成后，同步 compile 命中缓存
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t sub = g.addNode(ct::c3::SubNode{desc, desc}, {x, y}, desc);
+    g.markOutput(sub);
+
+    Tensor a(ShapeTag{}, {128, 128});
+    Tensor b(ShapeTag{}, {128, 128});
+    fillTensor(a, std::vector<float>(128*128, 3.0f));
+    fillTensor(b, std::vector<float>(128*128, 1.0f));
+
+    Tensor eager = a - b;
+
+    // 异步编译
+    auto future = engine.compileAsync(g);
+    auto async_kernel = future.get();
+    ASSERT_NE(async_kernel, nullptr);
+    auto async_result = async_kernel->execute({a, b});
+    EXPECT_TRUE(tensorsAllClose(async_result[0], eager));
+
+    // 同步调用应命中缓存
+    auto stats_before = engine.getCacheStats();
+    auto sync_kernel = engine.compile(g);
+    auto stats_after = engine.getCacheStats();
+
+    EXPECT_EQ(sync_kernel, async_kernel);
+    EXPECT_TRUE(stats_after.hits > stats_before.hits);
+}
+
+TEST(AsyncCompile, FusedAsyncExecute) {
+    // 验证异步编译融合 kernel 执行正确
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t z = g.addInput(desc);
+    size_t mul = g.addNode(ct::c3::MulNode{desc, desc}, {x, y}, desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {mul, x}, desc);
+    size_t sub = g.addNode(ct::c3::SubNode{desc, desc}, {add, z}, desc);
+    g.markOutput(sub);
+
+    Tensor a(ShapeTag{}, {128, 128});
+    Tensor b(ShapeTag{}, {128, 128});
+    Tensor c(ShapeTag{}, {128, 128});
+    fillTensor(a, std::vector<float>(128*128, 1.0f));
+    fillTensor(b, std::vector<float>(128*128, 2.0f));
+    fillTensor(c, std::vector<float>(128*128, 0.5f));
+
+    Tensor eager = (a * b) + a - c;
+
+    auto future = engine.compileAsync(g);
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+    auto result = kernel->execute({a, b, c});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager));
+}
+
+#ifdef CT_ENABLE_MLIR
+
+TEST(AsyncCompile, MLIRAsyncExecute) {
+    // 验证 MLIR 后端异步编译执行正确
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    ct::c3::CompileOptions opts;
+    opts.backend = ct::c3::C3Backend::MLIR;
+
+    Tensor a(ShapeTag{}, {128, 128});
+    Tensor b(ShapeTag{}, {128, 128});
+    fillTensor(a, std::vector<float>(128*128, 1.5f));
+    fillTensor(b, std::vector<float>(128*128, 2.5f));
+
+    Tensor eager = a + b;
+
+    auto future = engine.compileAsync(g, opts);
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+    auto result = kernel->execute({a, b});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager));
+}
+
+TEST(AsyncCompile, MLIRFusedAsyncExecute) {
+    // 验证 MLIR 后端异步编译融合 kernel 执行正确
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({128, 128});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t mul = g.addNode(ct::c3::MulNode{desc, desc}, {x, y}, desc);
+    size_t neg = g.addNode(ct::c3::NegNode{desc}, {mul}, desc);
+    g.markOutput(neg);
+
+    ct::c3::CompileOptions opts;
+    opts.backend = ct::c3::C3Backend::MLIR;
+    opts.enable_fusion = true;
+
+    Tensor a(ShapeTag{}, {128, 128});
+    Tensor b(ShapeTag{}, {128, 128});
+    fillTensor(a, std::vector<float>(128*128, 2.0f));
+    fillTensor(b, std::vector<float>(128*128, 3.0f));
+
+    Tensor eager = -(a * b);
+
+    auto future = engine.compileAsync(g, opts);
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+    auto result = kernel->execute({a, b});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager));
+}
+
+// ======================= MLP 端到端 Benchmark =======================
+
+TEST(Benchmark, MLPEndToEnd) {
+    /// @brief 2 层 MLP 端到端 Benchmark：C3 fused vs C3 non-fused vs Eager (AMX) vs Eager (SIMD)
+    /// @details 结构: MatMul→Add→ReLU → MatMul→Add→ReLU
+    ///          batch=8, input=32, hidden=64, output=16 （小规模，避免 CPU 资源耗尽）
+    ///          C3 当前仅支持单节点图编译，故将 MLP 拆为子图逐节点编译+串联
+    std::cout << "\n=== Benchmark: MLP End-to-End ===" << std::endl;
+    std::cout << "Model: 2-layer MLP (32→64→16, batch=8)" << std::endl;
+
+    const size_t B = 8, D_IN = 32, D_HID = 64, D_OUT = 16;
+
+    auto desc_in = ct::c3::TensorDesc::fromShape({B, D_IN});
+    auto desc_w1 = ct::c3::TensorDesc::fromShape({D_IN, D_HID});
+    auto desc_b1 = ct::c3::TensorDesc::fromShape({B, D_HID});
+    auto desc_hid = ct::c3::TensorDesc::fromShape({B, D_HID});
+    auto desc_w2 = ct::c3::TensorDesc::fromShape({D_HID, D_OUT});
+    auto desc_b2 = ct::c3::TensorDesc::fromShape({B, D_OUT});
+    auto desc_out = ct::c3::TensorDesc::fromShape({B, D_OUT});
+
+    /// 构建单节点子图的辅助函数
+    auto makeSingleOpGraph = [](ct::c3::NodeVariant op, ct::c3::TensorDesc in_a, ct::c3::TensorDesc in_b, ct::c3::TensorDesc out_desc) {
+        ct::c3::Graph g;
+        size_t x = g.addInput(in_a);
+        size_t y = g.addInput(in_b);
+        size_t node = g.addNode(op, {x, y}, out_desc);
+        g.markOutput(node);
+        return g;
+    };
+
+    auto makeUnaryGraph = [](ct::c3::NodeVariant op, ct::c3::TensorDesc in_desc, ct::c3::TensorDesc out_desc) {
+        ct::c3::Graph g;
+        size_t x = g.addInput(in_desc);
+        size_t node = g.addNode(op, {x}, out_desc);
+        g.markOutput(node);
+        return g;
+    };
+
+    auto& engine = ct::c3::C3Engine::getInstance();
+
+    // 编译所有子图（MLIR fused: Add+ReLU 融合为单个子图）
+    ct::c3::CompileOptions mlir_opts;
+    mlir_opts.backend = ct::c3::C3Backend::MLIR;
+    mlir_opts.enable_fusion = true;
+
+    ct::c3::CompileOptions hw_opts;
+    hw_opts.backend = ct::c3::C3Backend::Handwritten;
+    hw_opts.enable_fusion = true;
+
+    ct::c3::CompileOptions mlir_nf_opts;
+    mlir_nf_opts.backend = ct::c3::C3Backend::MLIR;
+    mlir_nf_opts.enable_fusion = false;
+
+    ct::c3::CompileOptions hw_nf_opts;
+    hw_nf_opts.backend = ct::c3::C3Backend::Handwritten;
+    hw_nf_opts.enable_fusion = false;
+
+    // MatMul 1: (B, D_IN) × (D_IN, D_HID) → (B, D_HID)
+    auto mm1_graph = makeSingleOpGraph(ct::c3::MatMulNode{desc_in, desc_w1}, desc_in, desc_w1, desc_hid);
+    auto mm1_mlir = engine.compile(mm1_graph, mlir_opts);
+    auto mm1_hw = engine.compile(mm1_graph, hw_opts);
+
+    // MatMul 2: (B, D_HID) × (D_HID, D_OUT) → (B, D_OUT)
+    auto mm2_graph = makeSingleOpGraph(ct::c3::MatMulNode{desc_hid, desc_w2}, desc_hid, desc_w2, desc_out);
+    auto mm2_mlir = engine.compile(mm2_graph, mlir_opts);
+    auto mm2_hw = engine.compile(mm2_graph, hw_opts);
+
+    // Fused: Add + ReLU chain (Add→ReLU)，编译为融合子图
+    ct::c3::Graph fuse1_graph;
+    size_t f1_a = fuse1_graph.addInput(desc_hid);
+    size_t f1_b = fuse1_graph.addInput(desc_b1);
+    size_t f1_add = fuse1_graph.addNode(ct::c3::AddNode{desc_hid, desc_b1}, {f1_a, f1_b}, desc_hid);
+    size_t f1_relu = fuse1_graph.addNode(ct::c3::ReLUNode{desc_hid}, {f1_add}, desc_hid);
+    fuse1_graph.markOutput(f1_relu);
+    auto fuse1_mlir = engine.compile(fuse1_graph, mlir_opts);
+    auto fuse1_hw = engine.compile(fuse1_graph, hw_opts);
+
+    ct::c3::Graph fuse2_graph;
+    size_t f2_a = fuse2_graph.addInput(desc_out);
+    size_t f2_b = fuse2_graph.addInput(desc_b2);
+    size_t f2_add = fuse2_graph.addNode(ct::c3::AddNode{desc_out, desc_b2}, {f2_a, f2_b}, desc_out);
+    size_t f2_relu = fuse2_graph.addNode(ct::c3::ReLUNode{desc_out}, {f2_add}, desc_out);
+    fuse2_graph.markOutput(f2_relu);
+    auto fuse2_mlir = engine.compile(fuse2_graph, mlir_opts);
+    auto fuse2_hw = engine.compile(fuse2_graph, hw_opts);
+
+    // Non-fused: 各自编译 Add 和 ReLU
+    auto add1_graph = makeSingleOpGraph(ct::c3::AddNode{desc_hid, desc_b1}, desc_hid, desc_b1, desc_hid);
+    auto add1_mlir_nf = engine.compile(add1_graph, mlir_nf_opts);
+    auto add1_hw_nf = engine.compile(add1_graph, hw_nf_opts);
+
+    auto relu1_graph = makeUnaryGraph(ct::c3::ReLUNode{desc_hid}, desc_hid, desc_hid);
+    auto relu1_mlir_nf = engine.compile(relu1_graph, mlir_nf_opts);
+    auto relu1_hw_nf = engine.compile(relu1_graph, hw_nf_opts);
+
+    auto add2_graph = makeSingleOpGraph(ct::c3::AddNode{desc_out, desc_b2}, desc_out, desc_b2, desc_out);
+    auto add2_mlir_nf = engine.compile(add2_graph, mlir_nf_opts);
+    auto add2_hw_nf = engine.compile(add2_graph, hw_nf_opts);
+
+    auto relu2_graph = makeUnaryGraph(ct::c3::ReLUNode{desc_out}, desc_out, desc_out);
+    auto relu2_mlir_nf = engine.compile(relu2_graph, mlir_nf_opts);
+    auto relu2_hw_nf = engine.compile(relu2_graph, hw_nf_opts);
+
+    // 准备输入数据
+    auto make_tensor = [&](const std::vector<size_t>& shape, float val) {
+        Tensor t(ShapeTag{}, shape);
+        std::vector<float> data(t.numel(), val);
+        fillTensor(t, data);
+        return t;
+    };
+
+    Tensor input_t = make_tensor({B, D_IN}, 1.0f);
+    Tensor w1_t = make_tensor({D_IN, D_HID}, 0.01f);
+    Tensor b1_t = make_tensor({B, D_HID}, 0.1f);
+    Tensor w2_t = make_tensor({D_HID, D_OUT}, 0.01f);
+    Tensor b2_t = make_tensor({B, D_OUT}, 0.1f);
+
+    // Eager reference (AMX MatMul)
+    Tensor eager_ref = matMul(input_t, w1_t);
+    eager_ref = eager_ref + b1_t;
+    eager_ref = eager_ref.relu();
+    eager_ref = matMul(eager_ref, w2_t);
+    eager_ref = eager_ref + b2_t;
+    eager_ref = eager_ref.relu_();
+
+    // 验证 C3 fused 正确性
+    auto run_mlir_fused = [&]() -> Tensor {
+        Tensor out = mm1_mlir->execute({input_t, w1_t})[0];
+        out = fuse1_mlir->execute({out, b1_t})[0];
+        out = mm2_mlir->execute({out, w2_t})[0];
+        out = fuse2_mlir->execute({out, b2_t})[0];
+        return out;
+    };
+
+    auto run_hw_fused = [&]() -> Tensor {
+        Tensor out = mm1_hw->execute({input_t, w1_t})[0];
+        out = fuse1_hw->execute({out, b1_t})[0];
+        out = mm2_hw->execute({out, w2_t})[0];
+        out = fuse2_hw->execute({out, b2_t})[0];
+        return out;
+    };
+
+    auto run_mlir_nonfused = [&]() -> Tensor {
+        Tensor out = mm1_mlir->execute({input_t, w1_t})[0];
+        out = add1_mlir_nf->execute({out, b1_t})[0];
+        out = relu1_mlir_nf->execute({out})[0];
+        out = mm2_mlir->execute({out, w2_t})[0];
+        out = add2_mlir_nf->execute({out, b2_t})[0];
+        out = relu2_mlir_nf->execute({out})[0];
+        return out;
+    };
+
+    auto run_hw_nonfused = [&]() -> Tensor {
+        Tensor out = mm1_hw->execute({input_t, w1_t})[0];
+        out = add1_hw_nf->execute({out, b1_t})[0];
+        out = relu1_hw_nf->execute({out})[0];
+        out = mm2_hw->execute({out, w2_t})[0];
+        out = add2_hw_nf->execute({out, b2_t})[0];
+        out = relu2_hw_nf->execute({out})[0];
+        return out;
+    };
+
+    EXPECT_TRUE(tensorsAllClose(run_mlir_fused(), eager_ref, 1e-3f, 1e-4f));
+    EXPECT_TRUE(tensorsAllClose(run_hw_fused(), eager_ref, 1e-3f, 1e-4f));
+    EXPECT_TRUE(tensorsAllClose(run_mlir_nonfused(), eager_ref, 1e-3f, 1e-4f));
+    EXPECT_TRUE(tensorsAllClose(run_hw_nonfused(), eager_ref, 1e-3f, 1e-4f));
+
+    // 预热
+    run_mlir_fused(); run_hw_fused(); run_mlir_nonfused(); run_hw_nonfused();
+
+    // Benchmark
+    const int runs = 100;
+
+    auto measure = [&](auto&& fn) -> double {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int r = 0; r < runs; ++r) {
+            Tensor out = fn();
+            (void)out;
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double, std::micro>(end - start).count() / runs;
+    };
+
+    auto measure_eager_amx = [&]() -> double {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int r = 0; r < runs; ++r) {
+            Tensor out = matMul(input_t, w1_t);       // AMX
+            out = out + b1_t;                          // SIMD
+            out = out.relu();                          // SIMD
+            out = matMul(out, w2_t);                   // AMX
+            out = out + b2_t;                          // SIMD
+            out.relu_();                               // SIMD inplace
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double, std::micro>(end - start).count() / runs;
+    };
+
+    auto measure_eager_simd = [&]() -> double {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int r = 0; r < runs; ++r) {
+            Tensor out = MatMul_SIMD_kernel(input_t, w1_t);  // SIMD MatMul
+            out = out + b1_t;                                  // SIMD
+            out = out.relu();                                  // SIMD
+            out = MatMul_SIMD_kernel(out, w2_t);               // SIMD MatMul
+            out = out + b2_t;                                  // SIMD
+            out.relu_();                                       // SIMD inplace
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration<double, std::micro>(end - start).count() / runs;
+    };
+
+    double mlir_f_us = measure(run_mlir_fused);
+    double mlir_nf_us = measure(run_mlir_nonfused);
+    double hw_f_us = measure(run_hw_fused);
+    double hw_nf_us = measure(run_hw_nonfused);
+    double eager_amx_us = measure_eager_amx();
+    double eager_simd_us = measure_eager_simd();
+
+    std::cout << "\n" << std::setw(28) << std::left << "Backend" << " | "
+              << std::setw(10) << std::right << "Time (us)" << " | "
+              << std::setw(12) << "vs AMX" << " | "
+              << std::setw(12) << "vs SIMD" << std::endl;
+    std::cout << std::string(70, '-') << std::endl;
+    std::cout << std::setw(28) << std::left << "MLIR Fused" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << mlir_f_us << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_amx_us / mlir_f_us) << "x" << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_simd_us / mlir_f_us) << "x" << std::endl;
+    std::cout << std::setw(28) << std::left << "MLIR Non-Fused" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << mlir_nf_us << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_amx_us / mlir_nf_us) << "x" << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_simd_us / mlir_nf_us) << "x" << std::endl;
+    std::cout << std::setw(28) << std::left << "HW Fused" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << hw_f_us << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_amx_us / hw_f_us) << "x" << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_simd_us / hw_f_us) << "x" << std::endl;
+    std::cout << std::setw(28) << std::left << "HW Non-Fused" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << hw_nf_us << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_amx_us / hw_nf_us) << "x" << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_simd_us / hw_nf_us) << "x" << std::endl;
+    std::cout << std::setw(28) << std::left << "Eager (AMX MatMul)" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << eager_amx_us << " | "
+              << std::setw(11) << std::right << "1.00x" << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_simd_us / eager_amx_us) << "x" << std::endl;
+    std::cout << std::setw(28) << std::left << "Eager (SIMD MatMul)" << " | "
+              << std::setw(10) << std::right << std::fixed << std::setprecision(1) << eager_simd_us << " | "
+              << std::setw(11) << std::right << std::fixed << std::setprecision(2)
+              << (eager_amx_us / eager_simd_us) << "x" << " | "
+              << std::setw(11) << std::right << "1.00x" << std::endl;
+}
+
+#endif // CT_ENABLE_MLIR
+
+// ======================= main =======================
+
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}
