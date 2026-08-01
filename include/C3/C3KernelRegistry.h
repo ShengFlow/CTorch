@@ -59,6 +59,17 @@ using C3KernelFunc = void (*)(const float*, const float*, float*, size_t, size_t
  */
 using FusedKernelFunc = void (*)(const float* const*, float*, size_t);
 
+/**
+ * @brief C3 多节点 kernel 函数指针签名
+ * @param inputs 输入数据指针数组（长度 = num_inputs）
+ * @param out 输出数据指针
+ * @param n 元素总数（逐元素操作）
+ * @param M MatMul M 维度
+ * @param K MatMul K 维度
+ * @param N MatMul N 维度
+ */
+using MultiNodeKernelFunc = void (*)(const float* const*, float*, size_t, size_t, size_t, size_t);
+
 // ======================= 内核形状签名 =======================
 
 /**

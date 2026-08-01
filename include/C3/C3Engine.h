@@ -26,6 +26,7 @@ namespace c3 {
 
 // 前向声明：计算图定义由 src/JIT 模块提供，避免在公共头文件中暴露实现细节。
 class Graph;
+struct AutoTunerConfig;
 
 /**
  * @enum C3Backend
@@ -45,7 +46,11 @@ enum class C3Backend {
  */
 struct CompileOptions {
     /** @brief JIT 编译后端，默认 Handwritten */
-    C3Backend backend = C3Backend::Handwritten;
+    #ifdef CT_ENABLE_MLIR
+    C3Backend backend = C3Backend::MLIR;   ///< 默认 MLIR 后端
+#else
+    C3Backend backend = C3Backend::Handwritten; ///< 无 MLIR 时回退 Handwritten（仅测试）
+#endif
     /** @brief 目标设备，默认 CPU */
     DeviceType target_device = DeviceType::kCPU;
     /** @brief 优化级别：0=关闭优化，1=基础优化，2=积极优化（默认），3=极限优化 */
@@ -54,6 +59,8 @@ struct CompileOptions {
     bool enable_fusion = true;
     /** @brief 是否启用编译缓存（默认开启） */
     bool enable_cache = true;
+    /** @brief 是否启用自动调优（默认关闭，首次编译时运行 QEA 搜索最优分块） */
+    bool enable_autotune = false;
     /** @brief 自定义缓存键；为空时由引擎根据图结构与选项生成 */
     std::string cache_key_override;
 };
@@ -164,12 +171,28 @@ public:
     /** @brief 查询当前缓存状态 */
     [[nodiscard]] C3CacheStats getCacheStats() const;
 
-    /** @brief 清空全部编译缓存 */
+    /** @brief 清空全部编译缓存（不取消进行中的异步编译） */
     void clearCache();
+
+    /**
+     * @brief 运行自动调优，搜索当前机器最优 MatMul 分块参数
+     * @details 使用 QEA 量子启发算法在搜索空间中寻找最优 TILE_M/N/K/unroll 组合。
+     *          调优结果写入 TuningState，后续所有编译自动使用最优参数。
+     *          仅需调用一次；重复调用会跳过（已调优检查）。
+     * @param config 调优配置（可选，默认使用 AutoTunerConfig 默认值）
+     */
+    void autoTune(const struct AutoTunerConfig& config);
+
+    /**
+     * @brief 等待所有后台编译完成并回收线程资源
+     * @details 应在程序退出前调用，确保所有异步编译任务完成。
+     *          带 5 秒超时，避免死锁。
+     */
+    void shutdown();
 
 private:
     C3Engine() = default;
-    ~C3Engine() = default;
+    ~C3Engine() { shutdown(); }
     C3Engine(const C3Engine&) = delete;
     C3Engine& operator=(const C3Engine&) = delete;
 };

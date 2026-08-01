@@ -57,10 +57,16 @@ private:
    struct Deleter {
        std::shared_ptr<DeviceAllocator> _allocator;
        DeviceType _device;
-       void operator()(char* ptr) const {
+       void operator()(char* ptr) const noexcept {
            if (ptr) {
                if (_allocator) {
-                   _allocator->deallocate(ptr, _device);
+                   try {
+                       _allocator->deallocate(ptr, _device);
+                   } catch (...) {
+                       // 程序退出期 AllocatorManager 单例可能已析构，
+                       // 此时 mutex lock 会失败，回退到 std::free
+                       std::free(ptr);
+                   }
                } else {
                    std::free(ptr);
                }

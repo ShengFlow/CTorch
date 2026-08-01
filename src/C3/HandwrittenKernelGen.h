@@ -24,12 +24,15 @@ namespace c3 {
 struct GeneratedKernel {
     C3KernelFunc func = nullptr;
     FusedKernelFunc fused_func = nullptr; ///< 融合 kernel 函数指针（is_fused=true 时使用）
+    MultiNodeKernelFunc multi_func = nullptr; ///< 多节点 kernel 函数指针（is_multi_node=true 时使用）
     void* handle = nullptr;               ///< 资源句柄（dlopen handle 或 ExecutionEngine 引用）
     std::function<void()> deleter;        ///< 析构回调：释放 handle 指向的资源
     bool is_matmul = false;
     bool is_fused = false;                ///< 是否为融合 kernel
-    size_t num_inputs = 2;                ///< 融合 kernel 的外部输入数量
-    size_t M = 0, K = 0, N = 0;
+    bool is_multi_node = false;           ///< 是否为多节点 kernel
+    size_t num_inputs = 2;                ///< 外部输入数量
+    size_t M = 0, K = 0, N = 0;          ///< MatMul 维度
+    size_t elem_n = 0;                    ///< 逐元素操作的元素数
 };
 
 /// 从 Graph 生成 JIT kernel

@@ -1153,6 +1153,7 @@ TEST(MLIRBackend, CacheHitSeparateFromHandwritten) {
     g.addNode(AddNode{desc, desc}, {x, y}, desc);
 
     auto& engine = C3Engine::getInstance();
+    engine.clearCache();  // 确保缓存干净，避免前置测试污染
 
     // MLIR 编译
     CompileOptions mlir_opts;
@@ -2242,7 +2243,514 @@ TEST(Benchmark, MLPEndToEnd) {
 
 #endif // CT_ENABLE_MLIR
 
-// ======================= main =======================
+// ======================= AutoTuner 测试 =======================
+
+#include "C3/AutoTuner.h"
+
+TEST(AutoTuner, QEAvsGAvsGridSearch) {
+    /// @brief 对比 QEA / GA / GridSearch 在 MatMul 分块参数调优上的性能
+    /// @details 使用模拟的 MatMul 性能模型作为适应度函数，
+    ///          全局最优位于 (TILE_M=64, TILE_N=64, TILE_K=64, unroll=4)
+    ///          搜索空间: 5×5×5×4 = 500 种组合
+
+    auto fitness_fn = [](int tile_m, int tile_n, int tile_k, int unroll) -> double {
+        const int OPT_M = 64, OPT_N = 64, OPT_K = 64, OPT_UNROLL = 4;
+        const double L1D_BYTES = 128.0 * 1024.0;
+
+        double dist = std::sqrt(
+            (tile_m - OPT_M) * (tile_m - OPT_M) * 1.0 +
+            (tile_n - OPT_N) * (tile_n - OPT_N) * 1.0 +
+            (tile_k - OPT_K) * (tile_k - OPT_K) * 1.0 +
+            (unroll - OPT_UNROLL) * (unroll - OPT_UNROLL) * 100.0
+        );
+
+        double cache_usage = 3.0 * tile_m * tile_n * 4.0;
+        double cache_penalty = 0.0;
+        if (cache_usage > L1D_BYTES) {
+            cache_penalty = (cache_usage - L1D_BYTES) / L1D_BYTES * 200.0;
+        }
+
+        double overhead = 0.0;
+        if (tile_m < 32) overhead += 30.0;
+        if (tile_n < 32) overhead += 30.0;
+        if (tile_k < 32) overhead += 15.0;
+
+        return 10.0 + dist * 0.5 + cache_penalty + overhead;
+    };
+
+    ct::c3::AutoTunerConfig config;
+    config.verbose = false;
+
+    ct::c3::AutoTuner tuner(config);
+
+    std::vector<int> known_optimal = {64, 64, 64, 4};
+    tuner.runComparison(fitness_fn, known_optimal);
+
+    auto qea_result = tuner.tuneWithQEA(fitness_fn);
+    auto ga_result  = tuner.tuneWithGA(fitness_fn);
+    auto gs_result  = tuner.tuneWithGridSearch(fitness_fn);
+
+    EXPECT_EQ(gs_result.tile_m, 64);
+    EXPECT_EQ(gs_result.tile_n, 64);
+    EXPECT_EQ(gs_result.tile_k, 64);
+    EXPECT_EQ(gs_result.unroll, 4);
+
+    EXPECT_EQ(qea_result.tile_m, 64);
+    EXPECT_EQ(qea_result.tile_n, 64);
+    EXPECT_EQ(qea_result.tile_k, 64);
+    EXPECT_EQ(qea_result.unroll, 4);
+
+    EXPECT_EQ(ga_result.tile_m, 64);
+    EXPECT_EQ(ga_result.tile_n, 64);
+    EXPECT_EQ(ga_result.tile_k, 64);
+    EXPECT_EQ(ga_result.unroll, 4);
+
+    EXPECT_LT(qea_result.evaluations, gs_result.evaluations);
+    std::cout << "\nQEA evaluations: " << qea_result.evaluations
+              << " / " << gs_result.evaluations << " (GridSearch)"
+              << " = " << std::fixed << std::setprecision(1)
+              << (double)qea_result.evaluations / gs_result.evaluations * 100.0 << "%" << std::endl;
+}
+
+TEST(AutoTuner, ConvergenceRate) {
+    /// @brief 验证 QEA 在复杂多峰函数上的探索优势
+    /// @details 含多个局部极小值的 Rastrigin-like 函数，GA 易陷入局部最优，
+    ///          QEA 的概率编码和评估缓存有助于跳出局部极小
+
+    const int OPT_M = 64, OPT_N = 64, OPT_K = 64, OPT_UNROLL = 4;
+
+    // 多峰适应度函数: 在最优值附近有多个局部极小
+    auto fitness_fn = [&](int tile_m, int tile_n, int tile_k, int unroll) -> double {
+        double d_m = (tile_m - OPT_M) / 16.0;
+        double d_n = (tile_n - OPT_N) / 16.0;
+        double d_k = (tile_k - OPT_K) / 16.0;
+        double d_u = (unroll - OPT_UNROLL) / 2.0;
+
+        // Rastrigin-like: 二次项 + 余弦项产生局部极小
+        double rastrigin = 0.0;
+        for (double d : {d_m, d_n, d_k, d_u}) {
+            rastrigin += d * d - std::cos(2.0 * M_PI * d) + 1.0;
+        }
+
+        // Cache 溢出惩罚
+        double cache_usage = 3.0 * tile_m * tile_n * 4.0;
+        double cache_penalty = 0.0;
+        if (cache_usage > 128.0 * 1024.0) {
+            cache_penalty = 50.0;
+        }
+
+        return rastrigin * 10.0 + cache_penalty;
+    };
+
+    ct::c3::AutoTunerConfig config;
+    config.qea_population = 10;
+    config.qea_generations = 20;
+    config.ga_population = 20;
+    config.ga_generations = 20;
+
+    ct::c3::AutoTuner tuner(config);
+
+    auto qea_result = tuner.tuneWithQEA(fitness_fn);
+    auto ga_result  = tuner.tuneWithGA(fitness_fn);
+
+    if (qea_result.fitness_history.size() >= 5 && ga_result.fitness_history.size() >= 5) {
+        std::cout << "\nConvergence comparison (Rastrigin-like landscape):" << std::endl;
+        std::cout << "  Gen | QEA fitness | GA fitness" << std::endl;
+        std::cout << "  " << std::string(30, '-') << std::endl;
+        for (size_t g = 0; g < 5 && g < qea_result.fitness_history.size(); ++g) {
+            std::cout << "  " << std::setw(3) << g << " | "
+                      << std::setw(11) << std::fixed << std::setprecision(4) << qea_result.fitness_history[g]
+                      << " | " << std::setw(11) << ga_result.fitness_history[g] << std::endl;
+        }
+    }
+
+    // 两者都应找到全局最优 (64,64,64,4)
+    EXPECT_EQ(qea_result.tile_m, OPT_M);
+    EXPECT_EQ(qea_result.tile_n, OPT_N);
+    EXPECT_EQ(qea_result.tile_k, OPT_K);
+    EXPECT_EQ(qea_result.unroll, OPT_UNROLL);
+
+    EXPECT_EQ(ga_result.tile_m, OPT_M);
+    EXPECT_EQ(ga_result.tile_n, OPT_N);
+    EXPECT_EQ(ga_result.tile_k, OPT_K);
+    EXPECT_EQ(ga_result.unroll, OPT_UNROLL);
+}
+
+// ======================= MLP 端到端 Benchmark =======================
+
+/// 构建单层 MLP 子图: MatMul(W, x) + Bias + ReLU
+/// @note 使用 2D 形状 (batch=1) 以兼容 C3 MatMul kernel 的 2D 要求
+///       x: (in_dim, 1) 列向量, w: (out_dim, in_dim), b: (out_dim, 1)
+/// @return 编译后的 kernel
+static std::shared_ptr<ct::c3::CompiledKernel> buildMLPLayer(
+    size_t in_dim, size_t out_dim, bool with_relu = true)
+{
+    using namespace ct::c3;
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({in_dim, 1});       // 列向量 (in_dim, 1)
+    auto w_desc = TensorDesc::fromShape({out_dim, in_dim}); // 权重矩阵 (out_dim, in_dim)
+    auto b_desc = TensorDesc::fromShape({out_dim, 1});      // 偏置列向量 (out_dim, 1)
+    auto out_desc = TensorDesc::fromShape({out_dim, 1});    // 输出列向量 (out_dim, 1)
+
+    auto x = g.addInput(x_desc);   // input vector (2D column)
+    auto w = g.addInput(w_desc);   // weight matrix
+    auto b = g.addInput(b_desc);   // bias vector (2D column)
+
+    // MatMul: w @ x → (out_dim, 1)
+    auto mm = g.addNode(MatMulNode{w_desc, x_desc}, {w, x}, out_desc);
+    // Add bias
+    auto add = g.addNode(AddNode{out_desc, b_desc}, {mm, b}, out_desc);
+
+    if (with_relu) {
+        g.addNode(ReLUNode{out_desc}, {add}, out_desc);
+    }
+    g.markOutput(g.nodeCount() - 1);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.enable_fusion = false;  // 多节点 kernel 直接处理各 op，不融合
+    return C3Engine::getInstance().compile(g, opts);
+}
+
+/// 构建 MLP 的所有层并返回 kernel 列表
+static std::vector<std::shared_ptr<ct::c3::CompiledKernel>> buildMLP(
+    const std::vector<size_t>& layer_dims)
+{
+    std::vector<std::shared_ptr<ct::c3::CompiledKernel>> layers;
+    for (size_t i = 0; i < layer_dims.size() - 1; ++i) {
+        bool is_last = (i == layer_dims.size() - 2);
+        layers.push_back(buildMLPLayer(layer_dims[i], layer_dims[i + 1], !is_last));
+    }
+    return layers;
+}
+
+/// C3 MLP 前向传播
+/// @note 将 1D 输入/偏置 reshape 为 2D 列向量 (dim, 1) 以匹配 C3 MatMul kernel 的 2D 要求
+static Tensor c3MLPForward(
+    const std::vector<std::shared_ptr<ct::c3::CompiledKernel>>& layers,
+    const Tensor& input,
+    const std::vector<Tensor>& weights,
+    const std::vector<Tensor>& biases)
+{
+    Tensor x = input;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        // reshape 1D → 2D 列向量: (in_dim,) → (in_dim, 1)
+        Tensor x_2d = x.reshape({x.numel(), 1});
+        Tensor b_2d = biases[i].reshape({biases[i].numel(), 1});
+        auto results = layers[i]->execute({x_2d, weights[i], b_2d});
+        // reshape 2D 列向量 → 1D: (out_dim, 1) → (out_dim,)
+        x = results[0].reshape({results[0].numel()});
+    }
+    return x;
+}
+
+/// Eager MLP 前向传播（对照）
+/// @note 将 1D 输入/偏置 reshape 为 2D 列向量 (dim, 1) 以兼容 AMX MatMul
+///       weight: (out_dim, in_dim), x: (in_dim, 1)
+///       matMul(weight, x) = (out_dim, in_dim) @ (in_dim, 1) = (out_dim, 1)
+static Tensor eagerMLPForward(
+    const Tensor& input,
+    const std::vector<Tensor>& weights,
+    const std::vector<Tensor>& biases)
+{
+    Tensor x = input;
+    for (size_t i = 0; i < weights.size(); ++i) {
+        // Reshape 1D → 2D 列向量: (in_dim,) → (in_dim, 1)
+        Tensor x_2d = x.reshape({x.numel(), 1});
+        // weight: (out_dim, in_dim), matMul(weight, x_2d) = (out_dim, in_dim) @ (in_dim, 1) = (out_dim, 1)
+        x = matMul(weights[i], x_2d).reshape({weights[i].shape()[0]});
+        x = x + biases[i];
+        if (i < weights.size() - 1) {
+            x = x.relu();
+        }
+    }
+    return x;
+}
+
+/// 辅助：打印 benchmark 表头
+static void printBenchHeader() {
+    std::cout << "\n" << std::setw(20) << std::left << "Config"
+              << " | " << std::setw(12) << std::right << "Time(us)"
+              << " | " << std::setw(12) << "Throughput"
+              << " | " << std::setw(10) << "Speedup" << std::endl;
+    std::cout << std::string(70, '-') << std::endl;
+}
+
+/// 辅助：打印 benchmark 行
+static void printBenchRow(const std::string& label, double time_us, double baseline_us) {
+    double speedup = (baseline_us > 0) ? baseline_us / time_us : 0.0;
+    double throughput = (time_us > 0) ? (1e6 / time_us) : 0.0;
+    std::cout << std::setw(20) << std::left << label
+              << " | " << std::setw(12) << std::right << std::fixed << std::setprecision(1) << time_us
+              << " | " << std::setw(12) << std::fixed << std::setprecision(1) << throughput << " fwd/s"
+              << " | " << std::setw(9) << std::fixed << std::setprecision(2) << speedup << "x" << std::endl;
+}
+
+TEST(Benchmark, MLP_3Layer_C3_vs_Eager) {
+    using namespace ct;
+    std::cout << "\n========== MLP Benchmark: 784→256→128→10 ==========" << std::endl;
+
+    // 构建权重
+    std::vector<Tensor> weights, biases;
+    std::vector<size_t> dims = {784, 256, 128, 10};
+    for (size_t i = 0; i < dims.size() - 1; ++i) {
+        weights.push_back(Tensor(ShapeTag{}, {dims[i+1], dims[i]}));
+        biases.push_back(Tensor(ShapeTag{}, {dims[i+1]}));
+    }
+
+    // 随机初始化
+    for (auto& w : weights) {
+        for (size_t j = 0; j < w.numel(); ++j)
+            w.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+    for (auto& b : biases) {
+        for (size_t j = 0; j < b.numel(); ++j)
+            b.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+
+    Tensor input(ShapeTag{}, {784});
+    for (size_t j = 0; j < input.numel(); ++j)
+        input.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+
+    // C3 编译
+    auto& engine = c3::C3Engine::getInstance();
+    engine.clearCache();
+    auto layers = buildMLP(dims);
+    std::cout << "C3 layers compiled: " << layers.size() << std::endl;
+
+    // 正确性验证
+    auto c3_out = c3MLPForward(layers, input, weights, biases);
+    auto eager_out = eagerMLPForward(input, weights, biases);
+
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
+    if (!match) {
+        size_t first_mismatch = SIZE_MAX;
+        for (size_t i = 0; i < c3_out.numel() && first_mismatch == SIZE_MAX; ++i) {
+            float diff = std::fabs(c3_out.data_read<float>()[i] - eager_out.data_read<float>()[i]);
+            float max_val = std::max(std::fabs(c3_out.data_read<float>()[i]), std::fabs(eager_out.data_read<float>()[i]));
+            if (diff > 1e-4f + 1e-4f * max_val) {
+                first_mismatch = i;
+            }
+        }
+        std::cout << "First mismatch at index " << first_mismatch << ":" << std::endl;
+        std::cout << "  C3[" << first_mismatch << "] = " << c3_out.data_read<float>()[first_mismatch] << std::endl;
+        std::cout << "  Eager[" << first_mismatch << "] = " << eager_out.data_read<float>()[first_mismatch] << std::endl;
+        std::cout << "First 10 C3 values:    ";
+        for (size_t i = 0; i < std::min(size_t(10), c3_out.numel()); ++i)
+            std::cout << c3_out.data_read<float>()[i] << " ";
+        std::cout << std::endl;
+        std::cout << "First 10 Eager values: ";
+        for (size_t i = 0; i < std::min(size_t(10), eager_out.numel()); ++i)
+            std::cout << eager_out.data_read<float>()[i] << " ";
+        std::cout << std::endl;
+    }
+    EXPECT_TRUE(match);
+
+    // Benchmark
+    const size_t warmup = 10, runs = 100;
+    printBenchHeader();
+
+    // Eager
+    for (size_t r = 0; r < warmup; ++r) eagerMLPForward(input, weights, biases);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) eagerMLPForward(input, weights, biases);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double eager_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    // C3
+    for (size_t r = 0; r < warmup; ++r) c3MLPForward(layers, input, weights, biases);
+    t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) c3MLPForward(layers, input, weights, biases);
+    t1 = std::chrono::high_resolution_clock::now();
+    double c3_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    printBenchRow("Eager (AMX)", eager_us, eager_us);
+    printBenchRow("C3 MLIR Fused", c3_us, eager_us);
+
+    std::cout << "\nCache stats: hits=" << engine.getCacheStats().hits
+              << " misses=" << engine.getCacheStats().misses
+              << " entries=" << engine.getCacheStats().total_entries << std::endl;
+}
+
+TEST(Benchmark, MLP_Large_C3_vs_Eager) {
+    using namespace ct;
+    std::cout << "\n========== MLP Benchmark: 1024→512→256→10 ==========" << std::endl;
+
+    std::vector<Tensor> weights, biases;
+    std::vector<size_t> dims = {1024, 512, 256, 10};
+    for (size_t i = 0; i < dims.size() - 1; ++i) {
+        weights.push_back(Tensor(ShapeTag{}, {dims[i+1], dims[i]}));
+        biases.push_back(Tensor(ShapeTag{}, {dims[i+1]}));
+    }
+
+    for (auto& w : weights) {
+        for (size_t j = 0; j < w.numel(); ++j)
+            w.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+    for (auto& b : biases) {
+        for (size_t j = 0; j < b.numel(); ++j)
+            b.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+
+    Tensor input(ShapeTag{}, {1024});
+    for (size_t j = 0; j < input.numel(); ++j)
+        input.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+
+    auto& engine = c3::C3Engine::getInstance();
+    engine.clearCache();
+    auto layers = buildMLP(dims);
+
+    auto c3_out = c3MLPForward(layers, input, weights, biases);
+    auto eager_out = eagerMLPForward(input, weights, biases);
+
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
+    EXPECT_TRUE(match);
+
+    const size_t warmup = 10, runs = 100;
+    printBenchHeader();
+
+    for (size_t r = 0; r < warmup; ++r) eagerMLPForward(input, weights, biases);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) eagerMLPForward(input, weights, biases);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double eager_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    for (size_t r = 0; r < warmup; ++r) c3MLPForward(layers, input, weights, biases);
+    t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) c3MLPForward(layers, input, weights, biases);
+    t1 = std::chrono::high_resolution_clock::now();
+    double c3_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    printBenchRow("Eager (AMX)", eager_us, eager_us);
+    printBenchRow("C3 MLIR Fused", c3_us, eager_us);
+}
+
+TEST(Benchmark, MLP_Huge_C3_vs_Eager) {
+    using namespace ct;
+    std::cout << "\n========== MLP Benchmark: 2048→1024→512→256→10 ==========" << std::endl;
+
+    std::vector<Tensor> weights, biases;
+    std::vector<size_t> dims = {2048, 1024, 512, 256, 10};
+    for (size_t i = 0; i < dims.size() - 1; ++i) {
+        weights.push_back(Tensor(ShapeTag{}, {dims[i+1], dims[i]}));
+        biases.push_back(Tensor(ShapeTag{}, {dims[i+1]}));
+    }
+
+    for (auto& w : weights) {
+        for (size_t j = 0; j < w.numel(); ++j)
+            w.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+    for (auto& b : biases) {
+        for (size_t j = 0; j < b.numel(); ++j)
+            b.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+
+    Tensor input(ShapeTag{}, {2048});
+    for (size_t j = 0; j < input.numel(); ++j)
+        input.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+
+    auto& engine = c3::C3Engine::getInstance();
+    engine.clearCache();
+    auto layers = buildMLP(dims);
+
+    auto c3_out = c3MLPForward(layers, input, weights, biases);
+    auto eager_out = eagerMLPForward(input, weights, biases);
+
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
+    EXPECT_TRUE(match);
+
+    const size_t warmup = 10, runs = 50;
+    printBenchHeader();
+
+    for (size_t r = 0; r < warmup; ++r) eagerMLPForward(input, weights, biases);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) eagerMLPForward(input, weights, biases);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double eager_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    for (size_t r = 0; r < warmup; ++r) c3MLPForward(layers, input, weights, biases);
+    t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) c3MLPForward(layers, input, weights, biases);
+    t1 = std::chrono::high_resolution_clock::now();
+    double c3_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    printBenchRow("Eager (AMX)", eager_us, eager_us);
+    printBenchRow("C3 MLIR Fused", c3_us, eager_us);
+}
+
+TEST(Benchmark, MLP_Autotune_vs_Default) {
+    using namespace ct;
+    std::cout << "\n========== MLP + AutoTune Benchmark: 512→256→128→10 ==========" << std::endl;
+
+    std::vector<Tensor> weights, biases;
+    std::vector<size_t> dims = {512, 256, 128, 10};
+    for (size_t i = 0; i < dims.size() - 1; ++i) {
+        weights.push_back(Tensor(ShapeTag{}, {dims[i+1], dims[i]}));
+        biases.push_back(Tensor(ShapeTag{}, {dims[i+1]}));
+    }
+    for (auto& w : weights) {
+        for (size_t j = 0; j < w.numel(); ++j)
+            w.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+    for (auto& b : biases) {
+        for (size_t j = 0; j < b.numel(); ++j)
+            b.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+    }
+
+    Tensor input(ShapeTag{}, {512});
+    for (size_t j = 0; j < input.numel(); ++j)
+        input.data_write<float>()[j] = static_cast<float>(rand()) / RAND_MAX;
+
+    auto& engine = c3::C3Engine::getInstance();
+
+    // === 默认参数（无 autotune） ===
+    engine.clearCache();
+    auto layers_default = buildMLP(dims);
+
+    const size_t warmup = 10, runs = 100;
+    for (size_t r = 0; r < warmup; ++r) c3MLPForward(layers_default, input, weights, biases);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) c3MLPForward(layers_default, input, weights, biases);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double default_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    // === 运行 autotune ===
+    std::cout << "\nRunning AutoTune (QEA)..." << std::endl;
+    c3::AutoTunerConfig at_cfg;
+    at_cfg.verbose = true;
+    engine.autoTune(at_cfg);
+
+    // === 使用 autotune 参数重新编译 ===
+    engine.clearCache();
+    auto layers_tuned = buildMLP(dims);
+
+    for (size_t r = 0; r < warmup; ++r) c3MLPForward(layers_tuned, input, weights, biases);
+    t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) c3MLPForward(layers_tuned, input, weights, biases);
+    t1 = std::chrono::high_resolution_clock::now();
+    double tuned_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    // === Eager ===
+    for (size_t r = 0; r < warmup; ++r) eagerMLPForward(input, weights, biases);
+    t0 = std::chrono::high_resolution_clock::now();
+    for (size_t r = 0; r < runs; ++r) eagerMLPForward(input, weights, biases);
+    t1 = std::chrono::high_resolution_clock::now();
+    double eager_us = std::chrono::duration<double, std::micro>(t1 - t0).count() / runs;
+
+    printBenchHeader();
+    printBenchRow("Eager (AMX)", eager_us, eager_us);
+    printBenchRow("C3 Default", default_us, eager_us);
+    printBenchRow("C3 AutoTuned", tuned_us, eager_us);
+
+    // 正确性验证
+    auto c3_out = c3MLPForward(layers_tuned, input, weights, biases);
+    auto eager_out = eagerMLPForward(input, weights, biases);
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    EXPECT_TRUE(match);
+}
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

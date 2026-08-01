@@ -100,9 +100,15 @@ extern "C" void c3_kernel(const float* a, const float* b, float* out,
 static std::string generateDivKernel() {
     return R"SRC(
 #include <cstddef>
+#include <stdexcept>
+#include <string>
 extern "C" void c3_kernel(const float* a, const float* b, float* out,
                           size_t n, size_t, size_t, size_t) {
     for (size_t i = 0; i < n; ++i) {
+        if (b[i] == 0.0f) {
+            throw std::runtime_error(
+                "C3 DivNode: division by zero at index " + std::to_string(i));
+        }
         out[i] = a[i] / b[i];
     }
 }
@@ -135,6 +141,8 @@ static std::string generateFusedKernel(const std::vector<NodeVariant>& ops,
 
     std::ostringstream ss;
     ss << "#include <cstddef>\n"
+       << "#include <stdexcept>\n"
+       << "#include <string>\n"
        << "extern \"C\" void c3_kernel(const float* const* inputs, float* out, size_t n) {\n";
 
     // 循环外：预加载所有外部输入指针
@@ -223,9 +231,13 @@ static std::string generateFusedKernel(const std::vector<NodeVariant>& ops,
                 }
             } else if constexpr (std::is_same_v<T, DivNode>) {
                 if (op_idx > 0) {
+                    ss << "        if (" << extPtr(ext_inputs[0]) << " == 0.0f) "
+                       << "throw std::runtime_error(\"C3 Fused DivNode: division by zero at index \" + std::to_string(i));\n";
                     ss << prefix << result << " = " << prev
                        << " / " << extPtr(ext_inputs[0]) << ";\n";
                 } else {
+                    ss << "        if (" << extPtr(ext_inputs[1]) << " == 0.0f) "
+                       << "throw std::runtime_error(\"C3 Fused DivNode: division by zero at index \" + std::to_string(i));\n";
                     ss << prefix << result << " = " << extPtr(ext_inputs[0])
                        << " / " << extPtr(ext_inputs[1]) << ";\n";
                 }
@@ -362,27 +374,272 @@ static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
 
 // ======================= Graph → Kernel 生成 =======================
 
+/// 判断节点是否为计算节点（非输入、非 Const）
+static bool isComputeNode(const Node& node, const std::vector<size_t>& input_ids) {
+    for (size_t in_id : input_ids) {
+        if (node.id == in_id) return false;
+    }
+    if (node.inputs.empty()) return false;
+    if (std::holds_alternative<ConstNode>(node.op)) return false;
+    return true;
+}
+
+/// 为多节点图生成 kernel 源码
+/// @details 收集所有计算节点，按拓扑顺序生成代码，中间节点输出到临时缓冲区，
+///          最后一个节点输出到 output。支持 MatMul + 逐元素操作的混合图。
+static std::string generateMultiNodeKernel(const Graph& graph) {
+    const auto& nodes = graph.nodes();
+    const auto& inputs = graph.inputs();
+    const auto& outputs = graph.outputs();
+
+    // 步骤 1: 收集计算节点（拓扑顺序）
+    std::vector<const Node*> compute_nodes;
+    for (const auto& node : nodes) {
+        if (isComputeNode(node, inputs)) {
+            compute_nodes.push_back(&node);
+        }
+    }
+
+    if (compute_nodes.empty()) {
+        throw std::runtime_error("HandwrittenKernelGen: no compute node in multi-node graph");
+    }
+
+    // 步骤 2: 构建 node_id → 外部输入索引 的映射
+    std::unordered_map<size_t, size_t> external_input_map;
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        external_input_map[inputs[i]] = i;
+    }
+
+    // 步骤 3: 为每个计算节点分配缓冲区
+    // buffer_index[node_id] = 0,1,2,... 表示中间缓冲区索引
+    // SIZE_MAX 表示直接写入 output（最终输出节点）
+    std::unordered_map<size_t, size_t> node_to_buffer;
+    size_t num_intermediates = 0;
+    for (size_t i = 0; i < compute_nodes.size(); ++i) {
+        size_t node_id = compute_nodes[i]->id;
+        bool is_output = false;
+        for (size_t out_id : outputs) {
+            if (node_id == out_id) { is_output = true; break; }
+        }
+        if (i == compute_nodes.size() - 1) is_output = true; // 最后一个节点也作为输出
+
+        if (!is_output) {
+            node_to_buffer[node_id] = num_intermediates++;
+        } else {
+            node_to_buffer[node_id] = SIZE_MAX;
+        }
+    }
+
+    // 步骤 4: 确定维度参数
+    // 从图中提取 MatMul 的 M, K, N 和 elem_n
+    size_t M = 0, K = 0, N = 0, elem_n = 0;
+    for (const auto* node : compute_nodes) {
+        if (std::holds_alternative<MatMulNode>(node->op)) {
+            const auto& mm = std::get<MatMulNode>(node->op);
+            if (mm.lhs_desc.shape.size() == 2 && mm.rhs_desc.shape.size() == 2) {
+                M = mm.lhs_desc.shape[0];
+                K = mm.lhs_desc.shape[1];
+                N = mm.rhs_desc.shape[1];
+            }
+        }
+        elem_n = std::max(elem_n, node->out_desc.numel);
+    }
+
+    // 步骤 5: 生成源码
+    std::ostringstream ss;
+    ss << "#include <cstddef>\n"
+       << "#include <cstring>\n"
+       << "#include <algorithm>\n"
+       << "#include <stdexcept>\n"
+       << "#include <string>\n"
+       << "extern \"C\" void c3_kernel(const float* const* inputs, float* output,\n"
+       << "                          size_t n, size_t M, size_t K, size_t N) {\n";
+
+    // 分配中间缓冲区
+    for (size_t i = 0; i < num_intermediates; ++i) {
+        ss << "    float* tmp" << i << " = new float[n];\n";
+    }
+
+    // 辅助函数：获取节点输入的数据指针名
+    auto inputPtrName = [&](size_t in_node_id) -> std::string {
+        auto ext_it = external_input_map.find(in_node_id);
+        if (ext_it != external_input_map.end()) {
+            return "inputs[" + std::to_string(ext_it->second) + "]";
+        }
+        auto buf_it = node_to_buffer.find(in_node_id);
+        if (buf_it != node_to_buffer.end()) {
+            if (buf_it->second == SIZE_MAX) {
+                return "output";
+            }
+            return "tmp" + std::to_string(buf_it->second);
+        }
+        // fallback: 可能是未分配缓冲区的输入节点
+        return "inputs[" + std::to_string(in_node_id) + "]";
+    };
+
+    // 生成每个计算节点的代码
+    for (size_t ci = 0; ci < compute_nodes.size(); ++ci) {
+        const Node* node = compute_nodes[ci];
+        bool is_last = (ci == compute_nodes.size() - 1);
+        std::string out_ptr = is_last ? "output" : ("tmp" + std::to_string(node_to_buffer.at(node->id)));
+        const NodeVariant& op = node->op;
+
+        // 跳过 FusedNode（已在 fuse 阶段处理）
+        if (std::holds_alternative<FusedNode>(op)) {
+            continue;
+        }
+
+        // 获取输入指针名
+        std::vector<std::string> in_ptrs;
+        for (size_t in_id : node->inputs) {
+            in_ptrs.push_back(inputPtrName(in_id));
+        }
+
+        ss << "    // " << std::visit([](auto&& n) { return n.name; }, op) << "\n";
+
+        // MatMulNode
+        if (std::holds_alternative<MatMulNode>(op)) {
+            ss << "    {\n"
+               << "        const size_t TILE_M = 64, TILE_N = 64, TILE_K = 64;\n"
+               << "        for (size_t i = 0; i < M; ++i)\n"
+               << "            for (size_t j = 0; j < N; ++j)\n"
+               << "                " << out_ptr << "[i * N + j] = 0.0f;\n"
+               << "        for (size_t i0 = 0; i0 < M; i0 += TILE_M) {\n"
+               << "            size_t i_end = (i0 + TILE_M < M) ? i0 + TILE_M : M;\n"
+               << "            for (size_t j0 = 0; j0 < N; j0 += TILE_N) {\n"
+               << "                size_t j_end = (j0 + TILE_N < N) ? j0 + TILE_N : N;\n"
+               << "                for (size_t k0 = 0; k0 < K; k0 += TILE_K) {\n"
+               << "                    size_t k_end = (k0 + TILE_K < K) ? k0 + TILE_K : K;\n"
+               << "                    for (size_t i = i0; i < i_end; ++i) {\n"
+               << "                        const float* __restrict a_row = " << in_ptrs[0] << " + i * K;\n"
+               << "                        float* __restrict out_row = " << out_ptr << " + i * N;\n"
+               << "                        for (size_t j = j0; j < j_end; ++j) {\n"
+               << "                            float sum = out_row[j];\n"
+               << "                            const float* __restrict b_col = " << in_ptrs[1] << " + j;\n"
+               << "                            #pragma clang loop vectorize(enable)\n"
+               << "                            #pragma clang loop unroll(enable)\n"
+               << "                            for (size_t k = k0; k < k_end; ++k) {\n"
+               << "                                sum += a_row[k] * b_col[k * N];\n"
+               << "                            }\n"
+               << "                            out_row[j] = sum;\n"
+               << "                        }\n"
+               << "                    }\n"
+               << "                }\n"
+               << "            }\n"
+               << "        }\n"
+               << "    }\n";
+        }
+        // AddNode
+        else if (std::holds_alternative<AddNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] + " << in_ptrs[1] << "[i];\n"
+               << "    }\n";
+        }
+        // SubNode
+        else if (std::holds_alternative<SubNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] - " << in_ptrs[1] << "[i];\n"
+               << "    }\n";
+        }
+        // MulNode
+        else if (std::holds_alternative<MulNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] * " << in_ptrs[1] << "[i];\n"
+               << "    }\n";
+        }
+        // DivNode
+        else if (std::holds_alternative<DivNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        if (" << in_ptrs[1] << "[i] == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] / " << in_ptrs[1] << "[i];\n"
+               << "    }\n";
+        }
+        // NegNode
+        else if (std::holds_alternative<NegNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        " << out_ptr << "[i] = -" << in_ptrs[0] << "[i];\n"
+               << "    }\n";
+        }
+        // ReLUNode
+        else if (std::holds_alternative<ReLUNode>(op)) {
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] > 0.0f ? " << in_ptrs[0] << "[i] : 0.0f;\n"
+               << "    }\n";
+        }
+        else {
+            ss << "    // unsupported op type " << op.index() << "\n";
+        }
+    }
+
+    // 释放中间缓冲区
+    for (size_t i = 0; i < num_intermediates; ++i) {
+        ss << "    delete[] tmp" << i << ";\n";
+    }
+
+    ss << "}\n";
+    return ss.str();
+}
+
+static size_t countComputeNodes(const Graph& graph) {
+    size_t count = 0;
+    for (const auto& node : graph.nodes()) {
+        if (isComputeNode(node, graph.inputs())) {
+            count++;
+        }
+    }
+    return count;
+}
+
 GeneratedKernel generateFromGraph(const Graph& graph) {
     const auto& nodes = graph.nodes();
     if (nodes.size() < 2) {
         throw std::runtime_error("HandwrittenKernelGen: graph has too few nodes");
     }
 
-    // 跳过输入节点，找到第一个计算节点
+    size_t num_compute = countComputeNodes(graph);
+
+    // 多节点图：使用新的多节点 kernel 生成
+    if (num_compute > 1) {
+        std::string src = generateMultiNodeKernel(graph);
+        GeneratedKernel result;
+        result.is_multi_node = true;
+        result.num_inputs = graph.inputCount();
+
+        // 提取维度信息
+        for (const auto& node : nodes) {
+            if (isComputeNode(node, graph.inputs())) {
+                if (std::holds_alternative<MatMulNode>(node.op)) {
+                    const auto& mm = std::get<MatMulNode>(node.op);
+                    if (mm.lhs_desc.shape.size() == 2 && mm.rhs_desc.shape.size() == 2) {
+                        result.M = mm.lhs_desc.shape[0];
+                        result.K = mm.lhs_desc.shape[1];
+                        result.N = mm.rhs_desc.shape[1];
+                    }
+                }
+                result.elem_n = std::max(result.elem_n, node.out_desc.numel);
+            }
+        }
+
+        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel");
+        result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
+        result.handle = dl_handle;
+        result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
+        return result;
+    }
+
+    // 单节点图：使用原有逻辑
     const Node* compute_node = nullptr;
     for (const auto& node : nodes) {
-        bool is_input = false;
-        for (size_t in_id : graph.inputs()) {
-            if (node.id == in_id) { is_input = true; break; }
-        }
-        if (!is_input && !node.inputs.empty()) {
+        if (isComputeNode(node, graph.inputs())) {
             compute_node = &node;
             break;
         }
-    }
-
-    if (!compute_node) {
-        throw std::runtime_error("HandwrittenKernelGen: no compute node found in graph");
     }
 
     const NodeVariant& op = compute_node->op;

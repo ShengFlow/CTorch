@@ -350,7 +350,8 @@ Graph Graph::fuse() const {
             // 构建 FusedNode
             FusedNode fused_node;
             std::set<size_t> chain_set(chain->begin(), chain->end());
-            std::set<size_t> external_inputs;
+            // 外部输入：使用 vector + sort + unique 确保确定性顺序
+            std::vector<size_t> external_inputs;
 
             for (size_t cid : *chain) {
                 const Node& node = nodes_[cid];
@@ -358,10 +359,16 @@ Graph Graph::fuse() const {
                 fused_node.op_inputs.push_back(node.inputs);
                 for (size_t in_id : node.inputs) {
                     if (chain_set.find(in_id) == chain_set.end()) {
-                        external_inputs.insert(in_id);
+                        external_inputs.push_back(in_id);
                     }
                 }
             }
+
+            // 去重并排序，确保跨运行的确定性
+            std::sort(external_inputs.begin(), external_inputs.end());
+            external_inputs.erase(
+                std::unique(external_inputs.begin(), external_inputs.end()),
+                external_inputs.end());
 
             std::vector<size_t> new_inputs;
             for (size_t ext_id : external_inputs) {
