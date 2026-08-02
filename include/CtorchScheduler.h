@@ -157,6 +157,15 @@ public:
     template <op OpType>
     inline Tensor dispatch(const Tensor& a) {
         DeviceType target_dev = a.device();
+
+        // C3 JIT 热替换优先查询：若已安装 C3 kernel，优先使用
+        {
+            auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecuteUnary(OpType, a);
+            if (c3_result.has_value()) {
+                return c3_result.value();
+            }
+        }
+
         UnaryKernelFunc func = selectBestUnary(OpType, target_dev, unary_kernels_);
         if (func == nullptr) {
             CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");

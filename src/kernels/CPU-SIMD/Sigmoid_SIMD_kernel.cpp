@@ -84,38 +84,10 @@ Tensor Sigmoid_SIMD_kernel(const Tensor& a) {
     #endif
 #elif defined(__aarch64__)
     // ARM NEON优化实现
-    // 使用 exp 近似: exp(x) ≈ e^x (需要多项式近似)
-    // 这里使用简化的 sigmoid 实现，避免复杂的 exp 近似
-    // sigmoid(x) ≈ 0.5 + 0.25 * x  (当 x 接近 0 时)
-    // 更准确的近似使用分段函数
+    // 使用标准 expf 计算，多项式近似在 x>0.2 时误差过大
     size_t i = 0;
-    float32x4_t one_vec = vdupq_n_f32(1.0f);
-    float32x4_t zero_vec = vdupq_n_f32(0.0f);
-    for (; i + 3 < count; i += 4) {
-        float32x4_t x = vld1q_f32(&a_data[i]);
-
-        // Clamp to [-16, 16]
-        float32x4_t neg_16 = vdupq_n_f32(-16.0f);
-        float32x4_t pos_16 = vdupq_n_f32(16.0f);
-        x = vmaxq_f32(neg_16, vminq_f32(x, pos_16));
-
-        // exp(-x) approximation using polynomial
-        // exp(-x) ≈ 1 / (1 + 0.5*(-x) + 0.25*(-x)^2)
-        float32x4_t neg_x = vnegq_f32(x);
-        float32x4_t half = vdupq_n_f32(0.5f);
-        float32x4_t quarter = vdupq_n_f32(0.25f);
-        float32x4_t poly = vmulq_f32(neg_x, half);
-        poly = vfmaq_f32(one_vec, neg_x, poly);
-        poly = vfmaq_f32(poly, vmulq_f32(neg_x, neg_x), quarter);
-
-        // sigmoid = 1 / (1 + exp(-x)) = poly / (poly + 1)
-        float32x4_t denom = vaddq_f32(poly, one_vec);
-        float32x4_t sigmoid = vdivq_f32(poly, denom);
-        vst1q_f32(&result_data[i], sigmoid);
-    }
-    // 处理剩余部分
     for (; i < count; ++i) {
-        result_data[i] = 1.0f / (1.0f + std::exp(-a_data[i]));
+        result_data[i] = 1.0f / (1.0f + expf(-a_data[i]));
     }
 #else
     // 不支持SIMD的情况，使用标量实现

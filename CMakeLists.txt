@@ -66,6 +66,8 @@ set(CT-Core
         src/C3/Graph.cpp
         src/C3/HandwrittenKernelGen.cpp
         src/C3/C3Engine.cpp
+        src/C3/PatternMatcher.cpp
+        src/C3/PGOManager.cpp
 )
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
@@ -91,6 +93,7 @@ set(CT-Core-Headers
         include/C3/Graph.h
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
+        include/C3/PatternMatcher.h
 )
 
 set(CT-Nodes-Headers
@@ -309,6 +312,26 @@ target_include_directories(test_relu_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
 target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_matmul_blas src/tests/standalone/test_c3_matmul_blas.cpp)
+target_link_libraries(test_c3_matmul_blas PRIVATE CTorch)
+target_include_directories(test_c3_matmul_blas PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_mnist_step src/tests/standalone/test_c3_mnist_step.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(test_c3_mnist_step PRIVATE CTorch)
+target_include_directories(test_c3_mnist_step PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_compile_time src/tests/standalone/test_c3_compile_time.cpp)
+target_link_libraries(test_c3_compile_time PRIVATE CTorch)
+target_include_directories(test_c3_compile_time PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_mnist_train src/tests/standalone/test_c3_mnist_train.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(test_c3_mnist_train PRIVATE CTorch)
+target_include_directories(test_c3_mnist_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_compile_and_inject src/tests/standalone/test_c3_compile_and_inject.cpp)
+target_link_libraries(test_c3_compile_and_inject PRIVATE CTorch)
+target_include_directories(test_c3_compile_and_inject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # (SECURITY_SENSITIVE) MNIST Loader security regression tests
 add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)

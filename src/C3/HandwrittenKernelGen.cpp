@@ -83,6 +83,33 @@ extern "C" void c3_kernel(const float* a, const float*, float* out,
 )SRC";
 }
 
+static std::string generateSigmoidKernel() {
+    return R"SRC(
+#include <cstddef>
+#include <cmath>
+extern "C" void c3_kernel(const float* a, const float*, float* out,
+                          size_t n, size_t, size_t, size_t) {
+    for (size_t i = 0; i < n; ++i) {
+        out[i] = 1.0f / (1.0f + expf(-a[i]));
+    }
+}
+)SRC";
+}
+
+static std::string generateTanhKernel() {
+    return R"SRC(
+#include <cstddef>
+#include <cmath>
+extern "C" void c3_kernel(const float* a, const float*, float* out,
+                          size_t n, size_t, size_t, size_t) {
+    for (size_t i = 0; i < n; ++i) {
+        float x = a[i];
+        out[i] = (expf(x) - expf(-x)) / (expf(x) + expf(-x));
+    }
+}
+)SRC";
+}
+
 /// 为 Sub 操作生成 kernel 源码
 static std::string generateSubKernel() {
     return R"SRC(
@@ -241,6 +268,20 @@ static std::string generateFusedKernel(const std::vector<NodeVariant>& ops,
                     ss << prefix << result << " = " << extPtr(ext_inputs[0])
                        << " / " << extPtr(ext_inputs[1]) << ";\n";
                 }
+            } else if constexpr (std::is_same_v<T, SigmoidNode>) {
+                // Sigmoid: 1.0f / (1.0f + expf(-x))
+                if (op_idx > 0) {
+                    ss << prefix << result << " = 1.0f / (1.0f + expf(-" << prev << "));\n";
+                } else {
+                    ss << prefix << result << " = 1.0f / (1.0f + expf(-" << extPtr(ext_inputs[0]) << "));\n";
+                }
+            } else if constexpr (std::is_same_v<T, TanhNode>) {
+                // Tanh: (expf(x) - expf(-x)) / (expf(x) + expf(-x))
+                if (op_idx > 0) {
+                    ss << prefix << result << " = (expf(" << prev << ") - expf(-" << prev << ")) / (expf(" << prev << ") + expf(-" << prev << "));\n";
+                } else {
+                    ss << prefix << result << " = (expf(" << extPtr(ext_inputs[0]) << ") - expf(-" << extPtr(ext_inputs[0]) << ")) / (expf(" << extPtr(ext_inputs[0]) << ") + expf(-" << extPtr(ext_inputs[0]) << "));\n";
+                }
             }
         }, op);
 
@@ -252,47 +293,17 @@ static std::string generateFusedKernel(const std::vector<NodeVariant>& ops,
     return ss.str();
 }
 static std::string generateMatMulKernel() {
-    // 分块矩阵乘法：i0/j0/k0 三级分块 + 内层 k 循环展开 + 向量化
+    // 委托 Accelerate BLAS (cblas_sgemm) 获得 AMX 指令集加速
     return R"SRC(
 #include <cstddef>
-#include <algorithm>
+#include <Accelerate/Accelerate.h>
 extern "C" void c3_kernel(const float* a, const float* b, float* out,
                           size_t, size_t M, size_t K, size_t N) {
-    const size_t TILE_M = 64;
-    const size_t TILE_N = 64;
-    const size_t TILE_K = 64;
-
-    // 初始化 C 为 0
-    for (size_t i = 0; i < M; ++i) {
-        for (size_t j = 0; j < N; ++j) {
-            out[i * N + j] = 0.0f;
-        }
-    }
-
-    // 分块循环：i0 → j0 → k0 → i → j → k
-    for (size_t i0 = 0; i0 < M; i0 += TILE_M) {
-        size_t i_end = (i0 + TILE_M < M) ? i0 + TILE_M : M;
-        for (size_t j0 = 0; j0 < N; j0 += TILE_N) {
-            size_t j_end = (j0 + TILE_N < N) ? j0 + TILE_N : N;
-            for (size_t k0 = 0; k0 < K; k0 += TILE_K) {
-                size_t k_end = (k0 + TILE_K < K) ? k0 + TILE_K : K;
-                for (size_t i = i0; i < i_end; ++i) {
-                    const float* __restrict a_row = a + i * K;
-                    float* __restrict out_row = out + i * N;
-                    for (size_t j = j0; j < j_end; ++j) {
-                        float sum = out_row[j];
-                        const float* __restrict b_col = b + j;
-                        #pragma clang loop vectorize(enable)
-                        #pragma clang loop unroll(enable)
-                        for (size_t k = k0; k < k_end; ++k) {
-                            sum += a_row[k] * b_col[k * N];
-                        }
-                        out_row[j] = sum;
-                    }
-                }
-            }
-        }
-    }
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                (int)M, (int)N, (int)K,
+                1.0f, a, (int)K,
+                b, (int)N,
+                0.0f, out, (int)N);
 }
 )SRC";
 }
@@ -331,7 +342,8 @@ static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
     // 编译为 .so
     std::ostringstream cmd;
     cmd << "clang++ -O3 -ffast-math -march=native -fPIC -shared -std=c++20 "
-        << "-o " << so_path << " " << src_path << " 2>&1";
+        << "-o " << so_path << " " << src_path
+        << " -framework Accelerate 2>&1";
 
     FILE* pipe = popen(cmd.str().c_str(), "r");
     if (!pipe) {
@@ -410,10 +422,11 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         external_input_map[inputs[i]] = i;
     }
 
-    // 步骤 3: 为每个计算节点分配缓冲区
+    // 步骤 3: 为每个计算节点分配缓冲区，记录每个缓冲区的 numel
     // buffer_index[node_id] = 0,1,2,... 表示中间缓冲区索引
     // SIZE_MAX 表示直接写入 output（最终输出节点）
     std::unordered_map<size_t, size_t> node_to_buffer;
+    std::vector<size_t> buffer_numels; // buffer index → numel
     size_t num_intermediates = 0;
     for (size_t i = 0; i < compute_nodes.size(); ++i) {
         size_t node_id = compute_nodes[i]->id;
@@ -425,23 +438,38 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
 
         if (!is_output) {
             node_to_buffer[node_id] = num_intermediates++;
+            buffer_numels.push_back(compute_nodes[i]->out_desc.numel);
         } else {
             node_to_buffer[node_id] = SIZE_MAX;
         }
     }
 
-    // 步骤 4: 确定维度参数
-    // 从图中提取 MatMul 的 M, K, N 和 elem_n
-    size_t M = 0, K = 0, N = 0, elem_n = 0;
-    for (const auto* node : compute_nodes) {
-        if (std::holds_alternative<MatMulNode>(node->op)) {
-            const auto& mm = std::get<MatMulNode>(node->op);
-            if (mm.lhs_desc.shape.size() == 2 && mm.rhs_desc.shape.size() == 2) {
-                M = mm.lhs_desc.shape[0];
-                K = mm.lhs_desc.shape[1];
-                N = mm.rhs_desc.shape[1];
-            }
+    // 步骤 3a: Buffer 原地复用分析（与 MLIR 后端相同逻辑）
+    std::unordered_map<size_t, size_t> node_buffer_reuse;
+    for (size_t ci = 0; ci + 1 < compute_nodes.size(); ++ci) {
+        const Node* cur = compute_nodes[ci];
+        const Node* next = compute_nodes[ci + 1];
+        size_t cur_id = cur->id;
+        size_t next_id = next->id;
+
+        auto cur_buf = node_to_buffer.find(cur_id);
+        if (cur_buf == node_to_buffer.end() || cur_buf->second == SIZE_MAX) continue;
+        if (std::holds_alternative<FusedNode>(cur->op)) continue;
+        if (!std::holds_alternative<FusedNode>(next->op)) continue;
+
+        bool consumes_cur = false;
+        for (size_t in_id : next->inputs) {
+            if (in_id == cur_id) { consumes_cur = true; break; }
         }
+        if (!consumes_cur) continue;
+        if (next->out_desc.numel != cur->out_desc.numel) continue;
+
+        node_buffer_reuse[next_id] = cur_buf->second;
+    }
+
+    // 步骤 4: 确定 elem_n（所有节点输出 numel 的最大值，用于 MultiNodeKernel 的 elem_n 参数）
+    size_t elem_n = 0;
+    for (const auto* node : compute_nodes) {
         elem_n = std::max(elem_n, node->out_desc.numel);
     }
 
@@ -452,12 +480,13 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
        << "#include <algorithm>\n"
        << "#include <stdexcept>\n"
        << "#include <string>\n"
+       << "#include <Accelerate/Accelerate.h>\n"
        << "extern \"C\" void c3_kernel(const float* const* inputs, float* output,\n"
        << "                          size_t n, size_t M, size_t K, size_t N) {\n";
 
-    // 分配中间缓冲区
+    // 分配中间缓冲区（每个按节点实际输出 numel 分配）
     for (size_t i = 0; i < num_intermediates; ++i) {
-        ss << "    float* tmp" << i << " = new float[n];\n";
+        ss << "    float* tmp" << i << " = new float[" << buffer_numels[i] << "];\n";
     }
 
     // 辅助函数：获取节点输入的数据指针名
@@ -481,11 +510,109 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
     for (size_t ci = 0; ci < compute_nodes.size(); ++ci) {
         const Node* node = compute_nodes[ci];
         bool is_last = (ci == compute_nodes.size() - 1);
-        std::string out_ptr = is_last ? "output" : ("tmp" + std::to_string(node_to_buffer.at(node->id)));
+        // 确定输出 buffer：优先使用原地复用的 buffer
+        std::string out_ptr;
+        if (is_last) {
+            out_ptr = "output";
+        } else {
+            auto reuse_it = node_buffer_reuse.find(node->id);
+            if (reuse_it != node_buffer_reuse.end()) {
+                out_ptr = "tmp" + std::to_string(reuse_it->second);
+            } else {
+                out_ptr = "tmp" + std::to_string(node_to_buffer.at(node->id));
+            }
+        }
         const NodeVariant& op = node->op;
 
-        // 跳过 FusedNode（已在 fuse 阶段处理）
+        // FusedNode — 生成融合循环
         if (std::holds_alternative<FusedNode>(op)) {
+            const auto& fnode = std::get<FusedNode>(op);
+            int64_t node_n = (int64_t)node->out_desc.numel;
+
+            // 构建 arg_node_id → numel 映射（用于广播）
+            std::unordered_map<size_t, int64_t> arg_numels;
+            for (size_t aidx = 0; aidx < fnode.arg_node_ids.size(); ++aidx) {
+                size_t nid = fnode.arg_node_ids[aidx];
+                for (const auto& gn : nodes) {
+                    if (gn.id == nid) {
+                        arg_numels[nid] = (int64_t)gn.out_desc.numel;
+                        break;
+                    }
+                }
+            }
+
+            // 辅助 lambda：生成输入访问表达式（支持广播）
+            auto loadExpr = [&](size_t node_id, const std::string& idx_var) -> std::string {
+                auto it = arg_numels.find(node_id);
+                if (it != arg_numels.end() && it->second > 0 && (size_t)it->second < (size_t)node_n) {
+                    // 需要广播：用 modulo 索引
+                    return inputPtrName(node_id) + "[" + idx_var + " % " + std::to_string(it->second) + "]";
+                }
+                return inputPtrName(node_id) + "[" + idx_var + "]";
+            };
+
+            ss << "    // Fused (" << fnode.ops.size() << " ops)\n";
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n";
+
+            for (size_t op_idx = 0; op_idx < fnode.ops.size(); ++op_idx) {
+                const NodeVariant& fop = fnode.ops[op_idx];
+                const auto& inputs_for_op = fnode.op_inputs[op_idx];
+                bool is_last_op = (op_idx == fnode.ops.size() - 1);
+
+                // 获取外部输入节点 ID（排除 chain 内部连接）
+                std::vector<size_t> ext_inputs;
+                for (size_t in_id : inputs_for_op) {
+                    if (op_idx > 0 && in_id == inputs_for_op[0]) continue;
+                    ext_inputs.push_back(in_id);
+                }
+
+                std::visit([&](auto&& arg) {
+                    using T = std::decay_t<decltype(arg)>;
+                    std::string lhs, rhs, result_var;
+
+                    if (op_idx > 0) {
+                        result_var = "val";
+                    } else {
+                        result_var = "float val";
+                    }
+
+                    if constexpr (std::is_same_v<T, NegNode>) {
+                        lhs = (op_idx > 0) ? "val" : loadExpr(ext_inputs[0], "i");
+                        ss << "        " << result_var << " = -" << lhs << ";\n";
+                    } else if constexpr (std::is_same_v<T, ReLUNode>) {
+                        lhs = (op_idx > 0) ? "val" : loadExpr(ext_inputs[0], "i");
+                        ss << "        " << result_var << " = " << lhs << " > 0.0f ? " << lhs << " : 0.0f;\n";
+                    } else if constexpr (std::is_same_v<T, SigmoidNode>) {
+                        lhs = (op_idx > 0) ? "val" : loadExpr(ext_inputs[0], "i");
+                        ss << "        " << result_var << " = 1.0f / (1.0f + expf(-" << lhs << "));\n";
+                    } else if constexpr (std::is_same_v<T, TanhNode>) {
+                        lhs = (op_idx > 0) ? "val" : loadExpr(ext_inputs[0], "i");
+                        ss << "        float x" << op_idx << " = " << lhs << ";\n";
+                        ss << "        " << result_var << " = (expf(x" << op_idx << ") - expf(-x" << op_idx << ")) / (expf(x" << op_idx << ") + expf(-x" << op_idx << "));\n";
+                    } else if constexpr (std::is_same_v<T, AddNode> || std::is_same_v<T, SubNode> ||
+                                       std::is_same_v<T, MulNode> || std::is_same_v<T, DivNode>) {
+                        if (op_idx > 0) {
+                            lhs = "val";
+                            rhs = loadExpr(ext_inputs[0], "i");
+                        } else {
+                            lhs = loadExpr(ext_inputs[0], "i");
+                            rhs = loadExpr(ext_inputs[1], "i");
+                        }
+                        const char* op_str = "";
+                        if constexpr (std::is_same_v<T, AddNode>) op_str = "+";
+                        else if constexpr (std::is_same_v<T, SubNode>) op_str = "-";
+                        else if constexpr (std::is_same_v<T, MulNode>) op_str = "*";
+                        else if constexpr (std::is_same_v<T, DivNode>) op_str = "/";
+                        ss << "        " << result_var << " = " << lhs << " " << op_str << " " << rhs << ";\n";
+                    }
+                }, fop);
+
+                if (is_last_op) {
+                    ss << "        " << out_ptr << "[i] = val;\n";
+                }
+            }
+            ss << "    }\n";
             continue;
         }
 
@@ -497,79 +624,118 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
 
         ss << "    // " << std::visit([](auto&& n) { return n.name; }, op) << "\n";
 
-        // MatMulNode
+        // 计算广播取模（用于 bias 等向量广播到矩阵的场景）
+        auto getBroadcastMod = [&](const NodeVariant& v) -> int64_t {
+            auto getRhsShape = [](const NodeVariant& var) -> std::vector<size_t> {
+                if (std::holds_alternative<AddNode>(var)) return std::get<AddNode>(var).rhs_desc.shape;
+                if (std::holds_alternative<SubNode>(var)) return std::get<SubNode>(var).rhs_desc.shape;
+                if (std::holds_alternative<MulNode>(var)) return std::get<MulNode>(var).rhs_desc.shape;
+                if (std::holds_alternative<DivNode>(var)) return std::get<DivNode>(var).rhs_desc.shape;
+                return {};
+            };
+            auto getLhsShape = [](const NodeVariant& var) -> std::vector<size_t> {
+                if (std::holds_alternative<AddNode>(var)) return std::get<AddNode>(var).lhs_desc.shape;
+                if (std::holds_alternative<SubNode>(var)) return std::get<SubNode>(var).lhs_desc.shape;
+                if (std::holds_alternative<MulNode>(var)) return std::get<MulNode>(var).lhs_desc.shape;
+                if (std::holds_alternative<DivNode>(var)) return std::get<DivNode>(var).lhs_desc.shape;
+                return {};
+            };
+            auto lhs = getLhsShape(v);
+            auto rhs = getRhsShape(v);
+            if (lhs.empty() || rhs.empty() || lhs == rhs) return 0;
+            size_t rhs_numel = 1;
+            for (size_t d : rhs) rhs_numel *= d;
+            if (rhs_numel == 1) return 1;
+            if (rhs.size() == 1 && !lhs.empty() && lhs.back() == rhs[0]) {
+                return (int64_t)rhs[0];
+            }
+            return 0;
+        };
+
+        // MatMulNode — 委托 Accelerate BLAS（每个 MatMul 硬编码自己的 M, K, N）
         if (std::holds_alternative<MatMulNode>(op)) {
-            ss << "    {\n"
-               << "        const size_t TILE_M = 64, TILE_N = 64, TILE_K = 64;\n"
-               << "        for (size_t i = 0; i < M; ++i)\n"
-               << "            for (size_t j = 0; j < N; ++j)\n"
-               << "                " << out_ptr << "[i * N + j] = 0.0f;\n"
-               << "        for (size_t i0 = 0; i0 < M; i0 += TILE_M) {\n"
-               << "            size_t i_end = (i0 + TILE_M < M) ? i0 + TILE_M : M;\n"
-               << "            for (size_t j0 = 0; j0 < N; j0 += TILE_N) {\n"
-               << "                size_t j_end = (j0 + TILE_N < N) ? j0 + TILE_N : N;\n"
-               << "                for (size_t k0 = 0; k0 < K; k0 += TILE_K) {\n"
-               << "                    size_t k_end = (k0 + TILE_K < K) ? k0 + TILE_K : K;\n"
-               << "                    for (size_t i = i0; i < i_end; ++i) {\n"
-               << "                        const float* __restrict a_row = " << in_ptrs[0] << " + i * K;\n"
-               << "                        float* __restrict out_row = " << out_ptr << " + i * N;\n"
-               << "                        for (size_t j = j0; j < j_end; ++j) {\n"
-               << "                            float sum = out_row[j];\n"
-               << "                            const float* __restrict b_col = " << in_ptrs[1] << " + j;\n"
-               << "                            #pragma clang loop vectorize(enable)\n"
-               << "                            #pragma clang loop unroll(enable)\n"
-               << "                            for (size_t k = k0; k < k_end; ++k) {\n"
-               << "                                sum += a_row[k] * b_col[k * N];\n"
-               << "                            }\n"
-               << "                            out_row[j] = sum;\n"
-               << "                        }\n"
-               << "                    }\n"
-               << "                }\n"
-               << "            }\n"
-               << "        }\n"
-               << "    }\n";
+            const auto& mm = std::get<MatMulNode>(op);
+            int64_t matM = (int64_t)mm.lhs_desc.shape[0];
+            int64_t matK = (int64_t)mm.lhs_desc.shape[1];
+            int64_t matN = (int64_t)mm.rhs_desc.shape[1];
+            ss << "    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+               << "                " << matM << ", " << matN << ", " << matK << ",\n"
+               << "                1.0f, " << in_ptrs[0] << ", " << matK << ",\n"
+               << "                " << in_ptrs[1] << ", " << matN << ",\n"
+               << "                0.0f, " << out_ptr << ", " << matN << ");\n";
         }
         // AddNode
         else if (std::holds_alternative<AddNode>(op)) {
+            int64_t bmod = getBroadcastMod(op);
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] + " << in_ptrs[1] << "[i];\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] + " << in_ptrs[1] << rhs_idx << ";\n"
                << "    }\n";
         }
         // SubNode
         else if (std::holds_alternative<SubNode>(op)) {
+            int64_t bmod = getBroadcastMod(op);
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] - " << in_ptrs[1] << "[i];\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] - " << in_ptrs[1] << rhs_idx << ";\n"
                << "    }\n";
         }
         // MulNode
         else if (std::holds_alternative<MulNode>(op)) {
+            int64_t bmod = getBroadcastMod(op);
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] * " << in_ptrs[1] << "[i];\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] * " << in_ptrs[1] << rhs_idx << ";\n"
                << "    }\n";
         }
         // DivNode
         else if (std::holds_alternative<DivNode>(op)) {
+            int64_t bmod = getBroadcastMod(op);
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
-               << "        if (" << in_ptrs[1] << "[i] == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] / " << in_ptrs[1] << "[i];\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        if (" << in_ptrs[1] << rhs_idx << " == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
+               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] / " << in_ptrs[1] << rhs_idx << ";\n"
                << "    }\n";
         }
         // NegNode
         else if (std::holds_alternative<NegNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
                << "        " << out_ptr << "[i] = -" << in_ptrs[0] << "[i];\n"
                << "    }\n";
         }
         // ReLUNode
         else if (std::holds_alternative<ReLUNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < n; ++i) {\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
                << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] > 0.0f ? " << in_ptrs[0] << "[i] : 0.0f;\n"
+               << "    }\n";
+        }
+        // SigmoidNode
+        else if (std::holds_alternative<SigmoidNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = 1.0f / (1.0f + expf(-" << in_ptrs[0] << "[i]));\n"
+               << "    }\n";
+        }
+        // TanhNode
+        else if (std::holds_alternative<TanhNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        float x = " << in_ptrs[0] << "[i];\n"
+               << "        " << out_ptr << "[i] = (expf(x) - expf(-x)) / (expf(x) + expf(-x));\n"
                << "    }\n";
         }
         else {
@@ -673,6 +839,10 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         src = generateNegKernel();
     } else if (std::holds_alternative<ReLUNode>(op)) {
         src = generateReLUKernel();
+    } else if (std::holds_alternative<SigmoidNode>(op)) {
+        src = generateSigmoidKernel();
+    } else if (std::holds_alternative<TanhNode>(op)) {
+        src = generateTanhKernel();
     } else if (std::holds_alternative<MatMulNode>(op)) {
         src = generateMatMulKernel();
         result.is_matmul = true;

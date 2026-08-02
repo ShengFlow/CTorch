@@ -9,6 +9,7 @@
 #ifndef CTORCH_C3_JITENGINE_H
 #define CTORCH_C3_JITENGINE_H
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@
 #include "../Ctools.h"
 #include "../Tensor.h"
 #include "C3KernelRegistry.h"
+#include "Tracer.h"
 
 namespace ct {
 namespace c3 {
@@ -53,14 +55,25 @@ struct CompileOptions {
 #endif
     /** @brief 目标设备，默认 CPU */
     DeviceType target_device = DeviceType::kCPU;
-    /** @brief 优化级别：0=关闭优化，1=基础优化，2=积极优化（默认），3=极限优化 */
-    int opt_level = 2;
+    /** @brief 优化级别：0=关闭优化，1=基础优化，2=O2，3=O3/Ofast（默认，MLIR 后端生产优化级别） */
+    int opt_level = 3;
     /** @brief 是否启用算子融合（默认开启） */
     bool enable_fusion = true;
     /** @brief 是否启用编译缓存（默认开启） */
     bool enable_cache = true;
     /** @brief 是否启用自动调优（默认关闭，首次编译时运行 QEA 搜索最优分块） */
     bool enable_autotune = false;
+    /** @brief 是否启用 PGO 性能分析（默认关闭，开启后记录每次 execute 耗时） */
+    bool enable_profiling = false;
+    /** @brief 是否启用 PGO 两阶段编译（默认关闭）
+     *
+     *  Tier 1：解释器模式（Eager 逐节点执行），无编译开销
+     *  Tier 2：当热路径检测到后，自动编译为 MLIR kernel 并透明切换
+     *
+     *  启用后，compile() 返回 PGOCompiledKernel，初始阶段通过 Eager 执行，
+     *  收集 profile 数据，当调用次数/时间超过阈值后自动提升到编译模式。
+     */
+    bool pgo_mode = false;
     /** @brief 自定义缓存键；为空时由引擎根据图结构与选项生成 */
     std::string cache_key_override;
 };
@@ -86,6 +99,45 @@ struct C3CacheStats {
     size_t async_completions = 0;
     /** @brief 异步编译失败数 */
     size_t async_failures = 0;
+};
+
+/**
+ * @struct ProfileData
+ * @brief PGO 性能分析数据，记录 kernel 执行时间统计
+ * @details 线程安全：所有字段使用 atomic 支持并发记录。
+ *          由 ProfiledCompiledKernel 在每次 execute() 时自动更新。
+ */
+struct ProfileData {
+    /** @brief 调用次数 */
+    std::atomic<uint64_t> call_count{0};
+    /** @brief 累计执行时间（纳秒） */
+    std::atomic<uint64_t> total_time_ns{0};
+    /** @brief 单次最短执行时间（纳秒） */
+    std::atomic<uint64_t> min_time_ns{UINT64_MAX};
+    /** @brief 单次最长执行时间（纳秒） */
+    std::atomic<uint64_t> max_time_ns{0};
+    /** @brief 最近一次执行时间（纳秒） */
+    std::atomic<uint64_t> last_time_ns{0};
+
+    /** @brief 记录一次执行耗时 */
+    void record(uint64_t ns) {
+        call_count.fetch_add(1, std::memory_order_relaxed);
+        total_time_ns.fetch_add(ns, std::memory_order_relaxed);
+        last_time_ns.store(ns, std::memory_order_relaxed);
+        uint64_t old_min = min_time_ns.load(std::memory_order_relaxed);
+        while (ns < old_min &&
+               !min_time_ns.compare_exchange_weak(old_min, ns, std::memory_order_relaxed)) {}
+        uint64_t old_max = max_time_ns.load(std::memory_order_relaxed);
+        while (ns > old_max &&
+               !max_time_ns.compare_exchange_weak(old_max, ns, std::memory_order_relaxed)) {}
+    }
+
+    /** @brief 平均执行时间（纳秒），无调用时返回 0 */
+    [[nodiscard]] uint64_t avgTimeNs() const {
+        uint64_t cnt = call_count.load(std::memory_order_relaxed);
+        if (cnt == 0) return 0;
+        return total_time_ns.load(std::memory_order_relaxed) / cnt;
+    }
 };
 
 /**
@@ -127,6 +179,45 @@ public:
     }
 };
 
+/**
+ * @class ProfiledCompiledKernel
+ * @brief PGO 性能分析包装器：装饰 CompiledKernel 并自动记录每次 execute 耗时
+ * @details 透明代理模式，所有方法委托给内部 kernel，仅 execute() 额外计时代码。
+ *          当 CompileOptions::enable_profiling 为 true 时，C3Engine 自动包装。
+ */
+class ProfiledCompiledKernel : public CompiledKernel {
+public:
+    ProfiledCompiledKernel(std::shared_ptr<CompiledKernel> inner,
+                           std::shared_ptr<ProfileData> data)
+        : inner_(std::move(inner)), data_(std::move(data)) {}
+
+    std::vector<Tensor> execute(const std::vector<Tensor>& inputs) override {
+        auto start = std::chrono::steady_clock::now();
+        auto result = inner_->execute(inputs);
+        auto end = std::chrono::steady_clock::now();
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        data_->record(ns);
+        return result;
+    }
+
+    [[nodiscard]] const std::string& cacheKey() const override { return inner_->cacheKey(); }
+    [[nodiscard]] DeviceType targetDevice() const override { return inner_->targetDevice(); }
+    [[nodiscard]] size_t workspaceBytes() const override { return inner_->workspaceBytes(); }
+
+    bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
+        return inner_->installIntoRegistry(op_type, shapes);
+    }
+
+    /** @brief 获取内部 kernel 的引用 */
+    CompiledKernel& inner() { return *inner_; }
+    /** @brief 获取 profile 数据 */
+    const ProfileData& profileData() const { return *data_; }
+
+private:
+    std::shared_ptr<CompiledKernel> inner_;
+    std::shared_ptr<ProfileData> data_;
+};
+
 /// 异步编译结果的 future 类型（shared_future 支持多等待者）
 using CompileFuture = std::shared_future<std::shared_ptr<CompiledKernel>>;
 
@@ -162,6 +253,115 @@ public:
     CompileFuture compileAsync(const Graph& graph, const CompileOptions& options = {});
 
     /**
+     * @brief 并行编译多个独立子图
+     * @param graphs 待编译的子图列表（各子图必须独立，无数据依赖）
+     * @param options 编译选项
+     * @return 编译后的 kernel 列表，顺序与 graphs 一致
+     * @details 内部使用 std::async 并行编译所有子图，所有子图编译完成后返回。
+     *          每个子图独立走 compile() 流程（独立优化、缓存检查、编译）。
+     *          适用于 MLP 各层独立编译等场景，显著减少冷启动总编译时间。
+     * @throw std::runtime_error 当任一子图编译失败时抛出
+     */
+    std::vector<std::shared_ptr<CompiledKernel>> compileParallel(
+        const std::vector<Graph>& graphs,
+        const CompileOptions& options = {});
+
+    /**
+     * @brief 编译计算图并自动安装到 C3 内核注册表
+     * @param graph 待编译的计算图
+     * @param options 编译选项
+     * @return 编译后的 kernel
+     * @details 编译后的 kernel 自动注册到 C3KernelRegistry，下次调度器 dispatch
+     *          相同操作时自动使用 C3 kernel 而非 Eager kernel。
+     *          支持单节点图（Add/Mul/MatMul/Neg/ReLU/Sigmoid/Tanh）自动注入。
+     *          对于融合节点（FusedNode）或多节点图，调用方需手动指定 op_type。
+     * @throw std::runtime_error 当图不合法或无法推断 op_type 时抛出
+     */
+    std::shared_ptr<CompiledKernel> compileAndInject(
+        const Graph& graph, const CompileOptions& options = {});
+
+    // ======================= traceAndInject 系列 =======================
+
+    /**
+     * @brief 追踪表达式 → 编译 → 注入注册表，一站式完成
+     * @tparam F 可调用对象类型（接收 ProxyTensor 并返回 ProxyTensor）
+     * @param fn 表达式 lambda，如 [](auto& x) { return x.relu(); }
+     * @param desc 输入张量描述符
+     * @param options 编译选项
+     * @return 编译后的 kernel（已注入调度器注册表）
+     * @details traceAndInject 将 Tracer::trace() + compile() + inject() 合并为一步。
+     *          使用方式：
+     *          @code
+     *          auto kernel = engine.traceAndInject(
+     *              [](auto& x) { return x.relu(); }, desc);
+     *          auto result = kernel->execute({input_tensor});
+     *          @endcode
+     */
+    template <typename F>
+    std::shared_ptr<CompiledKernel> traceAndInject(
+        F&& fn, const TensorDesc& desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), desc);
+        return compileAndInject(graph, options);
+    }
+
+    /// 双输入版本
+    template <typename F>
+    std::shared_ptr<CompiledKernel> traceAndInject(
+        F&& fn, const TensorDesc& a_desc, const TensorDesc& b_desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), a_desc, b_desc);
+        return compileAndInject(graph, options);
+    }
+
+    /// 三输入版本（适合 FC 层：input, weight, bias）
+    template <typename F>
+    std::shared_ptr<CompiledKernel> traceAndInject(
+        F&& fn, const TensorDesc& a_desc, const TensorDesc& b_desc,
+        const TensorDesc& c_desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), a_desc, b_desc, c_desc);
+        return compileAndInject(graph, options);
+    }
+
+    /**
+     * @brief 异步追踪表达式 → 编译 → 注入（非阻塞）
+     * @tparam F 可调用对象类型
+     * @param fn 表达式 lambda
+     * @param desc 输入张量描述符
+     * @param options 编译选项
+     * @return CompileFuture，可通过 .get() 获取编译后的 kernel
+     * @details 编译在后台线程中执行，主线程可继续执行其他工作。
+     *          编译完成后自动注入调度器注册表。
+     */
+    template <typename F>
+    CompileFuture traceAndInjectAsync(
+        F&& fn, const TensorDesc& desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), desc);
+        return compileAsync(graph, options);
+    }
+
+    /// 双输入异步版本
+    template <typename F>
+    CompileFuture traceAndInjectAsync(
+        F&& fn, const TensorDesc& a_desc, const TensorDesc& b_desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), a_desc, b_desc);
+        return compileAsync(graph, options);
+    }
+
+    /// 三输入异步版本
+    template <typename F>
+    CompileFuture traceAndInjectAsync(
+        F&& fn, const TensorDesc& a_desc, const TensorDesc& b_desc,
+        const TensorDesc& c_desc,
+        const CompileOptions& options = {}) {
+        auto graph = Tracer::trace(std::forward<F>(fn), a_desc, b_desc, c_desc);
+        return compileAsync(graph, options);
+    }
+
+    /**
      * @brief 根据缓存键获取已编译 kernel
      * @param cache_key 缓存键
      * @return 对应 kernel；若不存在则返回 nullptr
@@ -170,6 +370,15 @@ public:
 
     /** @brief 查询当前缓存状态 */
     [[nodiscard]] C3CacheStats getCacheStats() const;
+
+    /**
+     * @brief 根据缓存键获取 PGO profile 数据
+     * @param cache_key 缓存键
+     * @return 对应 profile 数据的共享指针；若 profiling 未启用或键不存在则返回 nullptr
+     * @details 返回的 ProfileData 指针在 kernel 生命周期内有效。
+     *          调用方可通过 ProfileData 的原子接口安全读取统计信息。
+     */
+    [[nodiscard]] std::shared_ptr<ProfileData> getProfileData(const std::string& cache_key) const;
 
     /** @brief 清空全部编译缓存（不取消进行中的异步编译） */
     void clearCache();

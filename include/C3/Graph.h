@@ -124,6 +124,24 @@ struct ReLUNode {
 };
 
 /**
+ * @struct SigmoidNode
+ * @brief 一元 Sigmoid 激活节点：out = 1 / (1 + exp(-x))
+ */
+struct SigmoidNode {
+    static constexpr const char* name = "Sigmoid";
+    TensorDesc in_desc;
+};
+
+/**
+ * @struct TanhNode
+ * @brief 一元 Tanh 激活节点：out = (exp(x) - exp(-x)) / (exp(x) + exp(-x))
+ */
+struct TanhNode {
+    static constexpr const char* name = "Tanh";
+    TensorDesc in_desc;
+};
+
+/**
  * @struct ConstNode
  * @brief 常量节点（用于常量折叠）：value = scalar
  * @details 仅用于 canonicalize 阶段的常量折叠，不参与实际 kernel 执行。
@@ -146,7 +164,7 @@ struct FusedNode;
  *          - 图遍历（canonicalize）使用 std::visit 比虚函数模式更高效且显式
  *          - 新增算子类型只需扩展 variant，不破坏现有代码
  */
-using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ReLUNode, ConstNode, FusedNode>;
+using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ReLUNode, SigmoidNode, TanhNode, ConstNode, FusedNode>;
 
 /**
  * @struct FusedNode
@@ -258,6 +276,22 @@ public:
      */
     Graph fuse() const;
 
+    /**
+     * @brief 死代码消除：移除不可达节点（未被任何输出节点引用的子图）
+     * @return 消除死代码后的新图
+     * @details 从输出节点出发反向 BFS 收集所有可达节点，仅保留可达节点重建图。
+     *          输入节点若不被任何可达节点引用也会被移除。
+     */
+    Graph eliminateDeadCode() const;
+
+    /**
+     * @brief 添加常量节点（用于常量折叠）
+     * @param value 常量值
+     * @param desc 张量描述符（通常为标量 shape={1}）
+     * @return 常量节点的 ID
+     */
+    size_t addConstant(double value, const TensorDesc& desc);
+
     // ======================= 访问器 =======================
 
     [[nodiscard]] const std::vector<size_t>& inputs() const { return inputs_; }
@@ -274,13 +308,13 @@ public:
     /// 将图转为可读字符串（调试用）
     [[nodiscard]] std::string toString() const;
 
+    /// 检查节点 ID 是否有效
+    [[nodiscard]] bool validNodeId(size_t id) const { return id < nodes_.size(); }
+
 private:
     std::vector<Node> nodes_;       ///< 所有节点（按添加顺序，ID 即索引）
     std::vector<size_t> inputs_;    ///< 输入节点 ID 列表
     std::vector<size_t> outputs_;   ///< 输出节点 ID 列表
-
-    /// 检查节点 ID 是否有效
-    bool validNodeId(size_t id) const { return id < nodes_.size(); }
 };
 
 } // namespace c3

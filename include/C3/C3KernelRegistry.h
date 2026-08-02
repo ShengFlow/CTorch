@@ -200,6 +200,49 @@ public:
         }
     }
 
+    /**
+     * @brief 尝试通过 C3 kernel 执行（unary 版本）
+     * @param op_type 算子类型
+     * @param a 输入
+     * @return 若命中且执行成功返回 Tensor；否则返回 std::nullopt（回退 eager）
+     */
+    std::optional<Tensor> tryExecuteUnary(op op_type, const Tensor& a) {
+        auto key = makeKey(op_type, a.device());
+
+        C3Entry entry;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = entries_.find(key);
+            if (it == entries_.end() || !it->second.active) {
+                return std::nullopt;
+            }
+            entry = it->second;
+        }
+
+        // 形状匹配检查
+        if (a.shape() != entry.shapes.lhs_shape) {
+            return std::nullopt; // 静默回退
+        }
+
+        // 执行 C3 kernel
+        try {
+            Tensor out = Tensor(ShapeTag{}, a.shape());
+            entry.func(
+                a.data_read<float>(),
+                nullptr,
+                out.data_write<float>(),
+                a.numel(), 0, 0, 0);
+            hit_count_.fetch_add(1, std::memory_order_relaxed);
+            return out;
+        } catch (const std::exception& e) {
+            miss_count_.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        } catch (...) {
+            miss_count_.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+    }
+
     // ======================= 统计 =======================
 
     struct Stats {

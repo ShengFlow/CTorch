@@ -9,6 +9,7 @@
 
 #include "../../include/C3/C3Engine.h"
 #include "../../include/C3/Graph.h"
+#include "../../include/C3/PGOManager.h"
 #include "C3/AutoTuner.h"
 #include "C3/TuningState.h"
 #include "HandwrittenKernelGen.h"
@@ -261,6 +262,8 @@ namespace {
         std::unordered_map<std::string, PendingEntry> pending;
         /// 后台编译任务的 future，用于生命周期管理和 shutdown 等待
         std::vector<std::future<void>> compile_futures;
+        /// PGO profile 数据（key → ProfileData）
+        std::unordered_map<std::string, std::shared_ptr<ProfileData>> profile_data;
         C3CacheStats stats;
     };
 
@@ -332,7 +335,7 @@ static std::shared_ptr<CompiledKernel> doCompile(
     if (options.backend == C3Backend::Handwritten) {
         gen = generateFromGraph(working_graph);
     } else {
-        gen = generateFromGraphMLIR(working_graph);
+        gen = generateFromGraphMLIR(working_graph, options.opt_level);
     }
 #else
     gen = generateFromGraph(working_graph);
@@ -363,10 +366,38 @@ static std::shared_ptr<CompiledKernel> doCompile(
 std::shared_ptr<CompiledKernel> C3Engine::compile(
     const Graph& graph, const CompileOptions& options) {
 
-    // 算子融合：若启用，先对图做融合
+    // 图优化管线：canonicalize → eliminateDeadCode → fuse
     Graph working_graph = graph;
+    working_graph = working_graph.canonicalize();
+    working_graph = working_graph.eliminateDeadCode();
     if (options.enable_fusion) {
         working_graph = working_graph.fuse();
+    }
+
+    // PGO 模式：返回 PGOCompiledKernel（Tier 1 解释器 → 热路径检测后自动提升到 Tier 2）
+    if (options.pgo_mode) {
+        auto& pgo = PGOManager::getInstance();
+        if (!pgo.isEnabled()) {
+            pgo.setEnabled(true);
+        }
+
+        std::string cache_key = makeCacheKey(working_graph, options);
+        auto& state = getState();
+
+        // 获取或创建 profile data
+        std::shared_ptr<ProfileData> pd;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            auto pd_it = state.profile_data.find(cache_key);
+            if (pd_it == state.profile_data.end()) {
+                pd = std::make_shared<ProfileData>();
+                state.profile_data[cache_key] = pd;
+            } else {
+                pd = pd_it->second;
+            }
+        }
+
+        return pgo.registerKernel(working_graph, options, cache_key, pd, *this);
     }
 
     auto& state = getState();
@@ -382,7 +413,16 @@ std::shared_ptr<CompiledKernel> C3Engine::compile(
         if (it != state.cache.end()) {
             state.stats.hits++;
             it->second.last_accessed = std::chrono::steady_clock::now();
-            return it->second.kernel;
+            auto kernel = it->second.kernel;
+            // 如果 profiling 启用，包装为 ProfiledCompiledKernel
+            if (options.enable_profiling) {
+                auto pd_it = state.profile_data.find(cache_key);
+                if (pd_it == state.profile_data.end()) {
+                    pd_it = state.profile_data.emplace(cache_key, std::make_shared<ProfileData>()).first;
+                }
+                return std::make_shared<ProfiledCompiledKernel>(kernel, pd_it->second);
+            }
+            return kernel;
         }
         state.stats.misses++;
     }
@@ -394,6 +434,16 @@ std::shared_ptr<CompiledKernel> C3Engine::compile(
         std::string cache_key = makeCacheKey(working_graph, options);
         state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
         evictLRU(state);
+    }
+
+    // 如果 profiling 启用，包装为 ProfiledCompiledKernel
+    if (options.enable_profiling) {
+        std::string cache_key = makeCacheKey(working_graph, options);
+        auto pd_it = state.profile_data.find(cache_key);
+        if (pd_it == state.profile_data.end()) {
+            pd_it = state.profile_data.emplace(cache_key, std::make_shared<ProfileData>()).first;
+        }
+        return std::make_shared<ProfiledCompiledKernel>(kernel, pd_it->second);
     }
 
     return kernel;
@@ -484,6 +534,121 @@ CompileFuture C3Engine::compileAsync(
     return result_future;
 }
 
+std::vector<std::shared_ptr<CompiledKernel>> C3Engine::compileParallel(
+    const std::vector<Graph>& graphs,
+    const CompileOptions& options)
+{
+    if (graphs.empty()) return {};
+
+    // 启动并行编译任务
+    std::vector<std::future<std::shared_ptr<CompiledKernel>>> futures;
+    futures.reserve(graphs.size());
+
+    for (const auto& g : graphs) {
+        futures.push_back(std::async(std::launch::async, [this, &g, &options]() {
+            return compile(g, options);
+        }));
+    }
+
+    // 收集结果
+    std::vector<std::shared_ptr<CompiledKernel>> results;
+    results.reserve(graphs.size());
+    for (auto& f : futures) {
+        auto kernel = f.get();
+        if (!kernel) {
+            throw std::runtime_error("C3Engine::compileParallel: one or more subgraphs failed to compile");
+        }
+        results.push_back(std::move(kernel));
+    }
+
+    return results;
+}
+
+// ======================= NodeVariant → op 枚举映射 =======================
+
+namespace {
+
+/// 将 C3 NodeVariant 映射到调度器 op 枚举
+/// @return op 值；若无法映射（ConstNode/FusedNode/多节点图）则返回 std::nullopt
+static std::optional<op> nodeVariantToOp(const NodeVariant& nv) {
+    // NodeVariant 的 variant 索引顺序：
+    // AddNode=0, SubNode=1, MulNode=2, DivNode=3, MatMulNode=4,
+    // NegNode=5, ReLUNode=6, SigmoidNode=7, TanhNode=8, ConstNode=9, FusedNode=10
+    switch (nv.index()) {
+        case 0:  return op::Add;
+        case 1:  return op::Sub;
+        case 2:  return op::Mul;
+        case 3:  return op::Div;
+        case 4:  return op::MatMul;
+        case 5:  return op::Neg;
+        case 6:  return op::ReLU;
+        case 7:  return op::Sigmoid;
+        case 8:  return op::Tanh;
+        default: return std::nullopt; // ConstNode, FusedNode, unknown
+    }
+}
+
+/// 从 Graph 提取 KernelShapeInfo
+static KernelShapeInfo graphToShapeInfo(const Graph& graph) {
+    KernelShapeInfo info;
+    if (graph.outputCount() == 0) return info;
+
+    auto& out_node = graph.node(graph.outputs()[0]);
+    info.out_shape = out_node.out_desc.shape;
+
+    // 获取输入形状
+    auto& input_ids = graph.inputs();
+    if (input_ids.size() >= 1) {
+        info.lhs_shape = graph.node(input_ids[0]).out_desc.shape;
+    }
+    if (input_ids.size() >= 2) {
+        info.rhs_shape = graph.node(input_ids[1]).out_desc.shape;
+    }
+
+    // 如果是 MatMul 节点，提取 M/K/N
+    if (auto* mm = std::get_if<MatMulNode>(&out_node.op)) {
+        info.is_matmul = true;
+        info.M = mm->lhs_desc.shape[0];  // batch dim
+        info.K = mm->lhs_desc.shape[1];
+        info.N = mm->rhs_desc.shape[1];
+    }
+
+    return info;
+}
+
+} // anonymous namespace
+
+std::shared_ptr<CompiledKernel> C3Engine::compileAndInject(
+    const Graph& graph, const CompileOptions& options)
+{
+    // 1. 编译
+    auto kernel = compile(graph, options);
+    if (!kernel) {
+        throw std::runtime_error("C3Engine::compileAndInject: compilation failed");
+    }
+
+    // 2. 推断 op_type
+    if (graph.outputCount() == 0) {
+        throw std::runtime_error("C3Engine::compileAndInject: graph has no output");
+    }
+
+    auto& out_node = graph.node(graph.outputs()[0]);
+    auto op_type = nodeVariantToOp(out_node.op);
+    if (!op_type.has_value()) {
+        throw std::runtime_error(
+            "C3Engine::compileAndInject: cannot infer op_type from output node "
+            "(FusedNode and multi-node graphs require manual installIntoRegistry)");
+    }
+
+    // 3. 构建形状签名
+    auto shapes = graphToShapeInfo(graph);
+
+    // 4. 安装到注册表（仅单节点图支持自动注入，多节点/融合图跳过）
+    kernel->installIntoRegistry(op_type.value(), shapes);
+
+    return kernel;
+}
+
 std::shared_ptr<CompiledKernel> C3Engine::getKernel(const std::string& cache_key) const {
     auto& state = getState();
     std::lock_guard<std::mutex> lock(state.mutex);
@@ -502,6 +667,16 @@ C3CacheStats C3Engine::getCacheStats() const {
     stats.total_entries = state.cache.size();
     stats.pending_compiles = state.pending.size();
     return stats;
+}
+
+std::shared_ptr<ProfileData> C3Engine::getProfileData(const std::string& cache_key) const {
+    auto& state = getState();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    auto it = state.profile_data.find(cache_key);
+    if (it != state.profile_data.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
 
 void C3Engine::clearCache() {

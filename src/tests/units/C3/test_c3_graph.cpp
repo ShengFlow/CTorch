@@ -25,6 +25,8 @@
 #include "C3/C3Engine.h"
 #include "C3/Tracer.h"
 #include "C3/C3KernelRegistry.h"
+#include "C3/PatternMatcher.h"
+#include "C3/PGOManager.h"
 #include "Ctools.h"
 #include "kernels/kernels.h"
 
@@ -179,6 +181,141 @@ TEST(Canonicalize, NoChangeForNonFoldable) {
 
     // Add(x, 2) 不应被折叠
     EXPECT_GT(simplified.nodeCount(), 1u);
+}
+
+TEST(Canonicalize, MulWithZeroFolds) {
+    using namespace ct::c3;
+
+    // Mul(x, 0) → 0
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    TensorDesc zero_desc = TensorDesc::fromShape({3, 4});
+    size_t zero = g.addNode(ConstNode{0.0}, {}, zero_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t mul = g.addNode(MulNode{x_desc, zero_desc}, {x, zero}, out_desc);
+    g.markOutput(mul);
+
+    Graph simplified = g.canonicalize();
+
+    // 输出应被折叠为 ConstNode{0.0}
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
+    EXPECT_EQ(std::get<ConstNode>(out_node.op).value, 0.0);
+}
+
+TEST(Canonicalize, SubWithSameInputFolds) {
+    using namespace ct::c3;
+
+    // Sub(x, x) → 0
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t sub = g.addNode(SubNode{x_desc, x_desc}, {x, x}, out_desc);
+    g.markOutput(sub);
+
+    Graph simplified = g.canonicalize();
+
+    // 输出应被折叠为 ConstNode{0.0}
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
+    EXPECT_EQ(std::get<ConstNode>(out_node.op).value, 0.0);
+}
+
+TEST(Canonicalize, DivWithSameInputFolds) {
+    using namespace ct::c3;
+
+    // Div(x, x) → 1
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t div = g.addNode(DivNode{x_desc, x_desc}, {x, x}, out_desc);
+    g.markOutput(div);
+
+    Graph simplified = g.canonicalize();
+
+    // 输出应被折叠为 ConstNode{1.0}
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
+    EXPECT_EQ(std::get<ConstNode>(out_node.op).value, 1.0);
+}
+
+TEST(Canonicalize, NegNegFolds) {
+    using namespace ct::c3;
+
+    // Neg(Neg(x)) → x
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    auto neg_desc = TensorDesc::fromShape({3, 4});
+    size_t inner_neg = g.addNode(NegNode{x_desc}, {x}, neg_desc);
+    size_t outer_neg = g.addNode(NegNode{neg_desc}, {inner_neg}, neg_desc);
+    g.markOutput(outer_neg);
+
+    Graph simplified = g.canonicalize();
+
+    // 输出应被映射到输入 x，形状保持一致
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    // 被映射到输入后，输出节点应为 Input（ConstNode 占位符）
+    EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
+    EXPECT_EQ(out_node.out_desc.shape, x_desc.shape);
+}
+
+TEST(Canonicalize, AddWithSameInput) {
+    using namespace ct::c3;
+
+    // Add(x, x) — 当前规则 7 未完全实现替换为 Mul(x, 2)
+    // 因此 Add(x, x) 应保持为 Add 节点不被折叠
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({3, 4});
+    size_t x = g.addInput(x_desc);
+
+    auto out_desc = TensorDesc::fromShape({3, 4});
+    size_t add = g.addNode(AddNode{x_desc, x_desc}, {x, x}, out_desc);
+    g.markOutput(add);
+
+    Graph simplified = g.canonicalize();
+
+    // Add(x, x) 不应被折叠为常量（输入不是常量）
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<AddNode>(out_node.op));
+}
+
+TEST(Canonicalize, AlgebraicRulesCompose) {
+    using namespace ct::c3;
+
+    // 组合验证：Mul(Sub(x, x), Div(y, y)) → Mul(0, 1) → 0
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(x_desc);
+    size_t y = g.addInput(x_desc);
+
+    auto out_desc = TensorDesc::fromShape({4});
+    size_t sub = g.addNode(SubNode{x_desc, x_desc}, {x, x}, out_desc);
+    size_t div = g.addNode(DivNode{x_desc, x_desc}, {y, y}, out_desc);
+    size_t mul = g.addNode(MulNode{x_desc, x_desc}, {sub, div}, out_desc);
+    g.markOutput(mul);
+
+    Graph simplified = g.canonicalize();
+
+    // Sub(x,x)→0, Div(y,y)→1, Mul(0,1)→0
+    // 最终输出应为 ConstNode{0.0}
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
+    EXPECT_EQ(std::get<ConstNode>(out_node.op).value, 0.0);
 }
 
 // ======================= 算子融合测试 =======================
@@ -1982,6 +2119,98 @@ TEST(AsyncCompile, MLIRFusedAsyncExecute) {
     EXPECT_TRUE(tensorsAllClose(result[0], eager));
 }
 
+// ======================= PGO Profiling 测试 =======================
+
+TEST(PGOProfiling, BasicProfileData) {
+    // 验证 ProfileData 的基本记录和查询功能
+    ct::c3::ProfileData pd;
+    EXPECT_EQ(pd.call_count.load(), 0u);
+
+    pd.record(1000); // 1 us
+    EXPECT_EQ(pd.call_count.load(), 1u);
+    EXPECT_EQ(pd.last_time_ns.load(), 1000u);
+    EXPECT_EQ(pd.min_time_ns.load(), 1000u);
+    EXPECT_EQ(pd.max_time_ns.load(), 1000u);
+    EXPECT_EQ(pd.avgTimeNs(), 1000u);
+
+    pd.record(500); // 0.5 us
+    EXPECT_EQ(pd.call_count.load(), 2u);
+    EXPECT_EQ(pd.min_time_ns.load(), 500u);
+    EXPECT_EQ(pd.max_time_ns.load(), 1000u);
+    EXPECT_EQ(pd.avgTimeNs(), 750u);
+}
+
+TEST(PGOProfiling, ProfiledCompiledKernel) {
+    // 验证 enable_profiling 下 compile 返回 ProfiledCompiledKernel 并正确记录耗时
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({32, 32});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(ct::c3::AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    ct::c3::CompileOptions opts;
+    opts.backend = ct::c3::C3Backend::MLIR;
+    opts.enable_profiling = true;
+
+    Tensor a(ShapeTag{}, {32, 32});
+    Tensor b(ShapeTag{}, {32, 32});
+    fillTensor(a, std::vector<float>(32*32, 1.5f));
+    fillTensor(b, std::vector<float>(32*32, 2.5f));
+
+    // 编译并执行
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    // 检查是否返回了 ProfiledCompiledKernel
+    auto* profiled = dynamic_cast<ct::c3::ProfiledCompiledKernel*>(kernel.get());
+    ASSERT_NE(profiled, nullptr) << "enable_profiling should return ProfiledCompiledKernel";
+
+    // 执行 3 次
+    for (int i = 0; i < 3; ++i) {
+        kernel->execute({a, b});
+    }
+
+    // 验证 profile 数据
+    const auto& pd = profiled->profileData();
+    EXPECT_EQ(pd.call_count.load(), 3u);
+    EXPECT_GT(pd.total_time_ns.load(), 0u);
+    EXPECT_GT(pd.avgTimeNs(), 0u);
+
+    // 通过 cache key 查询 profile 数据
+    auto cache_key = kernel->cacheKey();
+    auto queried_pd = engine.getProfileData(cache_key);
+    ASSERT_NE(queried_pd, nullptr);
+    EXPECT_EQ(queried_pd->call_count.load(), 3u);
+
+    // 缓存命中应共享同一个 ProfileData
+    auto cached_kernel = engine.compile(g, opts);
+    auto* cached_profiled = dynamic_cast<ct::c3::ProfiledCompiledKernel*>(cached_kernel.get());
+    ASSERT_NE(cached_profiled, nullptr);
+    EXPECT_EQ(&cached_profiled->profileData(), &profiled->profileData());
+}
+
+TEST(PGOProfiling, ProfilingOffByDefault) {
+    // 验证默认不启用 profiling
+    auto& engine = ct::c3::C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = ct::c3::TensorDesc::fromShape({16, 16});
+    ct::c3::Graph g;
+    size_t x = g.addInput(desc);
+    size_t neg = g.addNode(ct::c3::NegNode{desc}, {x}, desc);
+    g.markOutput(neg);
+
+    auto kernel = engine.compile(g);
+    ASSERT_NE(kernel, nullptr);
+
+    auto* profiled = dynamic_cast<ct::c3::ProfiledCompiledKernel*>(kernel.get());
+    EXPECT_EQ(profiled, nullptr) << "profiling should be off by default";
+}
+
 // ======================= MLP 端到端 Benchmark =======================
 
 TEST(Benchmark, MLPEndToEnd) {
@@ -2752,7 +2981,707 @@ TEST(Benchmark, MLP_Autotune_vs_Default) {
     EXPECT_TRUE(match);
 }
 
+// ======================= 子图模式匹配测试 =======================
+
+TEST(PatternMatcher, FCWithActivation) {
+    using namespace ct::c3;
+
+    // 构建图: MatMul → Add(bias) → ReLU
+    auto mm_in = TensorDesc::fromShape({4, 3});
+    auto mm_w = TensorDesc::fromShape({3, 2});
+    auto mm_out = TensorDesc::fromShape({4, 2});
+    auto bias_desc = TensorDesc::fromShape({2});
+
+    Graph g;
+    size_t x = g.addInput(mm_in);
+    size_t w = g.addInput(mm_w);
+    size_t b = g.addInput(bias_desc);
+    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
+    size_t add = g.addNode(AddNode{mm_out, bias_desc}, {mm, b}, mm_out);
+    size_t relu = g.addNode(ReLUNode{mm_out}, {add}, mm_out);
+    g.markOutput(relu);
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应匹配到 FCWithActivation（MatMul→Add→ReLU）
+    bool found = false;
+    for (const auto& m : matches) {
+        if (m.type == GraphPatternType::FCWithActivation) {
+            found = true;
+            EXPECT_EQ(m.node_ids.size(), 3u);  // MatMul, Add, ReLU
+            EXPECT_EQ(m.node_ids[0], mm);
+            EXPECT_EQ(m.node_ids[1], add);
+            EXPECT_EQ(m.node_ids[2], relu);
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "Should match FCWithActivation pattern";
+
+    // 验证描述信息不为空
+    for (const auto& m : matches) {
+        EXPECT_FALSE(m.description.empty());
+    }
+}
+
+TEST(PatternMatcher, FullyConnected) {
+    using namespace ct::c3;
+
+    // 构建图: MatMul → Add(bias)（无激活函数）
+    auto mm_in = TensorDesc::fromShape({4, 3});
+    auto mm_w = TensorDesc::fromShape({3, 2});
+    auto mm_out = TensorDesc::fromShape({4, 2});
+    auto bias_desc = TensorDesc::fromShape({2});
+
+    Graph g;
+    size_t x = g.addInput(mm_in);
+    size_t w = g.addInput(mm_w);
+    size_t b = g.addInput(bias_desc);
+    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
+    size_t add = g.addNode(AddNode{mm_out, bias_desc}, {mm, b}, mm_out);
+    g.markOutput(add);
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应匹配到 FullyConnected
+    bool found = false;
+    for (const auto& m : matches) {
+        if (m.type == GraphPatternType::FullyConnected) {
+            found = true;
+            EXPECT_EQ(m.node_ids.size(), 2u);  // MatMul, Add
+            EXPECT_EQ(m.node_ids[0], mm);
+            EXPECT_EQ(m.node_ids[1], add);
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "Should match FullyConnected pattern";
+}
+
+TEST(PatternMatcher, Activation) {
+    using namespace ct::c3;
+
+    // 构建图: MatMul → ReLU
+    auto mm_in = TensorDesc::fromShape({4, 3});
+    auto mm_w = TensorDesc::fromShape({3, 2});
+    auto mm_out = TensorDesc::fromShape({4, 2});
+
+    Graph g;
+    size_t x = g.addInput(mm_in);
+    size_t w = g.addInput(mm_w);
+    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
+    size_t relu = g.addNode(ReLUNode{mm_out}, {mm}, mm_out);
+    g.markOutput(relu);
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应匹配到 Activation
+    bool found = false;
+    for (const auto& m : matches) {
+        if (m.type == GraphPatternType::Activation) {
+            found = true;
+            EXPECT_EQ(m.node_ids.size(), 2u);  // MatMul, ReLU
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "Should match Activation pattern";
+}
+
+TEST(PatternMatcher, BiasAdd) {
+    using namespace ct::c3;
+
+    // 构建图: Add 其中一侧为偏置（1D 偏置）
+    auto main_desc = TensorDesc::fromShape({4, 2});
+    auto bias_desc = TensorDesc::fromShape({2});  // 1D 偏置
+
+    Graph g;
+    size_t x = g.addInput(main_desc);
+    size_t b = g.addInput(bias_desc);
+    size_t add = g.addNode(AddNode{main_desc, bias_desc}, {x, b}, main_desc);
+    g.markOutput(add);
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应匹配到 BiasAdd
+    bool found = false;
+    for (const auto& m : matches) {
+        if (m.type == GraphPatternType::BiasAdd) {
+            found = true;
+            EXPECT_EQ(m.node_ids.size(), 1u);
+            EXPECT_EQ(m.node_ids[0], add);
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "Should match BiasAdd pattern";
+}
+
+TEST(PatternMatcher, NoMatchForSimpleAdd) {
+    using namespace ct::c3;
+
+    // 简单的 Add(x, y)，没有偏置或 MatMul 应有 0 个匹配
+    auto desc = TensorDesc::fromShape({4});
+
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t y = g.addInput(desc);
+    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(add);
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应有 0 个匹配（没有偏置、没有 MatMul）
+    EXPECT_TRUE(matches.empty()) << "Simple Add should not match any pattern";
+}
+
+TEST(PatternMatcher, MultiLayerMLP) {
+    using namespace ct::c3;
+
+    // 构建 2 层 MLP（类似 MNIST 分类器）
+    // Layer 1: MatMul(x, W1) + b1 → Sigmoid
+    // Layer 2: MatMul(h1, W2) + b2 → output
+    auto desc_in = TensorDesc::fromShape({4, 8});
+    auto desc_w1 = TensorDesc::fromShape({8, 16});
+    auto desc_h1 = TensorDesc::fromShape({4, 16});
+    auto desc_b1 = TensorDesc::fromShape({16});
+    auto desc_w2 = TensorDesc::fromShape({16, 4});
+    auto desc_out = TensorDesc::fromShape({4, 4});
+    auto desc_b2 = TensorDesc::fromShape({4});
+
+    Graph g;
+    size_t x = g.addInput(desc_in);
+    size_t w1 = g.addInput(desc_w1);
+    size_t b1 = g.addInput(desc_b1);
+    size_t w2 = g.addInput(desc_w2);
+    size_t b2 = g.addInput(desc_b2);
+
+    // Layer 1: MatMul + Add(bias) + Sigmoid
+    size_t mm1 = g.addNode(MatMulNode{desc_in, desc_w1}, {x, w1}, desc_h1);
+    size_t add1 = g.addNode(AddNode{desc_h1, desc_b1}, {mm1, b1}, desc_h1);
+    size_t sig1 = g.addNode(SigmoidNode{desc_h1}, {add1}, desc_h1);
+    g.markOutput(sig1);  // 临时标记以构建图
+
+    // Layer 2: MatMul + Add(bias)
+    size_t mm2 = g.addNode(MatMulNode{desc_h1, desc_w2}, {sig1, w2}, desc_out);
+    size_t add2 = g.addNode(AddNode{desc_out, desc_b2}, {mm2, b2}, desc_out);
+    g.markOutput(add2);  // 最终输出
+
+    PatternMatcher matcher;
+    auto matches = matcher.matchAll(g);
+
+    // 应匹配到：
+    // 1. FCWithActivation (Layer 1: MatMul→Add→Sigmoid)
+    // 2. FullyConnected (Layer 2: MatMul→Add)
+    size_t fc_act_count = 0, fc_count = 0;
+    for (const auto& m : matches) {
+        if (m.type == GraphPatternType::FCWithActivation) fc_act_count++;
+        if (m.type == GraphPatternType::FullyConnected) fc_count++;
+    }
+
+    EXPECT_EQ(fc_act_count, 1u) << "Layer 1 should be FCWithActivation";
+    EXPECT_EQ(fc_count, 1u) << "Layer 2 should be FullyConnected";
+    EXPECT_GE(matches.size(), 2u);
+}
+
+TEST(PatternMatcher, GetStats) {
+    using namespace ct::c3;
+
+    // 构建 2 层 MLP
+    auto desc_in = TensorDesc::fromShape({4, 8});
+    auto desc_w1 = TensorDesc::fromShape({8, 16});
+    auto desc_h1 = TensorDesc::fromShape({4, 16});
+    auto desc_b1 = TensorDesc::fromShape({16});
+    auto desc_w2 = TensorDesc::fromShape({16, 4});
+    auto desc_out = TensorDesc::fromShape({4, 4});
+    auto desc_b2 = TensorDesc::fromShape({4});
+
+    Graph g;
+    size_t x = g.addInput(desc_in);
+    size_t w1 = g.addInput(desc_w1);
+    size_t b1 = g.addInput(desc_b1);
+    size_t w2 = g.addInput(desc_w2);
+    size_t b2 = g.addInput(desc_b2);
+
+    // Layer 1: MatMul + Add(bias) + Tanh
+    size_t mm1 = g.addNode(MatMulNode{desc_in, desc_w1}, {x, w1}, desc_h1);
+    size_t add1 = g.addNode(AddNode{desc_h1, desc_b1}, {mm1, b1}, desc_h1);
+    size_t tanh1 = g.addNode(TanhNode{desc_h1}, {add1}, desc_h1);
+    g.markOutput(tanh1);
+
+    // Layer 2: MatMul + Add(bias) + ReLU
+    size_t mm2 = g.addNode(MatMulNode{desc_h1, desc_w2}, {tanh1, w2}, desc_out);
+    size_t add2 = g.addNode(AddNode{desc_out, desc_b2}, {mm2, b2}, desc_out);
+    size_t relu2 = g.addNode(ReLUNode{desc_out}, {add2}, desc_out);
+    g.markOutput(relu2);
+
+    PatternMatcher matcher;
+    auto stats = matcher.getStats(g);
+
+    // 应有 2 个 FCWithActivation
+    bool found = false;
+    for (const auto& [type, count] : stats) {
+        if (type == GraphPatternType::FCWithActivation) {
+            EXPECT_EQ(count, 2u);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "Should have 2 FCWithActivation patterns";
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+
+// ======================= traceAndInject 测试 =======================
+
+TEST(TraceAndInject, SingleInputReLU) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+
+    // 一站式: trace → compile → inject
+    auto kernel = engine.traceAndInject(
+        [](auto& x) { return x.relu(); }, desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    // 用真实张量执行
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {-1.0f, 2.0f, -3.0f, 4.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    // 验证结果
+    Tensor eager = a.relu();
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    // 清理注册表
+    C3KernelRegistry::getInstance().uninstall(op::ReLU, DeviceType::kCPU);
+}
+
+TEST(TraceAndInject, SingleInputSigmoid) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+
+    auto kernel = engine.traceAndInject(
+        [](auto& x) { return x.sigmoid(); }, desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {0.0f, 1.0f, -1.0f, 2.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a.sigmoid();
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Sigmoid, DeviceType::kCPU);
+}
+
+TEST(TraceAndInject, SingleInputTanh) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+
+    auto kernel = engine.traceAndInject(
+        [](auto& x) { return x.tanh(); }, desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {0.0f, 1.0f, -1.0f, 2.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a.tanh();
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Tanh, DeviceType::kCPU);
+}
+
+TEST(TraceAndInject, FCLayer) {
+    using namespace ct::c3;
+
+    // 追踪 FC 层: matmul(x, w) + b
+    auto x_desc = TensorDesc::fromShape({4, 3});
+    auto w_desc = TensorDesc::fromShape({3, 2});
+    auto b_desc = TensorDesc::fromShape({2});
+
+    auto& engine = C3Engine::getInstance();
+
+    auto kernel = engine.traceAndInject(
+        [](auto& x, auto& w, auto& b) { return x.matmul(w) + b; },
+        x_desc, w_desc, b_desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    // 用真实张量执行
+    Tensor x(ShapeTag{}, {4, 3});
+    Tensor w(ShapeTag{}, {3, 2});
+    Tensor b(ShapeTag{}, {2});
+    fillTensor(x, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f});
+    fillTensor(w, {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f});
+    fillTensor(b, {0.5f, -0.5f});
+
+    auto results = kernel->execute({x, w, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    // Eager 参考
+    Tensor eager = matMul(x, w) + b;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    // 清理（compileAndInject 会注入为 op::Add，因为输出节点是 Add）
+    // 但多节点图的注入未严格实现，只是不抛出异常即可
+}
+
+TEST(TraceAndInject, FCWithActivation) {
+    using namespace ct::c3;
+
+    // 追踪 FC + ReLU: relu(matmul(x, w) + b)
+    auto x_desc = TensorDesc::fromShape({4, 3});
+    auto w_desc = TensorDesc::fromShape({3, 2});
+    auto b_desc = TensorDesc::fromShape({2});
+
+    auto& engine = C3Engine::getInstance();
+
+    auto kernel = engine.traceAndInject(
+        [](auto& x, auto& w, auto& b) {
+            return (x.matmul(w) + b).relu();
+        },
+        x_desc, w_desc, b_desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor x(ShapeTag{}, {4, 3});
+    Tensor w(ShapeTag{}, {3, 2});
+    Tensor b(ShapeTag{}, {2});
+    fillTensor(x, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f});
+    fillTensor(w, {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f});
+    fillTensor(b, {0.5f, -0.5f});
+
+    auto results = kernel->execute({x, w, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = (matMul(x, w) + b).relu();
+
+    // Debug: print mismatches
+    if (!tensorsAllClose(results[0], eager)) {
+        const float* c3 = results[0].data_read<float>();
+        const float* eg = eager.data_read<float>();
+        size_t n = std::min(results[0].numel(), eager.numel());
+        std::cout << "\n[DEBUG] FCWithActivation mismatch:" << std::endl;
+        std::cout << "  C3 shape: [";
+        for (auto s : results[0].shape()) std::cout << s << ",";
+        std::cout << "] eager shape: [";
+        for (auto s : eager.shape()) std::cout << s << ",";
+        std::cout << "]" << std::endl;
+        std::cout << "  C3 numel=" << results[0].numel() << " eager numel=" << eager.numel() << std::endl;
+        for (size_t i = 0; i < n; ++i) {
+            float diff = std::fabs(c3[i] - eg[i]);
+            float max_val = std::max(std::fabs(c3[i]), std::fabs(eg[i]));
+            if (diff > 1e-4f + 1e-4f * max_val) {
+                std::cout << "  [" << i << "] C3=" << c3[i] << " eager=" << eg[i] << " diff=" << diff << std::endl;
+            }
+        }
+    }
+
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(TraceAndInject, AsyncTraceAndExecute) {
+    using namespace ct::c3;
+
+    // 异步 traceAndInject
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+
+    auto future = engine.traceAndInjectAsync(
+        [](auto& x) { return x.sigmoid(); }, desc);
+
+    // future 应立即可用
+    EXPECT_TRUE(future.valid());
+
+    // 等待编译完成
+    auto kernel = future.get();
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {0.0f, 1.0f, -1.0f, 2.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a.sigmoid();
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Sigmoid, DeviceType::kCPU);
+}
+
+TEST(TraceAndInject, Negate) {
+    using namespace ct::c3;
+
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+
+    auto kernel = engine.traceAndInject(
+        [](auto& x) { return -x; }, desc);
+
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {4});
+    fillTensor(a, {1.0f, -2.0f, 3.0f, -4.0f});
+
+    auto results = kernel->execute({a});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = -a;
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+
+    C3KernelRegistry::getInstance().uninstall(op::Neg, DeviceType::kCPU);
+}
+
+TEST(TraceAndInject, CacheKeyConsistency) {
+    using namespace ct::c3;
+
+    // 相同的表达式应产生相同的缓存键
+    auto desc = TensorDesc::fromShape({4});
+    auto& engine = C3Engine::getInstance();
+    engine.clearCache();
+
+    auto k1 = engine.traceAndInject(
+        [](auto& x) { return x.relu(); }, desc);
+    auto k2 = engine.traceAndInject(
+        [](auto& x) { return x.relu(); }, desc);
+
+    ASSERT_NE(k1, nullptr);
+    ASSERT_NE(k2, nullptr);
+
+    // 相同的表达式应命中缓存，返回相同 kernel
+    EXPECT_EQ(k1, k2) << "Same expression should hit cache";
+
+    C3KernelRegistry::getInstance().uninstallAll();
+}
+
+#ifdef CT_ENABLE_MLIR
+
+// ======================= PGO Phase 2: Hot Path 检测与重编译 =======================
+
+TEST(PGOProfiling, HotPathDetection) {
+    /// @brief 验证 CaaS 三层自动提升：Eager → O2 → Ofast
+    /// @details 创建一个 PGOCompiledKernel，使用同步编译模式，
+    ///          验证第一次 execute 后自动触发编译链，O2 和 Ofast 全部就绪。
+    using namespace ct::c3;
+
+    auto& engine = C3Engine::getInstance();
+    engine.clearCache();
+
+    auto& pgo_mgr = PGOManager::getInstance();
+    pgo_mgr.setEnabled(true);
+
+    // 使用同步编译模式方便测试
+    bool old_async = pgo_mgr.config().async_compilation;
+    pgo_mgr.config().async_compilation = false;
+
+    // 构建一个简单的图：Neg
+    auto desc = TensorDesc::fromShape({16, 16});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t neg = g.addNode(NegNode{desc}, {x}, desc);
+    g.markOutput(neg);
+
+    // 启用 PGO 模式
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.pgo_mode = true;
+
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    // 验证返回的是 PGOCompiledKernel
+    auto* pgo_kernel = dynamic_cast<PGOCompiledKernel*>(kernel.get());
+    ASSERT_NE(pgo_kernel, nullptr) << "PGO mode should return PGOCompiledKernel";
+
+    // 初始状态：未提升（还没执行过）
+    EXPECT_FALSE(pgo_kernel->isPromoted());
+
+    // 创建输入张量
+    Tensor a(ShapeTag{}, {16, 16});
+    for (size_t i = 0; i < a.numel(); ++i)
+        a.data_write<float>()[i] = static_cast<float>(i);
+
+    // 第一次执行：触发 O2 → Ofast 编译链（同步模式）
+    auto result = kernel->execute({a});
+    ASSERT_EQ(result.size(), 1u);
+
+    // 同步编译链已完成，应已提升
+    EXPECT_TRUE(pgo_kernel->isPromoted()) << "Kernel should be promoted after sync compilation";
+
+    // 验证 profile 数据已记录
+    const auto& pd = pgo_kernel->profileData();
+    EXPECT_GE(pd.call_count.load(), 1u);
+    EXPECT_GT(pd.total_time_ns.load(), 0u);
+
+    // 提升后执行结果应仍正确
+    Tensor eager = -a;
+    result = kernel->execute({a});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager, 1e-4f, 1e-4f));
+
+    // 恢复异步编译设置
+    pgo_mgr.config().async_compilation = old_async;
+}
+
+TEST(PGOProfiling, HotnessScore) {
+    /// @brief 验证热路径评分函数 computeHotnessScore 的合理性
+    using namespace ct::c3;
+
+    auto& engine = C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = TensorDesc::fromShape({8, 8});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t sig = g.addNode(SigmoidNode{desc}, {x}, desc);
+    g.markOutput(sig);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.pgo_mode = true;
+
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    auto* pgo_kernel = dynamic_cast<PGOCompiledKernel*>(kernel.get());
+    ASSERT_NE(pgo_kernel, nullptr);
+
+    // 初始评分应为 0（无调用）
+    // 无法直接访问 computeHotnessScore，但可以通过 profile 数据间接验证
+
+    // 执行几次
+    Tensor a(ShapeTag{}, {8, 8});
+    for (size_t i = 0; i < a.numel(); ++i)
+        a.data_write<float>()[i] = static_cast<float>(i) / 10.0f;
+
+    // 执行 3 次后检查 profile 数据
+    for (int i = 0; i < 3; ++i)
+        kernel->execute({a});
+
+    const auto& pd = pgo_kernel->profileData();
+    EXPECT_EQ(pd.call_count.load(), 3u);
+    EXPECT_GT(pd.avgTimeNs(), 0u);
+
+    // 验证正确性
+    Tensor eager = a.sigmoid();
+    auto result = kernel->execute({a});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager, 1e-4f, 1e-4f));
+}
+
+TEST(PGOProfiling, PGOIntegration) {
+    /// @brief 验证 PGO 模式在 C3Engine 中的完整集成
+    /// @details 测试 pgo_mode=true 时 compile() 返回 PGOCompiledKernel，
+    ///          以及 PGOManager 的统计信息正确。
+    using namespace ct::c3;
+
+    auto& engine = C3Engine::getInstance();
+    engine.clearCache();
+
+    // 启用 PGOManager 并清理状态
+    auto& pgo = PGOManager::getInstance();
+    pgo.setEnabled(true);
+    pgo.clear();
+
+    // 使用同步编译模式
+    bool old_async = pgo.config().async_compilation;
+    pgo.config().async_compilation = false;
+
+    // 编译一个 PGO kernel
+    auto desc = TensorDesc::fromShape({4, 4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t relu = g.addNode(ReLUNode{desc}, {x}, desc);
+    g.markOutput(relu);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.pgo_mode = true;
+
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    // 验证 PGOManager 统计（初始状态：pending）
+    auto stats = pgo.getStats();
+    EXPECT_EQ(stats.total_registered, 1u);
+    EXPECT_EQ(stats.pending, 1u);
+    EXPECT_EQ(stats.o2_ready, 0u);
+    EXPECT_EQ(stats.ofast_ready, 0u);
+
+    // 创建输入张量
+    Tensor a(ShapeTag{}, {4, 4});
+    for (size_t i = 0; i < a.numel(); ++i)
+        a.data_write<float>()[i] = static_cast<float>(i);
+
+    // 第一次执行触发同步编译链
+    kernel->execute({a});
+
+    // 同步编译完成后，O2 和 Ofast 都应就绪
+    stats = pgo.getStats();
+    EXPECT_EQ(stats.total_registered, 1u);
+    EXPECT_EQ(stats.o2_ready, 1u);
+    EXPECT_EQ(stats.ofast_ready, 1u);
+    EXPECT_EQ(stats.pending, 0u);
+
+    // 验证正确性
+    Tensor eager = a.relu();
+    auto result = kernel->execute({a});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager, 1e-4f, 1e-4f));
+
+    // 清理
+    engine.clearCache();
+    pgo.config().async_compilation = old_async;
+}
+
+TEST(PGOProfiling, NoPGOMode) {
+    /// @brief 验证 pgo_mode=false 时 compile() 不返回 PGOCompiledKernel
+    using namespace ct::c3;
+
+    auto& engine = C3Engine::getInstance();
+    engine.clearCache();
+
+    auto desc = TensorDesc::fromShape({4, 4});
+    Graph g;
+    size_t x = g.addInput(desc);
+    size_t tanh = g.addNode(TanhNode{desc}, {x}, desc);
+    g.markOutput(tanh);
+
+    CompileOptions opts;
+    opts.backend = C3Backend::MLIR;
+    opts.pgo_mode = false;
+
+    auto kernel = engine.compile(g, opts);
+    ASSERT_NE(kernel, nullptr);
+
+    // 验证不是 PGOCompiledKernel
+    auto* pgo_kernel = dynamic_cast<PGOCompiledKernel*>(kernel.get());
+    EXPECT_EQ(pgo_kernel, nullptr) << "Without pgo_mode, should not return PGOCompiledKernel";
+
+    // 验证正确性
+    Tensor a(ShapeTag{}, {4, 4});
+    for (size_t i = 0; i < a.numel(); ++i)
+        a.data_write<float>()[i] = static_cast<float>(i) / 10.0f;
+
+    Tensor eager = a.tanh();
+    auto result = kernel->execute({a});
+    EXPECT_TRUE(tensorsAllClose(result[0], eager, 1e-4f, 1e-4f));
+}
+
+#endif // CT_ENABLE_MLIR

@@ -51,6 +51,11 @@ public:
     // 矩阵乘法
     Derived matmul(const Derived& other) const;
 
+    // 激活函数
+    Derived relu() const;
+    Derived sigmoid() const;
+    Derived tanh() const;
+
     // 标量操作（右操作数）
     Derived operator*(float scalar) const;
     Derived operator+(float scalar) const;
@@ -219,6 +224,25 @@ template <typename Derived>
 Derived ProxyTensorBase<Derived>::matmul(const Derived& other) const {
     return binaryOp<MatMulNode>(other, "MatMul");
 }
+
+// ======================= 激活函数实现 =======================
+
+template <typename Derived>
+Derived ProxyTensorBase<Derived>::relu() const {
+    return unaryOp<ReLUNode>("ReLU");
+}
+
+template <typename Derived>
+Derived ProxyTensorBase<Derived>::sigmoid() const {
+    return unaryOp<SigmoidNode>("Sigmoid");
+}
+
+template <typename Derived>
+Derived ProxyTensorBase<Derived>::tanh() const {
+    return unaryOp<TanhNode>("Tanh");
+}
+
+// ======================= 标量操作实现 =======================
 
 template <typename Derived>
 Derived ProxyTensorBase<Derived>::operator*(float scalar) const {

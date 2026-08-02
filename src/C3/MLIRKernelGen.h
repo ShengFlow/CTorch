@@ -21,10 +21,11 @@ namespace c3 {
 /**
  * @brief 从 Graph 生成 MLIR 编译的 kernel（Phase 1 LLVM 后端）
  * @param graph 经过 canonicalize 的计算图
+ * @param opt_level LLVM 优化级别（0=O0, 1=O1, 2=O2, 3=O3/Ofast，默认 2）
  * @return GeneratedKernel 包含函数指针和资源管理回调
  * @throw std::runtime_error 编译失败时抛出
  */
-GeneratedKernel generateFromGraphMLIR(const Graph& graph);
+GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level = 2);
 
 } // namespace c3
 } // namespace ct
