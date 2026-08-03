@@ -54,6 +54,13 @@ public:
         std::lock_guard<std::mutex> lock(p->compile_mutex_);
         p->ofast_kernel_ = std::move(k);
     }
+    // ADR-010 测试 helper：直接触发 recordCompileError 模拟一次 PGO 编译失败
+    // （不需要等到真正去编译一个坏图）
+    static void simulateCompileError(PGOCompiledKernel* p, const char* tier,
+                                     const std::string& reason) {
+        if (!p) return;
+        p->recordCompileError(tier, reason);
+    }
 };
 
 }  // namespace c3
@@ -316,6 +323,91 @@ int main() {
                 std::cout << "  PASS [6]: PGO 编译链触发后，lastCompileError 为空（编译成功）\n";
                 ++passed;
             }
+        }
+    }
+
+    // ============== 测试 7: PGO 错误传播到 C3Engine（ADR-010 P1 修复验证） ==============
+    // 验证 PGOCompiledKernel::recordCompileError 也会更新 C3Engine::last_compile_error_
+    // 这使得调用方无需保留 PGOCompiledKernel 指针，也能通过 engine.getLastCompileError()
+    // 查到所有编译错误（包括 PGO 异步编译失败）。
+    {
+        C3Engine::getInstance().clearCache();
+        C3Engine::getInstance().clearLastCompileError();
+        PGOManager::getInstance().clear();
+
+        Graph g = buildSimpleAddGraph();
+        CompileOptions opts;
+        opts.opt_level = 0;
+        opts.pgo_mode = true;
+
+        auto profile = std::make_shared<ProfileData>();
+        PGOCompiledKernel kernel(g, opts, "test-adr-010-propagation", profile,
+                                 C3Engine::getInstance());
+
+        // 直接调用 PGOCompiledKernel::recordCompileError（public 友元测试入口）模拟一次失败
+        // 验证：调用后，C3Engine::getLastCompileError() 必须包含 "o2" 或 "ofast" 前缀
+        kernel.clearLastCompileError();
+        C3Engine::getInstance().clearLastCompileError();
+
+        // 用 PGOCompiledKernelTestAccess 友元访问 recordCompileError
+        // （PGOCompiledKernel::recordCompileError 是 private，但 friend class 可以访问）
+        PGOCompiledKernelTestAccess::simulateCompileError(&kernel, "o2",
+            "synthetic test: MLIR lowering failed at op #3 (arith.addf)");
+
+        // 1) 验证 PGOCompiledKernel::lastCompileError() 已记录
+        std::string kernel_err = kernel.lastCompileError();
+        if (kernel_err.find("o2") == std::string::npos) {
+            std::cout << "  FAIL [7a]: kernel.lastCompileError() 缺少 'o2' 前缀: " << kernel_err << "\n";
+            ++failed;
+        } else {
+            // 2) 验证 C3Engine::getLastCompileError() 也被更新（ADR-010 关键修复点）
+            std::string engine_err = C3Engine::getInstance().getLastCompileError();
+            if (engine_err.find("o2") == std::string::npos) {
+                std::cout << "  FAIL [7b]: engine.getLastCompileError() 未被 PGO 错误更新: " << engine_err << "\n";
+                ++failed;
+            } else if (engine_err != kernel_err) {
+                std::cout << "  FAIL [7b]: engine 和 kernel 错误信息不一致:\n"
+                          << "    kernel: " << kernel_err << "\n"
+                          << "    engine: " << engine_err << "\n";
+                ++failed;
+            } else {
+                std::cout << "  PASS [7]: PGO 编译错误已传播到 C3Engine 全局状态: "
+                          << engine_err.substr(0, 80) << "...\n";
+                ++passed;
+            }
+        }
+    }
+
+    // ============== 测试 8: recordCompileError 公开 API 独立调用 ==============
+    // 验证 C3Engine::recordCompileError(prefix, err) 可以独立调用并被 getLastCompileError() 读到
+    {
+        C3Engine::getInstance().clearLastCompileError();
+        C3Engine::getInstance().recordCompileError("synthetic", "test external error");
+
+        std::string err = C3Engine::getInstance().getLastCompileError();
+        if (err != "synthetic: test external error") {
+            std::cout << "  FAIL [8]: recordCompileError 输出不符预期: " << err << "\n";
+            ++failed;
+        } else {
+            std::cout << "  PASS [8]: recordCompileError 公开 API 工作正常\n";
+            ++passed;
+        }
+
+        // 验证截断：长字符串超过 1KB 会被截断
+        C3Engine::getInstance().clearLastCompileError();
+        std::string long_err(2048, 'X');
+        C3Engine::getInstance().recordCompileError("trunc", long_err);
+        std::string truncated = C3Engine::getInstance().getLastCompileError();
+        if (truncated.size() >= 2048) {
+            std::cout << "  FAIL [8]: 截断未生效，size=" << truncated.size() << "\n";
+            ++failed;
+        } else if (truncated.find("trunc") == std::string::npos ||
+                   truncated.find("truncated") == std::string::npos) {
+            std::cout << "  FAIL [8]: 截断消息格式不符预期: " << truncated.substr(0, 100) << "\n";
+            ++failed;
+        } else {
+            std::cout << "  PASS [8]: 长错误信息截断正常 (size=" << truncated.size() << ")\n";
+            ++passed;
         }
     }
 

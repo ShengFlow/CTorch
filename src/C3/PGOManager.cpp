@@ -191,6 +191,17 @@ void PGOCompiledKernel::recordCompileError(const char* tier, const std::string& 
     CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
         "PGO: compile error " + std::string(tier) + " for " + cache_key_ + " — " +
         truncated_reason);
+    // 同时回传到 C3Engine 全局 last_compile_error_（ADR-010）：
+    // 让调用方通过 C3Engine::getLastCompileError() 也能查到 PGO 编译失败，
+    // 而不需要保留 PGOCompiledKernel 指针来调用本 kernel 的 lastCompileError()。
+    // 注意：这里会覆盖前一次记录，但前一次记录通常也是 PGO 链中的更早一环，
+    //      因此 latest-wins 语义是合理的。
+    try {
+        engine_.recordCompileError(tier, truncated_reason);
+    } catch (...) {
+        // recordCompileError 理论上不会抛（只有 mutex 锁），但双保险吞错，
+        // 避免 PGO 错误日志自身抛异常把 compileO2/Ofast 流程搞砸
+    }
 }
 
 bool PGOCompiledKernel::installIntoRegistry(op op_type, const KernelShapeInfo& shapes) {

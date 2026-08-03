@@ -505,6 +505,17 @@ public:
      */
     void clearLastCompileError();
 
+    /**
+     * @brief 记录编译错误到全局 last_compile_error_（供内部子系统使用，如 PGOCompiledKernel）
+     * @param prefix 错误来源前缀，如 "o2"、"ofast"、"async-merge"
+     * @param err 错误信息字符串
+     * @details 线程安全：内部 mutex 保护。
+     *          这是内部 callback hook，主要被 PGOCompiledKernel::recordCompileError() 调用，
+     *          让 PGO O2/Ofast 编译失败也能被 C3Engine::getLastCompileError() 查到。
+     *          错误信息最大 1KB，超出截断。
+     */
+    void recordCompileError(const std::string& prefix, const std::string& err);
+
     // ======================= AOT (Ahead-Of-Time) 持久化 =======================
     //
     // 工业级 JIT 的"跨进程复用"能力：将编译产物持久化到 ~/.c3cache/，

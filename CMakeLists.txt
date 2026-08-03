@@ -220,6 +220,7 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/Cos_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/LReLU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/LReLU_Grad_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/SIMDMath.cpp
 )
 
 set(ctQALS
@@ -364,6 +365,14 @@ target_include_directories(bench_aot_speedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)
 target_include_directories(bench_subgraph_roi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_simd_math src/tests/standalone/test_simd_math.cpp)
+target_link_libraries(test_simd_math PRIVATE CTorch)
+target_include_directories(test_simd_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_simd_math src/tests/standalone/bench_simd_math.cpp)
+target_link_libraries(bench_simd_math PRIVATE CTorch)
+target_include_directories(bench_simd_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # (SECURITY_SENSITIVE) MNIST Loader security regression tests
 add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)

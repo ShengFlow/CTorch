@@ -984,6 +984,12 @@ void C3Engine::clearLastCompileError() {
     state.last_compile_error.clear();
 }
 
+void C3Engine::recordCompileError(const std::string& prefix, const std::string& err) {
+    // 公开 API：让 PGOCompiledKernel 等子系统能写入全局错误状态。
+    // 内部复用 recordEngineError 复用截断 + 日志逻辑。
+    recordEngineError(getState(), prefix, err);
+}
+
 void C3Engine::clearCache() {
     auto& state = getState();
     std::lock_guard<std::mutex> lock(state.mutex);
