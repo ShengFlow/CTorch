@@ -1143,6 +1143,9 @@ void C3Engine::clearCache() {
     state.stats.evictions = 0;
     state.stats.bytes_used = 0;
     state.stats.total_entries = 0;
+    state.stats.pending_compiles = 0;
+    state.stats.async_completions = 0;
+    state.stats.async_failures = 0;
     // 同步清理 PGO 缓存，确保测试间状态干净
     // （PGOManager::clear() 内部持有自己的 mutex，无死锁风险）
     PGOManager::getInstance().clear();
