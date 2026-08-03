@@ -107,24 +107,48 @@ PGOCompiledKernel::PGOCompiledKernel(
 }
 
 std::vector<Tensor> PGOCompiledKernel::execute(const std::vector<Tensor>& inputs) {
-    // 优先级 1: 如果有 Ofast kernel，直接使用（最高优化级别）
+    // ====== Deoptimization 支持 (ADR-006) ======
+    // 优先级 1: Ofast kernel（若未被 deopt 禁用）
     if (auto k = ofast_kernel_) {
-        auto start = std::chrono::steady_clock::now();
-        auto result = k->execute(inputs);
-        auto end = std::chrono::steady_clock::now();
-        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-        profile_data_->record(ns);
-        return result;
+        if (!ofast_disabled_.load(std::memory_order_acquire)) {
+            try {
+                auto start = std::chrono::steady_clock::now();
+                auto result = k->execute(inputs);
+                auto end = std::chrono::steady_clock::now();
+                auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+                profile_data_->record(ns);
+                return result;
+            } catch (const std::exception& e) {
+                // Ofast 运行时异常 → deopt 到 O2
+                recordDeopt("ofast", e.what());
+            } catch (...) {
+                recordDeopt("ofast", "unknown exception");
+            }
+            // 显式 disable 防止后续重试（单次失败即永久 deopt）
+            ofast_disabled_.store(true, std::memory_order_release);
+        }
+        // 显式 drop 局部 shared_ptr，加速 ofast_kernel_ 释放（如果不空）
+        // 注：成员 ofast_kernel_ 仍保留，避免影响其他观察者；下次 execute 会重新检查 disabled
     }
 
-    // 优先级 2: 如果有 O2 kernel，使用 O2（编译完成但 Ofast 还在编译）
+    // 优先级 2: O2 kernel（若未被 deopt 禁用）
     if (auto k = o2_kernel_) {
-        auto start = std::chrono::steady_clock::now();
-        auto result = k->execute(inputs);
-        auto end = std::chrono::steady_clock::now();
-        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-        profile_data_->record(ns);
-        return result;
+        if (!o2_disabled_.load(std::memory_order_acquire)) {
+            try {
+                auto start = std::chrono::steady_clock::now();
+                auto result = k->execute(inputs);
+                auto end = std::chrono::steady_clock::now();
+                auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+                profile_data_->record(ns);
+                return result;
+            } catch (const std::exception& e) {
+                // O2 运行时异常 → deopt 到 Eager
+                recordDeopt("o2", e.what());
+            } catch (...) {
+                recordDeopt("o2", "unknown exception");
+            }
+            o2_disabled_.store(true, std::memory_order_release);
+        }
     }
 
     // 优先级 3: Eager 解释执行（Tier 1，零编译延迟）
@@ -140,6 +164,16 @@ std::vector<Tensor> PGOCompiledKernel::execute(const std::vector<Tensor>& inputs
     }
 
     return result;
+}
+
+void PGOCompiledKernel::recordDeopt(const char* tier, const std::string& reason) {
+    deopt_count_.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(deopt_mutex_);
+        last_deopt_reason_ = std::string(tier) + ": " + reason;
+    }
+    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+        "PGO: deopt " + std::string(tier) + " kernel for " + cache_key_ + " — " + reason);
 }
 
 bool PGOCompiledKernel::installIntoRegistry(op op_type, const KernelShapeInfo& shapes) {

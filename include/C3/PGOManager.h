@@ -82,6 +82,11 @@ struct CompilationTask {
  * 优先级：Ofast > O2 > Eager，编译完成后下一调用自动使用更高优化级别。
  */
 class PGOCompiledKernel : public CompiledKernel {
+    // =================== Test-only access (ADR-006 deopt PoC) ===================
+    // 仅 PoC 测试用：允许测试代码直接注入 mock kernel 模拟运行时崩溃。
+    // 正式版本应保留此 API 以便 fuzz / chaos 测试。
+    friend class PGOCompiledKernelTestAccess;
+
 public:
     PGOCompiledKernel(
         const Graph& graph,
@@ -119,6 +124,29 @@ public:
     /** @brief 获取 profile 数据 */
     [[nodiscard]] const ProfileData& profileData() const { return *profile_data_; }
 
+    // =================== Deoptimization (ADR-006) ===================
+
+    /** @brief 总 deopt 次数（O2 或 Ofast 运行时抛异常 + disable） */
+    [[nodiscard]] uint64_t deoptCount() const {
+        return deopt_count_.load(std::memory_order_relaxed);
+    }
+
+    /** @brief 最近一次 deopt 的原因（含 tier 标签，如 "ofast: ..." / "o2: ..."） */
+    [[nodiscard]] const std::string& lastDeoptReason() const {
+        std::lock_guard<std::mutex> lock(deopt_mutex_);
+        return last_deopt_reason_;
+    }
+
+    /** @brief Ofast kernel 是否已被 deopt 禁用（true = 永久回退到 O2 或 Eager） */
+    [[nodiscard]] bool isOfastDisabled() const {
+        return ofast_disabled_.load(std::memory_order_acquire);
+    }
+
+    /** @brief O2 kernel 是否已被 deopt 禁用（true = 永久回退到 Eager） */
+    [[nodiscard]] bool isO2Disabled() const {
+        return o2_disabled_.load(std::memory_order_acquire);
+    }
+
     /** @brief 强制触发编译链（供 PGOManager::promoteAll 使用） */
     void promote();
 
@@ -142,6 +170,9 @@ private:
     Tensor executeFusedNodeInterpreted(const FusedNode& fnode,
                                         const std::unordered_map<size_t, Tensor>& values);
 
+    /** @brief 记录一次 deopt 事件（原子 +1 计数 + 加锁更新原因） */
+    void recordDeopt(const char* tier, const std::string& reason);
+
     Graph graph_;
     CompileOptions options_;
     std::string cache_key_;
@@ -153,6 +184,14 @@ private:
     std::shared_ptr<CompiledKernel> ofast_kernel_;    ///< Ofast 编译结果
 
     std::atomic<bool> compilation_triggered_{false};  ///< 是否已触发编译链
+
+    // =================== Deoptimization 状态 (ADR-006) ===================
+    // 运行时失败（kernel execute 抛异常）→ 自动 disable 永久回退到下一级
+    std::atomic<bool> ofast_disabled_{false};        ///< Ofast 是否已被 deopt
+    std::atomic<bool> o2_disabled_{false};            ///< O2 是否已被 deopt
+    std::atomic<uint64_t> deopt_count_{0};            ///< 总 deopt 次数
+    mutable std::mutex deopt_mutex_;                  ///< 保护 last_deopt_reason_
+    std::string last_deopt_reason_;                   ///< 最近一次 deopt 原因
 };
 
 /**
