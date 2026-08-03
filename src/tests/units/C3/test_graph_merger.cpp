@@ -158,3 +158,128 @@ TEST(GraphMerger, SequentialCanFuseAndOptimize) {
     Graph fused = canonical.fuse();
     EXPECT_TRUE(fused.isValid());
 }
+
+// ======================= P1-1 边界 case 测试 =======================
+// 覆盖：多输出子图 / fan-out / 链接索引越界
+
+/// 构造带 2 个输出的子图：in0, in1, in2 → MatMul → out0, in0 + out0 + in2 → Add → out1
+/// （每个 input 都被使用，避免 DCE）
+static Graph buildTwoOutputSubGraph(const std::vector<size_t>& in_shape,
+                                      const std::vector<size_t>& w_shape,
+                                      const std::vector<size_t>& b_shape,
+                                      const std::vector<size_t>& out_shape) {
+    Graph g;
+    auto in_desc = TensorDesc::fromShape(in_shape);
+    auto w_desc = TensorDesc::fromShape(w_shape);
+    auto b_desc = TensorDesc::fromShape(b_shape);
+    auto out_desc = TensorDesc::fromShape(out_shape);
+
+    size_t in = g.addInput(in_desc);
+    size_t w = g.addInput(w_desc);
+    size_t b = g.addInput(b_desc);
+
+    // MatMul: w @ in
+    size_t mm = g.addNode(MatMulNode{w_desc, in_desc}, {w, in}, out_desc);
+    // Add: mm + b
+    size_t add = g.addNode(AddNode{out_desc, b_desc}, {mm, b}, out_desc);
+
+    // 标记两个输出：mm 和 add（都是 markOutput）
+    g.markOutput(mm);
+    g.markOutput(add);
+    return g;
+}
+
+TEST(GraphMergerEdgeCase, LastSubgraphMultiOutput) {
+    // 子图 0：1 个输出（最后子图）
+    // 子图 1：2 个输出（最后子图，多输出场景）
+    // 验证"最后子图多输出"被正确保留
+    Graph g0 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g1 = buildTwoOutputSubGraph({4, 16}, {32, 16}, {32}, {4, 32});
+
+    std::vector<Graph> subs = {g0, g1};
+
+    // link 0: g0.output[0] → g1.input[0]
+    MergeSpec spec;
+    MergeLink link;
+    link.from_output = 0;
+    link.to_input = 0;
+    spec.links.push_back(link);
+
+    MergedGraphInfo info = GraphMerger::merge(subs, spec);
+
+    // 外部输入：g0 的 in, w, b + g1 的 w, b = 5 个
+    EXPECT_EQ(info.graph.inputCount(), 5u);
+    // g1 是最后子图，2 个输出都被保留
+    EXPECT_EQ(info.graph.outputCount(), 2u);
+    EXPECT_TRUE(info.graph.isValid());
+
+    // 应能继续 canonicalize + fuse
+    Graph fused = info.graph.canonicalize().fuse();
+    EXPECT_TRUE(fused.isValid());
+}
+
+TEST(GraphMergerEdgeCase, LinkFromOutputOutOfRange) {
+    // link.from_output 超过子图 0 的 outputCount
+    Graph g0 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g1 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g0, g1};
+
+    MergeSpec spec;
+    MergeLink link;
+    link.from_output = 999;  // 越界
+    link.to_input = 0;
+    spec.links.push_back(link);
+
+    EXPECT_THROW(GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMergerEdgeCase, LinkToInputOutOfRange) {
+    // link.to_input 超过子图 1 的 inputCount
+    Graph g0 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g1 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g0, g1};
+
+    MergeSpec spec;
+    MergeLink link;
+    link.from_output = 0;
+    link.to_input = 999;  // 越界
+    spec.links.push_back(link);
+
+    EXPECT_THROW(GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMergerEdgeCase, SequentialFanOut) {
+    // 构造子图 0: 1 个输出
+    // 构造子图 1: 3 个 input（in0, in1, in2），其中 in0 来自子图 0
+    //   子图逻辑：Add(in0, in1) → Add(., in2) → ReLU → out
+    //   （确保 3 个 input 都被使用）
+    Graph g0 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+
+    Graph g1;
+    auto in0_desc = TensorDesc::fromShape({4, 16});
+    auto out_desc = TensorDesc::fromShape({4, 16});
+    size_t i0 = g1.addInput(in0_desc);
+    size_t i1 = g1.addInput(in0_desc);  // 同 shape
+    size_t i2 = g1.addInput(in0_desc);  // 同 shape
+    // Add(in0, in1) → out1
+    size_t add1 = g1.addNode(AddNode{in0_desc, in0_desc}, {i0, i1}, out_desc);
+    // Add(out1, in2) → out2
+    size_t add2 = g1.addNode(AddNode{out_desc, in0_desc}, {add1, i2}, out_desc);
+    // ReLU(out2) → out
+    size_t out_id = g1.addNode(ReLUNode{out_desc}, {add2}, out_desc);
+    g1.markOutput(out_id);
+
+    // spec：link g0.output[0] → g1.input[0]
+    MergeSpec spec;
+    MergeLink link;
+    link.from_output = 0;
+    link.to_input = 0;
+    spec.links.push_back(link);
+
+    MergedGraphInfo info = GraphMerger::merge({g0, g1}, spec);
+    // 外部输入：g0 的 in, w, b + g1 的 i1, i2 = 5 个（3 个 input 都用上）
+    EXPECT_EQ(info.graph.inputCount(), 5u);
+    EXPECT_TRUE(info.graph.isValid());
+}
