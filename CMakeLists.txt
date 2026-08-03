@@ -354,6 +354,18 @@ add_executable(test_c3_compile_error src/tests/standalone/test_c3_compile_error.
 target_link_libraries(test_c3_compile_error PRIVATE CTorch)
 target_include_directories(test_c3_compile_error PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_c3_compile_timeout src/tests/standalone/test_c3_compile_timeout.cpp)
+target_link_libraries(test_c3_compile_timeout PRIVATE CTorch)
+target_include_directories(test_c3_compile_timeout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_compile_timeout_minimal /tmp/test_c3_compile_timeout_minimal.cpp)
+target_link_libraries(test_c3_compile_timeout_minimal PRIVATE CTorch)
+target_include_directories(test_c3_compile_timeout_minimal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_timeout_simple /tmp/test_timeout_simple.cpp)
+target_link_libraries(test_timeout_simple PRIVATE CTorch)
+target_include_directories(test_timeout_simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test_c3_aot_cache src/tests/standalone/test_c3_aot_cache.cpp)
 target_link_libraries(test_c3_aot_cache PRIVATE CTorch)
 target_include_directories(test_c3_aot_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -271,6 +271,9 @@ namespace {
         /// 使用独立 mutex 保护，避免与 cache.mutex 互锁
         mutable std::mutex last_error_mutex;
         std::string last_compile_error;
+        /// 编译超时配置（ADR-011），独立 mutex 保护
+        mutable std::mutex config_mutex;
+        uint32_t compile_timeout_ms = 30000;  // 默认 30s
     };
 
     /// 截断过长错误信息，避免 OOM
@@ -299,16 +302,22 @@ namespace {
     }
 
     /// 回收已完成的编译任务 future（调用方需持有 state.mutex）
-    static void reapCompletedFutures(EngineState& state) {
-        auto it = state.compile_futures.begin();
-        while (it != state.compile_futures.end()) {
-            if (it->valid() && it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                it->get(); // 吸收异常，避免 future 析构时抛异常
-                it = state.compile_futures.erase(it);
-            } else {
-                ++it;
+    /// @param reaped_sink 接收被回收的 future，**必须在调用方释放 state.mutex 后才能让此 vector 析构**。
+    ///                    这是因为 std::async task 可能正在等 state.mutex（写 cache），
+    ///                    在锁内 ~std::future 会等 task 真正结束 → 经典死锁。
+    ///                    （ADR-011 P1 修复发现的二次 bug：reaper 在持锁时 erase 触发了同款死锁。）
+    static void reapCompletedFutures(EngineState& state,
+                                     std::vector<std::future<void>>& reaped_sink) {
+        for (auto& f : state.compile_futures) {
+            if (f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                reaped_sink.push_back(std::move(f));
             }
         }
+        // 清理已经被 move 走（valid()==false）的槽位，避免 vector 无限增长
+        state.compile_futures.erase(
+            std::remove_if(state.compile_futures.begin(), state.compile_futures.end(),
+                [](const std::future<void>& f) { return !f.valid(); }),
+            state.compile_futures.end());
     }
 
     /// LRU 逐出：当缓存超过上限时，移除最久未访问的条目（调用方需持有 state.mutex）
@@ -436,31 +445,34 @@ std::shared_ptr<CompiledKernel> C3Engine::compile(
     }
 
     auto& state = getState();
-    std::lock_guard<std::mutex> lock(state.mutex);
+    std::vector<std::future<void>> _to_reap;  // 锁外声明，让析构在锁释放后发生
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
 
-    // 回收已完成的异步编译 future
-    reapCompletedFutures(state);
+        // 回收已完成的异步编译 future
+        reapCompletedFutures(state, _to_reap);
 
-    // 缓存查询
-    if (options.enable_cache) {
-        std::string cache_key = makeCacheKey(working_graph, options);
-        auto it = state.cache.find(cache_key);
-        if (it != state.cache.end()) {
-            state.stats.hits++;
-            it->second.last_accessed = std::chrono::steady_clock::now();
-            auto kernel = it->second.kernel;
-            // 如果 profiling 启用，包装为 ProfiledCompiledKernel
-            if (options.enable_profiling) {
-                auto pd_it = state.profile_data.find(cache_key);
-                if (pd_it == state.profile_data.end()) {
-                    pd_it = state.profile_data.emplace(cache_key, std::make_shared<ProfileData>()).first;
+        // 缓存查询
+        if (options.enable_cache) {
+            std::string cache_key = makeCacheKey(working_graph, options);
+            auto it = state.cache.find(cache_key);
+            if (it != state.cache.end()) {
+                state.stats.hits++;
+                it->second.last_accessed = std::chrono::steady_clock::now();
+                auto kernel = it->second.kernel;
+                // 如果 profiling 启用，包装为 ProfiledCompiledKernel
+                if (options.enable_profiling) {
+                    auto pd_it = state.profile_data.find(cache_key);
+                    if (pd_it == state.profile_data.end()) {
+                        pd_it = state.profile_data.emplace(cache_key, std::make_shared<ProfileData>()).first;
+                    }
+                    return std::make_shared<ProfiledCompiledKernel>(kernel, pd_it->second);
                 }
-                return std::make_shared<ProfiledCompiledKernel>(kernel, pd_it->second);
+                return kernel;
             }
-            return kernel;
+            state.stats.misses++;
         }
-        state.stats.misses++;
-    }
+    }  // ← lock 在此析构，_to_reap 在函数末尾析构（无死锁）
 
     auto kernel = doCompile(working_graph, options, makeCacheKey(working_graph, options));
 
@@ -498,12 +510,13 @@ CompileFuture C3Engine::compileAsync(
 
     std::shared_ptr<std::promise<std::shared_ptr<CompiledKernel>>> promise;
     CompileFuture result_future;
+    std::vector<std::future<void>> _to_reap;  // 锁外声明
 
     {
         std::lock_guard<std::mutex> lock(state.mutex);
 
         // 回收已完成的异步编译 future
-        reapCompletedFutures(state);
+        reapCompletedFutures(state, _to_reap);
 
         // 1. 检查常规缓存
         if (options.enable_cache) {
@@ -524,43 +537,87 @@ CompileFuture C3Engine::compileAsync(
             return pending_it->second.future;
         }
 
-        // 3. 创建新的异步编译任务
+        // 3. 创建新的异步编译任务（ADR-011 watchdog 模式）
         promise = std::make_shared<std::promise<std::shared_ptr<CompiledKernel>>>();
         result_future = promise->get_future().share();
+
+        // 共享编译状态：compile 线程写，watchdog 线程读
+        struct AsyncCompileState {
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;       // compile 线程完成
+            bool timed_out = false;  // watchdog 判定超时
+            std::shared_ptr<CompiledKernel> kernel;
+            std::string error;
+        };
+        auto compile_state = std::make_shared<AsyncCompileState>();
 
         state.pending[cache_key] = {promise, result_future, std::chrono::steady_clock::now()};
         state.stats.pending_compiles++;
 
-        // 4. 启动后台编译（使用 std::async 管理线程生命周期）
-        auto async_future = std::async(std::launch::async,
+        // 4. 启动实际编译线程
+        auto compile_future = std::async(std::launch::async,
             [working_graph = std::move(working_graph), options, cache_key,
-             promise]() mutable {
+             promise, compile_state]() mutable {
                 try {
                     auto kernel = doCompile(working_graph, options, cache_key);
-                    promise->set_value(kernel);
 
+                    // 写共享状态
+                    {
+                        std::lock_guard<std::mutex> slock(compile_state->mutex);
+                        compile_state->kernel = kernel;
+                        compile_state->done = true;
+                    }
+                    compile_state->cv.notify_all();
+
+                    // 写 cache + 清 pending
                     auto& state = getState();
-                    std::lock_guard<std::mutex> lock(state.mutex);
-                    if (options.enable_cache) {
-                        state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
-                        evictLRU(state);
+                    {
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        if (options.enable_cache) {
+                            // 即使 timed_out 也写入 cache（让后续相同 key 命中，节省重新编译）
+                            state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
+                            evictLRU(state);
+                        }
+                        state.pending.erase(cache_key);
+                        state.stats.pending_compiles--;
+                        if (kernel) {
+                            state.stats.async_completions++;
+                        } else {
+                            state.stats.async_failures++;
+                        }
+                    }  // ← lock_guard 在此析构，释放 state.mutex
+                    // 关键：编译成功后必须通知主线程！
+                    // 必须放在 lock 块**外**：
+                    //   reapCompletedFutures 会持 state.mutex 遍历 compile_futures
+                    //   对 ready 的 future 调 erase，~future 会 block 等 std::async task 真正结束
+                    //   如果我们在持 lock 时 set_value，reaper 能看到 ready 但 ~future 会等我们释放 lock，
+                    //   而我们又等 reaper 释放 state.mutex → 死锁。
+                    //   （这个 bug 是 ADR-011 修复过程中引入的。）
+                    if (!compile_state->timed_out) {
+                        try {
+                            promise->set_value(compile_state->kernel);
+                        } catch (...) {
+                            // race condition: watchdog 在我们 set 前 set_value(nullptr)，
+                            // 这里 try/catch 吸收 future_error 避免 propagate
+                        }
                     }
-                    state.pending.erase(cache_key);
-                    state.stats.pending_compiles--;
-                    state.stats.async_completions++;
                 } catch (const std::exception& e) {
-                    // 编译失败：记录 + 标记 future 为 nullptr + 清理状态
-                    // 修复后保留真实异常信息到 EngineState（ADR-007），
-                    // 调用方可通过 getLastCompileError() 查询。
-                    try {
-                        recordEngineError(getState(), "async", e.what());
-                    } catch (...) {
-                        // EngineState 不可用，吞错避免递归
+                    // 编译失败：记录 + 写共享状态
+                    {
+                        std::lock_guard<std::mutex> slock(compile_state->mutex);
+                        compile_state->error = e.what();
+                        compile_state->done = true;
                     }
-                    try {
-                        promise->set_value(nullptr);
-                    } catch (...) {
-                        // promise 可能已被销毁（极少数情况）
+                    compile_state->cv.notify_all();
+                    // 注意：timed_out 时 watchdog 已经返回 nullptr，这里不能再 set_value
+                    if (!compile_state->timed_out) {
+                        try {
+                            recordEngineError(getState(), "async", e.what());
+                        } catch (...) {}
+                        try {
+                            promise->set_value(nullptr);
+                        } catch (...) {}
                     }
                     try {
                         auto& state = getState();
@@ -568,16 +625,22 @@ CompileFuture C3Engine::compileAsync(
                         state.pending.erase(cache_key);
                         state.stats.pending_compiles--;
                         state.stats.async_failures++;
-                    } catch (...) {
-                        // 极端情况：state 不可用
-                    }
+                    } catch (...) {}
                 } catch (...) {
-                    try {
-                        recordEngineError(getState(), "async", "unknown exception");
-                    } catch (...) {}
-                    try {
-                        promise->set_value(nullptr);
-                    } catch (...) {}
+                    {
+                        std::lock_guard<std::mutex> slock(compile_state->mutex);
+                        compile_state->error = "unknown exception";
+                        compile_state->done = true;
+                    }
+                    compile_state->cv.notify_all();
+                    if (!compile_state->timed_out) {
+                        try {
+                            recordEngineError(getState(), "async", "unknown exception");
+                        } catch (...) {}
+                        try {
+                            promise->set_value(nullptr);
+                        } catch (...) {}
+                    }
                     try {
                         auto& state = getState();
                         std::lock_guard<std::mutex> lock(state.mutex);
@@ -587,7 +650,66 @@ CompileFuture C3Engine::compileAsync(
                     } catch (...) {}
                 }
             });
-        state.compile_futures.push_back(std::move(async_future));
+
+        // 5. 启动 watchdog 线程（ADR-011）
+        uint32_t timeout_ms;
+        {
+            std::lock_guard<std::mutex> clock(state.config_mutex);
+            timeout_ms = state.compile_timeout_ms;
+        }
+
+        std::shared_future<void> compile_future_shared = compile_future.share();
+        auto watchdog_future = std::async(std::launch::async,
+            [compile_state, promise, cache_key, timeout_ms, compile_future_shared]() {
+                if (timeout_ms == 0) {
+                    // 0 表示永不超时，watchdog 退化为直接等编译完成
+                    compile_future_shared.wait();
+                    return;
+                }
+
+                // 先看是否已完成（避免无意义的等待）
+                {
+                    std::lock_guard<std::mutex> lock(compile_state->mutex);
+                    if (compile_state->done) {
+                        // 编译已完成（fast path），但 promise 还没被 set
+                        // 让 compile_future_shared 跑完后续清状态，promise 由 compile 线程自己 set
+                        return;
+                    }
+                }
+
+                // 等待 timeout_ms 或 done
+                std::unique_lock<std::mutex> lock(compile_state->mutex);
+                bool done = compile_state->cv.wait_for(lock,
+                    std::chrono::milliseconds(timeout_ms),
+                    [&] { return compile_state->done; });
+
+                if (!done) {
+                    // **超时！** ADR-011 P1 修复
+                    compile_state->timed_out = true;
+                    lock.unlock();
+
+                    // 记录超时错误
+                    try {
+                        std::string err = "compile exceeded " + std::to_string(timeout_ms) +
+                                          "ms for cache_key=" + cache_key +
+                                          " (actual compile continues in background)";
+                        recordEngineError(getState(), "async-timeout", err);
+                    } catch (...) {}
+
+                    // 立即给用户返回 nullptr（不阻塞 future.get()）
+                    try {
+                        promise->set_value(nullptr);
+                    } catch (...) {
+                        // promise 可能已被 compile 线程 set 过（race condition 极少见）
+                    }
+
+                    // 注意：compile 线程继续跑，最终会写入 cache 供后续命中
+                    // 但本次 compile 会被 watchdog 视为"超时失败"
+                }
+            });
+
+        state.compile_futures.push_back(std::move(compile_future));
+        state.compile_futures.push_back(std::move(watchdog_future));
     }
     // 释放锁，不阻塞后台线程
 
@@ -763,12 +885,13 @@ CompileFuture C3Engine::compileMergedAsync(
     auto& state = getState();
     std::shared_ptr<std::promise<std::shared_ptr<CompiledKernel>>> promise;
     CompileFuture result_future;
+    std::vector<std::future<void>> _to_reap;  // 锁外声明
 
     {
         std::lock_guard<std::mutex> lock(state.mutex);
 
         // 回收已完成的异步编译 future
-        reapCompletedFutures(state);
+        reapCompletedFutures(state, _to_reap);
 
         // 1. 检查常规缓存
         if (options.enable_cache) {
@@ -954,11 +1077,15 @@ std::shared_ptr<CompiledKernel> C3Engine::getKernel(const std::string& cache_key
 
 C3CacheStats C3Engine::getCacheStats() const {
     auto& state = getState();
-    std::lock_guard<std::mutex> lock(state.mutex);
-    reapCompletedFutures(state);
-    C3CacheStats stats = state.stats;
-    stats.total_entries = state.cache.size();
-    stats.pending_compiles = state.pending.size();
+    std::vector<std::future<void>> _to_reap;  // 锁外声明
+    C3CacheStats stats;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        reapCompletedFutures(state, _to_reap);
+        stats = state.stats;
+        stats.total_entries = state.cache.size();
+        stats.pending_compiles = state.pending.size();
+    }  // ← 锁释放，_to_reap 后续析构不会触发持锁等待
     return stats;
 }
 
@@ -988,6 +1115,20 @@ void C3Engine::recordCompileError(const std::string& prefix, const std::string& 
     // 公开 API：让 PGOCompiledKernel 等子系统能写入全局错误状态。
     // 内部复用 recordEngineError 复用截断 + 日志逻辑。
     recordEngineError(getState(), prefix, err);
+}
+
+void C3Engine::setCompileTimeoutMs(uint32_t ms) {
+    auto& state = getState();
+    std::lock_guard<std::mutex> lock(state.config_mutex);
+    state.compile_timeout_ms = ms;
+    CtorchError::log(ErrorLevel::INFO, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+        "C3Engine: compile timeout set to " + std::to_string(ms) + "ms");
+}
+
+uint32_t C3Engine::getCompileTimeoutMs() const {
+    auto& state = getState();
+    std::lock_guard<std::mutex> lock(state.config_mutex);
+    return state.compile_timeout_ms;
 }
 
 void C3Engine::clearCache() {

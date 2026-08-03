@@ -516,6 +516,32 @@ public:
      */
     void recordCompileError(const std::string& prefix, const std::string& err);
 
+    /**
+     * @brief 设置异步编译超时（毫秒），默认 30000ms (30s)
+     * @param ms 超时毫秒数，0 表示永不超时（不推荐，可能 thread pool 永远增长）
+     * @details 仅对 compileAsync 路径生效（同步 compile() 仍然由调用方控制）。
+     *          超时行为（ADR-011）：
+     *          - watchdog 线程在 timeout_ms 内没拿到 kernel → 视为超时
+     *          - 用户 future 立即返回 nullptr
+     *          - last_compile_error_ 记录 "[async-timeout] compile exceeded Xms for <cache_key>"
+     *          - **实际 compile 线程继续跑**（无法取消 clang++/MLIR），跑完后写入 cache
+     *            供后续相同 cache_key 命中
+     *
+     *          适用场景：冷启动时多图并发编译，其中某张图触发 MLIR 复杂优化卡死，
+     *          watchdog 防止主线程 / shutdown() 永远等待。
+     *
+     *          调优建议：
+     *          - 开发环境：60s（避免被合法大图误杀）
+     *          - 生产环境：10-15s（快速失败，依赖 cache 复用）
+     *          - 测试环境：2-3s（让超时测试可以快速跑完）
+     */
+    void setCompileTimeoutMs(uint32_t ms);
+
+    /**
+     * @brief 获取当前异步编译超时配置
+     */
+    [[nodiscard]] uint32_t getCompileTimeoutMs() const;
+
     // ======================= AOT (Ahead-Of-Time) 持久化 =======================
     //
     // 工业级 JIT 的"跨进程复用"能力：将编译产物持久化到 ~/.c3cache/，
