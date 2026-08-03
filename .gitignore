@@ -9,3 +9,20 @@ compile_commands.json
 /.idea/codeStyles/Project.xml
 *.Identifier
 cmake-build-debug
+
+# 顶层目录的旧 binary（避免与 build/ 目录产物混淆）
+/test_c3_compile_merged
+/test_c3_compile_merged_pgo
+/test_graph_merger
+/test_c3_graph
+/llama.cpp-link
+/backup_threadpool/
+/poc_input.bin
+/.dbg/
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/Makefile
+/Testing/
+/cmake_install.cmake
+/tl-ArrayTest[1]_include.cmake

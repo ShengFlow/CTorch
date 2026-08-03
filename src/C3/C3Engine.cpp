@@ -239,6 +239,8 @@ C3Engine& C3Engine::getInstance() {
 
 // C3Engine 内部缓存
 namespace {
+    /// merged cache key 前缀版本号：统一使用 ct::c3::kMergedCacheKeyPrefix（见 GraphMerger.h）
+    /// 不在此处重新定义，避免与 GraphMerger.h 中的版本号出现不一致
     static constexpr size_t kMaxCacheEntries = 256; ///< 缓存条目上限
 
     struct CacheEntry {
@@ -564,6 +566,205 @@ std::vector<std::shared_ptr<CompiledKernel>> C3Engine::compileParallel(
     return results;
 }
 
+// ======================= compileMerged 系列实现 =======================
+
+std::shared_ptr<CompiledKernel> C3Engine::compileMerged(
+    const std::vector<Graph>& sub_graphs,
+    const MergeSpec& spec,
+    const CompileOptions& options)
+{
+    // 1. 入参校验
+    if (sub_graphs.empty()) {
+        throw std::invalid_argument(
+            "C3Engine::compileMerged: sub_graphs must be non-empty");
+    }
+    if (spec.links.size() != sub_graphs.size() - 1) {
+        throw std::invalid_argument(
+            "C3Engine::compileMerged: spec.links.size() (" +
+            std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
+            std::to_string(sub_graphs.size() - 1) + ")");
+    }
+
+    // 2. 验证子图与链接的兼容性（shape/dtype/device）
+    std::string err = GraphMerger::validate(sub_graphs, spec);
+    if (!err.empty()) {
+        throw std::invalid_argument(
+            "C3Engine::compileMerged: validation failed: " + err);
+    }
+
+    // 3. 合并子图为单个 Graph
+    MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
+
+    // 4. 复用现有 compile() 流程：canonicalize → eliminateDeadCode → fuse → cache → compile
+    //    注意：compile() 内部会基于 working_graph 重新生成 cache key，因此融合图的
+    //    缓存条目与子图独立缓存的条目互不冲突。
+    auto kernel = compile(merged.graph, options);
+    if (!kernel) {
+        throw std::runtime_error(
+            "C3Engine::compileMerged: compilation of merged graph failed");
+    }
+
+    // 5. 返回编译后的 kernel
+    return kernel;
+}
+
+std::shared_ptr<CompiledKernel> C3Engine::compileMergedPGO(
+    const std::vector<Graph>& sub_graphs,
+    const MergeSpec& spec,
+    const CompileOptions& options)
+{
+    // 1. 入参校验（与 compileMerged 保持一致）
+    if (sub_graphs.empty()) {
+        throw std::invalid_argument(
+            "C3Engine::compileMergedPGO: sub_graphs must be non-empty");
+    }
+    if (spec.links.size() != sub_graphs.size() - 1) {
+        throw std::invalid_argument(
+            "C3Engine::compileMergedPGO: spec.links.size() (" +
+            std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
+            std::to_string(sub_graphs.size() - 1) + ")");
+    }
+    std::string err = GraphMerger::validate(sub_graphs, spec);
+    if (!err.empty()) {
+        throw std::invalid_argument(
+            "C3Engine::compileMergedPGO: validation failed: " + err);
+    }
+
+    // 2. 合并子图为单个 Graph
+    MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
+
+    // 3. 构造 PGO 模式 options（强制 pgo_mode=true，其他字段透传）
+    CompileOptions pgo_opts = options;
+    pgo_opts.pgo_mode = true;
+
+    // 4. 复用 compile() 流程：PGO 模式会在内部自动包装为 PGOCompiledKernel
+    //    PGOCompiledKernel.execute() 第一次调用走 Eager 解释执行（scheduler 逐算子），
+    //    同时触发 O2 + Ofast 异步编译，编译完成后原子热替换。
+    //    缓存键基于 merged_graph 结构 + options（pgo_mode 不计入，因为 PGO 是运行时包装层）
+    auto kernel = compile(merged.graph, pgo_opts);
+    if (!kernel) {
+        throw std::runtime_error(
+            "C3Engine::compileMergedPGO: compilation of merged graph failed");
+    }
+
+    return kernel;
+}
+
+std::shared_ptr<CompiledKernel> C3Engine::compileMergedSequential(
+    const std::vector<Graph>& sub_graphs,
+    const CompileOptions& options)
+{
+    // 顺序场景：直接构造顺序 spec 后调用 compileMerged
+    MergeSpec spec = GraphMerger::makeSequentialSpec(sub_graphs);
+    return compileMerged(sub_graphs, spec, options);
+}
+
+std::shared_ptr<CompiledKernel> C3Engine::compileMergedPGOSequential(
+    const std::vector<Graph>& sub_graphs,
+    const CompileOptions& options)
+{
+    // 顺序场景：直接构造顺序 spec 后调用 compileMergedPGO
+    MergeSpec spec = GraphMerger::makeSequentialSpec(sub_graphs);
+    return compileMergedPGO(sub_graphs, spec, options);
+}
+
+CompileFuture C3Engine::compileMergedAsync(
+    const std::vector<Graph>& sub_graphs,
+    const MergeSpec& spec,
+    const CompileOptions& options)
+{
+    // 1. 立即生成 merged cache key 以支持去重
+    std::string merged_key = GraphMerger::mergedCacheKey(sub_graphs, spec);
+    // 在 key 前缀加入 compile 维度，区分 Handwritten vs MLIR、opt level 等
+    std::ostringstream full_key_ss;
+    full_key_ss << kMergedCacheKeyPrefix
+                << static_cast<int>(options.backend) << "_"
+                << static_cast<int>(options.target_device) << "_"
+                << options.opt_level << "_"
+                << (options.enable_fusion ? "f" : "n") << "_"
+                << merged_key;
+    std::string cache_key = full_key_ss.str();
+
+    auto& state = getState();
+    std::shared_ptr<std::promise<std::shared_ptr<CompiledKernel>>> promise;
+    CompileFuture result_future;
+
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+
+        // 回收已完成的异步编译 future
+        reapCompletedFutures(state);
+
+        // 1. 检查常规缓存
+        if (options.enable_cache) {
+            auto it = state.cache.find(cache_key);
+            if (it != state.cache.end()) {
+                state.stats.hits++;
+                auto ready_promise = std::make_shared<std::promise<std::shared_ptr<CompiledKernel>>>();
+                ready_promise->set_value(it->second.kernel);
+                return ready_promise->get_future().share();
+            }
+            state.stats.misses++;
+        }
+
+        // 2. 检查是否有进行中的融合编译任务（去重）
+        auto pending_it = state.pending.find(cache_key);
+        if (pending_it != state.pending.end()) {
+            return pending_it->second.future;
+        }
+
+        // 3. 创建新的异步融合编译任务
+        promise = std::make_shared<std::promise<std::shared_ptr<CompiledKernel>>>();
+        result_future = promise->get_future().share();
+
+        state.pending[cache_key] = {promise, result_future, std::chrono::steady_clock::now()};
+        state.stats.pending_compiles++;
+
+        // 4. 启动后台融合编译
+        auto async_future = std::async(std::launch::async,
+            [sub_graphs, spec, options, cache_key, promise]() mutable {
+                try {
+                    auto kernel = C3Engine::getInstance().compileMerged(
+                        sub_graphs, spec, options);
+                    promise->set_value(kernel);
+
+                    auto& state = getState();
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    if (options.enable_cache) {
+                        state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
+                        evictLRU(state);
+                    }
+                    state.pending.erase(cache_key);
+                    state.stats.pending_compiles--;
+                    state.stats.async_completions++;
+                } catch (...) {
+                    // 融合编译失败：保留真实异常信息，调用方通过 future.get() 接收
+                    // 禁止静默吞错（违反 project CtorchError::throwException 硬约束）
+                    try {
+                        promise->set_exception(std::current_exception());
+                    } catch (const std::future_error&) {
+                        // promise 已被设置过（去重路径下重复 set_value 场景），忽略
+                    } catch (...) {
+                        // 极端情况：promise 已被销毁。统计失败但不抛
+                        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+                            ErrorType::UNKNOWN,
+                            "C3Engine::compileMergedAsync: failed to propagate "
+                            "compile exception (promise destroyed)");
+                    }
+                    auto& state = getState();
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.pending.erase(cache_key);
+                    state.stats.pending_compiles--;
+                    state.stats.async_failures++;
+                }
+            });
+        state.compile_futures.push_back(std::move(async_future));
+    }
+    // 释放锁，不阻塞后台线程
+
+    return result_future;
+}
+
 // ======================= NodeVariant → op 枚举映射 =======================
 
 namespace {
@@ -691,6 +892,9 @@ void C3Engine::clearCache() {
     state.stats.evictions = 0;
     state.stats.bytes_used = 0;
     state.stats.total_entries = 0;
+    // 同步清理 PGO 缓存，确保测试间状态干净
+    // （PGOManager::clear() 内部持有自己的 mutex，无死锁风险）
+    PGOManager::getInstance().clear();
 }
 
 void C3Engine::autoTune(const AutoTunerConfig& config) {
@@ -770,16 +974,27 @@ void C3Engine::autoTune(const AutoTunerConfig& config) {
 }
 
 void C3Engine::shutdown() {
+    // 等待 PGO 后台编译完成（PGO 内部 PGOCompiledKernel 可能 lock 自己的 compile_mutex，
+    // 但其 triggerCompilationChain 也会访问 PGOManager 的 mutex_/queue_mutex_）。
+    PGOManager::getInstance().shutdown();
+
     auto& state = getState();
     std::vector<std::future<void>> futures;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
         futures = std::move(state.compile_futures);
     }
-    // 等待所有后台编译完成（带超时，避免死锁）
+    // 等待所有后台编译完成（30s 超时，覆盖冷启动时 clang++ 链接 + MLIR 编译的长尾场景）
     for (auto& f : futures) {
         if (f.valid()) {
-            f.wait_for(std::chrono::seconds(5));
+            auto status = f.wait_for(std::chrono::seconds(30));
+            if (status == std::future_status::ready) {
+                try { f.get(); } catch (...) {} // 吸收异常
+            } else {
+                CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+                    "C3Engine::shutdown: background compile did not finish in 30s, "
+                    "future abandoned (may cause UAF if main exits before thread finishes)");
+            }
         }
     }
 }

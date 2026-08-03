@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -210,17 +211,38 @@ public:
     /** @brief 强制所有待编译的 kernel 立即编译 */
     void promoteAll();
 
+    /**
+     * @brief 等待所有后台 PGO 编译任务完成
+     * @details 必须由用户在 main() 退出前显式调用。
+     *          后台 PGO 编译通过 std::async 启动，若 main() 退出前未等待，
+     *          单例析构后线程继续运行会 lock 已析构的 mutex 导致 UAF。
+     *          调用方应在 C3Engine::shutdown() 之后或之前调用本方法。
+     */
+    void shutdown();
+
     /** @brief 获取队列互斥锁（PGOCompiledKernel 需要访问） */
-    std::mutex& queue_mutex() { return queue_mutex_; }
+    std::mutex& queue_mutex();
 
     /** @brief 获取优先级队列（PGOCompiledKernel 需要访问） */
-    std::priority_queue<CompilationTask>& task_queue() { return task_queue_; }
+    std::priority_queue<CompilationTask>& task_queue();
 
+    /** @brief 后台编译 future 的互斥锁（PGOCompiledKernel::triggerCompilationChain 需要） */
+    std::mutex& futures_mutex();
+
+    /** @brief 后台编译 future 列表（PGOCompiledKernel::triggerCompilationChain 需要） */
+    std::vector<std::future<void>>& compile_futures();
 private:
     PGOManager() = default;
 
     mutable std::mutex mutex_;
-    std::vector<std::weak_ptr<PGOCompiledKernel>> entries_;
+    // entries_ 持有 shared_ptr 以保持 kernel 存活（类似 C3Engine cache 的语义）。
+    // 使用 shared_ptr 确保 PGOManager 注册的 kernel 在整个程序运行期间可用，
+    // 避免 kernel 被销毁后 weak_ptr 过期导致 entries_.size 不准。
+    std::vector<std::shared_ptr<PGOCompiledKernel>> entries_;
+    // PGO 缓存：相同 cache_key 复用同一 PGOCompiledKernel 实例，
+    // 保证重复调用 compileMergedPGO/compileMergedPGOSequential 返回相同对象，
+    // 同时 profile_data 在多次调用间累计。
+    std::unordered_map<std::string, std::shared_ptr<PGOCompiledKernel>> cache_;
     PGOConfig config_;
     std::atomic<bool> enabled_{false};
 
@@ -231,6 +253,10 @@ private:
 
     // 优先级队列（未来扩展：实际编译任务调度）
     std::priority_queue<CompilationTask> task_queue_;
+
+    // 后台 PGO 编译任务 future 列表（用于 shutdown 等待）
+    std::mutex futures_mutex_;
+    std::vector<std::future<void>> compile_futures_;
 };
 
 } // namespace c3

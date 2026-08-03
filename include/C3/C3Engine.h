@@ -21,6 +21,7 @@
 #include "../Ctools.h"
 #include "../Tensor.h"
 #include "C3KernelRegistry.h"
+#include "GraphMerger.h"
 #include "Tracer.h"
 
 namespace ct {
@@ -266,6 +267,102 @@ public:
         const std::vector<Graph>& graphs,
         const CompileOptions& options = {});
 
+    // ======================= compileMerged 系列：多层融合编译 =======================
+
+    /**
+     * @brief 多子图融合编译：将 N 个独立子图按链接规格合并为单个图后统一编译
+     * @param sub_graphs 待融合的子图列表（至少 1 个，N>=1）
+     * @param spec 子图之间的链接规格
+     * @param options 编译选项（enable_fusion 会触发额外的图内优化）
+     * @return 编译后的单 kernel（封装整个融合图）；若 sub_graphs.size()==1 则等价于 compile()
+     * @details 这是"逐层编译 + 后台全图融合"模式的核心入口：
+     *          1. 调用 GraphMerger::merge() 合并子图为单个 Graph
+     *          2. 复用 compile() 的完整流程：canonicalize → eliminateDeadCode → fuse → cache → compile
+     *          3. 合并后的图 hash 作为 cache key，因此子图分别缓存后再次融合会命中同一 cache
+     *
+     *          典型用法（MLP 全图融合）：
+     *          @code
+     *          std::vector<Graph> layers = {layer1, layer2, layer3};
+     *          auto fused = engine.compileMerged(layers, MergeSpec{}); // 纯顺序链接
+     *          auto out = fused->execute({input});
+     *          @endcode
+     *
+     * @throw std::invalid_argument 当 sub_graphs 为空或 spec 与子图数量不匹配时
+     * @throw std::runtime_error 当图不合法、链接不兼容或编译失败时
+     */
+    std::shared_ptr<CompiledKernel> compileMerged(
+        const std::vector<Graph>& sub_graphs,
+        const MergeSpec& spec,
+        const CompileOptions& options = {});
+
+    /**
+     * @brief 简化版：纯顺序链接的多子图融合编译（MLP 等典型场景）
+     * @param sub_graphs 子图列表，每层要求单输入单输出
+     * @param options 编译选项
+     * @return 编译后的单 kernel
+     * @details 等价于 compileMerged(sub_graphs, GraphMerger::makeSequentialSpec(sub_graphs), options)
+     */
+    std::shared_ptr<CompiledKernel> compileMergedSequential(
+        const std::vector<Graph>& sub_graphs,
+        const CompileOptions& options = {});
+
+    /**
+     * @brief 异步版多子图融合编译
+     * @param sub_graphs 待融合的子图列表
+     * @param spec 链接规格
+     * @param options 编译选项
+     * @return CompileFuture，可通过 .get() 获取编译产物
+     * @details 在后台线程中执行 merge + compile。返回的 future 与对同一 (sub_graphs+spec) 后续调用
+     *          共享（去重），适用于多层网络冷启动时同时发起逐层编译和全图编译的场景。
+     *
+     *          **生命周期要求**：后台 std::async 任务依赖 C3Engine 单例持有的 EngineState。
+     *          编译器失败时异常通过 future.get() 传播（不静默吞错）。
+     *          **调用方应在 main() 退出前调用 `C3Engine::getInstance().shutdown()`**
+     *          以等待所有后台编译完成，避免 C3Engine 单例析构时与后台线程产生
+     *          mutex 析构顺序冲突。
+     */
+    CompileFuture compileMergedAsync(
+        const std::vector<Graph>& sub_graphs,
+        const MergeSpec& spec,
+        const CompileOptions& options = {});
+
+    /**
+     * @brief 多子图融合编译 + PGO 三层异步升级（"逐层编译 + 后台全图融合"模式核心入口）
+     * @param sub_graphs 待融合的子图列表
+     * @param spec 链接规格
+     * @param options 编译选项（会强制启用 pgo_mode=true，opt_level/opt backend 等其他字段透传）
+     * @return 编译后的 PGOCompiledKernel（merged graph 版本）
+     * @details 典型工作流（多层网络如 MLP）：
+     *          1. 客户端逐层调用 compile(layer_i, opts) 编译每个子图（首屏快）
+     *          2. 同时调用 compileMergedPGO(layers, spec) 启动全图 PGO 编译链
+     *          3. 首次 execute(merged_kernel, {x, w1, b1, ..., wN, bN})：
+     *             - PGO 包装器内部用 Eager 调度器逐算子执行 merged_graph（不阻塞）
+     *             - 同时触发 O2 + Ofast 异步编译
+     *          4. O2 编译完成：下一次 execute 原子切换到 O2 merged kernel
+     *          5. Ofast 编译完成：下一次 execute 原子切换到 Ofast merged kernel
+     *          6. 通过 isPromoted() / o2Kernel() / ofastKernel() 监控升级状态
+     *
+     *          缓存语义：merged graph 拥有独立的 cache key（基于 mergedCacheKey + 编译维度），
+     *          与子图独立缓存的条目互不冲突；同一 (sub_graphs+spec) 重复调用会命中缓存。
+     *
+     * @throw std::invalid_argument 当 sub_graphs 为空或 spec 与子图数量不匹配时
+     * @throw std::runtime_error 当图不合法、链接不兼容或编译失败时
+     */
+    std::shared_ptr<CompiledKernel> compileMergedPGO(
+        const std::vector<Graph>& sub_graphs,
+        const MergeSpec& spec,
+        const CompileOptions& options = {});
+
+    /**
+     * @brief 简化版：纯顺序链接的多子图融合 + PGO 异步升级（MLP 典型场景）
+     * @param sub_graphs 子图列表，每层要求单输入单输出
+     * @param options 编译选项
+     * @return PGOCompiledKernel（merged graph 版本）
+     */
+    std::shared_ptr<CompiledKernel> compileMergedPGOSequential(
+        const std::vector<Graph>& sub_graphs,
+        const CompileOptions& options = {});
+
     /**
      * @brief 编译计算图并自动安装到 C3 内核注册表
      * @param graph 待编译的计算图
@@ -395,13 +492,22 @@ public:
     /**
      * @brief 等待所有后台编译完成并回收线程资源
      * @details 应在程序退出前调用，确保所有异步编译任务完成。
-     *          带 5 秒超时，避免死锁。
+     *          带 30 秒超时（覆盖长编译/链接场景），超时后会 abandon 未完成 future
+     *          并记录 WARN；调用方应在 main 退出前显式调用。
+     *
+     *          析构函数不会自动调用 shutdown()，避免与 EngineState 静态变量
+     *          的析构顺序产生 UAF。**调用方有责任在 main() 返回前调用一次**。
      */
     void shutdown();
 
 private:
     C3Engine() = default;
-    ~C3Engine() { shutdown(); }
+    // 不在析构函数中自动调 shutdown：
+    // EngineState 是函数内 static 变量，其析构时机与 C3Engine 单例不保证有序，
+    // 在析构函数中调 shutdown() 会导致访问已析构 mutex 的 UAF。
+    // 调用方必须在 main() 返回前显式调 shutdown()，保证后台任务在静态变量
+    // 析构前完成。
+    ~C3Engine() = default;
     C3Engine(const C3Engine&) = delete;
     C3Engine& operator=(const C3Engine&) = delete;
 };

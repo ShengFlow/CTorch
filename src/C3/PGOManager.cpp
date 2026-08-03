@@ -7,6 +7,7 @@
 
 #include "../../include/C3/PGOManager.h"
 #include "../../include/C3/Graph.h"
+#include "../../include/CtorchError.h"
 
 #include <algorithm>
 #include <cmath>
@@ -98,6 +99,11 @@ PGOCompiledKernel::PGOCompiledKernel(
     , profile_data_(std::move(profile_data))
     , engine_(engine)
 {
+    CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+        "PGOCompiledKernel ctor: nodes=" + std::to_string(graph_.nodeCount()) +
+        " inputs=" + std::to_string(graph_.inputCount()) +
+        " outputs=" + std::to_string(graph_.outputCount()) +
+        " cache_key=" + cache_key_);
 }
 
 std::vector<Tensor> PGOCompiledKernel::execute(const std::vector<Tensor>& inputs) {
@@ -181,35 +187,60 @@ void PGOCompiledKernel::triggerCompilationChain() {
 
     // 启动异步编译链（O2 → Ofast）
     if (PGOManager::getInstance().config().async_compilation) {
-        std::thread([this]() {
-            std::cerr << "[PGO] Starting async compile chain for " << cache_key_ << std::endl;
-            compileO2();
-            compileOfast();
-            PGOManager::getInstance().notifyCompilationCompleted();
-        }).detach();
+        // 集中 future 管理，避免 std::thread::detach() 引发 UAF
+        // （线程在 main 退出后仍会 lock 已析构的 PGOManager mutex）
+        std::future<void> fut = std::async(std::launch::async, [this]() {
+            try {
+                CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+                    "PGO: starting async compile chain for " + cache_key_);
+                compileO2();
+                compileOfast();
+            } catch (const std::exception& e) {
+                // 防止后台线程异常导致 std::terminate；同时避免 lock 已析构 mutex
+                CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+                    ErrorType::KERNEL_LAUNCH,
+                    std::string("PGO: async compile chain exception for ") + cache_key_ +
+                    ": " + e.what());
+            } catch (...) {
+                CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+                    ErrorType::KERNEL_LAUNCH,
+                    "PGO: async compile chain unknown exception for " + cache_key_);
+            }
+            try {
+                PGOManager::getInstance().notifyCompilationCompleted();
+            } catch (...) {
+                // notifyCompilationCompleted 可能 lock 已析构 PGOManager mutex
+                // （main 退出 + 用户未调 PGOManager::shutdown 的极端场景）
+                // 静默吞错：仅统计作用，不影响业务正确性
+            }
+        });
+        std::lock_guard<std::mutex> lock(PGOManager::getInstance().futures_mutex());
+        PGOManager::getInstance().compile_futures().push_back(std::move(fut));
     } else {
         // 同步编译（用于测试）
-        std::cerr << "[PGO] Starting sync compile chain for " << cache_key_ << std::endl;
+        CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+            "PGO: starting sync compile chain for " + cache_key_);
         compileO2();
-        std::cerr << "[PGO] After compileO2: o2_kernel_=" << (o2_kernel_ ? "valid" : "nullptr") << std::endl;
         compileOfast();
-        std::cerr << "[PGO] After compileOfast: ofast_kernel_=" << (ofast_kernel_ ? "valid" : "nullptr") << std::endl;
         PGOManager::getInstance().notifyCompilationCompleted();
     }
 }
 
 void PGOCompiledKernel::compileO2() {
     // 编译 O2 级别 kernel
-    std::cerr << "[PGO] compileO2 ENTER for " << cache_key_ << std::endl;
+    CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+        "PGO: compileO2 ENTER for " + cache_key_);
     try {
         CompileOptions o2_opts = options_;
         o2_opts.opt_level = 2;
         o2_opts.pgo_mode = false;       // 避免递归创建 PGOCompiledKernel
         o2_opts.enable_cache = true;    // 启用缓存
 
-        std::cerr << "[PGO] compileO2: calling engine_.compile() with opt_level=2" << std::endl;
         auto kernel = engine_.compile(graph_, o2_opts);
-        std::cerr << "[PGO] compileO2: engine_.compile() returned " << (kernel ? "valid" : "nullptr") << std::endl;
+        if (!kernel) {
+            CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+                "PGO: compileO2 returned nullptr for " + cache_key_);
+        }
 
         {
             std::lock_guard<std::mutex> lock(compile_mutex_);
@@ -222,11 +253,14 @@ void PGOCompiledKernel::compileO2() {
             auto op_type = nodeVariantToOp(out_node.op);
             if (op_type.has_value()) {
                 auto shapes = graphToShapeInfo(graph_);
-                o2_kernel_->installIntoRegistry(op_type.value(), shapes);
+                if (o2_kernel_) {
+                    o2_kernel_->installIntoRegistry(op_type.value(), shapes);
+                }
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "[PGO] O2 compile exception: " << e.what() << std::endl;
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+            std::string("PGO: O2 compile exception for ") + cache_key_ + ": " + e.what());
         // 编译失败，静默处理——继续使用 Eager 解释执行
     }
 }
@@ -241,7 +275,8 @@ void PGOCompiledKernel::compileOfast() {
 
         auto kernel = engine_.compile(graph_, ofast_opts);
         if (!kernel) {
-            std::cerr << "[PGO] Ofast compile failed for " << cache_key_ << std::endl;
+            CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+                "PGO: Ofast compile returned nullptr for " + cache_key_);
             return; // 编译失败，静默处理
         }
 
@@ -260,7 +295,8 @@ void PGOCompiledKernel::compileOfast() {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "[PGO] Ofast compile exception: " << e.what() << std::endl;
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+            std::string("PGO: Ofast compile exception for ") + cache_key_ + ": " + e.what());
         // 编译失败，静默处理——继续使用 O2 或 Eager
     }
 }
@@ -303,9 +339,11 @@ std::vector<Tensor> PGOCompiledKernel::executeInterpreted(const std::vector<Tens
 
     // 2. 按拓扑顺序遍历所有节点，解释执行
     const auto& nodes = graph_.nodes();
+    // 预计算 input 节点 ID 集合（input 节点用 ConstNode{0.0} 作占位符，遍历时需优先匹配 input）
+    const std::unordered_set<size_t> input_set(graph_.inputs().begin(), graph_.inputs().end());
     for (const auto& node : nodes) {
-        // 跳过已处理的输入节点
-        if (values.count(node.id)) continue;
+        // input 节点已在 step 1 映射到 inputs[i]，跳过即可（防止被下方 ConstNode 分支误判为 0.0）
+        if (input_set.count(node.id)) continue;
 
         // 跳过 ConstNode（常量折叠后的残留节点）
         if (std::holds_alternative<ConstNode>(node.op)) {
@@ -472,21 +510,32 @@ std::shared_ptr<PGOCompiledKernel> PGOManager::registerKernel(
     std::shared_ptr<ProfileData> profile_data,
     C3Engine& engine)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. 缓存命中：相同 cache_key 复用既有 PGOCompiledKernel
+    //    （profile_data 仍由调用方持有并复用，确保 PGO 统计在多次调用间累计）
+    auto cache_it = cache_.find(cache_key);
+    if (cache_it != cache_.end()) {
+        if (cache_it->second) {
+            return cache_it->second;
+        }
+        // 缓存条目已失效，移除
+        cache_.erase(cache_it);
+    }
+
+    // 2. 缓存未命中：创建新 PGOCompiledKernel
+    //    注意：cache_key 是值类型，std::make_shared 构造函数把它 move 到 PGOCompiledKernel，
+    //    因此写入缓存前需要把 cache_key 复制一份。
+    const std::string key_copy = cache_key;
     auto kernel = std::make_shared<PGOCompiledKernel>(
         graph, options, std::move(cache_key),
         std::move(profile_data), engine);
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // 清理失效的 weak_ptr
-        entries_.erase(
-            std::remove_if(entries_.begin(), entries_.end(),
-                           [](const std::weak_ptr<PGOCompiledKernel>& wp) {
-                               return wp.expired();
-                           }),
-            entries_.end());
-        entries_.push_back(kernel);
-    }
+    // 3. entries_ 直接持有 shared_ptr（无需清理过期 weak_ptr）
+    entries_.push_back(kernel);
+
+    // 4. 写入缓存（使用 shared_ptr 确保 kernel 一直存活）
+    cache_[key_copy] = kernel;
 
     return kernel;
 }
@@ -542,8 +591,8 @@ PGOManager::Stats PGOManager::getStats() const {
     s.total_registered = entries_.size();
     s.active_compilations = active_compilations_.load(std::memory_order_acquire);
     s.queue_rejections = total_queue_rejections_;
-    for (const auto& wp : entries_) {
-        if (auto sp = wp.lock()) {
+    for (const auto& sp : entries_) {
+        if (sp) {
             bool has_o2 = sp->o2Kernel() != nullptr;
             bool has_ofast = sp->ofastKernel() != nullptr;
             if (has_ofast) s.ofast_ready++;
@@ -575,6 +624,7 @@ void PGOCompiledKernel::promote() {
 void PGOManager::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.clear();
+    cache_.clear();
     active_compilations_.store(0, std::memory_order_release);
     total_queue_rejections_ = 0;
     {
@@ -588,12 +638,40 @@ void PGOManager::clear() {
 void PGOManager::promoteAll() {
     // 强制所有待编译 kernel 立即启动编译链
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& wp : entries_) {
-        if (auto sp = wp.lock()) {
+    for (const auto& sp : entries_) {
+        if (sp) {
             sp->promote();
         }
     }
 }
+
+void PGOManager::shutdown() {
+    // 等待所有后台 PGO 编译任务完成（30s 超时，与 C3Engine::shutdown 同步）
+    std::vector<std::future<void>> futures;
+    {
+        std::lock_guard<std::mutex> lock(futures_mutex());
+        futures = std::move(compile_futures());
+    }
+    for (auto& f : futures) {
+        if (f.valid()) {
+            auto status = f.wait_for(std::chrono::seconds(30));
+            if (status == std::future_status::ready) {
+                try { f.get(); } catch (...) {} // 吸收异常
+            } else {
+                CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+                    "PGOManager::shutdown: background compile did not finish in 30s, "
+                    "future abandoned (may cause UAF if main exits before thread finishes)");
+            }
+        }
+    }
+}
+
+// ======================= 访问器实现 =======================
+
+std::mutex& PGOManager::queue_mutex() { return queue_mutex_; }
+std::priority_queue<CompilationTask>& PGOManager::task_queue() { return task_queue_; }
+std::mutex& PGOManager::futures_mutex() { return futures_mutex_; }
+std::vector<std::future<void>>& PGOManager::compile_futures() { return compile_futures_; }
 
 } // namespace c3
 } // namespace ct

@@ -11,10 +11,13 @@
 #ifndef CTORCH_C3_GRAPH_H
 #define CTORCH_C3_GRAPH_H
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -315,6 +318,42 @@ private:
     std::vector<Node> nodes_;       ///< 所有节点（按添加顺序，ID 即索引）
     std::vector<size_t> inputs_;    ///< 输入节点 ID 列表
     std::vector<size_t> outputs_;   ///< 输出节点 ID 列表
+
+    // 内部修改接口（仅供同命名空间内的 C3 工具类使用）
+    friend class GraphMerger;
+
+    /// 内部：重写所有节点中引用 old_id 的 inputs 边为 new_id
+    /// 同时同步更新 nodes_[old_id].outputs（移除指向 new 边的反向引用）和
+    /// nodes_[new_id].outputs（追加所有原本指向 old_id 的消费者）。
+    /// 修复 bug：仅重写 inputs 不更新 outputs 会导致拓扑排序错乱和后续 dead-code elimination 输出残缺图。
+    /// 注意：若同一节点的 inputs 中多次引用 old_id（如 inputs=[old_id, old_id]），
+    /// 确保 new_id 的 outputs 不会产生重复条目。
+    void _rewriteInputRefInternal(size_t old_id, size_t new_id) {
+        if (old_id == new_id) return;
+        for (auto& node : nodes_) {
+            bool already_added = false;
+            for (auto& in : node.inputs) {
+                if (in == old_id) {
+                    in = new_id;
+                    // 反向引用：把"old_id 的消费者"也记到 new_id 上
+                    // 使用 already_added 避免同一节点多次引用 old_id 时产生重复条目
+                    if (new_id < nodes_.size() && !already_added) {
+                        nodes_[new_id].outputs.push_back(node.id);
+                        already_added = true;
+                    }
+                }
+            }
+        }
+        // 清空 old_id 的 outputs（所有反向引用都已迁移到 new_id）
+        if (old_id < nodes_.size()) {
+            nodes_[old_id].outputs.clear();
+        }
+    }
+
+    /// 内部：执行死代码消除并返回 old_id → new_id 映射
+    /// 供 GraphMerger 等需要跟踪节点 ID 映射的工具类使用
+    std::pair<Graph, std::unordered_map<size_t, size_t>>
+    _eliminateDeadCodeForMergedInternal() const;
 };
 
 } // namespace c3

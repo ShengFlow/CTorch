@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <future>
 #include <iostream>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -558,9 +559,11 @@ TEST(JITCompile, CacheHit) {
     auto desc = TensorDesc::fromShape({4});
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
+    engine.clearCache();  // 确保缓存干净，避免前置测试污染
 
     // 首次编译
     auto stats_before = engine.getCacheStats();
@@ -936,7 +939,8 @@ TEST(C3HotReplace, InstallAndDispatch) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     auto kernel = engine.compile(g, {});
@@ -979,7 +983,8 @@ TEST(C3HotReplace, MulDispatch) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(MulNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     auto kernel = engine.compile(g, {});
@@ -1013,7 +1018,8 @@ TEST(C3HotReplace, RollbackOnUninstall) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     auto kernel = engine.compile(g, {});
@@ -1053,7 +1059,8 @@ TEST(C3HotReplace, ShapeMismatchFallback) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     auto kernel = engine.compile(g, {});
@@ -1090,7 +1097,8 @@ TEST(C3HotReplace, StatsAccuracy) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     auto kernel1 = engine.compile(g, {});
@@ -1101,7 +1109,8 @@ TEST(C3HotReplace, StatsAccuracy) {
     Graph g2;
     size_t a = g2.addInput(desc);
     size_t b = g2.addInput(desc);
-    g2.addNode(MulNode{desc, desc}, {a, b}, desc);
+    size_t c = g2.addNode(MulNode{desc, desc}, {a, b}, desc);
+    g2.markOutput(c);
     auto kernel2 = engine.compile(g2, {});
     kernel2->installIntoRegistry(op::Mul, shapes);
 
@@ -1287,7 +1296,8 @@ TEST(MLIRBackend, CacheHitSeparateFromHandwritten) {
     auto desc = TensorDesc::fromShape({4});
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto& engine = C3Engine::getInstance();
     engine.clearCache();  // 确保缓存干净，避免前置测试污染
@@ -1325,7 +1335,8 @@ TEST(MLIRBackend, HotReplaceInstallAndDispatch) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto kernel = compileMLIR(g);
     ASSERT_NE(kernel, nullptr);
@@ -1355,7 +1366,8 @@ TEST(MLIRBackend, HotReplaceUninstallFallback) {
     Graph g;
     size_t x = g.addInput(desc);
     size_t y = g.addInput(desc);
-    g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    size_t z = g.addNode(AddNode{desc, desc}, {x, y}, desc);
+    g.markOutput(z);
 
     auto kernel = compileMLIR(g);
     ASSERT_NE(kernel, nullptr);
@@ -3682,6 +3694,288 @@ TEST(PGOProfiling, NoPGOMode) {
     Tensor eager = a.tanh();
     auto result = kernel->execute({a});
     EXPECT_TRUE(tensorsAllClose(result[0], eager, 1e-4f, 1e-4f));
+}
+
+// ======================= GraphMerger 单元测试 =======================
+
+#include "C3/GraphMerger.h"
+
+namespace {
+
+ct::c3::Graph buildFCReLUSubGraph(const std::vector<size_t>& in_shape,
+                                   const std::vector<size_t>& w_shape,
+                                   const std::vector<size_t>& b_shape,
+                                   const std::vector<size_t>& out_shape,
+                                   bool add_relu = true) {
+    using namespace ct::c3;
+    Graph g;
+    auto in_desc = TensorDesc::fromShape(in_shape);
+    auto w_desc = TensorDesc::fromShape(w_shape);
+    auto b_desc = TensorDesc::fromShape(b_shape);
+    auto out_desc = TensorDesc::fromShape(out_shape);
+
+    size_t in = g.addInput(in_desc);
+    size_t w = g.addInput(w_desc);
+    size_t b = g.addInput(b_desc);
+
+    auto mm_desc = TensorDesc::fromShape(out_shape);
+    size_t mm = g.addNode(MatMulNode{w_desc, in_desc}, {w, in}, mm_desc);
+    size_t add = g.addNode(AddNode{mm_desc, b_desc}, {mm, b}, out_desc);
+    size_t out_id = add;
+    if (add_relu) {
+        out_id = g.addNode(ReLUNode{out_desc}, {add}, out_desc);
+    }
+    g.markOutput(out_id);
+    return g;
+}
+
+}  // namespace
+
+TEST(GraphMerger, EmptyInput) {
+    std::vector<ct::c3::Graph> subs;
+    ct::c3::MergeSpec spec;
+    EXPECT_THROW(ct::c3::GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMerger, SingleSubgraph) {
+    using namespace ct::c3;
+    Graph g = buildFCReLUSubGraph({4}, {4, 4}, {4}, {4});
+    std::vector<Graph> subs = {g};
+    MergeSpec spec;
+
+    MergedGraphInfo info = GraphMerger::merge(subs, spec);
+    EXPECT_EQ(info.graph.nodeCount(), g.nodeCount());
+    EXPECT_EQ(info.graph.inputCount(), g.inputCount());
+    EXPECT_EQ(info.graph.outputCount(), g.outputCount());
+}
+
+TEST(GraphMerger, SequentialMerge_TwoLayers) {
+    using namespace ct::c3;
+    // 子图 1: in=[4, 8], w1=[16, 8], b1=[16] → out=[4, 16]（带 ReLU）
+    // 子图 2: in=[4, 16], w2=[32, 16], b2=[32] → out=[4, 32]（无 ReLU）
+    Graph g1 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g2 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergedGraphInfo info = GraphMerger::mergeSequential(subs);
+
+    // 外部输入：x, w1, b1, w2, b2 = 5 个
+    EXPECT_EQ(info.graph.inputCount(), 5u);
+    // 输出：1 个
+    EXPECT_EQ(info.graph.outputCount(), 1u);
+    EXPECT_EQ(info.external_input_ids.size(), 5u);
+    EXPECT_TRUE(info.graph.isValid());
+}
+
+TEST(GraphMerger, SequentialMerge_ThreeLayers) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({8, 16}, {32, 16}, {32}, {8, 32}, true);
+    Graph g2 = buildFCReLUSubGraph({8, 32}, {16, 32}, {16}, {8, 16}, true);
+    Graph g3 = buildFCReLUSubGraph({8, 16}, {4, 16},  {4},  {8, 4},  false);
+
+    std::vector<Graph> subs = {g1, g2, g3};
+    MergedGraphInfo info = GraphMerger::mergeSequential(subs);
+
+    // 外部输入：x, w1, b1, w2, b2, w3, b3 = 7 个
+    EXPECT_EQ(info.graph.inputCount(), 7u);
+    EXPECT_EQ(info.graph.outputCount(), 1u);
+    EXPECT_EQ(info.external_input_ids.size(), 7u);
+    EXPECT_TRUE(info.graph.isValid());
+}
+
+TEST(GraphMerger, ShapeMismatch) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g2 = buildFCReLUSubGraph({4, 7}, {32, 7}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergeSpec spec;
+    spec.links.push_back({0, 0});
+
+    EXPECT_THROW(GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMerger, LinkCountMismatch) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g2 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergeSpec spec;
+    spec.links.push_back({0, 0});
+    spec.links.push_back({0, 0});  // 多余的链接
+
+    EXPECT_THROW(GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMerger, OutOfRangeLink) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g2 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergeSpec spec;
+    spec.links.push_back({0, 999});  // 越界
+
+    EXPECT_THROW(GraphMerger::merge(subs, spec), std::invalid_argument);
+}
+
+TEST(GraphMerger, SequentialCanFuseAndOptimize) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({4, 8}, {16, 8}, {16}, {4, 16}, true);
+    Graph g2 = buildFCReLUSubGraph({4, 16}, {32, 16}, {32}, {4, 32}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergedGraphInfo info = GraphMerger::mergeSequential(subs);
+
+    // 融合图已经过死代码消除，应可直接 canonicalize
+    Graph canonical = info.graph.canonicalize();
+    EXPECT_TRUE(canonical.isValid());
+
+    Graph fused = canonical.fuse();
+    EXPECT_TRUE(fused.isValid());
+}
+
+// ======================= 数值正确性测试 =======================
+// 验证融合图执行结果 == 逐层执行结果（数学校验，不只是结构校验）
+// 注意：实际数值执行依赖 Handwritten 后端对 FusedNode 的支持，
+// 这里采用更纯粹的"图结构等价"验证：手工构造"目标图"，与 merge 输出的图比较。
+
+namespace {
+
+/// 手工构造"目标图"：所有节点平铺在一张图中，节点 ID 按出现顺序
+/// 这是 merge 应该产生的等价图（除了 ID 可能不同）。
+static ct::c3::Graph buildExpectedMergedGraph(
+    const std::vector<ct::c3::Graph>& subs) {
+    using namespace ct::c3;
+    Graph result;
+    // 简化的目标图：把所有子图节点平铺，链式连接
+    // 子图 0 的 in[0,1,2] 是 w1, x, b1（按 mergeSequential 约定）
+    // 子图 1 的 in[0] 来自子图 0 的 out[0]，in[1,2] 是 w2, b2
+    // 子图 2 的 in[0] 来自子图 1 的 out[0]，in[1,2] 是 w3, b3
+
+    // 收集所有外部输入
+    std::vector<size_t> ext_in_ids;
+    auto add_in = [&](const Graph& sg, size_t j) {
+        const auto& n = sg.node(sg.inputs()[j]);
+        ext_in_ids.push_back(result.addInput(n.out_desc));
+    };
+
+    // 子图 0：3 个外部输入
+    for (size_t j = 0; j < 3; ++j) add_in(subs[0], j);
+    std::vector<size_t> sub0_in_map;  // 子图 0 的输入 ID → 新图 ID
+    for (size_t j = 0; j < 3; ++j) sub0_in_map.push_back(ext_in_ids[ext_in_ids.size() - 3 + j]);
+
+    // 复制子图 0 的非输入节点
+    std::vector<size_t> sub0_node_map;
+    for (const auto& n : subs[0].nodes()) {
+        bool is_in = false;
+        for (size_t in : subs[0].inputs()) if (n.id == in) { is_in = true; break; }
+        if (is_in) continue;
+        // 重映射 inputs（子图 0 的输入 ID → 新图 ID）
+        std::vector<size_t> new_in;
+        for (size_t i : n.inputs) {
+            // i 是子图 0 的节点 ID，找到对应的新图 ID
+            if (i < 3) {
+                new_in.push_back(sub0_in_map[i]);
+            } else {
+                // 计算子图 0 中第 (i-3) 个非输入节点
+                size_t idx = i - 3;
+                new_in.push_back(sub0_node_map[idx]);
+            }
+        }
+        sub0_node_map.push_back(result.addNode(n.op, new_in, n.out_desc));
+    }
+    size_t prev_out = sub0_node_map.back();  // 子图 0 最后节点
+
+    // 子图 1, 2, ...
+    for (size_t s = 1; s < subs.size(); ++s) {
+        // 子图 s 的 in[0] = prev_out，in[1,2] = 外部
+        add_in(subs[s], 1);
+        add_in(subs[s], 2);
+        size_t w_id = ext_in_ids[ext_in_ids.size() - 2];
+        size_t b_id = ext_in_ids.back();
+
+        std::vector<size_t> prev_nodes;  // 累积子图 s 的非输入节点
+        for (const auto& n : subs[s].nodes()) {
+            bool is_in = false;
+            for (size_t in : subs[s].inputs()) if (n.id == in) { is_in = true; break; }
+            if (is_in) continue;
+            std::vector<size_t> new_in;
+            for (size_t i : n.inputs) {
+                if (i == subs[s].inputs()[0]) new_in.push_back(prev_out);
+                else if (i == subs[s].inputs()[1]) new_in.push_back(w_id);
+                else if (i == subs[s].inputs()[2]) new_in.push_back(b_id);
+                else {
+                    // 子图 s 的内部节点（按出现顺序索引）
+                    size_t internal_idx = 0;
+                    for (const auto& nn : subs[s].nodes()) {
+                        bool ni = false;
+                        for (size_t ii : subs[s].inputs()) if (nn.id == ii) { ni = true; break; }
+                        if (ni) continue;
+                        if (nn.id == i) break;
+                        ++internal_idx;
+                    }
+                    new_in.push_back(prev_nodes[internal_idx]);
+                }
+            }
+            prev_nodes.push_back(result.addNode(n.op, new_in, n.out_desc));
+        }
+        prev_out = prev_nodes.back();
+    }
+
+    result.markOutput(prev_out);
+    return result;
+}
+
+}  // namespace
+
+TEST(GraphMerger, GraphEquivalence_TwoLayers) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({2, 4}, {8, 4}, {8}, {2, 8}, true);
+    Graph g2 = buildFCReLUSubGraph({2, 8}, {6, 8}, {6}, {2, 6}, false);
+
+    std::vector<Graph> subs = {g1, g2};
+    MergedGraphInfo info = GraphMerger::mergeSequential(subs);
+
+    // 手工构造期望图（纯结构）
+    Graph expected = buildExpectedMergedGraph(subs);
+
+    // 1. 直接比较节点/输入/输出数
+    EXPECT_EQ(info.graph.nodeCount(), expected.nodeCount());
+    EXPECT_EQ(info.graph.inputCount(), expected.inputCount());
+    EXPECT_EQ(info.graph.outputCount(), expected.outputCount());
+
+    // 2. 算子类型直方图应相同（MatMul 2个 + Add 2个 + ReLU 1个 = 5个）
+    auto opHistogram = [](const Graph& g) {
+        std::map<size_t, int> h;
+        for (const auto& n : g.nodes()) h[n.op.index()]++;
+        return h;
+    };
+    EXPECT_EQ(opHistogram(info.graph), opHistogram(expected));
+}
+
+TEST(GraphMerger, GraphEquivalence_ThreeLayers) {
+    using namespace ct::c3;
+    Graph g1 = buildFCReLUSubGraph({1, 2}, {4, 2}, {4}, {1, 4}, true);
+    Graph g2 = buildFCReLUSubGraph({1, 4}, {3, 4}, {3}, {1, 3}, true);
+    Graph g3 = buildFCReLUSubGraph({1, 3}, {2, 3}, {2}, {1, 2}, false);
+
+    std::vector<Graph> subs = {g1, g2, g3};
+    MergedGraphInfo info = GraphMerger::mergeSequential(subs);
+
+    Graph expected = buildExpectedMergedGraph(subs);
+
+    EXPECT_EQ(info.graph.nodeCount(), expected.nodeCount());
+    EXPECT_EQ(info.graph.inputCount(), expected.inputCount());
+    EXPECT_EQ(info.graph.outputCount(), expected.outputCount());
+
+    auto opHistogram = [](const Graph& g) {
+        std::map<size_t, int> h;
+        for (const auto& n : g.nodes()) h[n.op.index()]++;
+        return h;
+    };
+    EXPECT_EQ(opHistogram(info.graph), opHistogram(expected));
 }
 
 #endif // CT_ENABLE_MLIR

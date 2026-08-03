@@ -667,8 +667,15 @@ Graph Graph::fuse() const {
 // ======================= eliminateDeadCode（死代码消除） =======================
 
 Graph Graph::eliminateDeadCode() const {
+    return _eliminateDeadCodeForMergedInternal().first;
+}
+
+// 内部版本：返回 new graph + old_to_new 映射
+// 用于 GraphMerger 等需要跟踪节点 ID 映射的工具类
+std::pair<Graph, std::unordered_map<size_t, size_t>>
+Graph::_eliminateDeadCodeForMergedInternal() const {
     if (outputs_.empty()) {
-        return Graph();
+        return {Graph(), {}};
     }
 
     // 步骤 1：从输出节点反向 BFS，收集所有可达节点
@@ -753,7 +760,7 @@ Graph Graph::eliminateDeadCode() const {
         }
     }
 
-    return result;
+    return {result, old_to_new};
 }
 
 // ======================= 验证 =======================
@@ -814,6 +821,18 @@ std::string Graph::toString() const {
                 ss << nodeName(fnode.ops[j]);
             }
             ss << ")";
+            // 添加 arg_descs 形状到 cache key，确保不同形状的融合图区分
+            if (!fnode.arg_descs.empty()) {
+                ss << " args:[";
+                for (size_t j = 0; j < fnode.arg_descs.size(); ++j) {
+                    if (j > 0) ss << ",";
+                    for (size_t k = 0; k < fnode.arg_descs[j].shape.size(); ++k) {
+                        if (k > 0) ss << "x";
+                        ss << fnode.arg_descs[j].shape[k];
+                    }
+                }
+                ss << "]";
+            }
         } else if (std::holds_alternative<ConstNode>(node.op)) {
             auto cn = std::get<ConstNode>(node.op);
             ss << "Const(" << cn.value << ")";

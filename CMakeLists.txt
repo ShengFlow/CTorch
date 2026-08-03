@@ -66,6 +66,7 @@ set(CT-Core
         src/C3/Graph.cpp
         src/C3/HandwrittenKernelGen.cpp
         src/C3/C3Engine.cpp
+        src/C3/GraphMerger.cpp
         src/C3/PatternMatcher.cpp
         src/C3/PGOManager.cpp
 )
@@ -91,6 +92,7 @@ set(CT-Core-Headers
         include/ctQALS/ctQALS.h
         include/C3/C3Engine.h
         include/C3/Graph.h
+        include/C3/GraphMerger.h
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
         include/C3/PatternMatcher.h
@@ -332,6 +334,14 @@ target_include_directories(test_c3_mnist_train PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 add_executable(test_c3_compile_and_inject src/tests/standalone/test_c3_compile_and_inject.cpp)
 target_link_libraries(test_c3_compile_and_inject PRIVATE CTorch)
 target_include_directories(test_c3_compile_and_inject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_compile_merged src/tests/standalone/test_c3_compile_merged.cpp)
+target_link_libraries(test_c3_compile_merged PRIVATE CTorch)
+target_include_directories(test_c3_compile_merged PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_compile_merged_pgo src/tests/standalone/test_c3_compile_merged_pgo.cpp)
+target_link_libraries(test_c3_compile_merged_pgo PRIVATE CTorch)
+target_include_directories(test_c3_compile_merged_pgo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # (SECURITY_SENSITIVE) MNIST Loader security regression tests
 add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
