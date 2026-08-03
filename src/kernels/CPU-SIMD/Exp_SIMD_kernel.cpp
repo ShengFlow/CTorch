@@ -1,14 +1,16 @@
 /**
  * @file Exp_SIMD_kernel.cpp
- * @brief CPU-SIMD Exp算子（指数函数）
+ * @brief CPU-SIMD Exp算子（指数函数，集成 SIMDMath 向量化实现）
  * @author GhostFace
- * @date 2026/06/30
+ * @date 2026/08/03 - 2026/06/30
+ * @see SIMDMath.h 向量化超越函数库
  */
 
 #include "../kernels.h"
 #include "../../../include/CtorchError.h"
 #include "../../../include/Tensor.h"
 #include "../../../include/CoreDefs.h"
+#include "../../../include/kernels/SIMDMath.h"
 #include <cmath>
 
 #ifdef __x86_64__
@@ -25,12 +27,14 @@ CT_HOT Tensor Exp_SIMD_kernel(const Tensor& a) {
 
     Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
     size_t count = a.numel();
+    if (count == 0) return result;
+
     const float* CT_RESTRICT a_data = a.data_read<float>();
     float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __x86_64__
-    // x86: SVML 向量化 exp（如果可用）
     size_t i = 0;
+    // Intel 编译器 / GCC + SVML：使用硬件加速的 _mm256_exp_ps
     #if defined(__INTEL_COMPILER) || (defined(__GNUC__) && defined(__AVX__) && defined(__SVML__))
     for (; i + 7 < count; i += 8) {
         __m256 x = _mm256_loadu_ps(&a_data[i]);
@@ -38,19 +42,33 @@ CT_HOT Tensor Exp_SIMD_kernel(const Tensor& a) {
         _mm256_storeu_ps(&result_data[i], exp_x);
     }
     #endif
-    // 处理剩余部分（或无 SVML 时全部标量）
+    // 主路径：用 SIMDMath 的 exp256_ps（保证 Apple Clang 等无 SVML 环境下也向量化）
+    for (; i + 7 < count; i += 8) {
+        __m256 x = _mm256_loadu_ps(&a_data[i]);
+        _mm256_storeu_ps(&result_data[i], ct::kernels::simd::exp256_ps(x));
+    }
+    // 处理剩余部分（标量 + clamp，匹配 SIMDMath 内部精度）
     for (; i < count; ++i) {
-        result_data[i] = std::exp(a_data[i]);
+        float x = a_data[i];
+        x = std::min(x, 87.0f);
+        x = std::max(x, -87.0f);
+        result_data[i] = std::exp(x);
     }
 #elif defined(__aarch64__)
-    // ARM NEON: 无内置 exp，使用标量循环
-    for (size_t i = 0; i < count; ++i) {
-        result_data[i] = std::exp(a_data[i]);
+    // Apple Silicon / ARM64: 调用 SIMDMath 的 exp_neon_f32（4-wide）
+    size_t i = 0;
+    for (; i + 3 < count; i += 4) {
+        float32x4_t x = vld1q_f32(&a_data[i]);
+        vst1q_f32(&result_data[i], ct::kernels::simd::exp_neon_f32(x));
+    }
+    for (; i < count; ++i) {
+        float x = a_data[i];
+        x = std::min(x, 87.0f);
+        x = std::max(x, -87.0f);
+        result_data[i] = std::exp(x);
     }
 #else
-    for (size_t i = 0; i < count; ++i) {
-        result_data[i] = std::exp(a_data[i]);
-    }
+    ct::kernels::simd::vexp(a_data, result_data, count);
 #endif
 
     return result;

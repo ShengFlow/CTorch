@@ -1,14 +1,27 @@
 /**
  * @file CrossEntropy_SIMD_kernel.cpp
- * @brief CPU-SIMD 交叉熵算子
+ * @brief CPU-SIMD 交叉熵算子（集成 SIMDMath 向量化实现）
+ * @author GhostFace
+ * @date 2026/08/03
+ * @see SIMDMath.h 向量化超越函数库
+ *
+ * 算法：
+ *   CE = -1/N * sum_i sum_c y_ic * log(softmax(x)_ic)
+ *       = -1/N * sum_i sum_c y_ic * (x_ic - logsumexp(x_i))
+ *
+ *   logsumexp(x_i) = log(sum_c exp(x_ic - max_c)) + max_c
+ *
+ * 数值稳定性：max-subtraction trick。
  */
 
 #include "../kernels.h"
 #include "../../../include/CtorchError.h"
 #include "../../../include/Tensor.h"
 #include "../../../include/CoreDefs.h"
+#include "../../../include/kernels/SIMDMath.h"
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
@@ -25,6 +38,67 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
     const float* CT_RESTRICT data_b = b.data_read<float>();
     float cross_entropy = 0.0f;
 
+    if (a.numel() == 0) {
+        return Tensor(0.0f);
+    }
+
+    // 临时 buffer：用于 vexp 写入中间 exp 结果
+    // 分配在堆上避免栈溢出（large num_classes）
+    auto compute_logsumexp = [](const float* row, size_t n) -> float {
+        // 1. max
+        float m = row[0];
+        for (size_t j = 1; j < n; ++j) m = std::max(m, row[j]);
+
+        // 2. exp(x - m) 累加（用 vexp + horizontal sum）
+        std::vector<float> tmp(n);
+        ct::kernels::simd::vexp(row, tmp.data(), n);
+        // 减 m + sum
+        float s = 0.0f;
+#if defined(__AVX2__)
+        size_t j = 0;
+        __m256 mv = _mm256_set1_ps(m);
+        __m256 acc = _mm256_setzero_ps();
+        for (; j + 7 < n; j += 8) {
+            __m256 v = _mm256_loadu_ps(&tmp[j]);
+            v = _mm256_sub_ps(v, mv);
+            _mm256_storeu_ps(&tmp[j], v);
+            acc = _mm256_add_ps(acc, v);
+        }
+        __m128 hi = _mm256_extractf128_ps(acc, 1);
+        __m128 lo = _mm256_castps256_ps128(acc);
+        __m128 ss = _mm_add_ps(lo, hi);
+        ss = _mm_hadd_ps(ss, ss);
+        ss = _mm_hadd_ps(ss, ss);
+        s = _mm_cvtss_f32(ss);
+        for (; j < n; ++j) {
+            tmp[j] -= m;
+            s += tmp[j];
+        }
+#elif defined(__aarch64__)
+        size_t j = 0;
+        float32x4_t mv = vdupq_n_f32(m);
+        float32x4_t acc = vdupq_n_f32(0.0f);
+        for (; j + 3 < n; j += 4) {
+            float32x4_t v = vld1q_f32(&tmp[j]);
+            v = vsubq_f32(v, mv);
+            vst1q_f32(&tmp[j], v);
+            acc = vaddq_f32(acc, v);
+        }
+        s = vgetq_lane_f32(acc, 0) + vgetq_lane_f32(acc, 1)
+          + vgetq_lane_f32(acc, 2) + vgetq_lane_f32(acc, 3);
+        for (; j < n; ++j) {
+            tmp[j] -= m;
+            s += tmp[j];
+        }
+#else
+        for (size_t j = 0; j < n; ++j) {
+            tmp[j] -= m;
+            s += tmp[j];
+        }
+#endif
+        return m + std::log(s);
+    };
+
     if (a.sizes() == b.sizes()) {
         if (a.sizes().size() == 2) {
             size_t batch_size = a.sizes()[0];
@@ -32,49 +106,36 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
 
             #pragma omp parallel for reduction(+:cross_entropy)
             for (size_t i = 0; i < batch_size; ++i) {
-                float max_val = data_a[i * num_classes];
-                for (size_t j = 1; j < num_classes; ++j) {
-                    max_val = std::max(max_val, data_a[i * num_classes + j]);
-                }
-
-                float exp_sum = 0.0f;
-                #pragma omp simd reduction(+:exp_sum)
+                const float* row = data_a + i * num_classes;
+                float lse = compute_logsumexp(row, num_classes);
+                // CE_i = -sum_c y_ic * (x_ic - lse)
+                // 简化：先算 sum_c y_ic * x_ic，再减 lse * sum_c y_ic
+                float sum_yx = 0.0f;
+                float sum_y  = 0.0f;
                 for (size_t j = 0; j < num_classes; ++j) {
-                    exp_sum += std::exp(data_a[i * num_classes + j] - max_val);
+                    sum_yx += data_b[i * num_classes + j] * data_a[i * num_classes + j];
+                    sum_y  += data_b[i * num_classes + j];
                 }
-
-                float inv_exp_sum = 1.0f / exp_sum;
-                #pragma omp simd reduction(+:cross_entropy)
-                for (size_t j = 0; j < num_classes; ++j) {
-                    float pred = std::exp(data_a[i * num_classes + j] - max_val) * inv_exp_sum;
-                    pred = std::max(pred, 1e-10f);
-                    cross_entropy -= data_b[i * num_classes + j] * std::log(pred);
-                }
+                cross_entropy -= sum_yx - lse * sum_y;
             }
         } else if (a.sizes().size() == 1) {
             size_t num_classes = a.sizes()[0];
-            float max_val = data_a[0];
-            for (size_t j = 1; j < num_classes; ++j) {
-                max_val = std::max(max_val, data_a[j]);
-            }
-            float exp_sum = 0.0f;
-            #pragma omp simd reduction(+:exp_sum)
+            float lse = compute_logsumexp(data_a, num_classes);
+            float sum_yx = 0.0f;
+            float sum_y  = 0.0f;
             for (size_t j = 0; j < num_classes; ++j) {
-                exp_sum += std::exp(data_a[j] - max_val);
+                sum_yx += data_b[j] * data_a[j];
+                sum_y  += data_b[j];
             }
-            float inv_exp_sum = 1.0f / exp_sum;
-            #pragma omp simd reduction(+:cross_entropy)
-            for (size_t j = 0; j < num_classes; ++j) {
-                float pred = std::exp(data_a[j] - max_val) * inv_exp_sum;
-                pred = std::max(pred, 1e-10f);
-                cross_entropy -= data_b[j] * std::log(pred);
-            }
+            cross_entropy -= sum_yx - lse * sum_y;
         } else {
             CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                              "CPU-SIMD CrossEntropy_Kernel: one-hot 仅支持 1D/2D");
             return Tensor();
         }
     } else if (b.sizes().size() == 1 && a.sizes().size() == 2 && b.sizes()[0] == a.sizes()[0]) {
+        // class indices 形式：CE = -1/N * sum_i log(exp(x_i_c) / sum_c exp(x_i_c))
+        //                       = -1/N * sum_i (lse(x_i) - x_i_c)
         size_t batch_size = b.sizes()[0];
         size_t num_classes = a.sizes()[1];
 
@@ -86,18 +147,9 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
                                  "CPU-SIMD CrossEntropy_Kernel: 类别索引超出范围");
                 continue;
             }
-            float max_val = data_a[i * num_classes];
-            for (size_t j = 1; j < num_classes; ++j) {
-                max_val = std::max(max_val, data_a[i * num_classes + j]);
-            }
-            float exp_sum = 0.0f;
-            #pragma omp simd reduction(+:exp_sum)
-            for (size_t j = 0; j < num_classes; ++j) {
-                exp_sum += std::exp(data_a[i * num_classes + j] - max_val);
-            }
-            float pred = std::exp(data_a[i * num_classes + class_idx] - max_val) / exp_sum;
-            pred = std::max(pred, 1e-10f);
-            cross_entropy -= std::log(pred);
+            const float* row = data_a + i * num_classes;
+            float lse = compute_logsumexp(row, num_classes);
+            cross_entropy -= lse - data_a[i * num_classes + class_idx];
         }
     } else {
         CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
