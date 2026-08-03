@@ -69,6 +69,7 @@ set(CT-Core
         src/C3/GraphMerger.cpp
         src/C3/PatternMatcher.cpp
         src/C3/PGOManager.cpp
+        src/C3/AOTCache.cpp
 )
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
@@ -96,6 +97,7 @@ set(CT-Core-Headers
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
         include/C3/PatternMatcher.h
+        include/C3/AOTCache.h
 )
 
 set(CT-Nodes-Headers
@@ -350,6 +352,14 @@ target_include_directories(test_c3_pgo_deopt PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(test_c3_compile_error src/tests/standalone/test_c3_compile_error.cpp)
 target_link_libraries(test_c3_compile_error PRIVATE CTorch)
 target_include_directories(test_c3_compile_error PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_aot_cache src/tests/standalone/test_c3_aot_cache.cpp)
+target_link_libraries(test_c3_aot_cache PRIVATE CTorch)
+target_include_directories(test_c3_aot_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_aot_speedup src/tests/standalone/bench_aot_speedup.cpp)
+target_link_libraries(bench_aot_speedup PRIVATE CTorch)
+target_include_directories(bench_aot_speedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)

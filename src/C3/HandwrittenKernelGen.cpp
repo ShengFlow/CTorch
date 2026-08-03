@@ -8,6 +8,7 @@
  */
 
 #include "HandwrittenKernelGen.h"
+#include "../../include/C3/AOTCache.h"
 #include "../../include/C3/Graph.h"
 
 #include <cstdio>
@@ -314,11 +315,42 @@ extern "C" void c3_kernel(const float* a, const float* b, float* out,
  * @brief 从源码字符串编译为 .so 并加载函数指针
  * @param src C++ 源码字符串
  * @param func_name 要加载的函数名
+ * @param cache_key AOT cache key（空 = 禁用 AOT）
  * @return 函数指针和 dlopen 句柄的 pair
  * @throw std::runtime_error 编译或加载失败时抛出
+ * @details 流程：
+ *          1. 若 cache_key 非空，查询 AOT cache
+ *          2. 命中 → dlopen 缓存的 .so → return（避免 clang++ 编译，节省 ~10-50ms）
+ *          3. 未命中 → mkdtemp 写源码 → clang++ → 编译后 store 到 AOT → dlopen → return
  */
 static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
-                                                      const std::string& func_name) {
+                                                      const std::string& func_name,
+                                                      const std::string& cache_key = "") {
+    auto& aot = AOTCache::getInstance();
+
+    // 步骤 1: 查询 AOT cache
+    if (!cache_key.empty() && aot.isEnabled()) {
+        std::string cached_so = aot.lookup(cache_key);
+        if (!cached_so.empty()) {
+            void* handle = dlopen(cached_so.c_str(), RTLD_NOW | RTLD_LOCAL);
+            if (handle) {
+                dlerror();
+                auto* func_ptr = reinterpret_cast<C3KernelFunc>(dlsym(handle, func_name.c_str()));
+                const char* dlsym_error = dlerror();
+                if (func_ptr && !dlsym_error) {
+                    return {func_ptr, handle};
+                }
+                // dlsym 失败：fallback 到重新编译
+                if (handle) dlclose(handle);
+                aot.recordLoadFailure();
+            } else {
+                aot.recordLoadFailure();
+            }
+            // dlopen 失败：fallback 到重新编译
+        }
+    }
+
+    // 步骤 2: 编译（无 AOT 缓存可用）
     // 生成临时文件名
     char tmpdir_template[] = "/tmp/ctorch_c3_XXXXXX";
     std::string tmpdir = mkdtemp(tmpdir_template);
@@ -362,7 +394,12 @@ static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
             "HandwrittenKernelGen: compilation failed:\n" + compile_output);
     }
 
-    // 加载 .so
+    // 步骤 3: 写入 AOT cache（不阻塞 dlopen 流程，失败时静默降级）
+    if (!cache_key.empty() && aot.isEnabled()) {
+        (void)aot.store(cache_key, so_path); // 失败时已记录到 stats.disk_errors
+    }
+
+    // 步骤 4: 加载 .so
     void* handle = dlopen(so_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         throw std::runtime_error(
@@ -768,6 +805,15 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         throw std::runtime_error("HandwrittenKernelGen: graph has too few nodes");
     }
 
+    // 派生 AOT cache key：从 graph 拓扑 + 编译配置生成确定性 hash
+    // 注意：key 派生在 src 生成之前，但 graph.toString() 是稳定的，
+    //       不同 graph 自然产生不同 key，相同 graph 必产生相同 key
+    std::string cache_key = AOTCache::makeKey(
+        graph.toString(),
+        "cpu",  // Handwritten backend 当前仅支持 CPU
+        3,      // clang++ -O3（与 compileAndLoad 中的命令对齐）
+        AOTCache::currentBackendVersion());
+
     size_t num_compute = countComputeNodes(graph);
 
     // 多节点图：使用新的多节点 kernel 生成
@@ -792,7 +838,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             }
         }
 
-        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel");
+        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
         result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
         result.handle = dl_handle;
         result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
@@ -820,7 +866,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         result.num_inputs = fnode.arg_descs.size();
 
         // 编译融合 kernel（使用 FusedKernelFunc 签名）
-        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel");
+        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
         result.fused_func = reinterpret_cast<FusedKernelFunc>(func_ptr);
         result.handle = dl_handle;
         result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
@@ -860,7 +906,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             std::to_string(op.index()));
     }
 
-    auto [func, dl_handle] = compileAndLoad(src, "c3_kernel");
+    auto [func, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
     result.func = func;
     result.handle = dl_handle;
     result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };

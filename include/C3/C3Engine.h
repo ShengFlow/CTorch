@@ -20,6 +20,7 @@
 
 #include "../Ctools.h"
 #include "../Tensor.h"
+#include "AOTCache.h"
 #include "C3KernelRegistry.h"
 #include "GraphMerger.h"
 #include "Tracer.h"
@@ -503,6 +504,73 @@ public:
      *          仅清空错误消息以便后续观察。
      */
     void clearLastCompileError();
+
+    // ======================= AOT (Ahead-Of-Time) 持久化 =======================
+    //
+    // 工业级 JIT 的"跨进程复用"能力：将编译产物持久化到 ~/.c3cache/，
+    // 避免每次冷启动重新 clang++ 编译（节省 10-50ms / kernel）。
+    // 设计文档：ADR-008。
+
+    /**
+     * @brief 启用/禁用 AOT 持久化 cache（默认 true）
+     * @details 关闭后所有 kernel 仍可编译运行，但不会读写磁盘 cache。
+     *          主要用于：
+     *          - 调试：避免 cache 污染影响测试结果
+     *          - 临时关闭：怀疑 cache 损坏时
+     *          - 性能对比：AOT on vs off
+     */
+    void setAOTCacheEnabled(bool enabled) {
+        AOTCache::getInstance().setEnabled(enabled);
+    }
+
+    /**
+     * @brief 查询 AOT cache 是否启用
+     */
+    [[nodiscard]] bool isAOTCacheEnabled() const {
+        return AOTCache::getInstance().isEnabled();
+    }
+
+    /**
+     * @brief 获取 AOT 持久化 cache 统计信息
+     * @details 统计字段：
+     *          - hits: 命中次数（避免重新编译）
+     *          - misses: 未命中次数（需重新编译并写入）
+     *          - writes: 写入磁盘次数
+     *          - load_failures: dlopen 失败次数（fallback 到 in-memory）
+     *          - invalidations: backend version 不匹配导致的失效次数
+     *          - disk_errors: 磁盘 I/O 错误次数
+     *          - total_files / total_bytes: 当前磁盘占用
+     */
+    [[nodiscard]] AOTCacheStats getAOTCacheStats() const {
+        return AOTCache::getInstance().getStats();
+    }
+
+    /**
+     * @brief 清空 AOT 磁盘 cache
+     * @details 删除 ~/.c3cache/c3_* 下所有文件。
+     *          不影响 in-memory cache（in-memory cache 由 clearCache() 管理）。
+     *          下次编译时重新走 AOT 写入路径。
+     */
+    void evictAOTCache() {
+        AOTCache::getInstance().evict();
+    }
+
+    /**
+     * @brief 设置自定义 AOT cache 目录
+     * @param dir 目录路径；空字符串恢复默认 $HOME/.c3cache
+     * @details 也可通过 C3_AOT_CACHE_DIR 环境变量设置。
+     *          优先级：setAOTCacheDir() > C3_AOT_CACHE_DIR 环境变量 > $HOME/.c3cache
+     */
+    void setAOTCacheDir(const std::string& dir) {
+        AOTCache::getInstance().setCacheDir(dir);
+    }
+
+    /**
+     * @brief 获取当前 AOT cache 目录
+     */
+    [[nodiscard]] std::string getAOTCacheDir() const {
+        return AOTCache::getInstance().getCacheDir();
+    }
 
     /** @brief 清空全部编译缓存（不取消进行中的异步编译） */
     void clearCache();
