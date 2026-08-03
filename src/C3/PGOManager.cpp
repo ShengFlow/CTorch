@@ -429,10 +429,13 @@ Tensor PGOCompiledKernel::executeFusedNodeInterpreted(
 {
     auto& scheduler = CtorchScheduler::getInstance();
 
-    // 解析外部输入
+    // 1. 解析外部输入：arg_node_ids[i] -> values[arg_node_ids[i]]
+    //    同时构建 arg_node_id -> arg_index 映射，用于后续 op_inputs 解析
     std::vector<Tensor> ext_inputs;
     ext_inputs.reserve(fnode.arg_node_ids.size());
-    for (size_t arg_id : fnode.arg_node_ids) {
+    std::unordered_map<size_t, size_t> arg_id_to_idx;
+    for (size_t i = 0; i < fnode.arg_node_ids.size(); ++i) {
+        size_t arg_id = fnode.arg_node_ids[i];
         auto it = values.find(arg_id);
         if (it == values.end()) {
             throw std::runtime_error(
@@ -440,15 +443,22 @@ Tensor PGOCompiledKernel::executeFusedNodeInterpreted(
                 std::to_string(arg_id) + " not found");
         }
         ext_inputs.push_back(it->second);
+        arg_id_to_idx[arg_id] = i;
     }
 
-    // 按顺序执行融合链中的每个操作
-    Tensor last_output;
-    bool has_last = false;
+    // 2. 按顺序执行融合链中的每个操作
+    //    op_inputs[i] 是 Graph 节点 ID（不是 FusedNode 内部索引！）
+    //    假设（与 HandwrittenKernelGen 保持一致）：
+    //      - op[0] 的所有 input_ids 都是外部输入
+    //      - op[i>0] 的 input_ids[0] 是 chain 内部（即 op_outputs[i-1]）
+    //      - op[i>0] 的 input_ids[1..] 是外部输入
+    //    用 op_outputs[] 数组记录每个 op 的输出，支持任意长度的 chain。
+    std::vector<Tensor> op_outputs;
+    op_outputs.reserve(fnode.ops.size());
 
     for (size_t i = 0; i < fnode.ops.size(); ++i) {
         const auto& op = fnode.ops[i];
-        const auto& input_indices = fnode.op_inputs[i];
+        const auto& input_ids = fnode.op_inputs[i];  // Graph 节点 ID 列表
 
         auto op_type = nodeVariantToOp(op);
         if (!op_type.has_value()) {
@@ -457,43 +467,52 @@ Tensor PGOCompiledKernel::executeFusedNodeInterpreted(
                 std::to_string(i));
         }
 
-        auto resolveInput = [&](size_t idx) -> Tensor {
-            if (idx < ext_inputs.size()) {
-                return ext_inputs[idx];
+        // 解析 input：第一个位置（i>0）是 chain 内部，其他是外部
+        auto resolveByPosition = [&](size_t pos) -> Tensor {
+            size_t in_id = input_ids[pos];
+            if (i > 0 && pos == 0) {
+                // chain 内部：引用上一个 op 的输出
+                return op_outputs[i - 1];
             }
-            size_t prev_idx = idx - ext_inputs.size();
-            if (prev_idx == 0 && has_last) {
-                return last_output;
+            // 外部输入：用 arg_id_to_idx 映射
+            auto it = arg_id_to_idx.find(in_id);
+            if (it == arg_id_to_idx.end()) {
+                throw std::runtime_error(
+                    "PGOCompiledKernel: FusedNode input node " + std::to_string(in_id) +
+                    " not found in arg_node_ids at op " + std::to_string(i) +
+                    " pos " + std::to_string(pos));
             }
-            throw std::runtime_error(
-                "PGOCompiledKernel: FusedNode input index " + std::to_string(idx) +
-                " out of range");
+            return ext_inputs[it->second];
         };
 
+        Tensor cur_output;
         if (isBinaryOp(op)) {
-            if (input_indices.size() < 2) {
+            if (input_ids.size() < 2) {
                 throw std::runtime_error(
-                    "PGOCompiledKernel: FusedNode binary op needs 2 inputs");
+                    "PGOCompiledKernel: FusedNode binary op needs 2 inputs at op " +
+                    std::to_string(i));
             }
-            auto lhs = resolveInput(input_indices[0]);
-            auto rhs = resolveInput(input_indices[1]);
-            last_output = scheduler.dispatch(lhs, rhs, op_type.value());
+            auto lhs = resolveByPosition(0);
+            auto rhs = resolveByPosition(1);
+            cur_output = scheduler.dispatch(lhs, rhs, op_type.value());
         } else {
-            if (input_indices.empty()) {
+            if (input_ids.empty()) {
                 throw std::runtime_error(
-                    "PGOCompiledKernel: FusedNode unary op needs 1 input");
+                    "PGOCompiledKernel: FusedNode unary op needs 1 input at op " +
+                    std::to_string(i));
             }
-            auto input = resolveInput(input_indices[0]);
-            last_output = scheduler.dispatch(input, op_type.value());
+            auto input = resolveByPosition(0);
+            cur_output = scheduler.dispatch(input, op_type.value());
         }
-        has_last = true;
+        op_outputs.push_back(std::move(cur_output));
     }
 
-    if (!has_last) {
+    if (op_outputs.empty()) {
         throw std::runtime_error("PGOCompiledKernel: empty FusedNode");
     }
 
-    return last_output;
+    // 返回最后一个 op 的输出（与原语义一致：FusedNode 链终点即整体输出）
+    return op_outputs.back();
 }
 
 // ======================= PGOManager =======================

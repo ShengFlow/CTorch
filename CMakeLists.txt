@@ -343,6 +343,10 @@ add_executable(test_c3_compile_merged_pgo src/tests/standalone/test_c3_compile_m
 target_link_libraries(test_c3_compile_merged_pgo PRIVATE CTorch)
 target_include_directories(test_c3_compile_merged_pgo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
+target_link_libraries(bench_subgraph_roi PRIVATE CTorch)
+target_include_directories(bench_subgraph_roi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # (SECURITY_SENSITIVE) MNIST Loader security regression tests
 add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_mnist_loader_security PRIVATE CTorch)
