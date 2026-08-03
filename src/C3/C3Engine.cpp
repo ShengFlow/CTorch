@@ -267,7 +267,31 @@ namespace {
         /// PGO profile 数据（key → ProfileData）
         std::unordered_map<std::string, std::shared_ptr<ProfileData>> profile_data;
         C3CacheStats stats;
+        /// 最近一次编译失败的错误信息（ADR-007），由 getLastCompileError() 读取
+        /// 使用独立 mutex 保护，避免与 cache.mutex 互锁
+        mutable std::mutex last_error_mutex;
+        std::string last_compile_error;
     };
+
+    /// 截断过长错误信息，避免 OOM
+    static constexpr size_t kMaxErrorLen = 1024;
+    static std::string truncateErrorMsg(const std::string& err) {
+        if (err.size() <= kMaxErrorLen) return err;
+        return err.substr(0, kMaxErrorLen) + "... [truncated, original=" +
+               std::to_string(err.size()) + " bytes]";
+    }
+
+    /// 记录编译错误到 EngineState.last_compile_error_
+    /// 调用方需自行负责 prefix（"o2: " / "ofast: " / "async: " / "merge: " 等）
+    static void recordEngineError(EngineState& state, const std::string& prefix,
+                                 const std::string& err) {
+        std::string full = prefix.empty() ? err : (prefix + ": " + err);
+        std::lock_guard<std::mutex> lock(state.last_error_mutex);
+        state.last_compile_error = truncateErrorMsg(full);
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+            ErrorType::KERNEL_LAUNCH,
+            "C3Engine: compile error recorded: " + state.last_compile_error);
+    }
 
     EngineState& getState() {
         static EngineState state;
@@ -325,44 +349,53 @@ static std::shared_ptr<CompiledKernel> doCompile(
     const Graph& working_graph, const CompileOptions& options,
     const std::string& /*cache_key*/)
 {
-    // 自动调优：若启用且尚未调优，先运行一次 QEA 搜索
-    if (options.enable_autotune && !TuningState::instance().isTuned()) {
-        AutoTunerConfig at_cfg;
-        at_cfg.verbose = true;
-        C3Engine::getInstance().autoTune(at_cfg);
-    }
+    try {
+        // 自动调优：若启用且尚未调优，先运行一次 QEA 搜索
+        if (options.enable_autotune && !TuningState::instance().isTuned()) {
+            AutoTunerConfig at_cfg;
+            at_cfg.verbose = true;
+            C3Engine::getInstance().autoTune(at_cfg);
+        }
 
-    GeneratedKernel gen;
+        GeneratedKernel gen;
 #ifdef CT_ENABLE_MLIR
-    if (options.backend == C3Backend::Handwritten) {
-        gen = generateFromGraph(working_graph);
-    } else {
-        gen = generateFromGraphMLIR(working_graph, options.opt_level);
-    }
+        if (options.backend == C3Backend::Handwritten) {
+            gen = generateFromGraph(working_graph);
+        } else {
+            gen = generateFromGraphMLIR(working_graph, options.opt_level);
+        }
 #else
-    gen = generateFromGraph(working_graph);
+        gen = generateFromGraph(working_graph);
 #endif
 
-    std::shared_ptr<CompiledKernel> kernel;
-    if (gen.is_multi_node) {
-        kernel = std::make_shared<MultiNodeCompiledKernel>(
-            gen.multi_func, gen.deleter, makeCacheKey(working_graph, options),
-            options.target_device, gen.num_inputs, gen.M, gen.K, gen.N,
-            gen.elem_n
-        );
-    } else if (gen.is_fused) {
-        kernel = std::make_shared<FusedCompiledKernel>(
-            gen.fused_func, gen.deleter, makeCacheKey(working_graph, options),
-            options.target_device, gen.num_inputs
-        );
-    } else {
-        kernel = std::make_shared<ConcreteCompiledKernel>(
-            gen.func, gen.deleter, makeCacheKey(working_graph, options),
-            options.target_device, gen.is_matmul, gen.M, gen.K, gen.N
-        );
-    }
+        std::shared_ptr<CompiledKernel> kernel;
+        if (gen.is_multi_node) {
+            kernel = std::make_shared<MultiNodeCompiledKernel>(
+                gen.multi_func, gen.deleter, makeCacheKey(working_graph, options),
+                options.target_device, gen.num_inputs, gen.M, gen.K, gen.N,
+                gen.elem_n
+            );
+        } else if (gen.is_fused) {
+            kernel = std::make_shared<FusedCompiledKernel>(
+                gen.fused_func, gen.deleter, makeCacheKey(working_graph, options),
+                options.target_device, gen.num_inputs
+            );
+        } else {
+            kernel = std::make_shared<ConcreteCompiledKernel>(
+                gen.func, gen.deleter, makeCacheKey(working_graph, options),
+                options.target_device, gen.is_matmul, gen.M, gen.K, gen.N
+            );
+        }
 
-    return kernel;
+        return kernel;
+    } catch (const std::exception& e) {
+        // 记录到 EngineState（ADR-007）：让 getLastCompileError() 能查询到
+        recordEngineError(getState(), "", e.what());
+        throw;
+    } catch (...) {
+        recordEngineError(getState(), "", "unknown exception (not std::exception)");
+        throw;
+    }
 }
 
 std::shared_ptr<CompiledKernel> C3Engine::compile(
@@ -515,18 +548,43 @@ CompileFuture C3Engine::compileAsync(
                     state.pending.erase(cache_key);
                     state.stats.pending_compiles--;
                     state.stats.async_completions++;
-                } catch (...) {
-                    // 编译失败：存储 nullptr，不崩溃，eager 路径继续工作
+                } catch (const std::exception& e) {
+                    // 编译失败：记录 + 标记 future 为 nullptr + 清理状态
+                    // 修复后保留真实异常信息到 EngineState（ADR-007），
+                    // 调用方可通过 getLastCompileError() 查询。
+                    try {
+                        recordEngineError(getState(), "async", e.what());
+                    } catch (...) {
+                        // EngineState 不可用，吞错避免递归
+                    }
                     try {
                         promise->set_value(nullptr);
                     } catch (...) {
                         // promise 可能已被销毁（极少数情况）
                     }
-                    auto& state = getState();
-                    std::lock_guard<std::mutex> lock(state.mutex);
-                    state.pending.erase(cache_key);
-                    state.stats.pending_compiles--;
-                    state.stats.async_failures++;
+                    try {
+                        auto& state = getState();
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.pending.erase(cache_key);
+                        state.stats.pending_compiles--;
+                        state.stats.async_failures++;
+                    } catch (...) {
+                        // 极端情况：state 不可用
+                    }
+                } catch (...) {
+                    try {
+                        recordEngineError(getState(), "async", "unknown exception");
+                    } catch (...) {}
+                    try {
+                        promise->set_value(nullptr);
+                    } catch (...) {}
+                    try {
+                        auto& state = getState();
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.pending.erase(cache_key);
+                        state.stats.pending_compiles--;
+                        state.stats.async_failures++;
+                    } catch (...) {}
                 }
             });
         state.compile_futures.push_back(std::move(async_future));
@@ -573,39 +631,48 @@ std::shared_ptr<CompiledKernel> C3Engine::compileMerged(
     const MergeSpec& spec,
     const CompileOptions& options)
 {
-    // 1. 入参校验
-    if (sub_graphs.empty()) {
-        throw std::invalid_argument(
-            "C3Engine::compileMerged: sub_graphs must be non-empty");
-    }
-    if (spec.links.size() != sub_graphs.size() - 1) {
-        throw std::invalid_argument(
-            "C3Engine::compileMerged: spec.links.size() (" +
-            std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
-            std::to_string(sub_graphs.size() - 1) + ")");
-    }
+    try {
+        // 1. 入参校验
+        if (sub_graphs.empty()) {
+            throw std::invalid_argument(
+                "C3Engine::compileMerged: sub_graphs must be non-empty");
+        }
+        if (spec.links.size() != sub_graphs.size() - 1) {
+            throw std::invalid_argument(
+                "C3Engine::compileMerged: spec.links.size() (" +
+                std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
+                std::to_string(sub_graphs.size() - 1) + ")");
+        }
 
-    // 2. 验证子图与链接的兼容性（shape/dtype/device）
-    std::string err = GraphMerger::validate(sub_graphs, spec);
-    if (!err.empty()) {
-        throw std::invalid_argument(
-            "C3Engine::compileMerged: validation failed: " + err);
+        // 2. 验证子图与链接的兼容性（shape/dtype/device）
+        std::string err = GraphMerger::validate(sub_graphs, spec);
+        if (!err.empty()) {
+            throw std::invalid_argument(
+                "C3Engine::compileMerged: validation failed: " + err);
+        }
+
+        // 3. 合并子图为单个 Graph
+        MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
+
+        // 4. 复用现有 compile() 流程：canonicalize → eliminateDeadCode → fuse → cache → compile
+        //    注意：compile() 内部会基于 working_graph 重新生成 cache key，因此融合图的
+        //    缓存条目与子图独立缓存的条目互不冲突。
+        auto kernel = compile(merged.graph, options);
+        if (!kernel) {
+            throw std::runtime_error(
+                "C3Engine::compileMerged: compilation of merged graph failed");
+        }
+
+        // 5. 返回编译后的 kernel
+        return kernel;
+    } catch (const std::exception& e) {
+        // 记录到 EngineState（ADR-007）：merge 错误也属于编译错误
+        recordEngineError(getState(), "merge", e.what());
+        throw;
+    } catch (...) {
+        recordEngineError(getState(), "merge", "unknown exception");
+        throw;
     }
-
-    // 3. 合并子图为单个 Graph
-    MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
-
-    // 4. 复用现有 compile() 流程：canonicalize → eliminateDeadCode → fuse → cache → compile
-    //    注意：compile() 内部会基于 working_graph 重新生成 cache key，因此融合图的
-    //    缓存条目与子图独立缓存的条目互不冲突。
-    auto kernel = compile(merged.graph, options);
-    if (!kernel) {
-        throw std::runtime_error(
-            "C3Engine::compileMerged: compilation of merged graph failed");
-    }
-
-    // 5. 返回编译后的 kernel
-    return kernel;
 }
 
 std::shared_ptr<CompiledKernel> C3Engine::compileMergedPGO(
@@ -613,41 +680,49 @@ std::shared_ptr<CompiledKernel> C3Engine::compileMergedPGO(
     const MergeSpec& spec,
     const CompileOptions& options)
 {
-    // 1. 入参校验（与 compileMerged 保持一致）
-    if (sub_graphs.empty()) {
-        throw std::invalid_argument(
-            "C3Engine::compileMergedPGO: sub_graphs must be non-empty");
-    }
-    if (spec.links.size() != sub_graphs.size() - 1) {
-        throw std::invalid_argument(
-            "C3Engine::compileMergedPGO: spec.links.size() (" +
-            std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
-            std::to_string(sub_graphs.size() - 1) + ")");
-    }
-    std::string err = GraphMerger::validate(sub_graphs, spec);
-    if (!err.empty()) {
-        throw std::invalid_argument(
-            "C3Engine::compileMergedPGO: validation failed: " + err);
-    }
+    try {
+        // 1. 入参校验（与 compileMerged 保持一致）
+        if (sub_graphs.empty()) {
+            throw std::invalid_argument(
+                "C3Engine::compileMergedPGO: sub_graphs must be non-empty");
+        }
+        if (spec.links.size() != sub_graphs.size() - 1) {
+            throw std::invalid_argument(
+                "C3Engine::compileMergedPGO: spec.links.size() (" +
+                std::to_string(spec.links.size()) + ") must equal sub_graphs.size() - 1 (" +
+                std::to_string(sub_graphs.size() - 1) + ")");
+        }
+        std::string err = GraphMerger::validate(sub_graphs, spec);
+        if (!err.empty()) {
+            throw std::invalid_argument(
+                "C3Engine::compileMergedPGO: validation failed: " + err);
+        }
 
-    // 2. 合并子图为单个 Graph
-    MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
+        // 2. 合并子图为单个 Graph
+        MergedGraphInfo merged = GraphMerger::merge(sub_graphs, spec);
 
-    // 3. 构造 PGO 模式 options（强制 pgo_mode=true，其他字段透传）
-    CompileOptions pgo_opts = options;
-    pgo_opts.pgo_mode = true;
+        // 3. 构造 PGO 模式 options（强制 pgo_mode=true，其他字段透传）
+        CompileOptions pgo_opts = options;
+        pgo_opts.pgo_mode = true;
 
-    // 4. 复用 compile() 流程：PGO 模式会在内部自动包装为 PGOCompiledKernel
-    //    PGOCompiledKernel.execute() 第一次调用走 Eager 解释执行（scheduler 逐算子），
-    //    同时触发 O2 + Ofast 异步编译，编译完成后原子热替换。
-    //    缓存键基于 merged_graph 结构 + options（pgo_mode 不计入，因为 PGO 是运行时包装层）
-    auto kernel = compile(merged.graph, pgo_opts);
-    if (!kernel) {
-        throw std::runtime_error(
-            "C3Engine::compileMergedPGO: compilation of merged graph failed");
+        // 4. 复用 compile() 流程：PGO 模式会在内部自动包装为 PGOCompiledKernel
+        //    PGOCompiledKernel.execute() 第一次调用走 Eager 解释执行（scheduler 逐算子），
+        //    同时触发 O2 + Ofast 异步编译，编译完成后原子热替换。
+        //    缓存键基于 merged_graph 结构 + options（pgo_mode 不计入，因为 PGO 是运行时包装层）
+        auto kernel = compile(merged.graph, pgo_opts);
+        if (!kernel) {
+            throw std::runtime_error(
+                "C3Engine::compileMergedPGO: compilation of merged graph failed");
+        }
+
+        return kernel;
+    } catch (const std::exception& e) {
+        recordEngineError(getState(), "merge-pgo", e.what());
+        throw;
+    } catch (...) {
+        recordEngineError(getState(), "merge-pgo", "unknown exception");
+        throw;
     }
-
-    return kernel;
 }
 
 std::shared_ptr<CompiledKernel> C3Engine::compileMergedSequential(
@@ -740,6 +815,23 @@ CompileFuture C3Engine::compileMergedAsync(
                 } catch (...) {
                     // 融合编译失败：保留真实异常信息，调用方通过 future.get() 接收
                     // 禁止静默吞错（违反 project CtorchError::throwException 硬约束）
+                    // 同时记录到 EngineState（ADR-007），让 getLastCompileError() 能查到
+                    try {
+                        // current_exception 复制一次以避免再次抛出时与原异常冲突
+                        std::exception_ptr ep = std::current_exception();
+                        if (ep) {
+                            try {
+                                std::rethrow_exception(ep);
+                            } catch (const std::exception& ee) {
+                                recordEngineError(getState(), "async-merge", ee.what());
+                            } catch (...) {
+                                recordEngineError(getState(), "async-merge",
+                                                  "unknown exception");
+                            }
+                        }
+                    } catch (...) {
+                        // recordEngineError 自身异常，吞错
+                    }
                     try {
                         promise->set_exception(std::current_exception());
                     } catch (const std::future_error&) {
@@ -878,6 +970,18 @@ std::shared_ptr<ProfileData> C3Engine::getProfileData(const std::string& cache_k
         return it->second;
     }
     return nullptr;
+}
+
+std::string C3Engine::getLastCompileError() const {
+    auto& state = getState();
+    std::lock_guard<std::mutex> lock(state.last_error_mutex);
+    return state.last_compile_error;
+}
+
+void C3Engine::clearLastCompileError() {
+    auto& state = getState();
+    std::lock_guard<std::mutex> lock(state.last_error_mutex);
+    state.last_compile_error.clear();
 }
 
 void C3Engine::clearCache() {

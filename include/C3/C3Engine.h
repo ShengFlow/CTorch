@@ -477,6 +477,33 @@ public:
      */
     [[nodiscard]] std::shared_ptr<ProfileData> getProfileData(const std::string& cache_key) const;
 
+    /**
+     * @brief 获取最近一次编译失败的错误信息（覆盖所有编译路径：sync / async / PGO / Merged）
+     * @return 错误信息字符串；编译成功或引擎刚启动时返回空字符串
+     * @details 线程安全：内部 mutex 保护。
+     *          该 API 用于诊断"silent fail"问题：以前编译失败只 log warning，调用方无法查询。
+     *          现在所有编译失败都会记录到 EngineState.last_compile_error_，
+     *          调用方可通过本 API 显式查询。
+     *
+     *          错误信息可能包含 tier 前缀：
+     *          - `[o2] ...`：PGO O2 编译失败
+     *          - `[ofast] ...`：PGO Ofast 编译失败
+     *          - `[merge] ...`：GraphMerger 合并失败
+     *          - `[async] ...`：compileAsync 后台编译失败
+     *          - 其他：sync 编译失败（一般通过异常传播，调用方可能 catch 后调用此 API）
+     *
+     *          错误信息最大 1KB，超出截断（避免 OOM）。
+     */
+    [[nodiscard]] std::string getLastCompileError() const;
+
+    /**
+     * @brief 显式清空 last_compile_error_ 状态
+     * @details 主要用于测试或重试场景。
+     *          注意：不会撤销已发生的失败（kernel 仍是 nullptr / disabled 状态），
+     *          仅清空错误消息以便后续观察。
+     */
+    void clearLastCompileError();
+
     /** @brief 清空全部编译缓存（不取消进行中的异步编译） */
     void clearCache();
 

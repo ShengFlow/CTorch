@@ -153,6 +153,29 @@ public:
     /** @brief 计算热度评分（0.0 ~ 1.0），用于编译优先级排序 */
     [[nodiscard]] double computeHeatScore() const;
 
+    // =================== Compile Error Observability (ADR-007) ===================
+
+    /**
+     * @brief 获取该 kernel 最近一次编译失败原因（含 tier 前缀，如 "o2: ..." / "ofast: ..."）
+     * @return 错误信息字符串；无失败时返回空字符串
+     * @details 与 lastDeoptReason() 区别：
+     *          - lastDeoptReason() 记录**运行时**失败（kernel execute 抛异常）
+     *          - lastCompileError() 记录**编译时**失败（compileO2/Ofast 失败）
+     *
+     *          线程安全：内部 mutex 保护。
+     *          编译成功时不会自动清空（用户可调用 clearLastCompileError() 重置）。
+     */
+    [[nodiscard]] const std::string& lastCompileError() const {
+        std::lock_guard<std::mutex> lock(compile_error_mutex_);
+        return last_compile_error_;
+    }
+
+    /** @brief 显式清空 last_compile_error_ */
+    void clearLastCompileError() {
+        std::lock_guard<std::mutex> lock(compile_error_mutex_);
+        last_compile_error_.clear();
+    }
+
 private:
     /** @brief Tier 1：Eager 解释执行图节点 */
     std::vector<Tensor> executeInterpreted(const std::vector<Tensor>& inputs);
@@ -173,6 +196,9 @@ private:
     /** @brief 记录一次 deopt 事件（原子 +1 计数 + 加锁更新原因） */
     void recordDeopt(const char* tier, const std::string& reason);
 
+    /** @brief 记录一次编译错误（带 tier 前缀，更新 last_compile_error_） */
+    void recordCompileError(const char* tier, const std::string& reason);
+
     Graph graph_;
     CompileOptions options_;
     std::string cache_key_;
@@ -192,6 +218,12 @@ private:
     std::atomic<uint64_t> deopt_count_{0};            ///< 总 deopt 次数
     mutable std::mutex deopt_mutex_;                  ///< 保护 last_deopt_reason_
     std::string last_deopt_reason_;                   ///< 最近一次 deopt 原因
+
+    // =================== Compile Error 状态 (ADR-007) ===================
+    // 编译失败（compileO2/Ofast 失败）→ 记录到 last_compile_error_（独立 mutex，
+    // 避免与 deopt_mutex_ 互锁）
+    mutable std::mutex compile_error_mutex_;
+    std::string last_compile_error_;
 };
 
 /**

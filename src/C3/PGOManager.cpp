@@ -176,6 +176,23 @@ void PGOCompiledKernel::recordDeopt(const char* tier, const std::string& reason)
         "PGO: deopt " + std::string(tier) + " kernel for " + cache_key_ + " — " + reason);
 }
 
+void PGOCompiledKernel::recordCompileError(const char* tier, const std::string& reason) {
+    // 截断到 1KB
+    std::string truncated_reason = reason;
+    const size_t kMaxLen = 1024;
+    if (truncated_reason.size() > kMaxLen) {
+        truncated_reason = truncated_reason.substr(0, kMaxLen) +
+            "... [truncated, original=" + std::to_string(reason.size()) + " bytes]";
+    }
+    {
+        std::lock_guard<std::mutex> lock(compile_error_mutex_);
+        last_compile_error_ = std::string(tier) + ": " + truncated_reason;
+    }
+    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
+        "PGO: compile error " + std::string(tier) + " for " + cache_key_ + " — " +
+        truncated_reason);
+}
+
 bool PGOCompiledKernel::installIntoRegistry(op op_type, const KernelShapeInfo& shapes) {
     // PGOCompiledKernel 本身不直接安装到注册表
     // 编译后的 kernel 由编译链完成时安装
@@ -272,8 +289,7 @@ void PGOCompiledKernel::compileO2() {
 
         auto kernel = engine_.compile(graph_, o2_opts);
         if (!kernel) {
-            CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
-                "PGO: compileO2 returned nullptr for " + cache_key_);
+            recordCompileError("o2", "compile returned nullptr");
         }
 
         {
@@ -293,9 +309,11 @@ void PGOCompiledKernel::compileO2() {
             }
         }
     } catch (const std::exception& e) {
-        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
-            std::string("PGO: O2 compile exception for ") + cache_key_ + ": " + e.what());
-        // 编译失败，静默处理——继续使用 Eager 解释执行
+        // 编译失败：记录到 last_compile_error_（ADR-007），调用方可通过
+        // PGOCompiledKernel::lastCompileError() 查询。同时静默处理，继续 Eager。
+        recordCompileError("o2", e.what());
+    } catch (...) {
+        recordCompileError("o2", "unknown exception");
     }
 }
 
@@ -309,8 +327,7 @@ void PGOCompiledKernel::compileOfast() {
 
         auto kernel = engine_.compile(graph_, ofast_opts);
         if (!kernel) {
-            CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
-                "PGO: Ofast compile returned nullptr for " + cache_key_);
+            recordCompileError("ofast", "compile returned nullptr");
             return; // 编译失败，静默处理
         }
 
@@ -329,9 +346,10 @@ void PGOCompiledKernel::compileOfast() {
             }
         }
     } catch (const std::exception& e) {
-        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::KERNEL_LAUNCH,
-            std::string("PGO: Ofast compile exception for ") + cache_key_ + ": " + e.what());
-        // 编译失败，静默处理——继续使用 O2 或 Eager
+        // 编译失败：记录到 last_compile_error_（ADR-007）
+        recordCompileError("ofast", e.what());
+    } catch (...) {
+        recordCompileError("ofast", "unknown exception");
     }
 }
 
