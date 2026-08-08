@@ -309,7 +309,8 @@ static void buildFusedEpilogue(mlir::OpBuilder& builder, mlir::Location loc,
                                 mlir::Value in, mlir::Value out,
                                 mlir::Value n, mlir::Value bias = nullptr,
                                 MatMulActivation act = MatMulActivation::None,
-                                int64_t known_numel = 0) {
+                                int64_t known_numel = 0,
+                                mlir::Value N_for_bias = nullptr) {
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
 
@@ -321,8 +322,14 @@ static void buildFusedEpilogue(mlir::OpBuilder& builder, mlir::Location loc,
             mlir::Value val = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
 
             // 偏置加法（广播语义：bias[j] 使用列索引）
+            // 【P0 修复 DEBT-NEW-4 2026-08-08】之前 bug：用 idx_i64 (0..M*N-1) 索引 1D bias [N] → 越界
+            // 修复：用 idx_i64 % N 当 j 索引（当 caller 传 N_for_bias 时）
             if (bias) {
-                mlir::Value bias_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{idx_i64});
+                mlir::Value j = idx_i64;
+                if (N_for_bias) {
+                    j = b.create<mlir::arith::RemUIOp>(loc, idx_i64, N_for_bias);
+                }
+                mlir::Value bias_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{j});
                 mlir::Value bias_val = b.create<mlir::LLVM::LoadOp>(loc, f32, bias_ptr);
                 val = b.create<mlir::arith::AddFOp>(loc, val, bias_val);
             }
@@ -1353,14 +1360,16 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                 buildMatMul(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, mm_M, mm_K, mm_N);
                 if (fused_bias_ptr || fused_act != MatMulActivation::None) {
                     int64_t out_numel = matM * matN;
+                    // 【P0 修复 DEBT-NEW-4 2026-08-08】传 mm_N 给 buildFusedEpilogue，
+                    // 让 bias 索引用 idx_i64 % N（之前用 idx_i64 直接索引 1D bias → 越界）
                     if (out_numel > 0 && out_numel <= 16) {
                         buildFusedEpilogue(builder, loc, out_buf, out_buf,
                                            builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act, out_numel);
+                                           fused_bias_ptr, fused_act, out_numel, mm_N);
                     } else {
                         buildFusedEpilogue(builder, loc, out_buf, out_buf,
                                            builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act);
+                                           fused_bias_ptr, fused_act, /*known_numel=*/0, mm_N);
                     }
                 }
             }
