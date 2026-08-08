@@ -31,6 +31,8 @@ namespace c3 {
 // 前向声明：计算图定义由 src/JIT 模块提供，避免在公共头文件中暴露实现细节。
 class Graph;
 struct AutoTunerConfig;
+/// 内部状态结构前向声明（P0-2 修复：EngineState 由 C3Engine 拥有，避免 TU 间 static 析构顺序 UB）
+struct EngineState;
 
 /**
  * @enum C3Backend
@@ -517,6 +519,23 @@ public:
     void recordCompileError(const std::string& prefix, const std::string& err);
 
     /**
+     * @brief 查询最近一次 async compile 是否因 watchdog 超时返回 nullptr（P0-3 修复）
+     * @param cache_key 待查询的 cache key（与 compileAsync 调用对应的图编译产生的 key）
+     * @return true 表示曾因 timeout 返回 nullptr；false 表示正常完成 / 未触发 / 缓存已覆盖
+     * @details 背景：watchdog 超时后调用方 `future.get()` 立即拿到 nullptr，但**实际编译线程
+     *          仍在后台跑**（clang++/MLIR 不可取消），跑完后会写入 cache 供后续命中。
+     *          用户体感上"首次失败、二次莫名 hit"——加这个 API 让调用方能区分 nullptr 的原因：
+     *          - 本 API 返回 true：本次是 timeout，未来同 key 应当直接命中 cache
+     *          - 本 API 返回 false：nullptr 是真的编译失败
+     *
+     *          实现：通过解析 `last_compile_error_` 中 `[async-timeout] compile exceeded Xms for <cache_key>`
+     *          格式（watchdog L761 写入），找到匹配的 cache_key 即返回 true。
+     *          注意：last_compile_error_ 是**全局最近一次**错误，可能被后续编译覆盖，**仅在
+     *          future.get() 返回 nullptr 之后立即查询才可靠**。
+     */
+    [[nodiscard]] bool wasAsyncCompileTimedOut(const std::string& cache_key) const;
+
+    /**
      * @brief 设置异步编译超时（毫秒），默认 30000ms (30s)
      * @param ms 超时毫秒数，0 表示永不超时（不推荐，可能 thread pool 永远增长）
      * @details 仅对 compileAsync 路径生效（同步 compile() 仍然由调用方控制）。
@@ -625,23 +644,36 @@ public:
      * @brief 等待所有后台编译完成并回收线程资源
      * @details 应在程序退出前调用，确保所有异步编译任务完成。
      *          带 30 秒超时（覆盖长编译/链接场景），超时后会 abandon 未完成 future
-     *          并记录 WARN；调用方应在 main 退出前显式调用。
+     *          并记录 WARN。
      *
-     *          析构函数不会自动调用 shutdown()，避免与 EngineState 静态变量
-     *          的析构顺序产生 UAF。**调用方有责任在 main() 返回前调用一次**。
+     *          P0-2 修复：析构函数也会自动调用 shutdown()，调用方**不再需要**显式调用。
+     *          EngineState 现在是 C3Engine 的 std::unique_ptr 成员（不再是函数内 static），
+     *          析构顺序由 C++ 类成员声明顺序决定：state_ 必须在 C3Engine 自身销毁之后才释放，
+     *          因此析构函数调 shutdown() 安全（state_ 仍存活，async task 可被 join）。
+     *          老代码中"不要在 main 末尾调 shutdown() 的劝告"已废弃——可以调也可以不调。
      */
     void shutdown();
 
+    /// P0-2 修复：返回内部 EngineState 引用（static member）。
+    /// 设为 static 的关键原因：让 C3Engine.cpp 内的 33 个 unqualified getState() 调用点
+    /// （其中大量在 std::async lambda 内部）无需 capture `this` 即可工作。static member 在
+    /// unqualified lookup 中是 class-scope 名字，调用时不需要 `this`，因此 lambda 写
+    /// `[...]() { getState(); }` 即可，不需要 `[..., this]() { this->getState(); }`。
+    /// 路径：C3Engine::getState() → C3Engine::getInstance().state_。
+    /// 前提：state_ 在 C3Engine() 构造时已初始化。
+    static EngineState& getState();
+
 private:
-    C3Engine() = default;
-    // 不在析构函数中自动调 shutdown：
-    // EngineState 是函数内 static 变量，其析构时机与 C3Engine 单例不保证有序，
-    // 在析构函数中调 shutdown() 会导致访问已析构 mutex 的 UAF。
-    // 调用方必须在 main() 返回前显式调 shutdown()，保证后台任务在静态变量
-    // 析构前完成。
-    ~C3Engine() = default;
+    C3Engine();
+    // P0-2 修复：自定义析构函数 = 调 shutdown() 等待后台任务，然后 unique_ptr 自动释放 state_
+    ~C3Engine();
     C3Engine(const C3Engine&) = delete;
     C3Engine& operator=(const C3Engine&) = delete;
+
+    /// P0-2 修复：EngineState 由 C3Engine 拥有，析构顺序可控
+    /// 之前是函数内 static EngineState + Meyers C3Engine 单例，跨 TU 析构顺序未定义 → SIGABRT
+    /// 现在 std::unique_ptr 成员在 C3Engine 析构时**最后**释放（unique_ptr 析构在 C3Engine 自身之后）
+    std::unique_ptr<EngineState> state_;
 };
 
 } // namespace c3
