@@ -9,6 +9,7 @@
 
 #include "../../include/C3/C3Engine.h"
 #include "../../include/C3/Graph.h"
+#include "../../include/C3/C3HotPathManager.h"
 #include "../../include/C3/PGOManager.h"
 #include "C3/AutoTuner.h"
 #include "C3/TuningState.h"
@@ -237,6 +238,34 @@ C3Engine& C3Engine::getInstance() {
     return instance;
 }
 
+C3Engine::C3Engine() : state_(std::make_unique<EngineState>()) {}
+
+C3Engine::~C3Engine() {
+    // P0-2 修复：析构时先调 shutdown() 等后台任务完成。
+    // state_ 是 unique_ptr<EngineState>，C3Engine 销毁时**最后**释放（成员按逆声明序析构），
+    // 所以 shutdown() 体内访问 *state_ 安全。
+    // 解决析构阶段 std::lock_guard 偶尔抛 system_error（PGO/C3Engine 析构顺序 race）：
+    // shutdown() 内所有 try/catch 包裹，best-effort 清理，不抛异常出析构。
+    try {
+        shutdown();
+    } catch (...) {
+        // 析构阶段吞掉所有异常，不传播
+    }
+}
+
+EngineState& C3Engine::getState() {
+    return *getInstance().state_;
+}
+
+/// Free function 包装：让 C3Engine.cpp 内的 free function（如 doCompile / makeCacheKey / etc.
+/// 以及大量 std::async lambda 内部）能用 unqualified `getState()` 调用，
+/// 不需要 `C3Engine::` 前缀，也不需要 capture `this`。
+/// P0-2 之前是 free function 静态持有 EngineState；P0-2 改为 C3Engine 成员后，
+/// 通过此 wrapper 维持 33 个调用点的 API 兼容。
+static EngineState& getState() {
+    return C3Engine::getState();
+}
+
 // C3Engine 内部缓存
 namespace {
     /// merged cache key 前缀版本号：统一使用 ct::c3::kMergedCacheKeyPrefix（见 GraphMerger.h）
@@ -256,84 +285,82 @@ namespace {
         CompileFuture future;
         std::chrono::steady_clock::time_point created_at;
     };
-
-    struct EngineState {
-        std::mutex mutex;
-        std::unordered_map<std::string, CacheEntry> cache;
-        /// 进行中的异步编译（key → promise），用于去重
-        std::unordered_map<std::string, PendingEntry> pending;
-        /// 后台编译任务的 future，用于生命周期管理和 shutdown 等待
-        std::vector<std::future<void>> compile_futures;
-        /// PGO profile 数据（key → ProfileData）
-        std::unordered_map<std::string, std::shared_ptr<ProfileData>> profile_data;
-        C3CacheStats stats;
-        /// 最近一次编译失败的错误信息（ADR-007），由 getLastCompileError() 读取
-        /// 使用独立 mutex 保护，避免与 cache.mutex 互锁
-        mutable std::mutex last_error_mutex;
-        std::string last_compile_error;
-        /// 编译超时配置（ADR-011），独立 mutex 保护
-        mutable std::mutex config_mutex;
-        uint32_t compile_timeout_ms = 30000;  // 默认 30s
-    };
-
-    /// 截断过长错误信息，避免 OOM
-    static constexpr size_t kMaxErrorLen = 1024;
-    static std::string truncateErrorMsg(const std::string& err) {
-        if (err.size() <= kMaxErrorLen) return err;
-        return err.substr(0, kMaxErrorLen) + "... [truncated, original=" +
-               std::to_string(err.size()) + " bytes]";
-    }
-
-    /// 记录编译错误到 EngineState.last_compile_error_
-    /// 调用方需自行负责 prefix（"o2: " / "ofast: " / "async: " / "merge: " 等）
-    static void recordEngineError(EngineState& state, const std::string& prefix,
-                                 const std::string& err) {
-        std::string full = prefix.empty() ? err : (prefix + ": " + err);
-        std::lock_guard<std::mutex> lock(state.last_error_mutex);
-        state.last_compile_error = truncateErrorMsg(full);
-        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
-            ErrorType::KERNEL_LAUNCH,
-            "C3Engine: compile error recorded: " + state.last_compile_error);
-    }
-
-    EngineState& getState() {
-        static EngineState state;
-        return state;
-    }
-
-    /// 回收已完成的编译任务 future（调用方需持有 state.mutex）
-    /// @param reaped_sink 接收被回收的 future，**必须在调用方释放 state.mutex 后才能让此 vector 析构**。
-    ///                    这是因为 std::async task 可能正在等 state.mutex（写 cache），
-    ///                    在锁内 ~std::future 会等 task 真正结束 → 经典死锁。
-    ///                    （ADR-011 P1 修复发现的二次 bug：reaper 在持锁时 erase 触发了同款死锁。）
-    static void reapCompletedFutures(EngineState& state,
-                                     std::vector<std::future<void>>& reaped_sink) {
-        for (auto& f : state.compile_futures) {
-            if (f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                reaped_sink.push_back(std::move(f));
-            }
-        }
-        // 清理已经被 move 走（valid()==false）的槽位，避免 vector 无限增长
-        state.compile_futures.erase(
-            std::remove_if(state.compile_futures.begin(), state.compile_futures.end(),
-                [](const std::future<void>& f) { return !f.valid(); }),
-            state.compile_futures.end());
-    }
-
-    /// LRU 逐出：当缓存超过上限时，移除最久未访问的条目（调用方需持有 state.mutex）
-    static void evictLRU(EngineState& state) {
-        while (state.cache.size() > kMaxCacheEntries) {
-            auto oldest = state.cache.begin();
-            for (auto it = state.cache.begin(); it != state.cache.end(); ++it) {
-                if (it->second.last_accessed < oldest->second.last_accessed) {
-                    oldest = it;
-                }
-            }
-            state.cache.erase(oldest);
-            state.stats.evictions++;
-        }
-    }
 } // anonymous namespace
+
+// 【P0-2 修复 2026-08-08】EngineState 必须放在 ct::c3:: 命名空间（与 include/C3/C3Engine.h L35 forward
+// 声明保持一致），不能用 anonymous namespace 包裹（否则 TU-local 隐式链接会跟 header 的 ct::c3::EngineState
+// 产生 ODR violation + 成员访问报 incomplete type）。
+struct EngineState {
+    std::mutex mutex;
+    std::unordered_map<std::string, CacheEntry> cache;
+    /// 进行中的异步编译（key → promise），用于去重
+    std::unordered_map<std::string, PendingEntry> pending;
+    /// 后台编译任务的 future，用于生命周期管理和 shutdown 等待
+    std::vector<std::future<void>> compile_futures;
+    /// PGO profile 数据（key → ProfileData）
+    std::unordered_map<std::string, std::shared_ptr<ProfileData>> profile_data;
+    C3CacheStats stats;
+    /// 最近一次编译失败的错误信息（ADR-007），由 getLastCompileError() 读取
+    /// 使用独立 mutex 保护，避免与 cache.mutex 互锁
+    mutable std::mutex last_error_mutex;
+    std::string last_compile_error;
+    /// 编译超时配置（ADR-011），独立 mutex 保护
+    mutable std::mutex config_mutex;
+    uint32_t compile_timeout_ms = 30000;  // 默认 30s
+};
+
+/// 截断过长错误信息，避免 OOM
+static constexpr size_t kMaxErrorLen = 1024;
+static std::string truncateErrorMsg(const std::string& err) {
+    if (err.size() <= kMaxErrorLen) return err;
+    return err.substr(0, kMaxErrorLen) + "... [truncated, original=" +
+           std::to_string(err.size()) + " bytes]";
+}
+
+/// 记录编译错误到 EngineState.last_compile_error_
+/// 调用方需自行负责 prefix（"o2: " / "ofast: " / "async: " / "merge: " 等）
+static void recordEngineError(EngineState& state, const std::string& prefix,
+                             const std::string& err) {
+    std::string full = prefix.empty() ? err : (prefix + ": " + err);
+    std::lock_guard<std::mutex> lock(state.last_error_mutex);
+    state.last_compile_error = truncateErrorMsg(full);
+    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+        ErrorType::KERNEL_LAUNCH,
+        "C3Engine: compile error recorded: " + state.last_compile_error);
+}
+
+/// 回收已完成的编译任务 future（调用方需持有 state.mutex）
+/// @param reaped_sink 接收被回收的 future，**必须在调用方释放 state.mutex 后才能让此 vector 析构**。
+///                    这是因为 std::async task 可能正在等 state.mutex（写 cache），
+///                    在锁内 ~std::future 会等 task 真正结束 → 经典死锁。
+///                    （ADR-011 P1 修复发现的二次 bug：reaper 在持锁时 erase 触发了同款死锁。）
+static void reapCompletedFutures(EngineState& state,
+                                 std::vector<std::future<void>>& reaped_sink) {
+    for (auto& f : state.compile_futures) {
+        if (f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            reaped_sink.push_back(std::move(f));
+        }
+    }
+    // 清理已经被 move 走（valid()==false）的槽位，避免 vector 无限增长
+    state.compile_futures.erase(
+        std::remove_if(state.compile_futures.begin(), state.compile_futures.end(),
+            [](const std::future<void>& f) { return !f.valid(); }),
+        state.compile_futures.end());
+}
+
+/// LRU 逐出：当缓存超过上限时，移除最久未访问的条目（调用方需持有 state.mutex）
+static void evictLRU(EngineState& state) {
+    while (state.cache.size() > kMaxCacheEntries) {
+        auto oldest = state.cache.begin();
+        for (auto it = state.cache.begin(); it != state.cache.end(); ++it) {
+            if (it->second.last_accessed < oldest->second.last_accessed) {
+                oldest = it;
+            }
+        }
+        state.cache.erase(oldest);
+        state.stats.evictions++;
+    }
+}
 
 /// 从 Graph 和 CompileOptions 生成缓存键
 static std::string makeCacheKey(const Graph& graph, const CompileOptions& options) {
@@ -1228,28 +1255,55 @@ void C3Engine::autoTune(const AutoTunerConfig& config) {
 }
 
 void C3Engine::shutdown() {
+    // 正确的退出顺序：HotPathManager::shutdown() → PGO::shutdown() → C3Engine::shutdown()
+    // 1. HotPathManager 必须最先关闭：它的后台 std::async task 持有 ConcreteCompiledKernel
+    //    （含 MLIR ExecutionEngine 引用），析构顺序在 LLVM GDBJITRegistrationListener mutex
+    //    之前会触发 system_error → recursive_mutex 死锁 → std::terminate
+    // 2. PGO 在 HotPathManager 之后关闭：PGO 的 std::async task 通过 C3Engine::compile() 拿 state
+    try {
+        ct::c3::C3HotPathManager::instance().shutdown();
+    } catch (...) {
+        // best-effort
+    }
+
     // 等待 PGO 后台编译完成（PGO 内部 PGOCompiledKernel 可能 lock 自己的 compile_mutex，
     // 但其 triggerCompilationChain 也会访问 PGOManager 的 mutex_/queue_mutex_）。
-    PGOManager::getInstance().shutdown();
-
-    auto& state = getState();
-    std::vector<std::future<void>> futures;
-    {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        futures = std::move(state.compile_futures);
+    try {
+        PGOManager::getInstance().shutdown();
+    } catch (...) {
+        // PGO 析构链可能 cascade，吞掉防止 std::terminate
     }
-    // 等待所有后台编译完成（30s 超时，覆盖冷启动时 clang++ 链接 + MLIR 编译的长尾场景）
-    for (auto& f : futures) {
-        if (f.valid()) {
-            auto status = f.wait_for(std::chrono::seconds(30));
-            if (status == std::future_status::ready) {
-                try { f.get(); } catch (...) {} // 吸收异常
-            } else {
-                CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
-                    "C3Engine::shutdown: background compile did not finish in 30s, "
-                    "future abandoned (may cause UAF if main exits before thread finishes)");
+
+    // C3Engine state_ 析构的 race condition:
+    // 1. PGO::shutdown() 等 std::async task，task 内可能通过 C3Engine::compile() → C3Engine::getState() 访问 state_
+    // 2. 如果 state_ 已被 C3Engine 析构释放 → 析构触发 system_error
+    // 3. 这是 Meyers singleton 跨 TU 析构顺序 UB（PGO vs C3Engine）的经典问题
+    // 4. best-effort 清理：try/catch 吞 system_error
+    try {
+        auto& state = getState();
+        std::vector<std::future<void>> futures;
+        try {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            futures = std::move(state.compile_futures);
+        } catch (const std::system_error&) {
+            // 析构阶段 mutex 已销毁
+            return;
+        }
+        // 等待所有后台编译完成（30s 超时，覆盖冷启动时 clang++ 链接 + MLIR 编译的长尾场景）
+        for (auto& f : futures) {
+            if (f.valid()) {
+                auto status = f.wait_for(std::chrono::seconds(30));
+                if (status == std::future_status::ready) {
+                    try { f.get(); } catch (...) {} // 吸收异常
+                } else {
+                    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
+                        "C3Engine::shutdown: background compile did not finish in 30s, "
+                        "future abandoned (may cause UAF if main exits before thread finishes)");
+                }
             }
         }
+    } catch (...) {
+        // best-effort 清理
     }
 }
 

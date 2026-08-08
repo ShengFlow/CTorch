@@ -361,3 +361,30 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
     CtorchError::throwException(ErrorPlatform::kGENERAL,ErrorType::PLATFORM_API,"Ctorch_Scheduler: 没有可用的Softmax Kernel");
     return Tensor();
 }
+
+// ============================================================================
+// 【Stub 2026-08-08】Region Fusion 预走接口 tryRegionDispatch()
+// ============================================================================
+// 当前状态：fix/c3-p0-on-wip 分支把 tryRegionDispatch 的 3 个调用点加到了 CtorchScheduler.h
+// (L301, L358, L490, L503 区域) 但 .cpp 实现还没写。这是 link 错误根因。
+// Stub 行为：直接返回 nullopt → 调用方回退到 eager dispatch，保证 binary 可链接。
+// TODO: 实现真正的 region 预走 — 见 include/C3/RegionFusion.h 文档。
+std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
+    op /*op_type*/, const std::vector<Tensor>& /*inputs*/, DeviceType /*dev*/) {
+    return std::nullopt;
+}
+
+std::vector<size_t> CtorchScheduler::computeOutputShape(
+    op op_type, const std::vector<Tensor>& inputs) const {
+    // Stub: 直接调 CtorchScheduler::dispatch<op> 走一遍拿到 shape。
+    // 这里 op_type + inputs 跟实际 dispatch 签名不一致，所以简单 fallback：
+    // 复制 inputs[0] 的 shape（适用于 element-wise 算子；MatMul 需要真实 computeOutputShape）
+    if (inputs.empty()) return {};
+    return inputs.front().sizes();
+}
+
+Tensor CtorchScheduler::executeEagerFallback(
+    const std::vector<Tensor>& /*current_inputs*/, op /*current_op_type*/, DeviceType /*dev*/) {
+    // Stub: 不可达（tryRegionDispatch 永远 nullopt 不会触发）
+    return Tensor();
+}
