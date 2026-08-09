@@ -125,9 +125,13 @@ public:
         auto key = makeKey(op_type, dev, shapes);
         entries_[key] = {func, shapes, true};
         install_count_.fetch_add(1, std::memory_order_release);
+        // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG
+        // release build (NDEBUG) 自动 0 成本,跟 C3HotPathManager 2-2 commit 一致
+#ifdef CT_DEBUG
         fprintf(stderr, "[DBG] INSTALL op=%d dev=%d key3=%zu lhs=[%s] rhs=[%s]\n",
                 (int)op_type, (int)dev, key.third,
                 shapeDebug(shapes.lhs_shape).c_str(), shapeDebug(shapes.rhs_shape).c_str());
+#endif
     }
 
     /**
@@ -190,9 +194,12 @@ public:
                 entry = it->second;
             }
         }
+        // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG (跟 INSTALL/tryUnary 一致)
+#ifdef CT_DEBUG
         fprintf(stderr, "[DBG] tryBin op=%d key3=%zu found=%d a=[%s] b=[%s]\n",
                 (int)op_type, key.third, (int)found,
                 shapeDebug(a.shape()).c_str(), shapeDebug(b.shape()).c_str());
+#endif
         if (!found) return std::nullopt;
 
         // 形状匹配检查
@@ -285,9 +292,12 @@ public:
                 entry = it->second;
             }
         }
+        // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG (跟 INSTALL/tryBin 一致)
+#ifdef CT_DEBUG
         fprintf(stderr, "[DBG] tryUnary op=%d key3=%zu found=%d a=[%s]\n",
                 (int)op_type, key.third, (int)found,
                 shapeDebug(a.shape()).c_str());
+#endif
         if (!found) return std::nullopt;
 
         // 形状匹配检查

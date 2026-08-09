@@ -554,10 +554,16 @@ std::shared_ptr<CompiledKernel> C3Engine::compile(
     auto kernel = doCompile(working_graph, options, makeCacheKey(working_graph, options));
 
     // 写入缓存
+    // [Fix 2026-08-09 用户审查 P0-4]: 之前锁已释放后写 state.cache 跟 evictLRU,
+    // 多个 compile() 并发时 unordered_map 写入 race → UB 可能崩溃。
+    // 修法: 重新拿锁写,保证 thread-safe。
     if (options.enable_cache) {
         std::string cache_key = makeCacheKey(working_graph, options);
-        state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
-        evictLRU(state);
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.cache[cache_key] = {kernel, 0, std::chrono::steady_clock::now()};
+            evictLRU(state);
+        }
     }
 
     // 如果 profiling 启用，包装为 ProfiledCompiledKernel

@@ -458,10 +458,17 @@ public:
 
         #ifndef CT_DISABLE_C3
         // 记录热路径（触发 C3 自动编译）
+        // [Fix 2026-08-09 用户审查 P0-1]: 之前把 a.shape() + b.shape() 拼接当 lhs_shape
+        // 传给 recordCall,导致 add 走 submitCompileAsync else 分支时
+        //   info.lhs_shape = 拼接 (e.g. [128,256,256])
+        //   info.rhs_shape = 空
+        // 但 tryExecute 用 makeKeyFromShapes(op, dev, a, b) 算 hashShapes([a], [b]),
+        // 跟 install 时的 key 不一致 → 永远 miss 静默回退 eager (单 kernel 永远不命中)
+        // 修法: 直接传 a.shape(), b.shape() 分开, 让 C3HotPathManager 内部
+        // 用跟 tryExecute 一致的 hash 算法 (a, b 分开 hash 组合)
         if (target_dev != DeviceType::kMPS) {
-            std::vector<size_t> shape_sig = a.shape();
-            shape_sig.insert(shape_sig.end(), b.shape().begin(), b.shape().end());
-            ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, shape_sig);
+            ct::c3::C3HotPathManager::instance().recordCall(
+                OpType, target_dev, a.shape(), b.shape());
         }
 #endif
 
