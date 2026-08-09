@@ -185,7 +185,8 @@ public:
      * @param rhs_shape 右输入形状（unary 省略）
      */
     void recordCall(op op_type, DeviceType dev, const std::vector<size_t>& lhs_shape,
-                    const std::vector<size_t>& rhs_shape = {}) {
+                    const std::vector<size_t>& rhs_shape = {},
+                    bool in_autograd = false) {
         // M1 1.4 (2026-08-09): 热路径检测总开关短路
         // hotPathTrackingEnabled() 关闭时 (CT_C3_DISABLE_HOTPATH 编译宏
         // 或 C3_DISABLE_HOTPATH=1 运行时 env) recordCall 直接 O(1) 退出,
@@ -216,6 +217,15 @@ public:
             if (recent_dispatches_.size() > kMaxRingBufferSize) {
                 recent_dispatches_.pop_front();
             }
+        }
+
+        // [Dev 2026-08-09 inAutogradScope 短路] 训练态跳过单 kernel 编译触发
+        //   训练 (autograd scope) 时单 kernel 编译 ROI 极低: kernel 编译完可能下一 epoch
+        //   shape 就变了/反向走完一次就丢. 仍保留 RingBuffer 写入 (tryFuseRecentDispatches
+        //   region fusion 检测需要历史 trace).
+        //   实测 53848 dispatch/epoch × mutex_ 锁 + entries_[key] hash ≈ ~200ms/epoch 浪费.
+        if (in_autograd) {
+            return;
         }
 
         size_t key = hashShapeKey(shape, op_type, dev);

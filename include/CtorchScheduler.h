@@ -461,7 +461,8 @@ public:
         // 用跟 tryExecute 一致的 hash 算法 (a, b 分开 hash 组合)
         if (target_dev != DeviceType::kMPS) {
             ct::c3::C3HotPathManager::instance().recordCall(
-                OpType, target_dev, a.shape(), b.shape());
+                OpType, target_dev, a.shape(), b.shape(),
+                /*in_autograd=*/in_autograd);
         }
 #endif
 
@@ -627,7 +628,8 @@ public:
 #ifndef CT_DISABLE_C3
         // 记录热路径
         if (target_dev != DeviceType::kMPS) {
-            ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, a.shape());
+            ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, a.shape(), {},
+                /*in_autograd=*/in_autograd_u);
         }
 #endif
 

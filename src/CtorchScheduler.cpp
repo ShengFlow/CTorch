@@ -395,6 +395,13 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         }
     } _guard(_t0);
 #endif
+    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 第一道: 0 region 时 O(1) 返回
+    // 53848 dispatch/epoch 大量 trace 拷贝 + hash + 7 次循环是无谓开销
+    // 训练开始时 region 还没注册, 或 evict 后清空, 此分支直接返回
+    if (ct::c3::RegionFusionRegistry::getInstance().installedCountNoLock() == 0) {
+        return std::nullopt;
+    }
+
     // 读取 trace 快照
     std::vector<op> trace_snapshot;
     {
@@ -403,6 +410,14 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     }
 
     auto& registry = ct::c3::RegionFusionRegistry::getInstance();
+
+    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 第二道: 当前 op 不可能作为
+    // 任何已注册 region 的末尾 op 时 O(1) 返回. 省掉 extended trace hash + 7 次循环.
+    // 注意: 这是"末尾"过滤 (当前 dispatch 触发的 op), 不是"任意位置"过滤
+    // (region 可能以任意 op 结尾, 但匹配窗口只到当前 op, 所以末尾匹配即可)
+    if (!registry.mayMatchAsLastOp(op_type)) {
+        return std::nullopt;
+    }
 
     // 构建 extended trace: [current trace] + [current op]
     std::vector<op> extended = trace_snapshot;

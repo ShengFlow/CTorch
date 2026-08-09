@@ -32,6 +32,12 @@ void RegionFusionRegistry::install(uint64_t hash,
     entry.len = op_seq.size();
     entry.active = true;
     entries_[hash] = std::move(entry);
+    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 同步末尾 op 索引
+    if (!op_seq.empty()) {
+        std::lock_guard<std::mutex> lok(last_op_mutex_);
+        installed_last_ops_.insert(op_seq.back());
+    }
+    installed_count_.fetch_add(1, std::memory_order_release);
 }
 
 void RegionFusionRegistry::installFromCompiledKernel(
@@ -56,6 +62,12 @@ void RegionFusionRegistry::installFromCompiledKernel(
     entry.len = op_seq.size();
     entry.active = true;
     entries_[hash] = std::move(entry);
+    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 同步末尾 op 索引
+    if (!op_seq.empty()) {
+        std::lock_guard<std::mutex> lok(last_op_mutex_);
+        installed_last_ops_.insert(op_seq.back());
+    }
+    installed_count_.fetch_add(1, std::memory_order_release);
 }
 
 void RegionFusionRegistry::installWithCost(
@@ -101,6 +113,14 @@ void RegionFusionRegistry::installWithCost(
     bool worth_it = cost.worthwhile;  // FusionCost.worthwhile 是字段,不是函数
     entry.active = basic_valid && worth_it;
     entries_[hash] = std::move(entry);
+    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 同步末尾 op 索引
+    //   installWithCost 路径: 即使 cost 判定不值, 仍记入 last_op 集合
+    //   (实际 match 时 entry.active=false 会被跳过, 索引仅用于快速 O(1) 过滤)
+    if (!op_seq.empty()) {
+        std::lock_guard<std::mutex> lok(last_op_mutex_);
+        installed_last_ops_.insert(op_seq.back());
+    }
+    installed_count_.fetch_add(1, std::memory_order_release);
 }
 
 RegionEntry* RegionFusionRegistry::find(uint64_t hash) {
@@ -145,9 +165,17 @@ size_t RegionFusionRegistry::entryCount() const {
     return entries_.size();
 }
 
+bool RegionFusionRegistry::mayMatchAsLastOp(op last_op) const {
+    std::lock_guard<std::mutex> lok(last_op_mutex_);
+    return installed_last_ops_.count(last_op) > 0;
+}
+
 void RegionFusionRegistry::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     entries_.clear();
+    std::lock_guard<std::mutex> lok(last_op_mutex_);
+    installed_last_ops_.clear();
+    installed_count_.store(0, std::memory_order_release);
 }
 
 void RegionFusionRegistry::uninstallAll() {
@@ -156,6 +184,9 @@ void RegionFusionRegistry::uninstallAll() {
         entry.active = false;
     }
     entries_.clear();
+    std::lock_guard<std::mutex> lok(last_op_mutex_);
+    installed_last_ops_.clear();
+    installed_count_.store(0, std::memory_order_release);
 }
 
 } // namespace c3
