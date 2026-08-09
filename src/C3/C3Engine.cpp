@@ -187,28 +187,51 @@ private:
  */
 class ConcreteCompiledKernel : public CompiledKernel {
 public:
+    /// [Fix 2026-08-09 用户审查 P0]: 默认 a=inputs[0], b=inputs[1]
+    /// 反向多输入 kernel (Mul|in:0) 实际用 inputs[0]=grad, inputs[2]=B (跳过 A),
+    /// 因此允许 caller 通过 input_b_index 指定 b 来自哪个 inputs slot。
+    /// 默认 1 (forward 二元 op 用 inputs[1] = rhs)。
     ConcreteCompiledKernel(C3KernelFunc func,
                            std::function<void()> deleter,
                            std::string cache_key, DeviceType device,
                            bool is_matmul, size_t M, size_t K, size_t N,
-                           std::vector<size_t> out_shape = {})
+                           std::vector<size_t> out_shape = {},
+                           size_t input_b_index = 1)
         : func_(func), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
           is_matmul_(is_matmul), M_(M), K_(K), N_(N),
-          out_shape_(std::move(out_shape)) {}
+          out_shape_(std::move(out_shape)),
+          input_b_index_(input_b_index) {}
 
     ~ConcreteCompiledKernel() override {
         if (deleter_) deleter_();
     }
 
     std::vector<Tensor> execute(const std::vector<Tensor>& inputs) override {
+        // [Fix 2026-08-09 用户审查 P0]: 反向多输入 kernel 数量校验
+        // Mul|in:0 expects [grad, A, B]  (3 inputs), 不能 < 3
         if (inputs.empty()) {
             throw std::runtime_error("ConcreteCompiledKernel::execute: need at least 1 input");
         }
+        if (input_b_index_ >= inputs.size()) {
+            // 一元 op (input_b_index=1 但 inputs 只有 1) → fallback 复用 a
+            if (inputs.size() == 1) {
+                // OK, 一元 op 复用 a 当 b
+            } else {
+                throw std::runtime_error(
+                    "ConcreteCompiledKernel::execute: input_b_index=" +
+                    std::to_string(input_b_index_) + " out of range, inputs.size=" +
+                    std::to_string(inputs.size()) +
+                    " (反向多输入 kernel 配置错? Mul|in:0 expect [grad, A, B])");
+            }
+        }
 
         const Tensor& a = inputs[0];
-        // 二元算子用第二个输入，一元算子复用第一个（kernel 内部忽略不用的参数）
-        const Tensor& b = (inputs.size() >= 2) ? inputs[1] : a;
+        // [Fix 2026-08-09] 之前固定 inputs[1], 反向 Mul|in:0 要 inputs[2] (=B)
+        // 用 input_b_index_ 字段允许 caller 指定 (默认 1 = forward 二元 op)
+        const Tensor& b = (inputs.size() >= 2 && input_b_index_ < inputs.size())
+                           ? inputs[input_b_index_]
+                           : a;
 
         // v0.5.2 (2026-08-09) out_shape 修复: 优先用注册时记录的 out_shape_,
         // 解决 backward 路径 grad 形状 ≠ forward output 形状的 bug。
@@ -269,7 +292,8 @@ private:
     DeviceType device_;
     bool is_matmul_;
     size_t M_, K_, N_;
-    std::vector<size_t> out_shape_;  ///< v0.5.2: 注册时透传的 out_shape (backward 用)
+    std::vector<size_t> out_shape_;     ///< v0.5.2: 注册时透传的 out_shape (backward 用)
+    size_t input_b_index_ = 1;          ///< [Fix 2026-08-09] 默认 1, 反向多输入 (Mul|in:0) 设 2
 };
 
 // ======================= C3Engine 实现 =======================
