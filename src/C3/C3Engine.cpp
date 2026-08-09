@@ -46,10 +46,11 @@ public:
     FusedCompiledKernel(FusedKernelFunc func,
                         std::function<void()> deleter,
                         std::string cache_key, DeviceType device,
-                        size_t num_inputs)
+                        size_t num_inputs,
+                        std::vector<size_t> out_shape = {})
         : func_(func), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
-          num_inputs_(num_inputs) {}
+          num_inputs_(num_inputs), out_shape_(std::move(out_shape)) {}
 
     ~FusedCompiledKernel() override {
         if (deleter_) deleter_();
@@ -62,8 +63,17 @@ public:
                 " inputs, got " + std::to_string(inputs.size()));
         }
 
-        size_t n = inputs[0].numel();
-        Tensor out(ShapeTag{}, inputs[0].shape());
+        // DEBT-NEW-7 候选 A:用 out_shape 分配 output buffer
+        // - 旧实现:inputs[0].shape()(只对 elementwise 融合正确)
+        // - 新实现:out_shape(从 FusedNode.out_desc 提取,支持 MatMul-rooted region)
+        //   当 out_shape 为空(向后兼容),回退到 inputs[0].shape()
+        std::vector<size_t> out_shape = out_shape_;
+        if (out_shape.empty()) {
+            out_shape = inputs[0].shape();
+        }
+        size_t n = 1;
+        for (auto s : out_shape) n *= s;
+        Tensor out(ShapeTag{}, out_shape, inputs[0].dtype(), inputs[0].device());
 
         std::vector<const float*> in_ptrs;
         for (size_t i = 0; i < num_inputs_; ++i) {
@@ -90,6 +100,7 @@ private:
     std::string cache_key_;
     DeviceType device_;
     size_t num_inputs_;
+    std::vector<size_t> out_shape_;  ///< DEBT-NEW-7 候选 A:真实输出 shape(支持 MatMul-rooted)
 };
 
 /**
@@ -414,7 +425,7 @@ static std::shared_ptr<CompiledKernel> doCompile(
         } else if (gen.is_fused) {
             kernel = std::make_shared<FusedCompiledKernel>(
                 gen.fused_func, gen.deleter, makeCacheKey(working_graph, options),
-                options.target_device, gen.num_inputs
+                options.target_device, gen.num_inputs, gen.fused_out_shape
             );
         } else {
             kernel = std::make_shared<ConcreteCompiledKernel>(

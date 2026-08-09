@@ -33,6 +33,9 @@ struct GeneratedKernel {
     size_t num_inputs = 2;                ///< 外部输入数量
     size_t M = 0, K = 0, N = 0;          ///< MatMul 维度
     size_t elem_n = 0;                    ///< 逐元素操作的元素数
+    /// DEBT-NEW-7 候选 A:融合 kernel 的真实输出 shape(从 FusedNode.out_desc 提取)
+    /// 让 FusedCompiledKernel::execute() 能正确分配 output buffer(支持 MatMul-rooted region)
+    std::vector<size_t> fused_out_shape;
 };
 
 /// 从 Graph 生成 JIT kernel

@@ -864,6 +864,10 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         src = generateFusedKernel(fnode.ops, fnode.op_inputs, fnode.arg_node_ids);
         result.is_fused = true;
         result.num_inputs = fnode.arg_descs.size();
+        // DEBT-NEW-7 候选 A:把 FusedNode 的真实输出 shape 传给 kernel wrapper,
+        // 让 FusedCompiledKernel::execute() 能正确分配 output buffer
+        // (MatMul+Add+ReLU 的输出是 [M,N],不是 inputs[0] 的 [M,K])
+        result.fused_out_shape = fnode.out_desc.shape;
 
         // 编译融合 kernel（使用 FusedKernelFunc 签名）
         auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);

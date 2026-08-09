@@ -134,12 +134,15 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     // 调度器的 inAutogradScope guard 借此识别反向传播路径（其 matmul 输入
     // 通常 requires_grad=false,如 x.T @ grad），跳过 c3 单 kernel 注入。
     // RAII 模式：函数出口自动清除 flag，即使中途抛异常。
+    // 注：ct::detail 命名空间仅在 C3 启用时可用(由 CtorchScheduler.h 提供)
+#ifndef CT_DISABLE_C3
     bool prev_in_backward = ct::detail::g_in_backward();
     ct::detail::set_in_backward(true);
     struct FlagGuard {
         bool prev;
         ~FlagGuard() { ct::detail::set_in_backward(prev); }
     } guard{prev_in_backward};
+#endif
 
     bool original_enable_grad = AutoGrad::EnableGrad;
     AutoGrad::EnableGrad = false;

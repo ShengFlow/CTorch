@@ -437,25 +437,8 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         return std::nullopt;
     }
 
-    // 临时(2026-08-09 DEBT-NEW-7 实施阶段):FusedCompiledKernel 假设 inputs[0].shape() =
-    // output.shape()(只支持 elementwise 融合)。对于 MatMul+Add+ReLU 这种 MatMul
-    // 起头的 region,kernel 的 inputs/output shape 推导会错(把 M*K 当成 M*N)。
-    // 解决:暂不 invoke MatMul 起头的 region(返回 nullopt → 走 eager),等 v0.6.0
-    // 实现 MatMul-aware fusedCompiledKernel 后再放开。
-    if (!match->op_seq.empty() && match->op_seq[0] == op::MatMul) {
-#ifdef CT_DEBUG
-        static int dbg_matmul_region_skip = 0;
-        if (dbg_matmul_region_skip < 5) {
-            std::ostringstream oss;
-            oss << "[C3-RegionSkip] MatMul-rooted region len=" << match->len
-                << " (FusedCompiledKernel only supports elementwise fusion yet)";
-            CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
-                ErrorType::UNKNOWN, oss.str());
-            dbg_matmul_region_skip++;
-        }
-#endif
-        return std::nullopt;
-    }
+    // DEBT-NEW-7 候选 A(已修):FusedCompiledKernel 现在用 out_shape 分配 output buffer,
+    // 支持 MatMul-rooted region。MatMul guard 已取消(让 MatMul+Add+ReLU 真正 invoke)。
 
     // 匹配成功!需要从 prewalk_cache_ 里取最近 (match.len - 1) 个 dispatch 的 external inputs,
     // 加上当前 dispatch 的 external inputs(在 inputs 参数里)
@@ -493,6 +476,9 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
             }
         }
     }
+
+    // DEBT-NEW-7 候选 A(已修):FusedCompiledKernel 现在用 out_shape 分配 output buffer,
+    // 支持 MatMul-rooted region。MatMul guard 已取消(让 MatMul+Add+ReLU 真正 invoke)。
 
 #ifdef CT_DEBUG
     {
@@ -557,31 +543,37 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         input_ptrs.push_back(p);
     }
 
-    // invoke kernel(通过 CompiledKernel::execute() 虚函数)
-    // kernel 应该输出到 out_tensor 的 storage
-    // 注意:CompiledKernel::execute() 是高阶接口,我们用它执行整体 fused region
-    // 对于 HandwrittenKernelGen fused kernel,execute() 会调 result.fused_func
+    // invoke kernel(通过 C3KernelRegistry::executeFusedWithInputs,内含 fused_hit 计数)
+    // DEBT-NEW-7 候选 A:用 out_shape 分配 output buffer 后,FusedCompiledKernel::execute
+    // 能正确处理 MatMul-rooted region 的 shape(M, N 而不是 M, K)
     try {
-        // 把 input tensors 传给 kernel,期望它输出到 out_tensor
-        // 但 standard CompiledKernel::execute() 会自己分配 output tensor
-        // 我们的方案:让 kernel 写入我们预分配的 out_tensor 的 storage
-        // 简化:调 execute() 拿它的结果,然后 copy 到 out_tensor
-        // (这有 copy 开销但保证正确性)
-        auto kernel_outputs = match->kernel->execute(external_inputs);
-        if (kernel_outputs.empty() || kernel_outputs[0].storage().empty()) {
+        // 准备 KernelShapeInfo(让 kernel wrapper 知道输出 shape)
+        ct::c3::KernelShapeInfo shapes;
+        if (!external_inputs.empty()) {
+            shapes.lhs_shape = external_inputs.front().shape();
+        }
+        if (external_inputs.size() > 1) {
+            shapes.rhs_shape = external_inputs[1].shape();
+        }
+        shapes.out_shape = out_shape;
+        shapes.fused_pattern = "region-fusion";
+
+        Tensor kernel_result = ct::c3::C3KernelRegistry::getInstance()
+            .executeFusedWithInputs(match->kernel, external_inputs, shapes);
+        if (kernel_result.storage().empty()) {
             return std::nullopt;
         }
-        // 拷贝 kernel 输出到 out_tensor
-        const float* src = kernel_outputs[0].data_read<float>();
+        // 拷贝 kernel 输出到 out_tensor(保持 out_tensor 身份稳定,autograd 不被打断)
+        const float* src = kernel_result.data_read<float>();
         if (!src) {
             return std::nullopt;
         }
-        size_t kernel_numel = kernel_outputs[0].numel();
+        size_t kernel_numel = kernel_result.numel();
         size_t copy_n = std::min(kernel_numel, out_numel);
         std::memcpy(out_data, src, copy_n * sizeof(float));
         // 如果 kernel 输出比 out_tensor 小,剩余部分填 0
         if (kernel_numel < out_numel) {
-            std::memset(out_data + copy_n, 0, (out_numel - copy_n) * sizeof(float));
+            std::memset(out_data + copy_n, 0, (out_numel - kernel_numel) * sizeof(float));
         }
         return out_tensor;
     } catch (const std::exception& e) {
