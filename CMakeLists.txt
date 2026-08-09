@@ -97,6 +97,7 @@ set(CT-Core
         src/C3/PGOManager.cpp
         src/C3/AOTCache.cpp
         src/C3/C3BackwardCapture.cpp
+        src/C3/C3KernelRegistry.cpp
         src/C3/RollingHash.cpp
         src/C3/RegionFusionRegistry.cpp
 )

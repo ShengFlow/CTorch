@@ -73,9 +73,10 @@ __m256 exp256_ps(__m256 x) {
     y = _mm256_fmadd_ps(y, r, _mm256_set1_ps(1.0f));
     y = _mm256_fmadd_ps(y, r, _mm256_set1_ps(1.0f));
 
-    // 4. 2^k 通过 integer bit shift 实现
+    // 4. 2^k 通过 integer bit shift 实现（IEEE 754 偏置指数：+127）
     __m256i k_i = _mm256_cvtps_epi32(fk);
-    __m256i pow2_k = _mm256_slli_epi32(k_i, 23);
+    __m256i biased_k = _mm256_add_epi32(k_i, _mm256_set1_epi32(127));
+    __m256i pow2_k = _mm256_slli_epi32(biased_k, 23);
     __m256 pow2_k_f = _mm256_castsi256_ps(pow2_k);
 
     return _mm256_mul_ps(y, pow2_k_f);

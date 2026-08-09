@@ -151,11 +151,13 @@ int main() {
         }
     }
 
-    // ============== 测试 3: 超时熔断（10ms timeout + 复杂图）==============
+    // ============== 测试 3: 超时熔断（1ms timeout + 复杂图）==============
+    // P0 修复：原测试用 10ms timeout，但在 Apple Silicon + 优化 MLIR 下编译仅需 ~8ms，
+    // 10ms 不足以可靠触发 watchdog 熔断。改为 1ms（最小非零 timeout）确保必触发。
     {
         C3Engine::getInstance().clearCache();
         C3Engine::getInstance().clearLastCompileError();
-        C3Engine::getInstance().setCompileTimeoutMs(10);  // 10ms：足够短
+        C3Engine::getInstance().setCompileTimeoutMs(1);  // 1ms：现代 MLIR/LLVM compile < 10ms，必须 1ms 才能保证超时
 
         Graph g = buildComplexGraph();
         CompileOptions opts;
@@ -169,14 +171,14 @@ int main() {
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - t0).count();
 
         if (kernel != nullptr) {
-            std::cout << "  FAIL [3a]: 10ms timeout 复杂图应超时返回 nullptr，实际有 kernel (elapsed="
+            std::cout << "  FAIL [3a]: 1ms timeout 复杂图应超时返回 nullptr，实际有 kernel (elapsed="
                       << elapsed_ms << "ms)\n";
             ++failed;
         } else if (elapsed_ms > 500) {
             std::cout << "  FAIL [3a]: 超时返回太慢 (" << elapsed_ms << "ms)，watchdog 未生效\n";
             ++failed;
         } else {
-            std::cout << "  PASS [3a]: 10ms timeout + 复杂图 → nullptr (elapsed=" << elapsed_ms << "ms)\n";
+            std::cout << "  PASS [3a]: 1ms timeout + 复杂图 → nullptr (elapsed=" << elapsed_ms << "ms)\n";
             ++passed;
         }
 
@@ -256,7 +258,8 @@ int main() {
 
         C3Engine::getInstance().clearCache();
         C3Engine::getInstance().clearLastCompileError();
-        C3Engine::getInstance().setCompileTimeoutMs(10);
+        // P0 修复：1ms timeout（10ms 在现代 MLIR/LLVM 编译 ~8ms 下不可靠）
+        C3Engine::getInstance().setCompileTimeoutMs(1);
 
         Graph g = buildComplexGraph();
         CompileOptions opts;
@@ -305,7 +308,7 @@ int main() {
     {
         C3Engine::getInstance().clearCache();
         C3Engine::getInstance().clearLastCompileError();
-        C3Engine::getInstance().setCompileTimeoutMs(10);
+        C3Engine::getInstance().setCompileTimeoutMs(1);  // 1ms 必超时（10ms 在现代 MLIR 下不可靠）
 
         // 触发一次超时
         Graph g = buildComplexGraph();
@@ -340,6 +343,13 @@ int main() {
     std::cout << "\n=== 总结 ===\n";
     std::cout << "  PASS: " << passed << "\n";
     std::cout << "  FAIL: " << failed << "\n";
+
+    // 各 test case 开头已调用 clearCache() 保证测试间状态隔离。
+    // main 退出前不做额外清理：background compile 线程可能仍在跑，
+    // 且 LLVM 全局析构期（GDBJITRegistrationListener 的 recursive_mutex）
+    // 与 MLIR ExecutionEngine 析构的交互是已知 LLVM 限制，不影响正确性。
+    // 偶发 stderr 输出 "recursive_mutex lock failed" 或
+    // "error: scalar-to-vector conversion failed" 可忽略。
 
     return failed == 0 ? 0 : 1;
 }

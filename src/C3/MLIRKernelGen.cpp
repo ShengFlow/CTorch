@@ -16,6 +16,7 @@
 #include "MLIRKernelGen.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -24,6 +25,16 @@
 #include <variant>
 
 #include "C3/TuningState.h"
+
+// ======================= Profile timestamps (region fusion 探针) =======================
+// 由 test_region_fusion.cpp 通过 extern "C" 引用。JIT kernel 内部应调用
+// c3_profile_mark(idx) 写入 g_profile_ts[idx]，调度器据此分析 region fusion
+// 内核耗时分布。当前 region fusion 关闭（C3 编译期宏 CT_C3_DISABLE_REGION_FUSION=ON），
+// kernel 不会调用 c3_profile_mark，所以这里只提供符号定义让链接通过。
+extern "C" {
+    uint64_t g_profile_ts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    void c3_profile_mark(int /*idx*/) { /* no-op: region fusion disabled */ }
+}
 
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/BuiltinTypes.h>

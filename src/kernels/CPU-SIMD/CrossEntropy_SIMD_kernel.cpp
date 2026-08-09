@@ -49,19 +49,16 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
         float m = row[0];
         for (size_t j = 1; j < n; ++j) m = std::max(m, row[j]);
 
-        // 2. exp(x - m) 累加（用 vexp + horizontal sum）
+        // 2. exp(x - m) 累加：先 shift by max，再 vexp，再 horizontal sum
         std::vector<float> tmp(n);
-        ct::kernels::simd::vexp(row, tmp.data(), n);
-        // 减 m + sum
+        for (size_t j = 0; j < n; ++j) tmp[j] = row[j] - m;
+        ct::kernels::simd::vexp(tmp.data(), tmp.data(), n);
         float s = 0.0f;
 #if defined(__AVX2__)
         size_t j = 0;
-        __m256 mv = _mm256_set1_ps(m);
         __m256 acc = _mm256_setzero_ps();
         for (; j + 7 < n; j += 8) {
             __m256 v = _mm256_loadu_ps(&tmp[j]);
-            v = _mm256_sub_ps(v, mv);
-            _mm256_storeu_ps(&tmp[j], v);
             acc = _mm256_add_ps(acc, v);
         }
         __m128 hi = _mm256_extractf128_ps(acc, 1);
@@ -70,31 +67,19 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
         ss = _mm_hadd_ps(ss, ss);
         ss = _mm_hadd_ps(ss, ss);
         s = _mm_cvtss_f32(ss);
-        for (; j < n; ++j) {
-            tmp[j] -= m;
-            s += tmp[j];
-        }
+        for (; j < n; ++j) s += tmp[j];
 #elif defined(__aarch64__)
         size_t j = 0;
-        float32x4_t mv = vdupq_n_f32(m);
         float32x4_t acc = vdupq_n_f32(0.0f);
         for (; j + 3 < n; j += 4) {
             float32x4_t v = vld1q_f32(&tmp[j]);
-            v = vsubq_f32(v, mv);
-            vst1q_f32(&tmp[j], v);
             acc = vaddq_f32(acc, v);
         }
         s = vgetq_lane_f32(acc, 0) + vgetq_lane_f32(acc, 1)
           + vgetq_lane_f32(acc, 2) + vgetq_lane_f32(acc, 3);
-        for (; j < n; ++j) {
-            tmp[j] -= m;
-            s += tmp[j];
-        }
+        for (; j < n; ++j) s += tmp[j];
 #else
-        for (size_t j = 0; j < n; ++j) {
-            tmp[j] -= m;
-            s += tmp[j];
-        }
+        for (size_t j = 0; j < n; ++j) s += tmp[j];
 #endif
         return m + std::log(s);
     };

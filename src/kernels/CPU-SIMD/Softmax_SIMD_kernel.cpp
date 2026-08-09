@@ -66,57 +66,40 @@ CT_HOT Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
                 max_val = std::max(max_val, row_in[j]);
             }
 
-            // 2. 用 SIMDMath 的 vexp 计算 exp(x - max) 写入 dst，并累加 sum
-            //    为了支持并行 reduce + vexp，临时用 buffer 存 exp 结果再 sum
-            //    vexp 直接写到 row_out
-            ct::kernels::simd::vexp(row_in, row_out, axis_size);
+            // 2. 先 shift by max，再 vexp（exp(x - max) 而非 exp(x) - max）
+            std::vector<float> tmp(axis_size);
+            for (size_t j = 0; j < axis_size; ++j) tmp[j] = row_in[j] - max_val;
+            ct::kernels::simd::vexp(tmp.data(), row_out, axis_size);
 
-            // 减去 max（vexp 内部无法得知 max，需要手动减）
-            // 优化：先用 vexp 写 exp(x)，再用一个 separate loop 减 max
-            //      这其实有冗余（两次 memory traversal），但 SIMDMath 接口
-            //      暂时没有带 offset 的版本。可以后续扩展。
-            // 折中：在内存里存 exp(x)，然后原地减 max 并累加 sum
+            // 3. sum row_out（horizontal reduction）
             float exp_sum = 0.0f;
-            // tail：先算前面的完整 8-wide / 4-wide 块
 #if defined(__AVX2__)
             size_t j = 0;
-            __m256 mv = _mm256_set1_ps(max_val);
             __m256 acc = _mm256_setzero_ps();
             for (; j + 7 < axis_size; j += 8) {
                 __m256 v = _mm256_loadu_ps(&row_out[j]);
-                v = _mm256_sub_ps(v, mv);
-                _mm256_storeu_ps(&row_out[j], v);
                 acc = _mm256_add_ps(acc, v);
             }
-            // horizontal sum
             __m128 hi = _mm256_extractf128_ps(acc, 1);
             __m128 lo = _mm256_castps256_ps128(acc);
             __m128 s = _mm_add_ps(lo, hi);
             s = _mm_hadd_ps(s, s);
             s = _mm_hadd_ps(s, s);
             exp_sum = _mm_cvtss_f32(s);
+            for (; j < axis_size; ++j) exp_sum += row_out[j];
 #elif defined(__aarch64__)
             size_t j = 0;
-            float32x4_t mv = vdupq_n_f32(max_val);
             float32x4_t acc = vdupq_n_f32(0.0f);
             for (; j + 3 < axis_size; j += 4) {
                 float32x4_t v = vld1q_f32(&row_out[j]);
-                v = vsubq_f32(v, mv);
-                vst1q_f32(&row_out[j], v);
                 acc = vaddq_f32(acc, v);
             }
             exp_sum = vgetq_lane_f32(acc, 0) + vgetq_lane_f32(acc, 1)
                     + vgetq_lane_f32(acc, 2) + vgetq_lane_f32(acc, 3);
+            for (; j < axis_size; ++j) exp_sum += row_out[j];
 #else
-            for (size_t j = 0; j < axis_size; ++j) {
-                row_out[j] -= max_val;
-                exp_sum += row_out[j];
-            }
+            for (size_t j = 0; j < axis_size; ++j) exp_sum += row_out[j];
 #endif
-            for (; j < axis_size; ++j) {
-                row_out[j] -= max_val;
-                exp_sum += row_out[j];
-            }
 
             float inv_sum = 1.0f / exp_sum;
 

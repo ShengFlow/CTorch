@@ -28,6 +28,7 @@
 #ifndef CTORCH_C3_AOT_CACHE_H
 #define CTORCH_C3_AOT_CACHE_H
 
+#include "C3Config.h"
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -139,7 +140,8 @@ public:
     }
     [[nodiscard]] bool isEnabled() const {
         std::lock_guard<std::mutex> lock(mutex_);
-        return config_.enabled;
+        // 全局开关：编译期 CT_C3_DISABLE_AOT 宏或运行时 C3_DISABLE_AOT=1 均强制禁用
+        return config_.enabled && aotCacheEnabled();
     }
 
     /**

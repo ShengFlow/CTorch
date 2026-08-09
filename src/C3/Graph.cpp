@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace ct {
@@ -865,6 +866,93 @@ std::string Graph::toString() const {
         ss << "\n";
     }
     return ss.str();
+}
+
+// ======================= mergeGraph（DEBT-NEW-5 root cause #2 修复）=======================
+
+// 2-arg 重载：默认跳过 source input 占位节点
+std::unordered_map<size_t, size_t> Graph::mergeGraph(
+    const Graph& other,
+    const std::unordered_map<size_t, size_t>& remap_input_ids) {
+    return mergeGraph(other, remap_input_ids, /*skip_input_placeholders=*/true);
+}
+
+// 3-arg 重载：核心实现
+// DEBT-NEW-5: 旧实现把 source input 占位节点重新 push 到本图（用 source id + offset
+// 算 id），覆盖了调用方已通过 addInput 分配的节点内容，导致 chain 后续节点的 in_id
+// 指向错误的 buffer。修复：若 skip_input_placeholders=true，源图 inputs_ 列表里的
+// 节点不复制，仅靠 remap_input_ids 把它们的引用重映射到本图已分配的输入节点。
+std::unordered_map<size_t, size_t> Graph::mergeGraph(
+    const Graph& other,
+    const std::unordered_map<size_t, size_t>& remap_input_ids,
+    bool skip_input_placeholders) {
+    std::unordered_map<size_t, size_t> old_to_new;
+
+    // 收集源图 input 节点 id 集合（用于 skip 模式）
+    std::unordered_set<size_t> source_input_ids;
+    if (skip_input_placeholders) {
+        source_input_ids.reserve(other.inputs_.size());
+        for (size_t in_id : other.inputs_) {
+            source_input_ids.insert(in_id);
+        }
+    }
+
+    // 预填 remap_input_ids（调用方已通过 addInput 在本图分配过这些节点）
+    old_to_new.reserve(remap_input_ids.size() + other.nodes_.size());
+    for (const auto& kv : remap_input_ids) {
+        // 健全性检查：remap 目标必须在本图中已存在
+        if (kv.second >= nodes_.size()) {
+            throw std::runtime_error(
+                "Graph::mergeGraph: remap target id " + std::to_string(kv.second) +
+                " not yet allocated in this graph (have " +
+                std::to_string(nodes_.size()) + " nodes)");
+        }
+        old_to_new[kv.first] = kv.second;
+    }
+
+    // 复制源图节点：跳过 input 占位（若启用），否则全量复制
+    for (const auto& src_node : other.nodes_) {
+        if (skip_input_placeholders && source_input_ids.count(src_node.id)) {
+            continue;
+        }
+
+        // 分配新 id（追加到本图 nodes_ 末尾）
+        size_t new_id = nodes_.size();
+        Node new_node;
+        new_node.id = new_id;
+        new_node.op = src_node.op;            // std::variant 拷贝赋值
+        new_node.out_desc = src_node.out_desc;
+        new_node.inputs.reserve(src_node.inputs.size());
+
+        // 重映射每个输入 id（可能指向 source input → 用 remap_input_ids，
+        // 可能指向 source 内部节点 → 已在 old_to_new 中）
+        for (size_t old_in_id : src_node.inputs) {
+            auto it = old_to_new.find(old_in_id);
+            if (it == old_to_new.end()) {
+                throw std::runtime_error(
+                    "Graph::mergeGraph: unresolved input id " +
+                    std::to_string(old_in_id) + " (source node " +
+                    std::to_string(src_node.id) +
+                    ", skip_input_placeholders=" +
+                    std::to_string(skip_input_placeholders) +
+                    "). Hint: ensure remap_input_ids covers all source input ids.");
+            }
+            size_t mapped_id = it->second;
+            new_node.inputs.push_back(mapped_id);
+            // 更新新输入节点的 outputs 列表（与 addNode 保持一致）
+            if (mapped_id < nodes_.size()) {
+                nodes_[mapped_id].outputs.push_back(new_id);
+            }
+        }
+
+        // outputs 字段在本图为空（来源节点的 outputs 是 source graph 内的引用，
+        // 在新图里需要重新构建；这里保留空，由后续 topology/use 阶段按需重建）
+
+        old_to_new[src_node.id] = new_id;
+        nodes_.push_back(std::move(new_node));
+    }
+
+    return old_to_new;
 }
 
 } // namespace c3

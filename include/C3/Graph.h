@@ -145,6 +145,64 @@ struct TanhNode {
 };
 
 /**
+ * @struct GtNode
+ * @brief 大于比较节点：out = (lhs > rhs) ? 1.0f : 0.0f
+ * @details 用于 backward 中的 mask 生成（如 ReLU gradient: (x > 0) * grad）。
+ *          输出为 0.0 或 1.0，支持广播。
+ */
+struct GtNode {
+    static constexpr const char* name = "Gt";
+    TensorDesc lhs_desc;
+    TensorDesc rhs_desc;
+};
+
+/**
+ * @struct SumReduceNode
+ * @brief 求和降维节点：out = sum(input, axis) 或全 reduce
+ * @details 用于 backward 中广播梯度的收缩（如 AddNode 的 broadcast 反向）。
+ *          axis = -1 表示对所有维度求和（降维到标量 1 元素张量）。
+ *          输出形状根据 input 形状移除指定 axis 得到。
+ */
+struct SumReduceNode {
+    static constexpr const char* name = "SumReduce";
+    TensorDesc in_desc;
+    int axis = -1;  ///< 求和维度，-1 表示全 reduce
+};
+
+/**
+ * @struct TransposeNode
+ * @brief 矩阵转置节点：out = transpose(input, dim0, dim1)
+ * @details 用于 MatMul backward 中梯度矩阵的转置。
+ *          dim0/dim1 指定交换的维度，默认 dim0=0, dim1=1（2D 矩阵转置）。
+ */
+struct TransposeNode {
+    static constexpr const char* name = "Transpose";
+    TensorDesc in_desc;
+    int dim0 = 0;
+    int dim1 = 1;
+};
+
+/**
+ * @struct ExpNode
+ * @brief 指数节点：out = exp(x)
+ * @details 用于 Exp backward 和 Sigmoid backward 优化。
+ */
+struct ExpNode {
+    static constexpr const char* name = "Exp";
+    TensorDesc in_desc;
+};
+
+/**
+ * @struct LogNode
+ * @brief 对数节点：out = log(x)
+ * @details 用于 Log backward。
+ */
+struct LogNode {
+    static constexpr const char* name = "Log";
+    TensorDesc in_desc;
+};
+
+/**
  * @struct ConstNode
  * @brief 常量节点（用于常量折叠）：value = scalar
  * @details 仅用于 canonicalize 阶段的常量折叠，不参与实际 kernel 执行。
@@ -167,7 +225,7 @@ struct FusedNode;
  *          - 图遍历（canonicalize）使用 std::visit 比虚函数模式更高效且显式
  *          - 新增算子类型只需扩展 variant，不破坏现有代码
  */
-using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ReLUNode, SigmoidNode, TanhNode, ConstNode, FusedNode>;
+using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode, NegNode, ReLUNode, SigmoidNode, TanhNode, GtNode, SumReduceNode, TransposeNode, ExpNode, LogNode, ConstNode, FusedNode>;
 
 /**
  * @struct FusedNode
@@ -178,8 +236,9 @@ using NodeVariant = std::variant<AddNode, SubNode, MulNode, DivNode, MatMulNode,
  */
 struct FusedNode {
     static constexpr const char* name = "Fused";
-    std::vector<NodeVariant> ops;         ///< 操作序列（按执行顺序）
+    std::vector<NodeVariant> ops;         ///< 操作序列（按执行顺序，拓扑排序）
     std::vector<std::vector<size_t>> op_inputs; ///< 每个 op 的原始输入节点 ID（用于 kernel 生成时映射）
+    std::vector<size_t> op_node_ids;      ///< 每个 op 输出的原始节点 ID（用于 DAG 内部引用）
     std::vector<TensorDesc> arg_descs;    ///< 外部输入张量描述符（去重后）
     std::vector<size_t> arg_node_ids;     ///< 外部输入对应的原始节点 ID
     TensorDesc out_desc;                  ///< 输出张量描述符
@@ -313,6 +372,34 @@ public:
 
     /// 检查节点 ID 是否有效
     [[nodiscard]] bool validNodeId(size_t id) const { return id < nodes_.size(); }
+
+    /**
+     * @brief 合并另一个图到当前图
+     * @param other 源图
+     * @param remap_input_ids 源图输入节点 ID → 当前图节点 ID 的映射
+     * @param remap_output_ids 源图输出节点 ID → 当前图节点 ID 的映射（可选）
+     * @return 源图节点 ID → 当前图节点 ID 的映射
+     * @details 将 other 的所有节点复制到当前图，并重映射输入/输出引用。
+     *          调用方需提供 remap_input_ids 将源图的输入节点映射到当前图的已有节点。
+     */
+    std::unordered_map<size_t, size_t> mergeGraph(
+        const Graph& other,
+        const std::unordered_map<size_t, size_t>& remap_input_ids);
+
+    /**
+     * @brief 合并图（跳过 source input 占位节点，避免 id 冲突）
+     * @details source graph 的 input 占位节点（addInput 创建的 ConstNode{0}）已被
+     *          调用方通过 addInput 替换。如果不跳过，mergeGraph 会用 source input id +
+     *          offset 把占位节点再次 push 到本图，覆盖已经 addInput 分配的节点内容，
+     *          导致 chain 后续节点的 in_id 指向错误的 buffer。
+     * @param other source graph
+     * @param remap_input_ids 源图输入节点 id → 本图已分配节点 id 的映射
+     * @return 旧 id → 新 id 的映射表
+     */
+    std::unordered_map<size_t, size_t> mergeGraph(
+        const Graph& other,
+        const std::unordered_map<size_t, size_t>& remap_input_ids,
+        bool /*skip_input_placeholders*/);
 
 private:
     std::vector<Node> nodes_;       ///< 所有节点（按添加顺序，ID 即索引）

@@ -369,6 +369,7 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 // (L301, L358, L490, L503 区域) 但 .cpp 实现还没写。这是 link 错误根因。
 // Stub 行为：直接返回 nullopt → 调用方回退到 eager dispatch，保证 binary 可链接。
 // TODO: 实现真正的 region 预走 — 见 include/C3/RegionFusion.h 文档。
+#ifndef CT_DISABLE_C3
 std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     op /*op_type*/, const std::vector<Tensor>& /*inputs*/, DeviceType /*dev*/) {
     return std::nullopt;
@@ -384,7 +385,14 @@ std::vector<size_t> CtorchScheduler::computeOutputShape(
 }
 
 Tensor CtorchScheduler::executeEagerFallback(
-    const std::vector<Tensor>& /*current_inputs*/, op /*current_op_type*/, DeviceType /*dev*/) {
+    const std::vector<Tensor> & /*current_inputs*/, op /*current_op_type*/, DeviceType /*dev*/) {
     // Stub: 不可达（tryRegionDispatch 永远 nullopt 不会触发）
     return Tensor();
 }
+
+// 区域融合 dispatch 计时统计打印（stub：当前无 region fusion 活动，no-op）
+void c3_print_region_timing() {
+    // 当前 region fusion 关闭（C3 编译期 CT_C3_DISABLE_REGION_FUSION=ON），
+    // 所有计时计数器未被触发，无可打印内容。
+}
+#endif // CT_DISABLE_C3

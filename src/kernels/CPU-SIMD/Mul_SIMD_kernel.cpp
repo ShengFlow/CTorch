@@ -122,6 +122,13 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         size_t a_dim = i < a.sizes().size() ? a.sizes()[a.sizes().size() - 1 - i] : 1;
         size_t b_dim = i < b.sizes().size() ? b.sizes()[b.sizes().size() - 1 - i] : 1;
         if (a_dim != 1 && b_dim != 1 && a_dim != b_dim) {
+#ifdef CT_DEBUG
+            fprintf(stderr, "[DEBUG Mul] a_shape=[");
+            for (size_t s : a.sizes()) fprintf(stderr, "%zu,", s);
+            fprintf(stderr, "] b_shape=[");
+            for (size_t s : b.sizes()) fprintf(stderr, "%zu,", s);
+            fprintf(stderr, "] i=%zu a_dim=%zu b_dim=%zu\n", i, a_dim, b_dim);
+#endif
             CtorchError::throwException(ErrorPlatform::kCPU, ErrorType::DIMENSION,
                 "CPU-SIMD Mul_Kernel: Tensor形状不兼容");
         }

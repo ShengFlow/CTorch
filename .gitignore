@@ -26,3 +26,4 @@ cmake-build-debug
 /Testing/
 /cmake_install.cmake
 /tl-ArrayTest[1]_include.cmake
+.hilo/

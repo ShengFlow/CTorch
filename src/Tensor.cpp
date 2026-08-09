@@ -620,6 +620,12 @@ Tensor::Tensor()
     computeStrides();
 }
 
+// 触发惰性物化（LazyBox）：由 data_read() 在 storage 为空且带物化闭包时调用。
+// 物化结果缓存在物化器内，返回引用保证 data_read() 返回的指针在其存活期间有效。
+Tensor &Tensor::materializeLazy_() const {
+    return _lazy->materialize();
+}
+
 // 检查存储偏移是否有效：必须保证 offset + numel() <= storage.size()
 bool Tensor::check_storage_offset() const {
     if (_storage_offset >= _storage.size()) {
@@ -701,21 +707,32 @@ Tensor &Tensor::neg_() {
 
 // 求和操作
 Tensor Tensor::sum() const {
-    Tensor result(ShapeTag{}, {1}, _dtype, _device);
-
-    if (_dtype == DType::kFloat) {
-        const float *data = this->data_read<float>();
-        float sum         = 0.0f;
-        for (size_t i = 0; i < numel(); ++i) {
-            sum += data[i];
+    // ============= P2 修复：sum() 改为用 dot(ones) 实现，自动通过 AutoGrad::dispatch 挂 Node =============
+    // 原 bug：sum() 是裸 for 循环求和，从未创建任何 Node → L.getRelatedNode() 返回 nullptr，
+    // 后续 AutoGrad::backward(nullptr, ...) 直接 nullptr deref → SIGSEGV。
+    // 修复：用 dot(全 1 tensor) 等价实现 sum：
+    //   - 数值：a·ones = Σ_i a_i * 1 = Σ a_i ✅
+    //   - 反向：dL/dot = scalar, dL/da_i = dL/dot * 1_i → 标量广播为 a.shape（与 sum 反向完全一致 ✅）
+    //   - Node：dot 走 AutoGrad::dispatch<op::Dot>，自动创建 DotNode，backward 链路完整 ✅
+    if (_shape.empty()) {
+        // 空 tensor：返回 shape={1}, val=0
+        Tensor result(ShapeTag{}, {1}, _dtype, _device);
+        if (_dtype == DType::kFloat) {
+            float* rw = result.data_write<float>();
+            if (rw) *rw = 0.0f;
         }
-        float *result_data = result.data_write<float>();
-        if (result_data) {
-            *result_data = sum;
-        }
+        return result;
     }
-
-    return result;
+    // 修复：必须 flat 成 1D 再 dot，避免 2D dot 误触发大矩阵运算
+    //   - flat shape: {numel()}
+    //   - ones 1D shape {numel()}: 1D·1D = Σ a_i * 1 = Σ a_i，数值与原 sum() 完全一致 ✅
+    //   - dot 走 AutoGrad::dispatch<op::Dot>，自动创建 DotNode，backward 链路完整 ✅
+    //   - 计算量：O(numel) 与原始裸循环实现相同 ✅（不会再 19x 退化）
+    const size_t N = numel();
+    Tensor flat_this = reshape({N});
+    Tensor ones_1d(ShapeTag{}, {N}, _dtype, _device);
+    ones_1d.ones();
+    return flat_this.dot(ones_1d);
 }
 
 // ======================= 运算符模板辅助函数 =======================

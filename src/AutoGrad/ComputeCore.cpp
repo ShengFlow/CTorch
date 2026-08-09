@@ -12,6 +12,7 @@
 #include "../../include/AutoGrad/ComputeCore.h"
 #include "../../include/AutoGrad/Node.h"
 #include "../../include/CtorchError.h"
+#include "../../include/CtorchScheduler.h"  // ct::detail::set_in_backward（DEBT-NEW-7 H2 fix）
 #include "../../include/ThreadPool.h"
 #include "../../include/Arena.h"
 #include "../../include/AutoGrad.h"
@@ -129,6 +130,17 @@ void ComputeCore::addReadyNode(std::shared_ptr<Node> node) {
 }
 
 void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
+    // DEBT-NEW-7 H2 修复:在 backward 期间标记 in_backward=true，
+    // 调度器的 inAutogradScope guard 借此识别反向传播路径（其 matmul 输入
+    // 通常 requires_grad=false,如 x.T @ grad），跳过 c3 单 kernel 注入。
+    // RAII 模式：函数出口自动清除 flag，即使中途抛异常。
+    bool prev_in_backward = ct::detail::g_in_backward();
+    ct::detail::set_in_backward(true);
+    struct FlagGuard {
+        bool prev;
+        ~FlagGuard() { ct::detail::set_in_backward(prev); }
+    } guard{prev_in_backward};
+
     bool original_enable_grad = AutoGrad::EnableGrad;
     AutoGrad::EnableGrad = false;
 

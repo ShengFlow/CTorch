@@ -304,6 +304,7 @@ public:
     std::vector<std::future<void>>& compile_futures();
 private:
     PGOManager() = default;
+    ~PGOManager() { shutdown(); }  // RAII：析构时自动等待后台编译完成
 
     mutable std::mutex mutex_;
     // entries_ 持有 shared_ptr 以保持 kernel 存活（类似 C3Engine cache 的语义）。

@@ -36,6 +36,7 @@ extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
 #include <unordered_set>
 #include <limits>
 #include <map>
+#include <mutex>
 #include "Ctools.h"
 
 // ======================= 前向声明 =======================
@@ -59,6 +60,12 @@ class Node;
  *          例如：Tensor(ShapeTag{}, {3, 4}) 创建一个 3x4 的张量。
  */
 struct ShapeTag {};
+
+/// @brief 占位符标签，用于创建形状正确但无数据存储的占位张量
+struct PlaceholderTag {};
+
+// 前向声明：惰性物化器，完整定义见本文件末尾（class Tensor 之后）
+class LazyMaterializer;
 
 /**
  * @brief 矩阵乘法函数
@@ -122,6 +129,16 @@ class Tensor {
      */
     Storage _storage;
 
+    /**
+     * @var _lazy
+     * @brief 惰性物化器（LazyBox）。
+     * @details 当张量是区域融合预走的占位结果（空 storage）时，携带一个物化闭包。
+     *          首次通过 data_read() 访问时触发物化，按需重算真实中间值，
+     *          保证 autograd 后向与用户读取都能拿到正确数据。
+     *          非占位张量该成员为空。
+     */
+    mutable std::shared_ptr<LazyMaterializer> _lazy;
+
     // ======================= 内部辅助函数 =======================
 
     /**
@@ -148,6 +165,14 @@ class Tensor {
      * @return 存储中的一维索引
      */
     [[nodiscard]] size_t computeStorageIndex(std::initializer_list<size_t> indices) const;
+
+    /**
+     * @brief 触发惰性物化，返回真实中间值张量（定义在 Tensor.cpp）
+     * @details 仅当 _lazy 非空且 _storage 为空时由 data_read() 调用。
+     *          物化结果缓存在物化器内，返回引用保证 data_read() 返回的指针在
+     *          物化器存活期间始终有效。
+     */
+    Tensor &materializeLazy_() const;
 
     /**
      * @brief 检查数据类型是否匹配
@@ -318,6 +343,22 @@ class Tensor {
             zero();
     }
 
+    /// @brief 占位符构造函数：创建形状正确但无数据存储的占位张量
+    /// @param tag 占位符标签
+    /// @param shape 张量形状
+    /// @param dtype 数据类型
+    /// @param device 设备类型
+    Tensor(PlaceholderTag /*tag*/, const std::vector<size_t> &shape,
+           DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU)
+        : tensor_id_(global_tensor_id++),
+          _storage_offset(0), _device(device), _dtype(dtype) {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        _autograd_meta._node.reset();
+        _shape = shape;
+        computeStrides();
+        // _storage stays default (empty) - no data allocation
+    }
+
     /**
      * @brief 1D张量构造函数
      * @param size 张量大小
@@ -349,7 +390,8 @@ class Tensor {
           _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage),
-          _shape(other._shape) {
+          _shape(other._shape),
+          _lazy(other._lazy) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
         _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
@@ -379,6 +421,7 @@ class Tensor {
             _device           = other._device;
             _dtype            = other._dtype;
             _storage          = other._storage;
+            _lazy             = other._lazy;
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
             _autograd_meta._node.reset();
             _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
@@ -399,7 +442,8 @@ class Tensor {
         : _autograd_meta(std::move(other._autograd_meta)), tensor_id_(other.tensor_id_),
           _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)), _shape(std::move(other._shape)) {
+          _storage(std::move(other._storage)), _shape(std::move(other._shape)),
+          _lazy(std::move(other._lazy)) {
         _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
         other.tensor_id_ = 0;
         other._shape.clear();
@@ -422,6 +466,7 @@ class Tensor {
             _device           = other._device;
             _dtype            = other._dtype;
             _storage          = std::move(other._storage);
+            _lazy             = std::move(other._lazy);
             _autograd_meta    = std::move(other._autograd_meta);
             _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
 
@@ -514,6 +559,20 @@ class Tensor {
     [[nodiscard]] const Storage &storage() const { return _storage; }
 
     /**
+     * @brief 判断是否为惰性占位张量（LazyBox）
+     * @return true 表示该张量是区域融合预走产生的占位结果，数据未物化
+     * @note 与 storage().empty() 不同的地方：懒占位张量在首次 data_read() 时会自动物化，
+     *      因此不能用 storage().empty() 判断（物化后 storage 非空）。此方法不触发物化。
+     */
+    [[nodiscard]] bool isLazyBox() const noexcept { return _lazy != nullptr; }
+
+    /**
+     * @brief 为懒占位张量设置物化闭包（仅区域融合预走使用）
+     * @param m 物化器，携带按需重算真实中间值的闭包
+     */
+    void setLazyMaterializer(std::shared_ptr<LazyMaterializer> m) { _lazy = std::move(m); }
+
+    /**
      * @brief 获取张量的存储偏移量
      * @return 存储中的起始偏移量
      */
@@ -560,6 +619,13 @@ class Tensor {
 
     // ======================= 数据访问 =======================
 
+#ifdef CT_PROFILE_ACCESS
+    // 数据访问次数统计（仅在 CT_PROFILE_ACCESS 定义时启用，用于反事实基线测量）。
+    // 采用 relaxed 原子计数：不影响生产逻辑，仅用于统计 Eager 路径的读写分布。
+    inline static std::atomic<uint64_t> g_data_read_count{0};
+    inline static std::atomic<uint64_t> g_data_write_count{0};
+#endif
+
     /**
      * @brief 获取只读原始数据指针（MPS 路径会显式同步）
      * @tparam T 数据类型
@@ -567,6 +633,17 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> [[nodiscard]] const T *data_read() const {
+#ifdef CT_PROFILE_ACCESS
+        g_data_read_count.fetch_add(1, std::memory_order_relaxed);
+#endif
+        // LazyBox 物化收敛点：占位张量首次被读取时，按需重算真实中间值。
+        if (_storage.empty() && _lazy) {
+            Tensor& real = materializeLazy_();
+            if (real.storage().empty()) {
+                return nullptr;
+            }
+            return real.data_read<T>();
+        }
         if (_storage.empty()) {
             return nullptr;
         }
@@ -591,6 +668,9 @@ class Tensor {
      * @throw std::runtime_error 如果数据类型不匹配或存储偏移量无效
      */
     template <typename T> T *data_write() {
+#ifdef CT_PROFILE_ACCESS
+        g_data_write_count.fetch_add(1, std::memory_order_relaxed);
+#endif
         if (_storage.empty()) {
             return nullptr;
         }
@@ -1442,5 +1522,42 @@ Tensor matMul(const Tensor &a, const Tensor &b);
  * @return 广播结果
  */
 BroadCastResult broadCast(const Tensor &a, const Tensor &tensor2);
+
+// ======================= 惰性物化器（LazyBox） =======================
+
+/**
+ * @class LazyMaterializer
+ * @brief 惰性物化器：封装区域融合预走占位张量的物化闭包。
+ * @details 占位张量（空 storage）携带一个物化闭包，首次通过 data_read() 访问时，
+ *          触发闭包按需重算真实中间值。物化结果缓存在本对象内（幂等），
+ *          返回的引用保证 data_read() 拿到的指针在物化器存活期间始终有效。
+ *          线程安全：物化闭包的触发与缓存受互斥锁保护。
+ */
+class LazyMaterializer {
+public:
+    /// 物化闭包：返回被物化张量的真实中间值
+    using MaterializeFn = std::function<Tensor()>;
+
+    explicit LazyMaterializer(MaterializeFn fn) : fn_(std::move(fn)) {}
+
+    /**
+     * @brief 触发物化（幂等），返回真实中间值张量的引用
+     * @return 物化结果的引用，缓存在本对象内
+     */
+    Tensor &materialize() {
+        std::lock_guard<std::mutex> lk(mutex_);
+        if (!materialized_) {
+            result_ = fn_();
+            materialized_ = true;
+        }
+        return result_;
+    }
+
+private:
+    MaterializeFn fn_;          ///< 物化闭包
+    mutable std::mutex mutex_;  ///< 保护物化状态
+    bool materialized_ = false; ///< 是否已物化
+    Tensor result_;             ///< 物化结果缓存
+};
 
 #endif // TENSOR_H

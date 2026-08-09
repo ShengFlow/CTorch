@@ -30,6 +30,7 @@ enum class GraphPatternType : uint8_t {
     Activation,          ///< 线性层 + 激活函数（ReLU/Sigmoid/Tanh）
     BiasAdd,             ///< 偏置加法（Add 的一侧为偏置张量）
     FCWithActivation,    ///< FullyConnected + Activation
+    ElementWiseChain,    ///< 连续逐元素操作链（≥2 个纯逐元素 op）
     Unknown              ///< 未识别模式
 };
 
@@ -40,6 +41,7 @@ inline const char* patternTypeName(GraphPatternType type) {
         case GraphPatternType::Activation:       return "Activation";
         case GraphPatternType::BiasAdd:          return "BiasAdd";
         case GraphPatternType::FCWithActivation: return "FCWithActivation";
+        case GraphPatternType::ElementWiseChain: return "ElementWiseChain";
         default:                                 return "Unknown";
     }
 }
@@ -164,6 +166,13 @@ public:
      * @return 匹配到的 FCWithActivation 模式列表
      */
     std::vector<PatternMatch> matchFCWithActivation(const Graph& graph) const;
+
+    /**
+     * @brief 匹配 ElementWiseChain 模式：连续逐元素操作链
+     * @param graph 输入计算图
+     * @return 匹配到的逐元素链模式列表
+     */
+    std::vector<PatternMatch> matchElementWiseChain(const Graph& graph) const;
 
     /**
      * @brief 获取图的模式匹配统计数据

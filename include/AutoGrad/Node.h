@@ -122,6 +122,9 @@ public:
     /** @brief 获取上游节点列表 */
     [[nodiscard]] std::vector<std::shared_ptr<Node>> getUpStreamNodes() const;
 
+    /** @brief 获取输入张量列表 */
+    [[nodiscard]] const std::vector<Tensor>& getInputs() const { return _inputs; }
+
     /** @brief 检查是否需要加速计算 */
     [[nodiscard]] bool requireAccelerate() const;
 
