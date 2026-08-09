@@ -229,9 +229,14 @@ public:
 
             auto& entry = entries_[key];
             entry.call_count++;
+            // [Dev] v0.5.2+ (2026-08-09): 2 个 fprintf debug log 包到 #ifdef CT_DEBUG
+            // release build (NDEBUG) 自动从 CT_DEBUG 推导 OFF,0 成本
+            // 实测每个 fprintf 含 stderr flush 1-2us,53848 dispatch/epoch 省 ~200ms/epoch
+            #ifdef CT_DEBUG
             fprintf(stderr, "[DBG] recordCall ENTRY op=%d shape_size=%zu cc=%zu compiling=%d pending=%zu\n",
                     (int)op_type, shape.size(), entry.call_count, (int)entry.compiling,
                     pending_compiles_.load(std::memory_order_relaxed));
+            #endif
 
             // 检查是否在冷却期
             auto now = std::chrono::steady_clock::now();
@@ -255,8 +260,10 @@ public:
                 pending_compiles_.fetch_add(1, std::memory_order_relaxed);
                 compilations_triggered_.fetch_add(1, std::memory_order_relaxed);
                 should_compile = true;
+                #ifdef CT_DEBUG
                 fprintf(stderr, "[DBG] recordCall TRIGGER op=%d shape_size=%zu cc=%zu\n",
                         (int)op_type, shape.size(), entry.call_count);
+                #endif
             }
         } // mutex_ 释放
 
