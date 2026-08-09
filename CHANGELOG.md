@@ -5,6 +5,112 @@
 
 ---
 
+## [v0.5.1] — 2026-08-09
+
+> **P0 修复版本**：修复 DEBT-NEW-7（c3 单 kernel hot-path 破坏 MNIST 训练准确率 76-93% → 恢复 97.18%）。
+> 同时集成 region fusion 完整设计的基础设施（LazyMaterializer、shape-aware key、backward graph IR 节点），作为 v0.6.0 区域融合加速的前置。
+
+### 修复
+
+- **DEBT-NEW-7 · H2 缺陷（c3 单 kernel 训练期间破坏精度，P0）**：c3 单 kernel 在 forward + backward 期间渐进注入形成 Eager→JIT 混合轨迹，backward 阶段 matmul（如 `x.T @ d_z1`）输入均无 `requires_grad`，绕过 `inAutogradScope` guard 跑出错的 MLIR 编译 kernel（数值与 cblas_sgemm 不等），输出全 0 污染整个训练
+  - **根因**：`CtorchScheduler.h::inAutogradScope` guard 完整实现但 `g_in_backward` flag 从未被 `ComputeCore::backward()` 入口/出口切换，永远为 false，backward 期间 guard 完全失效
+  - **修复**：`src/AutoGrad/ComputeCore.cpp::backward()` 入口加 `set_in_backward(true)`，出口 RAII 自动清除（异常安全），guard 现在 forward+backward 都正确激活
+  - **验证**：5 轮 MNIST 训练全部 97.1755% acc / 0.0977 loss，stdev=0（c3 off 5 轮 baseline 同样 deterministic），c3 single kernel hit=0
+- **DEBT-NEW-4 · `buildFusedEpilogue` bias 索引越界**：MLIR fused matmul epilogue bias 加载用 `idx_i64` 0..M*N-1 直接索引 1D `bias[N]`，越界读取随机内存。修复：`N_for_bias` 参数 + caller 传 `mm_N`，改为 `idx_i64 % N_for_bias`（commit `c3e18fe`，v0.5.0 已合并）
+- **DEBT-NEW-5 · HotPathManager MatMul 强制 Handwritten backend**：`submitCompileAsync` 编译 `op::MatMul` 时强制 `opts.backend = C3Backend::Handwritten`（cblas_sgemm wrapper），避免 MLIR 编译 matmul 与 cblas_sgemm 数值不等价（commit `292cdaa`，v0.5.0 已合并）
+- **DEBT-NEW-5 root cause #2 · MERGEGRAPH ID CONFLICT**：`Graph::mergeGraph(other, remap, skip_input_placeholders=true)` 实现，源图 input placeholder 不再被错误复制到本图覆盖已分配节点（v0.5.0 之前 defer，现已实现）
+- **exp256_ps IEEE 754 偏置缺失**：`SIMDMath.cpp` `exp256_ps` 内 `__m256_slli_epi32(k_i, 23)` 漏了 +127 偏置，结果差 2^127 倍。修复：先 `_mm256_add_epi32(k_i, _mm256_set1_epi32(127))` 再 shift
+- **Softmax/CrossEntropy SIMD kernel x-m vexp 顺序错误**：原版先 `vexp(x)` 再减 m，丢失 softmax 数值稳定 trick（应先 `tmp = x - m` 再 `vexp(tmp)`）。修复后数值稳定路径恢复
+- **Tensor::sum() 缺 AutoGrad Node**（P2）：原实现裸 `for` 循环，`loss.sum()` 后 `L.getRelatedNode()` 返回 nullptr → `AutoGrad::backward(nullptr)` SIGSEGV。修复：改用 `dot(ones_1d)` 实现，自动挂 `DotNode`（O(N) 计算量不变，向后兼容）
+
+### 新增
+
+- **`LazyMaterializer` 惰性物化器**（DEBT-NEW-7 配套基础设施）：`Tensor` 新增 `PlaceholderTag` 构造函数 + `setLazyMaterializer()` + `isLazyBox()` + `materializeLazy_()`，region fusion 预走占位张量首次 `data_read()` 时按需重算真实中间值，避免 autograd 后向读到空 storage
+- **C3KernelRegistry shape-aware key**：原 `KeyType = (op, dev)` 二元组，改为 `(op, dev, shape_hash)` 三元组，shape_hash = FNV-1a hash(lhs_shape) ⊕ hash(rhs_shape)，彻底解决多形状核覆盖（H2 缺陷的同源变体）
+- **C3KernelRegistry fused_entries_/backward_entries_ 子表**：原 `entries_` map 拆分为单 kernel / 融合 kernel / 反向 kernel 三类，避免不同语义核互相覆盖
+- **`validateOutputShape` 自动卸载**（C3KernelRegistry.h）：C3 kernel 执行后验证输出形状与注册时记录的预期形状一致，不匹配则 `uninstall` 错核 + 记 WARN log（防御性兜底）
+- **Backward graph IR 新节点**（Graph.h）：`GtNode`（mask 生成）/ `SumReduceNode`（broadcast 反向）/ `TransposeNode`（MatMul backward）/ `ExpNode`（Sigmoid backward）/ `LogNode`（Log backward），与既有节点一起覆盖完整 backward 图表达
+- **`FusedNode::op_node_ids` 字段**：DAG 内部节点引用追踪，简化 kernel 生成时上下游映射
+- **`Graph::mergeGraph` 三参重载**：`skip_input_placeholders=true` 时跳过源图 input 占位节点，仅靠 `remap_input_ids` 重映射
+- **CtorchScheduler region fusion 状态机**（CtorchScheduler.h）：`region_trace_` / `prewalk_state_` / `matched_region_` / `cached_region_` 字段 + `tryRegionDispatch` / `computeOutputShape` / `executeEagerFallback` / `buildLazyMaterializer` 方法，region fusion 完整实现的接口骨架
+- **`inAutogradScope` guard**（CtorchScheduler.h）：`g_in_backward() || a_grad || b_grad` 联合判定，DEBT-NEW-7 H2 修复的核心机制
+- **C3 dispatch 诊断开关**：`c3SingleKernelDisabled()` / `c3OpDisabled(int)` 支持运行时 `C3_DISABLE_SINGLE_KERNEL=1` / `C3_DISABLE_OP=<ids>` 环境变量
+- **C3 单 kernel cache bypass 计数器**（DEBT-NEW-7 状态可视化）：`C3KernelRegistry::Stats::bypass_count` + `recordBypass()` + C3-STAT 增 `bypass` 字段，验证 H2 fix 是否在工作的关键信号
+  - 训练期间预期：`bypass >> 0, hit = miss = 0`（guard 工作中）
+  - 推理期间预期：`bypass = 0, hit > 0`（c3 加速生效）
+
+### 变更
+
+- **C3KernelRegistry::KeyType** 从 `std::pair<size_t, size_t>` 改为 `struct {first, second, third}` 自定义结构 + `KeyHash` 组合哈希
+- **`uninstall(op, dev)`** 由只删首个匹配改为遍历删全部匹配（uninstall_count 累加），避免 dev/op 多个变体残留
+- **PGOManager RAII 析构**：`~PGOManager() { shutdown(); }` 自动等待后台编译完成
+- **AOTCache 全局开关**：`isEnabled()` 受 `aotCacheEnabled()` 全局约束，编译期 `CT_C3_DISABLE_AOT` 宏或运行时 `C3_DISABLE_AOT=1` 均强制禁用
+- **Tensor `data_read`/`data_write` 访问计数**：`CT_PROFILE_ACCESS` 宏启用时统计 Eager 路径读写分布（反事实基线测量用）
+- **test_c3_compile_timeout 10ms → 1ms**：原 10ms 在 Apple Silicon + 优化 MLIR 下不可靠（编译 ~8ms），改为 1ms 必触发熔断
+
+### 新增 API
+
+| API | 说明 |
+|---|---|
+| `Tensor(PlaceholderTag, shape, dtype, device)` | 创建形状正确但无数据存储的占位张量 |
+| `Tensor::isLazyBox()` | 判断是否为惰性占位张量（不触发物化） |
+| `Tensor::setLazyMaterializer(m)` | 为占位张量设置物化闭包 |
+| `C3KernelRegistry::recordBypass()` | 记录一次 guard bypass（H2 fix 计数器） |
+| `C3KernelRegistry::Stats::bypass_count` | 读取 bypass 次数 |
+| `C3KernelRegistry::installFused(kernel, op, shapes)` | 安装融合 kernel（region fusion backend） |
+| `C3KernelRegistry::tryExecuteFused(op, inputs)` | 尝试执行融合 kernel（stub：返回 nullopt） |
+| `C3KernelRegistry::installBackward(key, kernel, ...)` | 安装 backward kernel |
+| `C3KernelRegistry::tryExecuteBackward(key, grad, inputs)` | 尝试执行 backward kernel（stub：返回 nullopt） |
+| `C3KernelRegistry::findFusedKernelFor{ForSequence,ForFirstOp}(...)` | 模糊匹配融合 kernel（stub：返回 nullopt） |
+| `C3KernelRegistry::executeFusedWithInputs(kernel, inputs, shapes)` | 用原始输入执行融合 kernel（stub：fallback eager） |
+| `Graph::mergeGraph(other, remap)` / `mergeGraph(other, remap, skip_input_placeholders)` | 合并图（DEBT-NEW-5 root cause #2 修复） |
+| `CtorchScheduler::resetRegionFusion()` | 重置 region fusion 状态（测试场景） |
+| `ct::detail::c3SingleKernelDisabled()` / `c3OpDisabled(int)` / `inAutogradScope(a, b)` | C3 dispatch 诊断 hook |
+| `ct::detail::g_in_backward()` / `set_in_backward(bool)` | thread_local backward flag，ComputeCore::backward 入口/出口调用 |
+
+### 文档
+
+- [DEBT-NEW-7-H2-fix-5run-verification-1152.md](~/skills/work/reports/2026-08-09/c3-h2-fix-5run-verification-1152.md)
+- [DEBT-NEW-7 H2 fix 修复报告](~/skills/work/reports/2026-08-09/c3-debt-new7-h2-guard-fix-1100.md)
+- [P0 code review](~/skills/work/reports/2026-08-08/code-review-c3-jit-1445.md)
+- [P0-2 EngineState 修复报告](~/skills/work/reports/2026-08-08/c3-p0-engine-state-fix-2155.md)
+- [DEBT-NEW-4 root cause + 3 fix 方案](~/skills/work/reports/2026-08-08/c3-ml-precision-root-cause-buildfusedepilogue-2250.md)
+- [DEBT-NEW-4 ablation](~/skills/work/reports/2026-08-08/c3-mnist-precision-debt-new4-2230.md)
+
+### 测试
+
+- `test_c3_mnist_train`：5 轮全部 97.1755% acc / 0.0977 loss，stdev=0（DEBT-NEW-7 验证）
+- `test_c3_mnist_step`：4 个 backend（MLIR/MLIR-fused/Handwritten/Handwritten-fused）全部 max_diff=0
+- `test_c3_backward`：8 iter 全部 max_diff=0，fused backward path OK
+- `test_c3_compile_merged`：10/10 PASS
+- `test_c3_compile_timeout`：14/14 PASS（1ms timeout 熔断）
+
+### 已知限制 / 后续工作
+
+- **c3 on 训练期间 single kernel 实际被全 bypass**：H2 fix 让 c3 single kernel 在 forward+backward 都跳过，行为退化为 c3 off 状态。这是 H2 fix 的预期行为（牺牲性能换精度），等 region fusion 完整实现后 region fusion 接管整条 op 序列，可恢复 c3 加速
+- **region fusion backend stub 状态**：`C3KernelRegistry::tryExecuteFused` / `executeFusedWithInputs` / `tryExecuteBackward` / `findFusedKernelFor*` 当前是 stub（return nullopt），C3 backward fusion 路径需在 v0.6.0 完成真实现
+- **C3 backward graph IR 节点**（GtNode/SumReduceNode/TransposeNode/ExpNode/LogNode）的 MLIR kernel 生成（`MLIRKernelGen.cpp::buildMultiNodeMLIR` 分发）需要分别补全，v0.6.0 工作
+- **DEBT-NEW-6 · MNIST 5 轮 stability baseline**：已建立（5×97.18% deterministic），未来所有 C3 修改必须先 5 轮验证不破坏 baseline
+- **未提交 untracked 文件**：JITCache.cpp / RegionFusionRegistry.cpp / RollingHash.cpp / bench_*.cpp / poc_*.cpp / test_*.cpp 等已被 build 使用但未 commit，v0.5.x 后续版本补 commit
+
+### 全量回归
+
+| 测试套件 | 用例数 | 状态 |
+|---|---|---|
+| test_c3_mnist_train | 1（5 轮 median 验证） | ✅ 97.1755% × 5 |
+| test_c3_mnist_step | 4 backend | ✅ max_diff=0 |
+| test_c3_backward | 8 iter | ✅ max_diff=0 |
+| test_c3_compile_merged | 10 | ✅ |
+| test_c3_compile_timeout | 14 | ✅ |
+| test_c3_compile_error | 11 | ✅ |
+| test_c3_aot_cache | 16 | ✅ |
+| test_c3_pgo_deopt | 7 | ✅ |
+| test_c3_graph | 108 | ✅ |
+| test_graph_merger | 8 | ✅ |
+| **C3 核心回归** | **~190+** | **✅** |
+
+---
+
 ## [v0.5.0] — 2026-08-03
 
 ### 新增
