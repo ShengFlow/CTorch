@@ -448,6 +448,20 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         return std::nullopt;
     }
 
+    // M1 1.3 (2026-08-09): FusionCostModel 接到 tryRegionDispatch
+    // 调度前 ROI 评估: 二次验证 match->cost.worthwhile, sanity check + 可观察性
+    // 理论上 installWithCost 已 gating (entry.active = worth_it), 此分支理论上不触发,
+    // 但某些路径走 install() 绕过 cost gating, 这里是最后一道防线
+    // (O(0) 读字段 + 1 atomic, 不会拖慢 hot path)
+#ifdef CT_PROFILE_PERF
+    if (!match->cost.worthwhile) {
+        ct::c3::C3KernelRegistry::getInstance().recordPerfRegionCostRejected();
+    }
+#endif
+    if (!match->cost.worthwhile) {
+        return std::nullopt;
+    }
+
     // 匹配成功!需要从 prewalk_cache_ 里取最近 (match.len - 1) 个 dispatch 的 external inputs
     size_t needed = match->len - 1;
     if (prewalk_cache_.size() < needed) {

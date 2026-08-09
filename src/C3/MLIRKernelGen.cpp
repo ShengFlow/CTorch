@@ -202,6 +202,64 @@ static mlir::LLVM::LLVMFuncOp getOrDeclareExpf(mlir::OpBuilder& builder, mlir::L
     return func;
 }
 
+/// DEBT-NEW-7 v0.5.1+: 在 module 中声明/查找 ct_simd_* 批量函数（NEON/AVX 手动向量化）
+/// 跟 getOrDeclareExpf 同样模式, 但用 C ABI void f(const float* in, float* out, size_t n)
+/// 用于 buildSigmoid/buildTanh/buildExp/buildLog 调批量实现代替逐元素 expf
+/// 链接: SIMDWrapper.cpp 提供 ct_simd_vexp/vlog/vsigmoid/vtanh/vgelu 实现
+template <const char* SymbolName>
+static mlir::LLVM::LLVMFuncOp getOrDeclareCtSimdBatchFn(mlir::OpBuilder& builder, mlir::Location loc) {
+    auto* ctx = builder.getContext();
+    auto module_op = builder.getBlock()->getParentOp()->getParentOfType<mlir::ModuleOp>();
+    if (!module_op)
+        throw std::runtime_error(std::string("getOrDeclareCtSimdBatchFn: not inside a module (looking up ") + SymbolName + ")");
+    auto existing = module_op.lookupSymbol<mlir::LLVM::LLVMFuncOp>(SymbolName);
+    if (existing) return existing;
+
+    auto void_type = mlir::LLVM::LLVMVoidType::get(ctx);
+    auto i64_type = builder.getI64Type();
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(ctx);
+    auto fn_type = mlir::LLVM::LLVMFunctionType::get(void_type, {ptr_type, ptr_type, i64_type}, false);
+
+    auto saved_ip = builder.saveInsertionPoint();
+    builder.setInsertionPointToStart(module_op.getBody());
+    auto func = builder.create<mlir::LLVM::LLVMFuncOp>(loc, SymbolName, fn_type);
+    func.setVisibility(mlir::SymbolTable::Visibility::Private);
+    builder.restoreInsertionPoint(saved_ip);
+    return func;
+}
+
+// 模板实例化需要 char 字符串作为模板参数, 用 namespace 局部变量提供稳定地址
+namespace {
+    constexpr char kCtSimdVexp[]     = "ct_simd_vexp";
+    constexpr char kCtSimdVlog[]     = "ct_simd_vlog";
+    constexpr char kCtSimdVsigmoid[] = "ct_simd_vsigmoid";
+    constexpr char kCtSimdVtanh[]    = "ct_simd_vtanh";
+    constexpr char kCtSimdVgelu[]    = "ct_simd_vgelu";
+
+    /// M1 1.2 (2026-08-09): AutoTuner → MLIR tile 参数接通
+    /// thread_local cache 避免每次 module-build 都进 TuningState mutex 锁
+    /// (TuningState.get() 内部 std::lock_guard, 编译期虽然不是 hot path,
+    /// 但多线程并发编译会争抢; cache 让首线程 fetch 后其余线程 0 锁直读)
+    struct TileCache {
+        int64_t tile_m = 0;
+        int64_t tile_n = 0;
+        int64_t tile_k = 0;
+        bool fetched = false;
+    };
+
+    inline TileCache& currentTileCache() {
+        thread_local TileCache cache;
+        if (!cache.fetched) {
+            auto t = ct::c3::TuningState::instance().get();
+            cache.tile_m = static_cast<int64_t>(t.tile_m);
+            cache.tile_n = static_cast<int64_t>(t.tile_n);
+            cache.tile_k = static_cast<int64_t>(t.tile_k);
+            cache.fetched = true;
+        }
+        return cache;
+    }
+}
+
 /// 在 module 中声明或查找已有的 cblas_sgemm 外部函数
 static mlir::LLVM::LLVMFuncOp getOrDeclareSgemm(mlir::OpBuilder& builder, mlir::Location loc) {
     auto* ctx = builder.getContext();
@@ -685,48 +743,24 @@ static void buildReLU(mlir::OpBuilder& builder, mlir::Location loc,
 static void buildSigmoid(mlir::OpBuilder& builder, mlir::Location loc,
                          mlir::Value in, mlir::Value out, mlir::Value n,
                          int64_t known_numel = 0) {
-    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
-    auto f32 = builder.getF32Type();
-
-    buildLoop(builder, loc, n, known_numel,
-        [&](mlir::OpBuilder& b, mlir::Location loc, mlir::Value idx_i64) {
-            mlir::Value in_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
-            mlir::Value out_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
-
-            mlir::Value iv = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
-            // Sigmoid: 1.0 / (1.0 + exp(-x))
-            auto expf_func = getOrDeclareExpf(b, loc);
-            mlir::Value neg_x = b.create<mlir::arith::NegFOp>(loc, iv);
-            mlir::Value exp_x = b.create<mlir::LLVM::CallOp>(loc, expf_func, mlir::ValueRange{neg_x}).getResult();
-            mlir::Value one = mlir::arith::ConstantFloatOp::create(b, loc, f32, llvm::APFloat(1.0f));
-            mlir::Value denom = b.create<mlir::arith::AddFOp>(loc, one, exp_x);
-            mlir::Value rv = b.create<mlir::arith::DivFOp>(loc, one, denom);
-            b.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
-        });
+    // DEBT-NEW-7 v0.5.1+: 直接调 ct_simd_vsigmoid 批量实现 (NEON/AVX 向量化)
+    // 跟之前逐元素 expf 不同, ct_simd_vsigmoid 一次处理 4-8 个元素
+    // 调用约定: void ct_simd_vsigmoid(const float* in, float* out, size_t n)
+    auto i64_type = builder.getI64Type();
+    auto fn = getOrDeclareCtSimdBatchFn<kCtSimdVsigmoid>(builder, loc);
+    builder.create<mlir::LLVM::CallOp>(loc, fn, mlir::ValueRange{in, out, n});
+    (void)i64_type; // 保留 unused 引用 (模板实装可能不需要)
+    (void)known_numel; // 批量实现不依赖 known_numel
 }
 
 static void buildTanh(mlir::OpBuilder& builder, mlir::Location loc,
                       mlir::Value in, mlir::Value out, mlir::Value n,
                       int64_t known_numel = 0) {
-    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
-    auto f32 = builder.getF32Type();
-
-    buildLoop(builder, loc, n, known_numel,
-        [&](mlir::OpBuilder& b, mlir::Location loc, mlir::Value idx_i64) {
-            mlir::Value in_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
-            mlir::Value out_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
-
-            mlir::Value iv = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
-            // Tanh: (exp(x) - exp(-x)) / (exp(x) + exp(-x))
-            auto expf_func = getOrDeclareExpf(b, loc);
-            mlir::Value exp_x = b.create<mlir::LLVM::CallOp>(loc, expf_func, mlir::ValueRange{iv}).getResult();
-            mlir::Value neg_x = b.create<mlir::arith::NegFOp>(loc, iv);
-            mlir::Value exp_neg_x = b.create<mlir::LLVM::CallOp>(loc, expf_func, mlir::ValueRange{neg_x}).getResult();
-            mlir::Value num = b.create<mlir::arith::SubFOp>(loc, exp_x, exp_neg_x);
-            mlir::Value denom = b.create<mlir::arith::AddFOp>(loc, exp_x, exp_neg_x);
-            mlir::Value rv = b.create<mlir::arith::DivFOp>(loc, num, denom);
-            b.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
-        });
+    // DEBT-NEW-7 v0.5.1+: 直接调 ct_simd_vtanh 批量实现 (NEON/AVX 向量化)
+    // 调用约定: void ct_simd_vtanh(const float* in, float* out, size_t n)
+    auto fn = getOrDeclareCtSimdBatchFn<kCtSimdVtanh>(builder, loc);
+    builder.create<mlir::LLVM::CallOp>(loc, fn, mlir::ValueRange{in, out, n});
+    (void)known_numel; // 批量实现不依赖 known_numel
 }
 
 // ======================= 融合 Kernel 构建 =======================
@@ -1355,10 +1389,15 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
 
             // === 选择最佳 MatMul 策略 ===
             int64_t total_ops = matM * matK * matN;
+            // M1 1.2 (2026-08-09): 读 AutoTuner 调优结果替换写死的 kDefaultTileM/N
+            // 调优未跑 (tuned=false) 时 thread_local cache 持有 {0,0,0}, 落到默认 32/32
+            auto& tile = currentTileCache();
+            int64_t tile_m = (tile.tile_m > 0) ? tile.tile_m : kDefaultTileM;
+            int64_t tile_n = (tile.tile_n > 0) ? tile.tile_n : kDefaultTileN;
             // 仅在 M 和 N 都足够大时才使用 tiling（避免 N=1 时 tiling 空转）
             bool use_tiling = (total_ops >= kSmallMatMulThreshold &&
                                total_ops < kTiledMatMulThreshold &&
-                               matM >= kDefaultTileM && matN >= kDefaultTileN);
+                               matM >= tile_m && matN >= tile_n);
             if (total_ops < kSmallMatMulThreshold) {
                 // 小矩阵：使用无 tiling 的内联循环（带 epilogue 融合）
                 buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
@@ -1366,9 +1405,10 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                                              /*tile_m=*/0, /*tile_n=*/0);
             } else if (use_tiling) {
                 // 中矩阵：使用 2D tiling 的融合版本（改善缓存利用率）
+                // tile 来自 AutoTuner 调优 (M1 1.2 接通)
                 buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
                                              mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
-                                             kDefaultTileM, kDefaultTileN);
+                                             tile_m, tile_n);
             } else {
                 // 大矩阵：委托 cblas_sgemm（BLAS 对大型矩阵有最优实现）
                 // epilogue（bias + activation）在 sgemm 之后单独执行

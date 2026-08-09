@@ -1300,7 +1300,6 @@ std::optional<Tensor> C3BackwardCapture::tryExecuteFusedBackward(
                 {
                     std::unique_lock<std::shared_mutex> ulock(intercepted_mutex_);
                     auto it2 = pending_intercepted_.find(node);
-                    #ifdef CT_DEBUG
                     if (it2 != pending_intercepted_.end() && it2->second.first == current_type) {
                         pending_intercepted_.erase(it2);
                     }
@@ -1313,10 +1312,12 @@ std::optional<Tensor> C3BackwardCapture::tryExecuteFusedBackward(
                 return intercepted;
             } else {
                 // 地址复用但 type 不符 → 清理旧 entry
+                #ifdef CT_DEBUG
                 std::cerr << "[DBG-INTERCEPT-TYPEMISMATCH] node_ptr=" << node
                           << " stored_type=" << it->second.first
                           << " current_type=" << typeid(*node).name()
                           << " → ERASED" << std::endl;
+                #endif
                 // 读锁下不能 erase，先记录后处理
                 lock.unlock();
                 {
@@ -1327,7 +1328,6 @@ std::optional<Tensor> C3BackwardCapture::tryExecuteFusedBackward(
                     }
                 }
             }
-                    #endif
         }
     }
 

@@ -366,6 +366,11 @@ public:
         uint64_t region_match_count = 0;    ///< region hit 次数(同 fused_hit_count)
         uint64_t c3_single_invoke_count = 0;///< c3 single kernel hit 次数
         uint64_t eager_invoke_count = 0;    ///< eager path 调用次数
+        // M1 1.3 (2026-08-09): FusionCostModel ROI 评估可观察性
+        // tryRegionDispatch 在 match 成功后读 match->cost.worthwhile 二次验证
+        // 不值得 (worthwhile=false) 计数器 +1,理论上 install 端 cost gating 已过滤,
+        // 此 counter 是 sanity check + perf 阶段 ROI 分布观测
+        uint64_t region_cost_rejected_count = 0; ///< match 成功但 cost.worthwhile=false 拒绝次数
     };
 
     /**
@@ -399,6 +404,14 @@ public:
         eager_invoke_ns_.fetch_add(ns, std::memory_order_relaxed);
         eager_invoke_count_.fetch_add(1, std::memory_order_relaxed);
     }
+    // M1 1.3 (2026-08-09): region fusion ROI 评估可观察性
+    // tryRegionDispatch 在 match 成功后调用,记录"match 成功但 cost model 拒绝"的次数
+    // (理论上 install 端 cost.worthwhile gating 已过滤掉, 此 counter 应为 0;
+    //  非 0 表示 registry 端 install 路径未走 installWithCost 走 install 绕过 gating,
+    //  或 entry 后续被外部改过 cost 字段)
+    void recordPerfRegionCostRejected() {
+        region_cost_rejected_count_.fetch_add(1, std::memory_order_relaxed);
+    }
 
     Stats getStats() const {
         Stats s;
@@ -416,6 +429,7 @@ public:
         s.region_match_count = region_match_count_.load(std::memory_order_relaxed);
         s.c3_single_invoke_count = c3_single_invoke_count_.load(std::memory_order_relaxed);
         s.eager_invoke_count = eager_invoke_count_.load(std::memory_order_relaxed);
+        s.region_cost_rejected_count = region_cost_rejected_count_.load(std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             s.active_entries = entries_.size();
@@ -699,6 +713,8 @@ private:
     std::atomic<uint64_t> region_match_count_{0};
     std::atomic<uint64_t> c3_single_invoke_count_{0};
     std::atomic<uint64_t> eager_invoke_count_{0};
+    // M1 1.3 (2026-08-09): ROI 评估可观察性 counter
+    std::atomic<uint64_t> region_cost_rejected_count_{0};
 };
 
 } // namespace c3

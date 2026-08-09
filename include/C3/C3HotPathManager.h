@@ -32,6 +32,7 @@
 #include "C3/C3Engine.h"
 #include "C3/Graph.h"
 #include "C3/RegionFusion.h"
+#include "C3/C3Config.h"
 
 #include <atomic>
 #include <chrono>
@@ -185,6 +186,14 @@ public:
      */
     void recordCall(op op_type, DeviceType dev, const std::vector<size_t>& lhs_shape,
                     const std::vector<size_t>& rhs_shape = {}) {
+        // M1 1.4 (2026-08-09): 热路径检测总开关短路
+        // hotPathTrackingEnabled() 关闭时 (CT_C3_DISABLE_HOTPATH 编译宏
+        // 或 C3_DISABLE_HOTPATH=1 运行时 env) recordCall 直接 O(1) 退出,
+        // 跳过 fprintf debug log / 双重 mutex / RingBuffer 写 / 编译触发
+        // (C3Config.h 的 hotPathTrackingEnabled() 自身有 static cache,
+        //  第一次调用后是 O(1) 函数返回, 0 额外开销)
+        if (!ct::c3::hotPathTrackingEnabled()) return;
+
         calls_tracked_.fetch_add(1, std::memory_order_relaxed);
 
         if (dev == DeviceType::kMPS) return; // MPS 暂不纳入 C3 编译
