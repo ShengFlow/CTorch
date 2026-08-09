@@ -1017,7 +1017,17 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
                << "    }\n";
         }
         else {
-            ss << "    // unsupported op type " << op.index() << "\n";
+            // [Fix 2026-08-09 用户审查 P0]: 之前 L1020 '// unsupported op type {op.index()}'
+            // 只写注释, 不生成代码 → 静默跳过, 跟 MLIRKernelGen #2 同源 bug。
+            // 真实例子: c3 bw MatMul|in:0 graph 含 TransposeNode (buildMatMulBackwardGraph L671),
+            // HandwrittenKernelGen 静默跳过 → c3 kernel 实际是 grad @ B (不转置), 数值错 → 5d 崩。
+            // 改: 显式 throw, 强制 fallback 走 eager 而非 c3 bw 路径
+            const std::string op_name = std::visit(
+                [](const auto& n) -> std::string { return typeid(n).name(); },
+                op);
+            throw std::runtime_error(
+                "HandwrittenKernelGen: unsupported op in multi-node graph: " + op_name +
+                " (M2 范畴 v0.5.3+ 实装, TransposeNode 当前是 c3 bw MatMul blocker)");
         }
     }
 

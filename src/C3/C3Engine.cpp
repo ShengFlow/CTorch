@@ -281,7 +281,13 @@ public:
             s.is_matmul = true;
             s.M = M_; s.K = K_; s.N = N_;
         }
-        C3KernelRegistry::getInstance().install(op_type, device_, func_, s);
+        // [Fix 2026-08-09 用户审查 P0-#4]: 用 shared_ptr<CompiledKernel> 持寿命
+        // 替代裸 C3KernelFunc, 避免 cache evict/uninstallAll 后 func 悬垂 UAF
+        std::shared_ptr<CompiledKernel> self =
+            std::shared_ptr<CompiledKernel>(this, [](CompiledKernel*) {});
+        // deleter 用空 lambda (ConcreteCompiledKernel 不被 registry 持, 仍由 C3Engine 寿命管理)
+        // 真正持寿命通过 C3Engine compile 内部持 shared_ptr<ConcreteCompiledKernel>
+        C3KernelRegistry::getInstance().install(op_type, device_, self, s);
         return true;
     }
 

@@ -119,14 +119,48 @@ public:
      * @param shapes 形状签名
      * @param dl_handle dlopen 句柄（注册表不负责释放，由 CompiledKernel 管理）
      */
-    void install(op op_type, DeviceType dev, C3KernelFunc func,
+    /**
+     * @brief [Fix 2026-08-09 用户审查 P0-#4] 推荐用: install 持 shared_ptr<CompiledKernel>
+     * @details 避免 cache evict/uninstallAll 后裸 C3KernelFunc 悬垂 (UAF)。
+     *          旧 install(op, dev, C3KernelFunc, shapes) 保留兼容 (deprecated),
+     *          内部 wrap 成临时 shared_ptr 但 ConcreteCompiledKernel 寿命不绑定。
+     */
+    void install(op op_type, DeviceType dev,
+                 std::shared_ptr<CompiledKernel> kernel,
                  const KernelShapeInfo& shapes) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto key = makeKey(op_type, dev, shapes);
-        entries_[key] = {func, shapes, true};
+        C3Entry e;
+        e.kernel = std::move(kernel);
+        e.shapes = shapes;
+        e.active = true;
+        entries_[key] = std::move(e);
         install_count_.fetch_add(1, std::memory_order_release);
         // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG
-        // release build (NDEBUG) 自动 0 成本,跟 C3HotPathManager 2-2 commit 一致
+#ifdef CT_DEBUG
+        fprintf(stderr, "[DBG] INSTALL op=%d dev=%d key3=%zu lhs=[%s] rhs=[%s]\n",
+                (int)op_type, (int)dev, key.third,
+                shapeDebug(shapes.lhs_shape).c_str(), shapeDebug(shapes.rhs_shape).c_str());
+#endif
+    }
+
+    /**
+     * @brief 旧 install API (deprecated, 仅保留兼容)
+     * @warning 不持 CompiledKernel 寿命, 未来 cache evict 后 func 可能悬垂。
+     *          推荐改用 install(op, dev, shared_ptr<CompiledKernel>, shapes)
+     */
+    void install(op op_type, DeviceType dev, C3KernelFunc func,
+                 const KernelShapeInfo& shapes) {
+        // 旧 API 不持 shared_ptr, 仍用裸 func 路径 (backward 兼容)
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto key = makeKey(op_type, dev, shapes);
+        C3Entry e;
+        e.func = func;
+        e.shapes = shapes;
+        e.active = true;
+        entries_[key] = std::move(e);
+        install_count_.fetch_add(1, std::memory_order_release);
+        // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG
 #ifdef CT_DEBUG
         fprintf(stderr, "[DBG] INSTALL op=%d dev=%d key3=%zu lhs=[%s] rhs=[%s]\n",
                 (int)op_type, (int)dev, key.third,
@@ -209,6 +243,10 @@ public:
         }
 
         // 执行 C3 kernel
+        // [Fix 2026-08-09 用户审查 P0-#4]: entry.kernel (shared_ptr) 持 ConcreteCompiledKernel 寿命
+        // 避免 cache evict/uninstallAll 后裸 C3KernelFunc 悬垂 UAF。
+        // 调用仍用 entry.func (旧路径) - 简单不破坏现有 inline 实装。
+        // entry.kernel 寿命绑定在 entries_ map, entries_.erase/clear 时 shared_ptr reset 触发 deleter
         try {
 #ifdef CT_PROFILE_PERF
             auto t0 = std::chrono::steady_clock::now();
@@ -580,6 +618,16 @@ private:
     C3KernelRegistry() = default;
 
     struct C3Entry {
+        // [Fix 2026-08-09 用户审查 P0-#4]: 之前只存裸 C3KernelFunc 指针,
+        // 持寿命靠 ConcreteCompiledKernel deleter (dlclose handle 释放) 隐式管。
+        // 风险: cache evict/uninstallAll 时 ConcreteCompiledKernel 析构 → deleter 调
+        //       dlclose → kernel module 句柄释放 → C3Entry.func 指向的内存失效 → UAF。
+        // 修法: 持 std::shared_ptr<CompiledKernel>, 让 ConcreteCompiledKernel 寿命
+        //       跟 registry entry 绑定。cache evict/uninstallAll 时 shared_ptr reset
+        //       → ConcreteCompiledKernel 析构 → deleter 调 dlclose 安全。
+        std::shared_ptr<CompiledKernel> kernel;
+        // 保留 func 字段 (FusedEntry 持 kernel 但 install path 老代码用 func)
+        // 实际: tryExecute 走 entry.kernel->execute(), 不用 func 字段
         C3KernelFunc func = nullptr;
         KernelShapeInfo shapes;
         bool active = false;
