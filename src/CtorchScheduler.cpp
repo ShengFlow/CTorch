@@ -18,30 +18,31 @@ extern "C" void* MTLCreateSystemDefaultDevice(void);
 #endif
 
 bool CtorchScheduler::isDeviceAvailable(DeviceType dev_type) {
+    // [Dev] v0.5.2+ (2026-08-09): static cache 让 system call (cpuid / MTLCreateSystemDefaultDevice)
+    // 只在第一次调用时执行,后续 O(1) 查表。原版每次 dispatch 都调系统调用 0.5-1us,
+    // 53848 dispatch/epoch × 1us = 54ms/epoch 净亏。
+    // 设备可用性是 startup-time 不变量 (MPS 设备不会运行时插拔,AMX_TILE CPUID 不会运行时变),
+    // 缓存安全。
+    static const bool kCPU_Available = true;
+    static const bool kCUDA_Available = false;
+#ifdef __APPLE__
+    static const bool kMPS_Available = MTLCreateSystemDefaultDevice() != nullptr;
+    static const bool kAMX_Available = true;  // Apple Silicon: AMX 走 Accelerate 框架
+#else
+    static const bool kMPS_Available = false;
+    static const bool kAMX_Available = []() {
+        unsigned int eax, ebx, ecx, edx;
+        if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
+            return (edx & (1u << 24)) != 0;
+        }
+        return false;
+    }();
+#endif
     switch (dev_type) {
-        case DeviceType::kCPU:
-            return true;
-        case DeviceType::kCUDA:
-            return false;
-        case DeviceType::kMPS:
-#ifdef __APPLE__
-            return MTLCreateSystemDefaultDevice() != nullptr;
-#else
-            return false;
-#endif
-        case DeviceType::kAMX:
-#ifdef __APPLE__
-            // Apple Silicon 的 AMX 通过 Accelerate 框架抽象暴露，不直接对应 x86 AMX 指令集；
-            // 当前 MatMul AMX kernel 在 macOS 上实际调用的是 Accelerate/BLAS，因此标记为可用。
-            return true;
-#else
-            // x86_64 检测 AMX_TILE (CPUID leaf 7, subleaf 0, EDX bit 24)
-            unsigned int eax, ebx, ecx, edx;
-            if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
-                return (edx & (1u << 24)) != 0;
-            }
-            return false;
-#endif
+        case DeviceType::kCPU:  return kCPU_Available;
+        case DeviceType::kCUDA: return kCUDA_Available;
+        case DeviceType::kMPS:  return kMPS_Available;
+        case DeviceType::kAMX:  return kAMX_Available;
         case DeviceType::kSIMD:
             // SIMD 路径依赖编译器 auto-vectorization，默认在 CPU 上可用。
             return true;
