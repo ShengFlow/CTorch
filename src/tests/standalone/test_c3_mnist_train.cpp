@@ -384,9 +384,9 @@ int main() {
         {
             auto s = c3::C3KernelRegistry::getInstance().getStats();
             auto hp = c3::C3HotPathManager::instance().getStats();
-            fprintf(stderr, "[C3-STAT] epoch=%d single_active=%zu fused=%zu hit=%zu miss=%zu bypass=%zu compiles=%zu tracked=%zu\n",
+            fprintf(stderr, "[C3-STAT] epoch=%d single_active=%zu fused=%zu hit=%zu miss=%zu bypass=%zu fused_hit=%zu compiles=%zu tracked=%zu\n",
                     epoch + 1, s.active_entries, s.fused_entries, s.hit_count, s.miss_count,
-                    s.bypass_count,
+                    s.bypass_count, s.fused_hit_count,
                     hp.compilations_triggered, hp.calls_tracked);
         }
 #endif

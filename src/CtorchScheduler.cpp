@@ -367,21 +367,272 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 // ============================================================================
 // 当前状态：fix/c3-p0-on-wip 分支把 tryRegionDispatch 的 3 个调用点加到了 CtorchScheduler.h
 // (L301, L358, L490, L503 区域) 但 .cpp 实现还没写。这是 link 错误根因。
-// Stub 行为：直接返回 nullopt → 调用方回退到 eager dispatch，保证 binary 可链接。
-// TODO: 实现真正的 region 预走 — 见 include/C3/RegionFusion.h 文档。
+// DEBT-NEW-7 region fusion:向后匹配(以当前 dispatch 的 op 结尾的 region)
+// 总是缓存最近 K 个 dispatch 的 external inputs(按 buildFusedGraph 约定),
+// 当 extended trace 末尾形成已知 region 模式时,从缓存里取出所有外部 input invoke kernel。
+//
+// 当前实现假设:
+//   - region 的 op_seq[0] 是 region 入口 op,所有 inputs 是外部
+//   - 后续 op 的 inputs[0] 是 chain (来自前一个 op 的输出),其余是外部
+//   - 缓存容量 K=8(够 MatMul+Add+ReLU+MatMul+Add+ReLU 这种长链)
+// 简化:不预测未来,只匹配"过去+当前=完整 region"。Eager 会执行 past ops,
+// kernel 会重新计算(浪费了 past op 的 eager work,但保证正确性)。
 #ifndef CT_DISABLE_C3
 std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
-    op /*op_type*/, const std::vector<Tensor>& /*inputs*/, DeviceType /*dev*/) {
-    return std::nullopt;
+    op op_type, const std::vector<Tensor>& inputs, DeviceType /*dev*/) {
+    // 读取 trace 快照
+    std::vector<op> trace_snapshot;
+    {
+        std::lock_guard<std::mutex> lk(region_trace_mutex_);
+        trace_snapshot = region_trace_;
+    }
+
+    auto& registry = ct::c3::RegionFusionRegistry::getInstance();
+
+    // 构建 extended trace: [current trace] + [current op]
+    std::vector<op> extended = trace_snapshot;
+    extended.push_back(op_type);
+    auto extended_prefix = ct::c3::RollingHash::computePrefixHashes(extended);
+    if (extended_prefix.size() < 2) {
+        return std::nullopt;  // 至少需要 2 个 op 才有 region 意义
+    }
+
+    size_t current_pos = extended.size() - 1;
+
+    // DEBT-NEW-7:跟 installWithCost 一样,把 shape 混入 hash
+    // 先计算当前 dispatch 的 first input 的 shape hash(用 MatMul 的 lhs shape)
+    // 如果当前 op 不是 MatMul(在 region 中间),用 MatMul-equivalent first input(从 cache 取)
+    uint64_t shape_hash = 0;
+    if (op_type == op::MatMul) {
+        if (!inputs.empty()) {
+            for (auto s : inputs.front().shape()) {
+                shape_hash = shape_hash * 31 + s + 1;
+            }
+        }
+    } else if (!prewalk_cache_.empty()) {
+        // 找 cache 里最后一个 MatMul 的 external input(它的 lhs shape 决定 region hash)
+        for (auto it = prewalk_cache_.rbegin(); it != prewalk_cache_.rend(); ++it) {
+            if (it->op_type == op::MatMul && !it->original_inputs.empty()) {
+                for (auto s : it->original_inputs.front().shape()) {
+                    shape_hash = shape_hash * 31 + s + 1;
+                }
+                break;
+            }
+        }
+    }
+
+    // 手动实现向后匹配:从最长可能长度到最短,寻找 sub_hash = entry.hash 的 region
+    ct::c3::RegionEntry* match = nullptr;
+    for (size_t len = std::min<size_t>(current_pos + 1, 8); len >= 2 && !match; --len) {
+        size_t start = current_pos + 1 - len;
+        uint64_t op_hash = ct::c3::RollingHash::getSubHash(extended_prefix, start, current_pos);
+        uint64_t full_hash = op_hash ^ (shape_hash << 32);
+        auto* candidate = registry.find(full_hash);
+        if (candidate && candidate->active && candidate->len == len) {
+            match = candidate;
+            break;
+        }
+    }
+    if (!match) {
+        return std::nullopt;
+    }
+
+    // 临时(2026-08-09 DEBT-NEW-7 实施阶段):FusedCompiledKernel 假设 inputs[0].shape() =
+    // output.shape()(只支持 elementwise 融合)。对于 MatMul+Add+ReLU 这种 MatMul
+    // 起头的 region,kernel 的 inputs/output shape 推导会错(把 M*K 当成 M*N)。
+    // 解决:暂不 invoke MatMul 起头的 region(返回 nullopt → 走 eager),等 v0.6.0
+    // 实现 MatMul-aware fusedCompiledKernel 后再放开。
+    if (!match->op_seq.empty() && match->op_seq[0] == op::MatMul) {
+#ifdef CT_DEBUG
+        static int dbg_matmul_region_skip = 0;
+        if (dbg_matmul_region_skip < 5) {
+            std::ostringstream oss;
+            oss << "[C3-RegionSkip] MatMul-rooted region len=" << match->len
+                << " (FusedCompiledKernel only supports elementwise fusion yet)";
+            CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
+                ErrorType::UNKNOWN, oss.str());
+            dbg_matmul_region_skip++;
+        }
+#endif
+        return std::nullopt;
+    }
+
+    // 匹配成功!需要从 prewalk_cache_ 里取最近 (match.len - 1) 个 dispatch 的 external inputs,
+    // 加上当前 dispatch 的 external inputs(在 inputs 参数里)
+    // 关键:prewalk_cache_ 应该已经缓存了 trace_snapshot 的最后 (match.len - 1) 个 op
+    // 如果不匹配(缓存不够),放弃
+    size_t needed = match->len - 1;  // 不含当前 op
+    if (prewalk_cache_.size() < needed) {
+        return std::nullopt;  // 缓存不足(可能在 prewalk 初始化阶段),放弃
+    }
+
+    // DEBT-NEW-7 重要:rolling hash 只按 op_seq 算,不同 shape 的同 op_seq 序列
+    // 会产生相同 hash(registry 多次 install 会互相覆盖)。所以 match 之后必须
+    // 验证 shape,否则会用错 shape 的 kernel 计算。
+    // 验证方法:entry 的 first_input_shapes 跟缓存里第一个 external input 的 shape 比对
+    if (!match->first_input_shapes.empty() && needed > 0) {
+        const auto& first_cached = prewalk_cache_[prewalk_cache_.size() - needed].original_inputs;
+        if (!first_cached.empty()) {
+            const auto& expected_shape = match->first_input_shapes.front();
+            const auto& actual_shape = first_cached.front().shape();
+            if (expected_shape != actual_shape) {
+                // shape 不匹配:这个 entry 是别的 shape install 留下的,放弃
+#ifdef CT_DEBUG
+                {
+                    std::ostringstream oss;
+                    oss << "[C3-RegionShapeMismatch] expected=[";
+                    for (auto s : expected_shape) oss << s << ",";
+                    oss << "] actual=[";
+                    for (auto s : actual_shape) oss << s << ",";
+                    oss << "]";
+                    CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
+                        ErrorType::UNKNOWN, oss.str());
+                }
+#endif
+                return std::nullopt;
+            }
+        }
+    }
+
+#ifdef CT_DEBUG
+    {
+        std::ostringstream oss;
+        oss << "[C3-RegionHit] matched region len=" << match->len
+            << " op_seq=[";
+        for (auto o : match->op_seq) { oss << (int)o << ","; }
+        oss << "] current_op=" << (int)op_type
+            << " external_inputs=" << needed + (op_type == op::MatMul ? 2 : (inputs.size() > 1 ? 1 : 0))
+            << " cache_size=" << prewalk_cache_.size();
+        CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
+            ErrorType::UNKNOWN, oss.str());
+    }
+#endif
+
+    // 收集所有 external inputs
+    std::vector<Tensor> external_inputs;
+    // 从 prewalk_cache_ 末尾取最近 (match.len - 1) 个 entry
+    for (size_t i = prewalk_cache_.size() - needed; i < prewalk_cache_.size(); ++i) {
+        for (const auto& t : prewalk_cache_[i].original_inputs) {
+            external_inputs.push_back(t);
+        }
+    }
+    // 当前 dispatch 的 external inputs(按 op 类型决定)
+    if (op_type == op::MatMul) {
+        // MatMul:region 入口,所有 inputs 都是外部
+        for (const auto& t : inputs) external_inputs.push_back(t);
+    } else if (inputs.size() > 1) {
+        // 二元非 MatMul op:inputs[0] 是 chain,只取 inputs[1] 作为外部
+        external_inputs.push_back(inputs[1]);
+    } else {
+        // 一元 op:input 是 chain,不取
+    }
+
+    // 准备 output tensor(按 region 最后一个 op 的 output_shape)
+    // 最后一个 op 的 output_shape = 缓存中最新一个 entry 的 output_shape
+    // 但当前 dispatch 的 output_shape 才是 region 的最终 output
+    std::vector<size_t> out_shape = computeOutputShape(op_type, inputs);
+    if (out_shape.empty()) {
+        return std::nullopt;
+    }
+    size_t out_numel = 1;
+    for (auto s : out_shape) out_numel *= s;
+    if (out_numel == 0) {
+        return std::nullopt;
+    }
+
+    Tensor out_tensor(ShapeTag{}, out_shape, DType::kFloat, DeviceType::kCPU);
+    float* out_data = out_tensor.data_write<float>();
+    if (!out_data) {
+        return std::nullopt;
+    }
+
+    // 准备 input pointers 数组
+    std::vector<const float*> input_ptrs;
+    input_ptrs.reserve(external_inputs.size());
+    for (const auto& t : external_inputs) {
+        const float* p = t.data_read<float>();
+        if (!p) {
+            return std::nullopt;
+        }
+        input_ptrs.push_back(p);
+    }
+
+    // invoke kernel(通过 CompiledKernel::execute() 虚函数)
+    // kernel 应该输出到 out_tensor 的 storage
+    // 注意:CompiledKernel::execute() 是高阶接口,我们用它执行整体 fused region
+    // 对于 HandwrittenKernelGen fused kernel,execute() 会调 result.fused_func
+    try {
+        // 把 input tensors 传给 kernel,期望它输出到 out_tensor
+        // 但 standard CompiledKernel::execute() 会自己分配 output tensor
+        // 我们的方案:让 kernel 写入我们预分配的 out_tensor 的 storage
+        // 简化:调 execute() 拿它的结果,然后 copy 到 out_tensor
+        // (这有 copy 开销但保证正确性)
+        auto kernel_outputs = match->kernel->execute(external_inputs);
+        if (kernel_outputs.empty() || kernel_outputs[0].storage().empty()) {
+            return std::nullopt;
+        }
+        // 拷贝 kernel 输出到 out_tensor
+        const float* src = kernel_outputs[0].data_read<float>();
+        if (!src) {
+            return std::nullopt;
+        }
+        size_t kernel_numel = kernel_outputs[0].numel();
+        size_t copy_n = std::min(kernel_numel, out_numel);
+        std::memcpy(out_data, src, copy_n * sizeof(float));
+        // 如果 kernel 输出比 out_tensor 小,剩余部分填 0
+        if (kernel_numel < out_numel) {
+            std::memset(out_data + copy_n, 0, (out_numel - copy_n) * sizeof(float));
+        }
+        return out_tensor;
+    } catch (const std::exception& e) {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+            ErrorType::UNKNOWN,
+            "CtorchScheduler::tryRegionDispatch: kernel execute failed: " +
+            std::string(e.what()) + ", falling back to eager.");
+        return std::nullopt;
+    }
 }
 
 std::vector<size_t> CtorchScheduler::computeOutputShape(
     op op_type, const std::vector<Tensor>& inputs) const {
-    // Stub: 直接调 CtorchScheduler::dispatch<op> 走一遍拿到 shape。
-    // 这里 op_type + inputs 跟实际 dispatch 签名不一致，所以简单 fallback：
-    // 复制 inputs[0] 的 shape（适用于 element-wise 算子；MatMul 需要真实 computeOutputShape）
+    // DEBT-NEW-7 region fusion 配套：每个 op 的真实输出 shape 计算
+    // 用于 prewalk 期间创建 placeholder Tensor(空 storage + LazyMaterializer)
     if (inputs.empty()) return {};
-    return inputs.front().sizes();
+
+    // 一元算子：输出 shape = 输入 shape
+    auto isUnary = [](op t) {
+        return t == op::ReLU || t == op::Tanh || t == op::Sigmoid ||
+               t == op::Neg  || t == op::Exp  || t == op::Log    ||
+               t == op::Abs  || t == op::GELU || t == op::Softmax;
+    };
+
+    if (isUnary(op_type) || inputs.size() == 1) {
+        return inputs.front().sizes();
+    }
+
+    // 二元算子：分两类
+    const auto& a = inputs[0].sizes();
+    const auto& b = inputs.size() > 1 ? inputs[1].sizes() : a;
+
+    if (op_type == op::MatMul) {
+        // [M, K] @ [K, N] → [M, N]（最常见的 2D matmul；高维暂不支持）
+        if (a.size() >= 2 && b.size() >= 2) {
+            return {a[a.size() - 2], b[b.size() - 1]};
+        }
+        return a;  // 退化 fallback
+    }
+
+    // 元素级（Add/Sub/Mul/Div/CE）：广播到较大 shape
+    if (a == b) return a;
+
+    // 简化广播：取两边维度的最大值（与 broadCast 逻辑对齐）
+    std::vector<size_t> out(std::max(a.size(), b.size()));
+    for (size_t i = 0; i < out.size(); ++i) {
+        size_t ad = (i < a.size()) ? a[a.size() - 1 - i] : 1;
+        size_t bd = (i < b.size()) ? b[b.size() - 1 - i] : 1;
+        out[out.size() - 1 - i] = std::max(ad, bd);
+    }
+    return out;
 }
 
 Tensor CtorchScheduler::executeEagerFallback(

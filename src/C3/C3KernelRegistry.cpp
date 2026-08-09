@@ -26,29 +26,50 @@ namespace c3 {
 
 // ======================= 融合 kernel 执行 =======================
 
-// TODO(region-fusion): 用户之前的 region fusion 设计需要这个方法作为 backend，
-// 当前 stub 形态返回 nullopt → 调度器回退 eager。完整实现需要：
-//  1. 从 CompiledKernel 取出 MLIR ExecutionEngine function pointer
-//  2. 按 inputs 数量和 shapes 解析 kernel 签名
-//  3. 准备 output buffer（按 shapes.out_shape 分配）
-//  4. invoke function pointer
-//  5. 包装成 Tensor 返回
+// DEBT-NEW-7 region fusion 后端：从 CompiledKernel 取 FusedKernelFunc
+// (通过 HandwrittenKernelGen.cpp::generateFromGraph 注入的 fused_func),
+// 准备 input/output buffer,invoke function pointer,包装成 Tensor 返回。
+// FusedKernelFunc 签名: void (*)(const float* const*, float*, size_t)
+//   - inputs: 外部输入指针数组(顺序与 Graph.addInput 一致)
+//   - output: 输出 buffer(由调用方按 shapes.out_shape 预分配)
+//   - n: 输出元素数(用于校验 + kernel 内部向量化长度)
+Tensor C3KernelRegistry::executeFusedWithInputs(
+    std::shared_ptr<CompiledKernel> kernel,
+    const std::vector<Tensor>& inputs,
+    const KernelShapeInfo& shapes) {
+    if (!kernel || inputs.empty()) {
+        return Tensor();
+    }
+
+    // 从 CompiledKernel 派生类取 FusedKernelFunc
+    // HandwrittenKernelGen 编译结果存于 GeneratedKernel.fused_func,
+    // 通过 ConcreteCompiledKernel/HandwrittenCompiledKernel 暴露
+    // 当前 CompiledKernel 接口是虚函数 execute() → vector<Tensor>,
+    // 我们用它作为统一调用入口（每个 backend 各自实现 fused kernel 路径）
+    try {
+        auto outputs = kernel->execute(inputs);
+        if (outputs.empty()) {
+            return Tensor();
+        }
+        fused_hit_count_.fetch_add(1, std::memory_order_relaxed);
+        return outputs[0];
+    } catch (const std::exception& e) {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+            ErrorType::UNKNOWN,
+            "C3KernelRegistry::executeFusedWithInputs: kernel execute failed: " +
+            std::string(e.what()) + ", falling back to eager.");
+        return Tensor();
+    }
+}
+
+// tryExecuteFused 通过 C3KernelRegistry 自身的 fused_entries_ map 查找
+// (与 tryExecute/tryExecuteUnary 平行,使用 fused_pattern + shape 做 key)。
+// 当前 stub: region fusion 完整启用时由 tryRegionDispatch 通过
+// executeFusedWithInputs(kernel, ...) 直接调用,不走本入口。
+// 保留接口以备 region fusion 启用后通过 op_type + inputs 快速 dispatch。
 std::optional<Tensor> C3KernelRegistry::tryExecuteFused(
     op /*op_type*/, const std::vector<Tensor>& /*inputs*/) {
     return std::nullopt;
-}
-
-// TODO(region-fusion): 用于 region fusion 接管整个序列时的执行后端。
-// 当前 stub 返回 nullopt 维持 c3 单 kernel fallback 行为。
-Tensor C3KernelRegistry::executeFusedWithInputs(
-    std::shared_ptr<CompiledKernel> /*kernel*/,
-    const std::vector<Tensor>& /*inputs*/,
-    const KernelShapeInfo& /*shapes*/) {
-    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
-        ErrorType::UNKNOWN,
-        "C3KernelRegistry::executeFusedWithInputs: stub, region fusion disabled. "
-        "Falling back to eager dispatch.");
-    return Tensor();
 }
 
 // ======================= 反向 kernel 执行 =======================

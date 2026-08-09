@@ -464,7 +464,7 @@ public:
         // [DEPRECATED] 融合 trace 记录已被移除，由区域融合替代
 
         #ifndef CT_DISABLE_C3
-        // 记录到区域融合 trace
+        // 记录到区域融合 trace + 同步更新 prewalk_cache_
         {
             std::lock_guard<std::mutex> lk(region_trace_mutex_);
             region_trace_.push_back(OpType);
@@ -473,6 +473,28 @@ public:
                 region_trace_.erase(region_trace_.begin());
             }
             region_prefix_hashes_ = ct::c3::RollingHash::computePrefixHashes(region_trace_);
+
+            // DEBT-NEW-7:同步更新 prewalk_cache_（region fusion match 用）,
+            // 按 buildFusedGraph 约定只缓存每个 dispatch 的 external inputs:
+            //   - MatMul: 2 external（区域入口）
+            //   - 二元非 MatMul: 1 external（inputs[0] 是 chain）
+            //   - 一元: 0 external（input 是 chain）
+            PrewalkEntry entry;
+            entry.op_type = OpType;
+            entry.output_shape = computeOutputShape(OpType, {a, b});
+            if constexpr (OpType == op::MatMul) {
+                entry.original_inputs = {a, b};
+            } else if constexpr (OpType == op::Add || OpType == op::Sub ||
+                                 OpType == op::Mul || OpType == op::Div ||
+                                 OpType == op::CE) {
+                entry.original_inputs = {b};
+            } else {
+                entry.original_inputs = {};
+            }
+            prewalk_cache_.push_back(std::move(entry));
+            if (prewalk_cache_.size() > 8) {
+                prewalk_cache_.erase(prewalk_cache_.begin());
+            }
         }
 #endif
 
@@ -588,7 +610,7 @@ public:
         // [DEPRECATED] 融合 trace 记录已被移除，由区域融合替代
 
         #ifndef CT_DISABLE_C3
-        // 记录到区域融合 trace
+        // 记录到区域融合 trace + 同步更新 prewalk_cache_
         {
             std::lock_guard<std::mutex> lk(region_trace_mutex_);
             region_trace_.push_back(OpType);
@@ -596,6 +618,16 @@ public:
                 region_trace_.erase(region_trace_.begin());
             }
             region_prefix_hashes_ = ct::c3::RollingHash::computePrefixHashes(region_trace_);
+
+            // DEBT-NEW-7:同步更新 prewalk_cache_。一元 op 的 input 是 chain,无 external
+            PrewalkEntry entry;
+            entry.op_type = OpType;
+            entry.output_shape = computeOutputShape(OpType, {a});
+            entry.original_inputs = {};  // 一元 op:无 external input
+            prewalk_cache_.push_back(std::move(entry));
+            if (prewalk_cache_.size() > 8) {
+                prewalk_cache_.erase(prewalk_cache_.begin());
+            }
         }
 #endif
 

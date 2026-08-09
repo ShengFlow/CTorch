@@ -347,6 +347,7 @@ public:
         size_t active_entries = 0;
         size_t fused_entries = 0;
         size_t backward_entries = 0;
+        size_t fused_hit_count = 0;  ///< DEBT-NEW-7 region fusion:实际 invoke fused kernel 次数
     };
 
     /**
@@ -369,6 +370,7 @@ public:
         s.hit_count = hit_count_.load(std::memory_order_acquire);
         s.miss_count = miss_count_.load(std::memory_order_acquire);
         s.bypass_count = bypass_count_.load(std::memory_order_acquire);
+        s.fused_hit_count = fused_hit_count_.load(std::memory_order_acquire);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             s.active_entries = entries_.size();
@@ -631,6 +633,7 @@ private:
     std::atomic<size_t> hit_count_{0};
     std::atomic<size_t> miss_count_{0};
     std::atomic<size_t> bypass_count_{0};  ///< DEBT-NEW-7 H2 fix 计数器
+    std::atomic<size_t> fused_hit_count_{0};  ///< DEBT-NEW-7 region fusion 实际 invoke 计数
 };
 
 } // namespace c3
