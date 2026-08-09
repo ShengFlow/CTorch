@@ -345,7 +345,11 @@ static void buildFusedEpilogue(mlir::OpBuilder& builder, mlir::Location loc,
 static constexpr int64_t kDefaultTileM = 32;
 static constexpr int64_t kDefaultTileN = 32;
 // 使用 tiling 的 MatMul 阈值上限（超过此值仍委托 cblas_sgemm）
-static constexpr int64_t kTiledMatMulThreshold = 65536;
+// 【P0 修复 DEBT-NEW-5 2026-08-08】原值 65536 触发 MNIST L2 (128x256x128 = 4.2M ops)
+// 走 buildTiledMatMulWithEpilogue，sum 累加顺序跟 cblas_sgemm 数值不等价
+// 实测：MNIST epoch 0 一致，epoch 1 batch 0 分歧（loss 0.7218 vs 0.2120, grad 差 4x）
+// 修复：降到 4096（小矩阵 inline 优化仍生效，大矩阵走 cblas_sgemm 保证精度）
+static constexpr int64_t kTiledMatMulThreshold = 4096;
 
 /// 生成 tiled MatMul + 可选的偏置融合 + 激活函数融合
 ///
@@ -1586,9 +1590,9 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
 
     mlir::ExecutionEngineOptions engineOpts;
     if (tm) {
-        int llvm_opt = std::clamp(opt_level, 0, 3);
-        engineOpts.transformer = mlir::makeOptimizingTransformer(/*optLevel=*/llvm_opt, /*sizeLevel=*/0,
-                                                                  tm.get());
+        // 【DEBT-NEW-5 实验 2026-08-08 23:15】先置空 transformer（不做 LLVM pass），
+        // 隔离 MLIR-level vs LLVM-level 数值差异来源
+        engineOpts.transformer = {};
     } else {
         engineOpts.transformer = {};
     }

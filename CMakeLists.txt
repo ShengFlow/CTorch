@@ -21,6 +21,32 @@ endif()
 
 include(FetchContent)
 
+# ---- C3 开关 ----
+option(CT_DISABLE_C3 "Disable C3 JIT compilation and fusion optimizations" OFF)
+if(CT_DISABLE_C3)
+    add_definitions(-DCT_DISABLE_C3)
+    message(STATUS "C3 optimizations DISABLED")
+else()
+    message(STATUS "C3 optimizations enabled")
+endif()
+
+# ---- C3 子功能开关（编译期硬开关，运行时仍可用对应 env 变量关闭）----
+# 每项生成对应宏，供 include/C3/C3Config.h 的查询接口短路判断。
+option(CT_C3_DISABLE_SINGLE_KERNEL "Disable C3 single-kernel hotpath injection" OFF)
+option(CT_C3_DISABLE_REGION_FUSION "Disable C3 region fusion" OFF)
+option(CT_C3_DISABLE_BACKWARD      "Disable C3 backward fusion" OFF)
+option(CT_C3_DISABLE_AOT           "Disable C3 AOT disk cache" OFF)
+option(CT_C3_DISABLE_HOTPATH       "Disable C3 hotpath tracking/compile trigger" OFF)
+
+foreach(_C3_FEAT SINGLE_KERNEL REGION_FUSION BACKWARD AOT HOTPATH)
+    if(CT_C3_DISABLE_${_C3_FEAT})
+        add_definitions(-DCT_C3_DISABLE_${_C3_FEAT})
+        message(STATUS "C3 sub-feature ${_C3_FEAT} DISABLED (compile-time)")
+    else()
+        message(STATUS "C3 sub-feature ${_C3_FEAT} enabled (runtime env can override)")
+    endif()
+endforeach()
+
 # ---- LLVM / MLIR (Phase 1: JIT 后端) ----
 option(CT_ENABLE_MLIR "Enable MLIR/LLVM JIT backend for C3" ON)
 if(CT_ENABLE_MLIR)
@@ -70,11 +96,15 @@ set(CT-Core
         src/C3/PatternMatcher.cpp
         src/C3/PGOManager.cpp
         src/C3/AOTCache.cpp
+        src/C3/C3BackwardCapture.cpp
+        src/C3/RollingHash.cpp
+        src/C3/RegionFusionRegistry.cpp
 )
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
 if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
+    list(APPEND CT-Core src/C3/JITCache.cpp)
 endif()
 
 set(CT-Core-Headers
@@ -92,12 +122,14 @@ set(CT-Core-Headers
         include/MetalDevice.h
         include/ctQALS/ctQALS.h
         include/C3/C3Engine.h
+        include/C3/C3Config.h
         include/C3/Graph.h
         include/C3/GraphMerger.h
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
         include/C3/PatternMatcher.h
         include/C3/AOTCache.h
+        include/C3/C3BackwardCapture.h
 )
 
 set(CT-Nodes-Headers
@@ -221,6 +253,44 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/LReLU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/LReLU_Grad_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/SIMDMath.cpp
+        src/kernels/CPU-SIMD/SIMDWrapper.cpp
+)
+
+set(CT-Distributed
+        include/Distributed/DeviceBackend.h
+        include/Distributed/BackendManager.h
+        include/Distributed/DeviceMigration.h
+        include/Distributed/CDTF.h
+        include/Distributed/CommEngine.h
+        include/Distributed/GradientAggregator.h
+        include/Distributed/DistributedOptimizer.h
+        include/Distributed/GTCScheduler.h
+        include/Distributed/EntropyAwareCompressor.h
+        include/Distributed/TopologyManager.h
+        include/Distributed/QuorumManager.h
+        include/Distributed/NodeDiscovery.h
+        include/Distributed/FaultTolerance.h
+        include/Distributed/CheckpointManager.h
+        include/Distributed/Transport.h
+        include/Distributed/CPUBackend.h
+        include/Distributed/MPSBackend.h
+        include/Distributed/DistributedTrainer.h
+        src/Distributed/BackendManager.cpp
+        src/Distributed/CDTF.cpp
+        src/Distributed/CommEngine.cpp
+        src/Distributed/GradientAggregator.cpp
+        src/Distributed/DistributedOptimizer.cpp
+        src/Distributed/GTCScheduler.cpp
+        src/Distributed/EntropyAwareCompressor.cpp
+        src/Distributed/TopologyManager.cpp
+        src/Distributed/QuorumManager.cpp
+        src/Distributed/NodeDiscovery.cpp
+        src/Distributed/FaultTolerance.cpp
+        src/Distributed/CheckpointManager.cpp
+        src/Distributed/Transport.cpp
+        src/Distributed/CPUBackend.cpp
+        src/Distributed/MPSBackend.mm
+        src/Distributed/DistributedTrainer.cpp
 )
 
 set(ctQALS
@@ -239,6 +309,7 @@ add_library(CTorch OBJECT
         ${CT-MPS-OPs}
         ${CT-Nodes}
         ${CT-Nodes-Headers}
+        ${CT-Distributed}
         ${ctQALS}
 )
 
@@ -318,9 +389,21 @@ add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mn
 target_link_libraries(test_mnist_perf PRIVATE CTorch)
 target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(exp_mnist_cold_start src/tests/standalone/exp_mnist_cold_start.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+target_link_libraries(exp_mnist_cold_start PRIVATE CTorch)
+target_include_directories(exp_mnist_cold_start PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test_c3_matmul_blas src/tests/standalone/test_c3_matmul_blas.cpp)
 target_link_libraries(test_c3_matmul_blas PRIVATE CTorch)
 target_include_directories(test_c3_matmul_blas PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_h2_matmul_precision src/tests/standalone/test_h2_matmul_precision.cpp)
+target_link_libraries(test_h2_matmul_precision PRIVATE CTorch)
+target_include_directories(test_h2_matmul_precision PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_h2_registry_override src/tests/standalone/test_h2_registry_override.cpp)
+target_link_libraries(test_h2_registry_override PRIVATE CTorch)
+target_include_directories(test_h2_registry_override PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_c3_mnist_step src/tests/standalone/test_c3_mnist_step.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_c3_mnist_step PRIVATE CTorch)
@@ -329,6 +412,10 @@ target_include_directories(test_c3_mnist_step PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 add_executable(test_c3_compile_time src/tests/standalone/test_c3_compile_time.cpp)
 target_link_libraries(test_c3_compile_time PRIVATE CTorch)
 target_include_directories(test_c3_compile_time PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(diag_mini_train src/tests/standalone/diag_mini_train.cpp)
+target_link_libraries(diag_mini_train PRIVATE CTorch)
+target_include_directories(diag_mini_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_c3_mnist_train src/tests/standalone/test_c3_mnist_train.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(test_c3_mnist_train PRIVATE CTorch)
@@ -358,13 +445,14 @@ add_executable(test_c3_compile_timeout src/tests/standalone/test_c3_compile_time
 target_link_libraries(test_c3_compile_timeout PRIVATE CTorch)
 target_include_directories(test_c3_compile_timeout PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_c3_compile_timeout_minimal /tmp/test_c3_compile_timeout_minimal.cpp)
-target_link_libraries(test_c3_compile_timeout_minimal PRIVATE CTorch)
-target_include_directories(test_c3_compile_timeout_minimal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(test_timeout_simple /tmp/test_timeout_simple.cpp)
-target_link_libraries(test_timeout_simple PRIVATE CTorch)
-target_include_directories(test_timeout_simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# 临时调试目标（需要时手动创建源文件）
+# add_executable(test_c3_compile_timeout_minimal /tmp/test_c3_compile_timeout_minimal.cpp)
+# target_link_libraries(test_c3_compile_timeout_minimal PRIVATE CTorch)
+# target_include_directories(test_c3_compile_timeout_minimal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+#
+# add_executable(test_timeout_simple /tmp/test_timeout_simple.cpp)
+# target_link_libraries(test_timeout_simple PRIVATE CTorch)
+# target_include_directories(test_timeout_simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_c3_aot_cache src/tests/standalone/test_c3_aot_cache.cpp)
 target_link_libraries(test_c3_aot_cache PRIVATE CTorch)
@@ -374,9 +462,66 @@ add_executable(bench_aot_speedup src/tests/standalone/bench_aot_speedup.cpp)
 target_link_libraries(bench_aot_speedup PRIVATE CTorch)
 target_include_directories(bench_aot_speedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_mlir_simd_integration src/tests/standalone/test_mlir_simd_integration.cpp)
+target_link_libraries(test_mlir_simd_integration PRIVATE CTorch)
+target_include_directories(test_mlir_simd_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# -rdynamic 导出主程序符号到动态符号表，MLIR JIT 通过 dlsym 查找
+# 自定义 SIMD 函数（ct_simd_vsigmoid 等）需要被 JIT 可见
+target_link_options(test_mlir_simd_integration PRIVATE -rdynamic)
+
+add_executable(bench_mlir_simd src/tests/standalone/bench_mlir_simd.cpp)
+target_link_libraries(bench_mlir_simd PRIVATE CTorch)
+target_include_directories(bench_mlir_simd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_options(bench_mlir_simd PRIVATE -rdynamic)
+
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)
 target_include_directories(bench_subgraph_roi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_auto_c3 src/tests/standalone/bench_auto_c3.cpp)
+target_link_libraries(bench_auto_c3 PRIVATE CTorch)
+target_include_directories(bench_auto_c3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_fusion_dispatch src/tests/standalone/test_fusion_dispatch.cpp)
+target_link_libraries(test_fusion_dispatch PRIVATE CTorch)
+target_include_directories(test_fusion_dispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_region_fusion src/tests/standalone/test_region_fusion.cpp)
+target_link_libraries(test_region_fusion PRIVATE CTorch)
+target_include_directories(test_region_fusion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# C3_DISPATCH_TIMING disabled: per-dispatch fprintf overhead (~20-50us) skews perf measurements
+
+add_executable(test_region_fusion_auto src/tests/standalone/test_region_fusion_auto.cpp)
+target_link_libraries(test_region_fusion_auto PRIVATE CTorch)
+target_include_directories(test_region_fusion_auto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_debug_fused src/tests/standalone/test_debug_fused.cpp)
+target_link_libraries(test_debug_fused PRIVATE CTorch)
+target_include_directories(test_debug_fused PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_c3_backward src/tests/standalone/test_c3_backward.cpp)
+target_link_libraries(test_c3_backward PRIVATE CTorch)
+target_include_directories(test_c3_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_backward_fusion src/tests/standalone/bench_backward_fusion.cpp)
+target_link_libraries(bench_backward_fusion PRIVATE CTorch)
+target_include_directories(bench_backward_fusion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_c3_backward_perf src/tests/standalone/bench_c3_backward_perf.cpp)
+target_link_libraries(bench_c3_backward_perf PRIVATE CTorch)
+target_include_directories(bench_c3_backward_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_c3_backward_perf_clean src/tests/standalone/bench_c3_backward_perf_clean.cpp)
+target_link_libraries(bench_c3_backward_perf_clean PRIVATE CTorch)
+target_include_directories(bench_c3_backward_perf_clean PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(split_fwd_bwd src/tests/standalone/split_fwd_bwd.cpp)
+target_link_libraries(split_fwd_bwd PRIVATE CTorch)
+target_include_directories(split_fwd_bwd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(exp_c3_warmup src/tests/standalone/exp_c3_warmup.cpp)
+target_link_libraries(exp_c3_warmup PRIVATE CTorch)
+target_include_directories(exp_c3_warmup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_simd_math src/tests/standalone/test_simd_math.cpp)
 target_link_libraries(test_simd_math PRIVATE CTorch)
@@ -385,6 +530,10 @@ target_include_directories(test_simd_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(bench_simd_math src/tests/standalone/bench_simd_math.cpp)
 target_link_libraries(bench_simd_math PRIVATE CTorch)
 target_include_directories(bench_simd_math PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_amx_startup src/tests/standalone/bench_amx_startup.cpp)
+target_link_libraries(bench_amx_startup PRIVATE CTorch)
+target_include_directories(bench_amx_startup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # (SECURITY_SENSITIVE) MNIST Loader security regression tests
 add_executable(test_mnist_loader_security src/tests/standalone/test_mnist_loader_security.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
@@ -420,6 +569,21 @@ target_include_directories(poc_cpu_kernel_int_narrowing PRIVATE ${CMAKE_CURRENT_
 add_executable(poc_storage_deleter_uaf src/tests/standalone/poc_storage_deleter_uaf.cpp)
 target_link_libraries(poc_storage_deleter_uaf PRIVATE CTorch)
 target_include_directories(poc_storage_deleter_uaf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Gen 2 分布式系统单元测试
+add_executable(test_distributed_gen2 src/tests/standalone/test_distributed_gen2.cpp)
+target_link_libraries(test_distributed_gen2 PRIVATE CTorch)
+target_include_directories(test_distributed_gen2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Gen 2 端到端集成测试
+add_executable(test_gen2_e2e src/tests/standalone/test_gen2_e2e.cpp)
+target_link_libraries(test_gen2_e2e PRIVATE CTorch)
+target_include_directories(test_gen2_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Gen 2 性能基准测试
+add_executable(bench_gen2 src/tests/standalone/bench_gen2.cpp)
+target_link_libraries(bench_gen2 PRIVATE CTorch)
+target_include_directories(bench_gen2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_compile_options(-Wno-ignored-attributes)
 

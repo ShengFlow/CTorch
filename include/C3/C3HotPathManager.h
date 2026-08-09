@@ -1,0 +1,1000 @@
+/**
+ * @file C3HotPathManager.h
+ * @brief 热路径自动 C3 编译管理器
+ * @details 在调度器 dispatch 路径中自动检测热路径，
+ *          触发后台 C3 编译，编译完成后自动安装到 C3KernelRegistry。
+ *
+ *          ### 工作流程
+ *
+ *          ```
+ *          dispatch(op, a, b)
+ *            ├─ 1. 查 C3KernelRegistry → 命中 → 执行 C3 kernel
+ *            ├─ 2. 记录调用 → call_count++
+ *            ├─ 3. call_count >= hot_threshold ?
+ *            │     ├─ 是 → 提交异步 C3 编译
+ *            │     │      └─ 编译完成 → 自动 install 到 registry
+ *            │     └─ 否 → 继续
+ *            └─ 4. 执行 eager kernel
+ *          ```
+ *
+ *          ### 节流策略
+ *          - 同一 (op, shape) 在 hot_threshold 次调用后触发编译
+ *          - 编译触发后进入 cooldown_sec 冷却期
+ *          - 待编译队列达到 max_pending 时进入背压状态
+ *
+ * @date 2026/08/03
+ */
+
+#ifndef CTORCH_C3_C3_HOT_PATH_MANAGER_H
+#define CTORCH_C3_C3_HOT_PATH_MANAGER_H
+
+#include "C3/C3KernelRegistry.h"
+#include "C3/C3Engine.h"
+#include "C3/Graph.h"
+#include "C3/RegionFusion.h"
+
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <deque>
+#include <functional>
+#include <future>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+#include "Ctools.h"
+#include "Tensor.h"
+
+namespace ct {
+namespace c3 {
+
+// ============================================================
+// C3HotPathManager 配置
+// ============================================================
+
+struct HotPathConfig {
+    /// 触发编译的调用次数阈值（达到此值后触发异步编译）
+    size_t hot_threshold = 5;
+    /// 同一 key 编译后的冷却期（秒），避免重复触发
+    size_t cooldown_sec = 60;
+    /// 最大待编译任务数（背压阈值）
+    size_t max_pending = 16;
+    /// 编译超时时间（ms），传递给 C3Engine
+    uint32_t compile_timeout_ms = 30000;
+    /// 是否启用日志输出
+    bool verbose = false;
+};
+
+// ============================================================
+// C3HotPathManager
+// ============================================================
+
+class C3HotPathManager {
+public:
+    static C3HotPathManager& instance() {
+        static C3HotPathManager mgr;
+        return mgr;
+    }
+
+    // ======================= 配置 =======================
+
+    void configure(const HotPathConfig& cfg) {
+        std::lock_guard<std::mutex> lk(cfg_mutex_);
+        config_ = cfg;
+    }
+
+    HotPathConfig getConfig() const {
+        std::lock_guard<std::mutex> lk(cfg_mutex_);
+        return config_;
+    }
+
+    // ======================= 统计 =======================
+
+    struct Stats {
+        size_t calls_tracked = 0;         ///< 总记录调用次数
+        size_t compilations_triggered = 0; ///< 已触发的编译次数
+        size_t pending_compiles = 0;       ///< 当前待编译数
+        size_t cooldown_hits = 0;          ///< 冷却期内被忽略的次数
+        size_t backpressure_hits = 0;      ///< 背压被忽略的次数
+    };
+
+    Stats getStats() const {
+        Stats s;
+        s.calls_tracked = calls_tracked_.load(std::memory_order_relaxed);
+        s.compilations_triggered = compilations_triggered_.load(std::memory_order_relaxed);
+        s.pending_compiles = pending_compiles_.load(std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            s.cooldown_hits = cooldown_hits_;
+            s.backpressure_hits = backpressure_hits_;
+        }
+        return s;
+    }
+
+    /// 单次 dispatch 记录（用于测试直接构造图）
+    struct DispatchRecord {
+        op op_type;
+        std::vector<size_t> shape;      ///< 拼接形状 lhs+rhs（融合检测用，兼容旧逻辑）
+        std::vector<size_t> lhs_shape;  ///< 实际左输入形状（单 kernel 安装用）
+        std::vector<size_t> rhs_shape;  ///< 实际右输入形状（单 kernel 安装用，unary 为空）
+        std::chrono::steady_clock::time_point timestamp;
+    };
+
+    // ======================= 生命周期管理 =======================
+
+    /// 等待所有待处理的编译任务完成（必须在 main 退出前调用）
+    /// 调用后不再接受新的编译提交（新的 recordCall 只计数不触发编译）。
+    /// 应在 C3Engine::shutdown() / clearCache() 之前调用，
+    /// 因为 HotPathManager 的后台任务会调用 C3Engine 编译接口。
+    /// 完整退出序列：HotPathManager::shutdown() → C3Engine::shutdown() → C3Engine::clearCache()
+    void shutdown() {
+        // 1. 设置关闭标志，阻止新任务提交
+        shutting_down_.store(true, std::memory_order_release);
+
+        // 2. 取出所有待完成的 future
+        std::vector<std::future<void>> futures;
+        {
+            std::lock_guard<std::mutex> lk(futures_mutex_);
+            futures = std::move(pending_futures_);
+        }
+
+        // 3. 逐个等待，超时 30s（与 C3Engine/PGOManager 保持一致）
+        for (auto& f : futures) {
+            if (f.valid()) {
+                auto st = f.wait_for(std::chrono::seconds(30));
+                if (st == std::future_status::ready) {
+                    try { f.get(); } catch (...) {}
+                } else {
+                    // 30s 超时仍未完成，静默放弃（避免阻塞退出）
+                    // 注意：超时后 future 被销毁但其线程可能仍在运行，
+                    // 这是已知的 trade-off —— 总比 detach 后完全失控好。
+                    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
+                        ErrorType::UNKNOWN,
+                        "C3HotPathManager::shutdown: background compile did not finish in 30s, "
+                        "future abandoned (may cause UAF if main exits before thread finishes)");
+                }
+            }
+        }
+    }
+
+    /// 查询是否处于关闭状态
+    bool isShuttingDown() const {
+        return shutting_down_.load(std::memory_order_acquire);
+    }
+
+    /// 等待所有待处理的编译任务完成（用于测试场景）
+    void waitForPendingCompiles() {
+        while (pending_compiles_.load(std::memory_order_acquire) > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        // 额外等待确保编译任务完全完成并注册
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    // ======================= 核心接口 =======================
+
+    /**
+     * @brief 记录一次调用并检查是否需要触发编译
+     * @param op_type 算子类型
+     * @param dev 目标设备
+     * @param lhs_shape 左输入形状（unary 用 a.shape()）
+     * @param rhs_shape 右输入形状（unary 省略）
+     */
+    void recordCall(op op_type, DeviceType dev, const std::vector<size_t>& lhs_shape,
+                    const std::vector<size_t>& rhs_shape = {}) {
+        calls_tracked_.fetch_add(1, std::memory_order_relaxed);
+
+        if (dev == DeviceType::kMPS) return; // MPS 暂不纳入 C3 编译
+
+        // shutdown 后不再触发新的编译任务，只更新计数
+        if (shutting_down_.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        // 拼接 shape（epoch 用：融合检测 + 编译触发 key）
+        std::vector<size_t> shape = lhs_shape;
+        shape.insert(shape.end(), rhs_shape.begin(), rhs_shape.end());
+
+        // 记录到 RingBuffer，用于融合检测
+        {
+            std::lock_guard<std::mutex> lk(rb_mutex_);
+            DispatchRecord rec{op_type, shape, lhs_shape, rhs_shape,
+                               std::chrono::steady_clock::now()};
+            recent_dispatches_.push_back(rec);
+            if (recent_dispatches_.size() > kMaxRingBufferSize) {
+                recent_dispatches_.pop_front();
+            }
+        }
+
+        size_t key = hashShapeKey(shape, op_type, dev);
+
+        HotPathConfig cfg = getConfig();
+
+        bool should_compile = false;
+
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+
+            auto& entry = entries_[key];
+            entry.call_count++;
+            fprintf(stderr, "[DBG] recordCall ENTRY op=%d shape_size=%zu cc=%zu compiling=%d pending=%zu\n",
+                    (int)op_type, shape.size(), entry.call_count, (int)entry.compiling,
+                    pending_compiles_.load(std::memory_order_relaxed));
+
+            // 检查是否在冷却期
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                now - entry.last_compile_time).count();
+            if (elapsed < static_cast<decltype(elapsed)>(cfg.cooldown_sec)) {
+                cooldown_hits_++;
+                return;
+            }
+
+            // 检查背压
+            if (pending_compiles_.load(std::memory_order_relaxed) >= cfg.max_pending) {
+                backpressure_hits_++;
+                return;
+            }
+
+            // 达到阈值，标记需要编译（在锁外执行，避免死锁）
+            if (entry.call_count >= cfg.hot_threshold && !entry.compiling) {
+                entry.compiling = true;
+                entry.call_count = 0;
+                pending_compiles_.fetch_add(1, std::memory_order_relaxed);
+                compilations_triggered_.fetch_add(1, std::memory_order_relaxed);
+                should_compile = true;
+                fprintf(stderr, "[DBG] recordCall TRIGGER op=%d shape_size=%zu cc=%zu\n",
+                        (int)op_type, shape.size(), entry.call_count);
+            }
+        } // mutex_ 释放
+
+        if (should_compile) {
+            // 先检查是否有可融合的多算子模式
+            tryFuseRecentDispatches(dev, cfg);
+
+            // 异步提交单算子编译任务
+            submitCompileAsync(op_type, dev, shape, lhs_shape, rhs_shape, key, cfg);
+        }
+    }
+
+    /**
+     * @brief 清除所有跟踪状态
+     */
+    void clear() {
+        std::lock_guard<std::mutex> lk(mutex_);
+        entries_.clear();
+        std::lock_guard<std::mutex> rblk(rb_mutex_);
+        recent_dispatches_.clear();
+        calls_tracked_.store(0, std::memory_order_relaxed);
+        compilations_triggered_.store(0, std::memory_order_relaxed);
+        pending_compiles_.store(0, std::memory_order_relaxed);
+        cooldown_hits_ = 0;
+        backpressure_hits_ = 0;
+    }
+
+private:
+    C3HotPathManager() = default;
+    ~C3HotPathManager() {
+        // 防御性清理：若 shutdown() 未被显式调用，尝试安全清理 pending futures
+        // 避免静态析构期访问已销毁对象（如 LLVM GDBJITRegistrationListener 的 mutex）
+        shutting_down_.store(true, std::memory_order_release);
+        std::vector<std::future<void>> futures;
+        {
+            std::lock_guard<std::mutex> lk(futures_mutex_);
+            futures = std::move(pending_futures_);
+        }
+        for (auto& f : futures) {
+            if (f.valid()) {
+                auto st = f.wait_for(std::chrono::milliseconds(100));
+                if (st == std::future_status::ready) {
+                    try { f.get(); } catch (...) {}
+                }
+                // 超时则静默放弃，避免阻塞退出
+            }
+        }
+    }
+    C3HotPathManager(const C3HotPathManager&) = delete;
+    C3HotPathManager& operator=(const C3HotPathManager&) = delete;
+
+    // ======================= 内部结构 =======================
+
+    struct HotEntry {
+        size_t call_count = 0;
+        bool compiling = false;
+        std::chrono::steady_clock::time_point last_compile_time;
+    };
+
+    static constexpr size_t kMaxRingBufferSize = 32;
+
+    // ======================= 哈希工具 =======================
+
+    /// 计算 (shape, op_type, dev) 的哈希 key
+    static size_t hashShapeKey(const std::vector<size_t>& shape,
+                               op op_type, DeviceType dev) {
+        size_t h = static_cast<size_t>(op_type) ^ (static_cast<size_t>(dev) << 8);
+        h ^= 0x9e3779b9 + (h << 6) + (h >> 2);
+        for (auto s : shape) {
+            h ^= s + 0x9e3779b9 + (h << 6) + (h >> 2);
+        }
+        return h;
+    }
+
+    // ======================= Graph 构建 =======================
+
+    /// 构建单算子 Graph
+    static Graph buildGraphForOp(op op_type, const std::vector<size_t>& shape,
+                                 const std::vector<size_t>& lhs_shape,
+                                 const std::vector<size_t>& rhs_shape) {
+        Graph g;
+
+        switch (op_type) {
+        case op::Sigmoid: {
+            auto desc = TensorDesc::fromShape(lhs_shape);
+            size_t in = g.addInput(desc);
+            size_t out = g.addNode(SigmoidNode{desc}, {in}, desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::Tanh: {
+            auto desc = TensorDesc::fromShape(lhs_shape);
+            size_t in = g.addInput(desc);
+            size_t out = g.addNode(TanhNode{desc}, {in}, desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::ReLU: {
+            auto desc = TensorDesc::fromShape(lhs_shape);
+            size_t in = g.addInput(desc);
+            size_t out = g.addNode(ReLUNode{desc}, {in}, desc);
+            g.markOutput(out);
+            break;
+        }
+        // 二元算子：包含两个输入，使用真实 lhs/rhs 形状
+        case op::Add: {
+            TensorDesc lhs_desc = TensorDesc::fromShape(lhs_shape);
+            TensorDesc rhs_desc = TensorDesc::fromShape(rhs_shape.empty() ? lhs_shape : rhs_shape);
+            size_t a = g.addInput(lhs_desc);
+            size_t b = g.addInput(rhs_desc);
+            size_t out = g.addNode(AddNode{lhs_desc, rhs_desc}, {a, b}, lhs_desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::Sub: {
+            TensorDesc lhs_desc = TensorDesc::fromShape(lhs_shape);
+            TensorDesc rhs_desc = TensorDesc::fromShape(rhs_shape.empty() ? lhs_shape : rhs_shape);
+            size_t a = g.addInput(lhs_desc);
+            size_t b = g.addInput(rhs_desc);
+            size_t out = g.addNode(SubNode{lhs_desc, rhs_desc}, {a, b}, lhs_desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::Mul: {
+            TensorDesc lhs_desc = TensorDesc::fromShape(lhs_shape);
+            TensorDesc rhs_desc = TensorDesc::fromShape(rhs_shape.empty() ? lhs_shape : rhs_shape);
+            size_t a = g.addInput(lhs_desc);
+            size_t b = g.addInput(rhs_desc);
+            size_t out = g.addNode(MulNode{lhs_desc, rhs_desc}, {a, b}, lhs_desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::Div: {
+            TensorDesc lhs_desc = TensorDesc::fromShape(lhs_shape);
+            TensorDesc rhs_desc = TensorDesc::fromShape(rhs_shape.empty() ? lhs_shape : rhs_shape);
+            size_t a = g.addInput(lhs_desc);
+            size_t b = g.addInput(rhs_desc);
+            size_t out = g.addNode(DivNode{lhs_desc, rhs_desc}, {a, b}, lhs_desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::Neg: {
+            auto desc = TensorDesc::fromShape(lhs_shape);
+            size_t in = g.addInput(desc);
+            size_t out = g.addNode(NegNode{desc}, {in}, desc);
+            g.markOutput(out);
+            break;
+        }
+        case op::MatMul: {
+            // MatMul: shape 是 {M, K, K, N} 格式
+            // 拆分为 lhs(M,K), rhs(K,N), out(M,N)
+            if (shape.size() >= 4) {
+                size_t M = shape[0], K1 = shape[1], K2 = shape[2], N = shape[3];
+                if (K1 == K2) {
+                    TensorDesc lhs_desc = TensorDesc::fromShape({M, K1});
+                    TensorDesc rhs_desc = TensorDesc::fromShape({K2, N});
+                    TensorDesc out_desc = TensorDesc::fromShape({M, N});
+
+                    size_t a = g.addInput(lhs_desc);
+                    size_t b = g.addInput(rhs_desc);
+                    size_t out = g.addNode(MatMulNode{lhs_desc, rhs_desc}, {a, b}, out_desc);
+                    g.markOutput(out);
+                }
+            }
+            break;
+        }
+        default:
+            // 不支持的操作，返回空图
+            break;
+        }
+
+        return g;
+    }
+
+    /// 从 DispatchRecord 创建 NodeVariant
+    static NodeVariant makeNodeVariant(const DispatchRecord& rec) {
+        auto desc = TensorDesc::fromShape(rec.shape);
+        switch (rec.op_type) {
+        case op::Add: {
+            // shape_sig = lhs_shape + rhs_shape（拼接）
+            // 提取 lhs: 前半部分，rhs: 后半部分
+            auto out_shape = extractBinOpOutShape(rec.shape);
+            auto lhs = TensorDesc::fromShape(out_shape);
+            std::vector<size_t> rhs_shape;
+            if (rec.shape.size() > out_shape.size()) {
+                rhs_shape.assign(rec.shape.begin() + (ptrdiff_t)out_shape.size(), rec.shape.end());
+            } else {
+                rhs_shape = out_shape;
+            }
+            auto rhs = TensorDesc::fromShape(rhs_shape);
+            return AddNode{lhs, rhs};
+        }
+        case op::Sub:
+            return SubNode{desc, desc};
+        case op::Mul:
+            return MulNode{desc, desc};
+        case op::Div:
+            return DivNode{desc, desc};
+        case op::MatMul: {
+            if (rec.shape.size() >= 4) {
+                auto lhs = TensorDesc::fromShape({rec.shape[0], rec.shape[1]});
+                auto rhs = TensorDesc::fromShape({rec.shape[2], rec.shape[3]});
+                return MatMulNode{lhs, rhs};
+            }
+            return MatMulNode{desc, desc};
+        }
+        case op::Neg:
+            return NegNode{desc};
+        case op::ReLU:
+            return ReLUNode{desc};
+        case op::Tanh:
+            return TanhNode{desc};
+        case op::Sigmoid:
+            return SigmoidNode{desc};
+        default:
+            return SigmoidNode{desc}; // fallback
+        }
+    }
+
+    /// 判断是否为 C3 支持的算子
+    static bool isSupportedOp(op op_type) {
+        switch (op_type) {
+        case op::Add:
+        case op::Sub:
+        case op::Mul:
+        case op::Div:
+        case op::MatMul:
+        case op::Neg:
+        case op::ReLU:
+        case op::Tanh:
+        case op::Sigmoid:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // ======================= 异步编译 =======================
+
+    /// 尝试融合最近的 dispatch 序列，检测多算子模式
+    void tryFuseRecentDispatches(DeviceType dev, const HotPathConfig& cfg) {
+        std::lock_guard<std::mutex> lk(rb_mutex_);
+        if (recent_dispatches_.size() < 3) return; // 至少需要 3 个 dispatch
+
+        // 检查最近的序列是否匹配已知融合模式
+        // 模式1: MatMul + Add + Sigmoid (FCWithActivation)
+        // 模式2: MatMul + Add + ReLU (FCWithReLU)
+        auto checkPattern = [&](const std::deque<DispatchRecord>& seq) -> bool {
+            if (seq.size() < 3) return false;
+
+            const auto& last3_0 = seq[seq.size() - 3];
+            const auto& last3_1 = seq[seq.size() - 2];
+            const auto& last3_2 = seq[seq.size() - 1];
+
+            // MatMul + Add + Sigmoid 模式
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Add &&
+                last3_2.op_type == op::Sigmoid) {
+                // 检查 shape 兼容性: MatMul 输出 (M,N) == Add 输入 == Sigmoid 输入
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 2 && last3_2.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        // 提交融合编译
+                        submitFusedCompileAsync({last3_0, last3_1, last3_2}, dev, cfg, "MatMul+Add+Sigmoid");
+                        return true;
+                    }
+                }
+            }
+
+            // MatMul + Add + ReLU 模式
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Add &&
+                last3_2.op_type == op::ReLU) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 2 && last3_2.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1, last3_2}, dev, cfg, "MatMul+Add+ReLU");
+                        return true;
+                    }
+                }
+            }
+
+            // MatMul + Sigmoid 模式 (无 bias)
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Sigmoid) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+Sigmoid");
+                        return true;
+                    }
+                }
+            }
+
+            // MatMul + ReLU 模式 (无 bias)
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::ReLU) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+ReLU");
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        };
+
+        // 检查最近的 dispatch 序列
+        if (!checkPattern(recent_dispatches_)) {
+            // 也可以检查更长的历史序列中是否有重复的模式
+            // 这里简化处理，只检查最近的
+        }
+    }
+
+    /// 从 DispatchRecord 的 shape 提取 MatMul 的 M,K,N 维度
+    /// shape 格式: {M, K, K, N} (从 dispatch 时合并的 shape_sig 来)
+    static bool extractMatMulDims(const std::vector<size_t>& shape,
+                                   size_t& M, size_t& K, size_t& N) {
+        if (shape.size() < 4) return false;
+        M = shape[0]; K = shape[1]; N = shape[3];
+        return true;
+    }
+
+    /// 从 DispatchRecord 的 shape 提取二元算子的 out_shape
+    /// 对于 MatMul, shape 是 {M,K,K,N}, out_shape = {M,N}
+    /// 对于逐元素二元算子, shape 是 {M,N,M,N}, out_shape = {M,N}
+    static std::vector<size_t> extractBinOpOutShape(const std::vector<size_t>& shape) {
+        if (shape.size() >= 4) {
+            // shape = {M, K, K, N} 或 {M, N, M, N}
+            return {shape[0], shape[shape.size() - 1]};
+        }
+        if (shape.size() >= 2) {
+            return {shape[0], shape[1]};
+        }
+        return shape;
+    }
+
+    /// 判断一个 op 是一元算子还是二元算子
+    static bool isUnaryOp(op op_type) {
+        switch (op_type) {
+        case op::Neg: case op::ReLU: case op::Tanh: case op::Sigmoid:
+        case op::GELU: case op::LReLU: case op::Log: case op::Exp:
+        case op::Abs: case op::Sin: case op::Cos:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+public:
+    /// 测试入口：直接复用 buildFusedGraph 的图构造逻辑，跳过预走机制
+    static Graph buildFusedGraphForTest(const std::vector<DispatchRecord>& records,
+                                         const std::string& pattern_name) {
+        return buildFusedGraph(records, pattern_name);
+    }
+
+private:
+    /// 构建融合 Graph 的核心方法
+    /// @param records 按执行顺序排列的 DispatchRecord 序列
+    /// @param pattern_name 融合模式名（用于生成 KernelShapeInfo）
+    /// @return 正确连接的 Graph
+    static Graph buildFusedGraph(const std::vector<DispatchRecord>& records,
+                                 const std::string& pattern_name) {
+        Graph g;
+
+        // 为每个 record 预先计算: 输入描述符、输出描述符、需要的输入数量
+        struct NodeInfo {
+            TensorDesc out_desc;
+            std::vector<TensorDesc> input_descs; // 外部输入（非链式中间结果）
+            std::vector<bool> input_is_external; // 标记每个输入是否为外部
+        };
+
+        std::vector<NodeInfo> infos;
+        for (const auto& rec : records) {
+            NodeInfo info;
+
+            if (rec.op_type == op::MatMul) {
+                size_t M, K, N;
+                if (extractMatMulDims(rec.shape, M, K, N)) {
+                    TensorDesc lhs_desc = TensorDesc::fromShape({M, K});
+                    TensorDesc rhs_desc = TensorDesc::fromShape({K, N});
+                    info.input_descs = {lhs_desc, rhs_desc};
+                    info.input_is_external = {true, true};
+                    info.out_desc = TensorDesc::fromShape({M, N});
+                } else {
+                    info.out_desc = TensorDesc::fromShape(rec.shape);
+                    info.input_descs = {info.out_desc, info.out_desc};
+                    info.input_is_external = {true, true};
+                }
+            } else if (!isUnaryOp(rec.op_type)) {
+                // 二元逐元素算子
+                auto out_shape = extractBinOpOutShape(rec.shape);
+                info.out_desc = TensorDesc::fromShape(out_shape);
+                // 第一个输入 = out_shape，第二个输入从 shape 剩余部分提取
+                // shape_sig = lhs_shape + rhs_shape（拼接），所以 rhs_shape = shape[out_shape.size():]
+                std::vector<size_t> rhs_shape;
+                if (rec.shape.size() > out_shape.size()) {
+                    rhs_shape.assign(rec.shape.begin() + (ptrdiff_t)out_shape.size(), rec.shape.end());
+                } else {
+                    rhs_shape = out_shape;
+                }
+                info.input_descs = {info.out_desc, TensorDesc::fromShape(rhs_shape)};
+                // 第一个输入可能是链式的（由后续设置），第二个是外部的
+                info.input_is_external = {false, true};
+            } else {
+                // 一元算子
+                auto out_shape = extractBinOpOutShape(rec.shape);
+                info.out_desc = TensorDesc::fromShape(out_shape);
+                // 一元算子的输入来自 chain
+                info.input_descs = {info.out_desc};
+                info.input_is_external = {false};
+            }
+            infos.push_back(std::move(info));
+        }
+
+        // 对于第一个节点，所有输入都是外部的
+        if (!infos.empty()) {
+            for (size_t j = 0; j < infos[0].input_is_external.size(); ++j) {
+                infos[0].input_is_external[j] = true;
+            }
+        }
+
+        // 添加所有外部输入
+        // 跟踪每个输入对应的 node_id (用于链式连接)
+        std::vector<size_t> input_node_ids; // 外部输入的 node_id 列表
+        std::vector<std::pair<size_t, size_t>> input_to_node; // (input_index, record_index)
+
+        // 为每个 record 的每个外部输入添加 Graph 输入
+        for (size_t ri = 0; ri < records.size(); ++ri) {
+            for (size_t ii = 0; ii < infos[ri].input_descs.size(); ++ii) {
+                if (infos[ri].input_is_external[ii]) {
+                    size_t in_id = g.addInput(infos[ri].input_descs[ii]);
+                    input_node_ids.push_back(in_id);
+                    input_to_node.push_back({in_id, ri});
+                }
+            }
+        }
+
+        // 添加计算节点并连接
+        size_t prev_node_id = SIZE_MAX;
+        for (size_t ri = 0; ri < records.size(); ++ri) {
+            const auto& rec = records[ri];
+            const auto& info = infos[ri];
+
+            // 收集此节点的输入 node_ids
+            std::vector<size_t> node_input_ids;
+
+            if (ri == 0) {
+                // 第一个节点：所有输入都是外部的
+                for (size_t ii = 0; ii < info.input_descs.size(); ++ii) {
+                    // 找到对应的外部输入 ID
+                    // 对于 MatMul: input_descs[0]=lhs, input_descs[1]=rhs
+                    // 我们按添加顺序获取前 N 个外部输入
+                    size_t ext_idx = ii; // 因为第一个节点的所有输入都是外部的，且按顺序添加
+                    if (ext_idx < input_node_ids.size()) {
+                        node_input_ids.push_back(input_node_ids[ext_idx]);
+                    }
+                }
+            } else {
+                // 后续节点：第一个输入来自 chain（上一个节点的输出），其余为外部输入
+                node_input_ids.push_back(prev_node_id);
+
+                // 收集剩余的外部输入
+                for (size_t ii = 1; ii < info.input_descs.size(); ++ii) {
+                    // 查找剩余的外部输入
+                    size_t ext_idx = 0;
+                    for (size_t rj = 0; rj < ri; ++rj) {
+                        ext_idx += infos[rj].input_descs.size();
+                    }
+                    // 跳过第一个节点已消费的
+                    ext_idx += (ii - 1); // 因为当前节点的第一个输入是 chain 内部的
+                    if (ext_idx < input_node_ids.size()) {
+                        node_input_ids.push_back(input_node_ids[ext_idx]);
+                    }
+                }
+            }
+
+            // 创建节点
+            size_t node_id = g.addNode(makeNodeVariant(rec), node_input_ids, info.out_desc);
+            prev_node_id = node_id;
+        }
+
+        // 标记最后一个节点为输出
+        if (prev_node_id != SIZE_MAX) {
+            g.markOutput(prev_node_id);
+        }
+
+        return g;
+    }
+
+    /// 提交融合编译任务（通用版，支持 2 或 3 个算子）
+    void submitFusedCompileAsync(const std::vector<DispatchRecord>& records,
+                                 DeviceType dev, const HotPathConfig& cfg,
+                                 const std::string& pattern_name) {
+        // 计算融合 key
+        size_t fused_key = 0;
+        for (const auto& r : records) {
+            fused_key ^= hashShapeKey(r.shape, r.op_type, dev);
+        }
+
+        // 检查是否已经在编译
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            auto it = entries_.find(fused_key);
+            if (it != entries_.end() && it->second.compiling) return;
+        }
+
+        pending_compiles_.fetch_add(1, std::memory_order_relaxed);
+        compilations_triggered_.fetch_add(1, std::memory_order_relaxed);
+
+        if (cfg.verbose) {
+            CtorchError::log(ErrorLevel::INFO, ErrorPlatform::kGENERAL,
+                ErrorType::UNKNOWN,
+                "C3HotPathManager: 检测到融合模式: " + pattern_name);
+        }
+
+        // 使用 std::async 启动后台任务，future 纳入 pending_futures_ 管理
+        // 这样 shutdown() 可以等待所有任务完成，避免进程退出时 UAF
+        auto future = std::async(std::launch::async, [this, records, fused_key, pattern_name]() {
+            // 使用新的 Graph 构建方法
+            Graph g = buildFusedGraph(records, pattern_name);
+
+            // 编译
+            auto& engine = C3Engine::getInstance();
+            auto kernel = engine.compile(g, CompileOptions{});
+
+            if (kernel) {
+                KernelShapeInfo info;
+                if (!records.empty()) {
+                    // 设置 shape 信息
+                    if (records[0].op_type == op::MatMul && records[0].shape.size() >= 4) {
+                        info.lhs_shape = {records[0].shape[0], records[0].shape[1]};
+                        info.rhs_shape = {records[0].shape[2], records[0].shape[3]};
+                    } else {
+                        info.lhs_shape = records[0].shape;
+                    }
+                    // 最后一个记录的 out_shape
+                    const auto& last = records.back();
+                    info.out_shape = extractBinOpOutShape(last.shape);
+                }
+                info.fused_pattern = pattern_name;
+
+                // 使用 C3Engine 编译
+                C3KernelRegistry::getInstance().installFused(kernel, records.back().op_type, info);
+
+                // 同时安装到 RegionFusionRegistry，启用预走匹配。
+                // 附带读写次数成本模型评估：仅值得融合的 pattern 才会被激活。
+                std::vector<op> op_seq;
+                std::vector<size_t> out_numels;
+                for (const auto& rec : records) {
+                    op_seq.push_back(rec.op_type);
+                    // 提取每个算子的输出 numel（MatMul: {M,K,K,N}->{M,N}，其余按 out_shape）
+                    std::vector<size_t> os = extractBinOpOutShape(rec.shape);
+                    size_t numel = 1;
+                    for (auto s : os) numel *= s;
+                    out_numels.push_back(numel);
+                }
+                // 首个 op 的输入形状：用于预走匹配时的形状校验，
+                // 避免反向传播（形状不同）错误匹配前向注册的区域。
+                std::vector<std::vector<size_t>> first_input_shapes;
+                if (!records.empty()) {
+                    const auto& r0 = records[0];
+                    if (r0.op_type == op::MatMul && r0.shape.size() >= 4) {
+                        first_input_shapes = {{r0.shape[0], r0.shape[1]},
+                                              {r0.shape[2], r0.shape[3]}};
+                    } else if (r0.shape.size() >= 2) {
+                        size_t half = r0.shape.size() / 2;
+                        first_input_shapes.push_back(
+                            {r0.shape.begin(), r0.shape.begin() + (ptrdiff_t)half});
+                        first_input_shapes.push_back(
+                            {r0.shape.begin() + (ptrdiff_t)half, r0.shape.end()});
+                    }
+                }
+                RegionFusionRegistry::getInstance().installWithCost(
+                    op_seq, kernel, out_numels, first_input_shapes);
+
+                if (getConfig().verbose) {
+                    CtorchError::log(ErrorLevel::INFO, ErrorPlatform::kGENERAL,
+                        ErrorType::UNKNOWN,
+                        "C3HotPathManager: 融合编译完成: " + pattern_name);
+                }
+            }
+
+            pending_compiles_.fetch_sub(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(mutex_);
+                auto it = entries_.find(fused_key);
+                if (it != entries_.end()) {
+                    it->second.compiling = false;
+                    it->second.last_compile_time = std::chrono::steady_clock::now();
+                }
+            }
+        });
+
+        // 将 future 加入统一管理列表
+        {
+            std::lock_guard<std::mutex> lk(futures_mutex_);
+            pending_futures_.push_back(std::move(future));
+        }
+    }
+
+    /// 异步提交 C3 编译任务
+    void submitCompileAsync(op op_type, DeviceType dev,
+                            const std::vector<size_t>& shape,
+                            const std::vector<size_t>& lhs_shape,
+                            const std::vector<size_t>& rhs_shape,
+                            size_t key, const HotPathConfig& cfg) {
+        if (!isSupportedOp(op_type)) {
+            // 不支持的操作，释放 pending 计数
+            pending_compiles_.fetch_sub(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lk(mutex_);
+            auto it = entries_.find(key);
+            if (it != entries_.end()) {
+                it->second.compiling = false;
+            }
+            return;
+        }
+
+        Graph g = buildGraphForOp(op_type, shape, lhs_shape, rhs_shape);
+
+        // 防御：空图（无输出节点）跳过编译，避免安装损坏的 kernel
+        if (g.outputCount() == 0) {
+            pending_compiles_.fetch_sub(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(mutex_);
+                auto it = entries_.find(key);
+                if (it != entries_.end()) {
+                    it->second.compiling = false;
+                }
+            }
+            return;
+        }
+
+        CompileOptions opts;
+        opts.opt_level = 1; // 首次编译用 O1 快速产出
+        // 【P0 修复 DEBT-NEW-5 2026-08-08】CompileOptions::backend 默认 MLIR，
+        // 但 MLIR 编译的 MatMul kernel (buildTiledMatMulWithEpilogue / buildMatMul + buildFusedEpilogue)
+        // 跟 cblas_sgemm 数值不等价（weight 范围大时 sum 累加顺序差异放大 4x）
+        // 实测：MNIST epoch 0 一致，epoch 1 batch 0 分歧（loss 0.7218 vs 0.2120, grad 差 4x）
+        // 修复：MatMul 强制走 Handwritten backend（即 cblas_sgemm wrapper，数值精确）
+        if (op_type == op::MatMul) {
+            opts.backend = C3Backend::Handwritten;
+        }
+
+        // 保存原始 timeout 并设置临时 timeout
+        auto& engine = C3Engine::getInstance();
+        uint32_t original_timeout = engine.getCompileTimeoutMs();
+        engine.setCompileTimeoutMs(cfg.compile_timeout_ms);
+
+        // 提交异步编译
+        auto compile_future = engine.compileAsync(g, opts);
+
+        // 恢复 timeout
+        engine.setCompileTimeoutMs(original_timeout);
+
+        // 使用 std::async 启动后台等待+安装任务，future 纳入 pending_futures_ 管理
+        // 这样 shutdown() 可以等待所有任务完成，避免进程退出时 UAF
+        auto future = std::async(std::launch::async, [this, compile_future = std::move(compile_future), op_type, shape, lhs_shape, rhs_shape, key]() mutable {
+            auto kernel = compile_future.get();
+
+            if (kernel) {
+                // 安装到 C3KernelRegistry
+                KernelShapeInfo info;
+                if (op_type == op::MatMul && shape.size() >= 4) {
+                    // MatMul: shape={M, K, K, N}
+                    size_t M = shape[0], K = shape[1], N = shape[3];
+                    info.is_matmul = true;
+                    info.M = M; info.K = K; info.N = N;
+                    info.lhs_shape = {M, K};
+                    info.rhs_shape = {K, N};
+                    info.out_shape = {M, N};
+                } else {
+                    // 单算子统一使用真实输入形状，保证注册 key 与执行期 key 一致
+                    info.lhs_shape = lhs_shape;
+                    info.rhs_shape = rhs_shape;
+                    info.out_shape = lhs_shape;
+                }
+                kernel->installIntoRegistry(op_type, info);
+
+                if (getConfig().verbose) {
+                    CtorchError::log(ErrorLevel::INFO, ErrorPlatform::kGENERAL,
+                        ErrorType::UNKNOWN,
+                        "C3HotPathManager: 编译完成并安装: op=" +
+                        std::to_string(static_cast<int>(op_type)) +
+                        " shape=[" + shapeToString(shape) + "]");
+                }
+            }
+
+            // 更新状态
+            pending_compiles_.fetch_sub(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(mutex_);
+                auto it = entries_.find(key);
+                if (it != entries_.end()) {
+                    it->second.compiling = false;
+                    it->second.last_compile_time = std::chrono::steady_clock::now();
+                }
+            }
+        });
+
+        // 将 future 加入统一管理列表
+        {
+            std::lock_guard<std::mutex> lk(futures_mutex_);
+            pending_futures_.push_back(std::move(future));
+        }
+    }
+
+    static std::string shapeToString(const std::vector<size_t>& shape) {
+        std::string s;
+        for (size_t i = 0; i < shape.size(); ++i) {
+            if (i > 0) s += ",";
+            s += std::to_string(shape[i]);
+        }
+        return s;
+    }
+
+    // ======================= 成员变量 =======================
+
+    mutable std::mutex mutex_;
+    mutable std::mutex cfg_mutex_;
+    mutable std::mutex rb_mutex_;
+    mutable std::mutex futures_mutex_;  ///< 保护 pending_futures_
+    HotPathConfig config_;
+
+    std::unordered_map<size_t, HotEntry> entries_;
+
+    // RingBuffer for fusion detection
+    std::deque<DispatchRecord> recent_dispatches_;
+
+    // 待管理的异步编译任务 future（替代 detach 线程）
+    std::vector<std::future<void>> pending_futures_;
+
+    std::atomic<size_t> calls_tracked_{0};
+    std::atomic<size_t> compilations_triggered_{0};
+    std::atomic<size_t> pending_compiles_{0};
+    std::atomic<bool> shutting_down_{false};
+    size_t cooldown_hits_ = 0;
+    size_t backpressure_hits_ = 0;
+};
+
+} // namespace c3
+} // namespace ct
+
+#endif // CTORCH_C3_C3_HOT_PATH_MANAGER_H
