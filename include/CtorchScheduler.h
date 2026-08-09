@@ -382,9 +382,14 @@ public:
         // 实验开关 C3_DISABLE_SINGLE_KERNEL=1 时跳过，仅保留区域融合
         // 方案 A：autograd 追踪区域（输入 requires_grad）也跳过单 kernel 注入，
         // 避免 Eager→JIT 混合轨迹破坏训练一致性。
-        if (!ct::detail::c3SingleKernelDisabled() &&
-            !ct::detail::inAutogradScope(a.requires_grad(), b.requires_grad()) &&
-            !ct::detail::c3OpDisabled(static_cast<int>(OpType))) {
+        // DEBT-NEW-7 H2 fix 计数器:c3_attemptable + in_autograd 时记录 bypass
+        const bool c3_attemptable = !ct::detail::c3SingleKernelDisabled() &&
+                                    !ct::detail::c3OpDisabled(static_cast<int>(OpType));
+        const bool in_autograd = ct::detail::inAutogradScope(a.requires_grad(), b.requires_grad());
+        if (c3_attemptable && in_autograd) {
+            ct::c3::C3KernelRegistry::getInstance().recordBypass();
+        }
+        if (c3_attemptable && !in_autograd) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecute(OpType, a, b);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG
@@ -512,9 +517,14 @@ public:
         // 实验开关 C3_DISABLE_SINGLE_KERNEL=1 时跳过，仅保留区域融合
         // 方案 A：autograd 追踪区域（输入 requires_grad）也跳过单 kernel 注入，
         // 避免 Eager→JIT 混合轨迹破坏训练一致性。
-        if (!ct::detail::c3SingleKernelDisabled() &&
-            !ct::detail::inAutogradScope(a.requires_grad(), false) &&
-            !ct::detail::c3OpDisabled(static_cast<int>(OpType))) {
+        // DEBT-NEW-7 H2 fix 计数器:unary 版（b=false 因 unary 无第二输入）
+        const bool c3_attemptable_u = !ct::detail::c3SingleKernelDisabled() &&
+                                      !ct::detail::c3OpDisabled(static_cast<int>(OpType));
+        const bool in_autograd_u = ct::detail::inAutogradScope(a.requires_grad(), false);
+        if (c3_attemptable_u && in_autograd_u) {
+            ct::c3::C3KernelRegistry::getInstance().recordBypass();
+        }
+        if (c3_attemptable_u && !in_autograd_u) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecuteUnary(OpType, a);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG

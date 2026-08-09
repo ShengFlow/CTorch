@@ -343,10 +343,24 @@ public:
         size_t uninstall_count = 0;
         size_t hit_count = 0;
         size_t miss_count = 0;
+        size_t bypass_count = 0;   ///< DEBT-NEW-7 H2 fix:被 inAutogradScope guard 跳过的次数
         size_t active_entries = 0;
         size_t fused_entries = 0;
         size_t backward_entries = 0;
     };
+
+    /**
+     * @brief 记录一次 guard bypass（DEBT-NEW-7 H2 fix 计数器）
+     * @details 由调度器 inAutogradScope guard 在检测到 autograd 上下文时调用，
+     *          表明本次本可以走 c3 single kernel 路径但被主动跳过。
+     *          通过 bypass_count vs hit_count + miss_count 的对比，
+     *          可以验证 H2 fix 是否在工作：
+     *            - 训练期间：bypass >> (hit + miss),准确率高
+     *            - 推理期间：hit + miss >> bypass,加速生效
+     */
+    void recordBypass() {
+        bypass_count_.fetch_add(1, std::memory_order_relaxed);
+    }
 
     Stats getStats() const {
         Stats s;
@@ -354,6 +368,7 @@ public:
         s.uninstall_count = uninstall_count_.load(std::memory_order_acquire);
         s.hit_count = hit_count_.load(std::memory_order_acquire);
         s.miss_count = miss_count_.load(std::memory_order_acquire);
+        s.bypass_count = bypass_count_.load(std::memory_order_acquire);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             s.active_entries = entries_.size();
@@ -615,6 +630,7 @@ private:
     std::atomic<size_t> uninstall_count_{0};
     std::atomic<size_t> hit_count_{0};
     std::atomic<size_t> miss_count_{0};
+    std::atomic<size_t> bypass_count_{0};  ///< DEBT-NEW-7 H2 fix 计数器
 };
 
 } // namespace c3
