@@ -381,6 +381,19 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 #ifndef CT_DISABLE_C3
 std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     op op_type, const std::vector<Tensor>& inputs, DeviceType /*dev*/) {
+#ifdef CT_PROFILE_PERF
+    auto _t0 = std::chrono::steady_clock::now();
+    // RAII-like defer:把 dispatch 耗时统计放这里,确保所有 return 路径都统计到
+    struct PerfGuard {
+        std::chrono::steady_clock::time_point t0;
+        PerfGuard(std::chrono::steady_clock::time_point t) : t0(t) {}
+        ~PerfGuard() {
+            auto t1 = std::chrono::steady_clock::now();
+            ct::c3::C3KernelRegistry::getInstance().recordPerfRegionDispatch(
+                (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        }
+    } _guard(_t0);
+#endif
     // 读取 trace 快照
     std::vector<op> trace_snapshot;
     {
@@ -497,6 +510,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     } catch (...) {
         return std::nullopt;
     }
+    // (timing 由 _guard RAII 在函数退出时统计,见函数入口 PerfGuard)
 }
 
 std::vector<size_t> CtorchScheduler::computeOutputShape(

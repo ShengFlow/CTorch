@@ -30,6 +30,32 @@
 #include <chrono>
 #endif
 
+// DEBT-NEW-7 性能采样(v0.5.1+ 代码审查用):
+// c3 off build (CT_DISABLE_C3=ON) 时,ct::c3::C3KernelRegistry 不可用,
+// 改用文件级 inline static 计数器(每个 TU 看到同一份实例)。
+#ifdef CT_PROFILE_PERF
+namespace ct { namespace detail {
+inline std::atomic<uint64_t>& perfEagerNs() {
+    static std::atomic<uint64_t> v{0}; return v;
+}
+inline std::atomic<uint64_t>& perfEagerCount() {
+    static std::atomic<uint64_t> v{0}; return v;
+}
+inline void perfEagerAdd(uint64_t ns) {
+    perfEagerNs().fetch_add(ns, std::memory_order_relaxed);
+    perfEagerCount().fetch_add(1, std::memory_order_relaxed);
+}
+inline void perfEagerReset() {
+    perfEagerNs().store(0, std::memory_order_relaxed);
+    perfEagerCount().store(0, std::memory_order_relaxed);
+}
+inline std::pair<uint64_t, uint64_t> perfEagerRead() {
+    return { perfEagerNs().load(std::memory_order_relaxed),
+             perfEagerCount().load(std::memory_order_relaxed) };
+}
+}} // namespace ct::detail
+#endif
+
 #ifndef CT_DISABLE_C3
 namespace ct { namespace detail {
 /// 实验开关：单 kernel hotpath 注入是否禁用（编译期 CT_C3_DISABLE_SINGLE_KERNEL 宏
@@ -465,7 +491,23 @@ public:
             dbg_cnt++;
         }
 #endif
-        Tensor result = func(a, b);
+        Tensor result;
+#ifdef CT_PROFILE_PERF
+        {
+            auto _t0 = std::chrono::steady_clock::now();
+            result = func(a, b);
+            auto _t1 = std::chrono::steady_clock::now();
+            uint64_t _ns = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(_t1 - _t0).count();
+#ifndef CT_DISABLE_C3
+            ct::c3::C3KernelRegistry::getInstance().recordPerfEagerInvoke(_ns);
+#else
+            // CT_DISABLE_C3 build:用文件级 inline static 累加(c3 off 也能量化 eager)
+            ct::detail::perfEagerAdd(_ns);
+#endif
+        }
+#else
+        result = func(a, b);
+#endif
 
         // [DEPRECATED] 融合 trace 记录已被移除，由区域融合替代
 

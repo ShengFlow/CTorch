@@ -203,6 +203,9 @@ public:
 
         // 执行 C3 kernel
         try {
+#ifdef CT_PROFILE_PERF
+            auto t0 = std::chrono::steady_clock::now();
+#endif
             Tensor out;
             if (entry.shapes.is_matmul) {
                 out = Tensor(ShapeTag{}, entry.shapes.out_shape);
@@ -220,6 +223,11 @@ public:
                     out.data_write<float>(),
                     a.numel(), 0, 0, 0);
             }
+#ifdef CT_PROFILE_PERF
+            auto t1 = std::chrono::steady_clock::now();
+            recordPerfC3SingleInvoke(
+                (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+#endif
             hit_count_.fetch_add(1, std::memory_order_relaxed);
 
             // 输出形状验证：C3 kernel 输出形状必须与注册时记录的预期形状一致
@@ -348,6 +356,16 @@ public:
         size_t fused_entries = 0;
         size_t backward_entries = 0;
         size_t fused_hit_count = 0;  ///< DEBT-NEW-7 region fusion:实际 invoke fused kernel 次数
+        // DEBT-NEW-7 性能采样 (v0.5.1+ 代码审查用): 各路径耗时累计
+        // 单位:纳秒。perf sample 阶段启用,production 默认 CT_PROFILE_PERF=OFF (zero-cost)
+        uint64_t region_dispatch_ns = 0;   ///< tryRegionDispatch 总耗时(含 match + invoke)
+        uint64_t region_match_ns = 0;      ///< region kernel invoke 总耗时(只 hit 部分)
+        uint64_t c3_single_invoke_ns = 0;  ///< c3 single kernel invoke 总耗时(只 hit 部分)
+        uint64_t eager_invoke_ns = 0;       ///< eager path 总耗时(全量,因 c3 miss 后必然走 eager)
+        uint64_t region_dispatch_count = 0; ///< tryRegionDispatch 调用次数
+        uint64_t region_match_count = 0;    ///< region hit 次数(同 fused_hit_count)
+        uint64_t c3_single_invoke_count = 0;///< c3 single kernel hit 次数
+        uint64_t eager_invoke_count = 0;    ///< eager path 调用次数
     };
 
     /**
@@ -363,6 +381,25 @@ public:
         bypass_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // DEBT-NEW-7 性能采样:各路径耗时累加器(CT_PROFILE_PERF 宏开启时启用)
+    // 避免逐 dispatch 调用 chrono now() 引入 release-mode 开销
+    void recordPerfRegionDispatch(uint64_t ns) {
+        region_dispatch_ns_.fetch_add(ns, std::memory_order_relaxed);
+        region_dispatch_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void recordPerfRegionMatch(uint64_t ns) {
+        region_match_ns_.fetch_add(ns, std::memory_order_relaxed);
+        region_match_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void recordPerfC3SingleInvoke(uint64_t ns) {
+        c3_single_invoke_ns_.fetch_add(ns, std::memory_order_relaxed);
+        c3_single_invoke_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void recordPerfEagerInvoke(uint64_t ns) {
+        eager_invoke_ns_.fetch_add(ns, std::memory_order_relaxed);
+        eager_invoke_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
     Stats getStats() const {
         Stats s;
         s.install_count = install_count_.load(std::memory_order_acquire);
@@ -371,6 +408,14 @@ public:
         s.miss_count = miss_count_.load(std::memory_order_acquire);
         s.bypass_count = bypass_count_.load(std::memory_order_acquire);
         s.fused_hit_count = fused_hit_count_.load(std::memory_order_acquire);
+        s.region_dispatch_ns = region_dispatch_ns_.load(std::memory_order_relaxed);
+        s.region_match_ns = region_match_ns_.load(std::memory_order_relaxed);
+        s.c3_single_invoke_ns = c3_single_invoke_ns_.load(std::memory_order_relaxed);
+        s.eager_invoke_ns = eager_invoke_ns_.load(std::memory_order_relaxed);
+        s.region_dispatch_count = region_dispatch_count_.load(std::memory_order_relaxed);
+        s.region_match_count = region_match_count_.load(std::memory_order_relaxed);
+        s.c3_single_invoke_count = c3_single_invoke_count_.load(std::memory_order_relaxed);
+        s.eager_invoke_count = eager_invoke_count_.load(std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             s.active_entries = entries_.size();
@@ -634,6 +679,15 @@ private:
     std::atomic<size_t> miss_count_{0};
     std::atomic<size_t> bypass_count_{0};  ///< DEBT-NEW-7 H2 fix 计数器
     std::atomic<size_t> fused_hit_count_{0};  ///< DEBT-NEW-7 region fusion 实际 invoke 计数
+    // DEBT-NEW-7 性能采样:uint64_t 避免溢出(纳秒累加)
+    std::atomic<uint64_t> region_dispatch_ns_{0};
+    std::atomic<uint64_t> region_match_ns_{0};
+    std::atomic<uint64_t> c3_single_invoke_ns_{0};
+    std::atomic<uint64_t> eager_invoke_ns_{0};
+    std::atomic<uint64_t> region_dispatch_count_{0};
+    std::atomic<uint64_t> region_match_count_{0};
+    std::atomic<uint64_t> c3_single_invoke_count_{0};
+    std::atomic<uint64_t> eager_invoke_count_{0};
 };
 
 } // namespace c3

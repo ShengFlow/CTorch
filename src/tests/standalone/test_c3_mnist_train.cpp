@@ -390,6 +390,38 @@ int main() {
                     hp.compilations_triggered, hp.calls_tracked);
         }
 #endif
+#ifdef CT_PROFILE_PERF
+        // DEBT-NEW-7 性能采样输出(v0.5.1+ 代码审查用)
+        // 单独写:不需要 C3 namespace,在 c3 off build 也能用(只是没有 C3-STAT 数据)
+#ifndef CT_DISABLE_C3
+        {
+            auto s = c3::C3KernelRegistry::getInstance().getStats();
+            fprintf(stderr, "[C3-PERF] rd=%lu(%.1fus) rm=%lu(%.1fus) c3s=%lu(%.1fus) eager=%lu(%.1fus)\n",
+                    (unsigned long)s.region_dispatch_count,
+                    s.region_dispatch_count ? (double)s.region_dispatch_ns / s.region_dispatch_count / 1000.0 : 0.0,
+                    (unsigned long)s.region_match_count,
+                    s.region_match_count ? (double)s.region_match_ns / s.region_match_count / 1000.0 : 0.0,
+                    (unsigned long)s.c3_single_invoke_count,
+                    s.c3_single_invoke_count ? (double)s.c3_single_invoke_ns / s.c3_single_invoke_count / 1000.0 : 0.0,
+                    (unsigned long)s.eager_invoke_count,
+                    s.eager_invoke_count ? (double)s.eager_invoke_ns / s.eager_invoke_count / 1000.0 : 0.0);
+            fprintf(stderr, "[C3-PERF] total_ms: rd=%.1f rm=%.1f c3s=%.1f eager=%.1f\n",
+                    (double)s.region_dispatch_ns / 1e6,
+                    (double)s.region_match_ns / 1e6,
+                    (double)s.c3_single_invoke_ns / 1e6,
+                    (double)s.eager_invoke_ns / 1e6);
+        }
+#else
+        // CT_DISABLE_C3 build:从 inline static 读 eager 统计
+        {
+            auto [eager_ns, eager_count] = ct::detail::perfEagerRead();
+            fprintf(stderr, "[C3-PERF-off] eager=%lu(%.1fus) total_ms=%.1f\n",
+                    (unsigned long)eager_count,
+                    eager_count ? (double)eager_ns / eager_count / 1000.0 : 0.0,
+                    (double)eager_ns / 1e6);
+        }
+#endif
+#endif
     }
 
     // 总结

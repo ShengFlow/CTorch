@@ -47,7 +47,15 @@ Tensor C3KernelRegistry::executeFusedWithInputs(
     // 当前 CompiledKernel 接口是虚函数 execute() → vector<Tensor>,
     // 我们用它作为统一调用入口（每个 backend 各自实现 fused kernel 路径）
     try {
+#ifdef CT_PROFILE_PERF
+        auto t0 = std::chrono::steady_clock::now();
+#endif
         auto outputs = kernel->execute(inputs);
+#ifdef CT_PROFILE_PERF
+        auto t1 = std::chrono::steady_clock::now();
+        recordPerfRegionMatch(
+            (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+#endif
         if (outputs.empty()) {
             return Tensor();
         }
