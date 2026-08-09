@@ -462,9 +462,16 @@ public:
     void installBackward(const std::string& backward_key,
                          std::shared_ptr<CompiledKernel> kernel,
                          const std::vector<size_t>& grad_shape,
-                         const std::vector<size_t>& out_shape) {
+                         const std::vector<size_t>& out_shape,
+                         size_t num_inputs = 1) {
         std::lock_guard<std::mutex> lock(mutex_);
-        backward_entries_[backward_key] = {std::move(kernel), grad_shape, out_shape, true};
+        BackwardEntry e;
+        e.kernel = std::move(kernel);
+        e.grad_shape = grad_shape;
+        e.out_shape = out_shape;
+        e.num_inputs = num_inputs;
+        e.active = true;
+        backward_entries_[backward_key] = std::move(e);
         install_count_.fetch_add(1, std::memory_order_release);
     }
 
@@ -564,6 +571,10 @@ private:
         std::shared_ptr<CompiledKernel> kernel;
         std::vector<size_t> grad_shape;
         std::vector<size_t> out_shape;
+        // DEBT-NEW-7 v0.5.1+: backward kernel graph 的 input 数量,决定 tryExecuteBackward
+        // 传几个 tensor。ReLU/Sigmoid/Tanh:2(grad,x); Add/Sub:1(grad); Mul/MatMul/Div:3(grad,A,B)。
+        // 缺这字段会导致 Add kernel 收到多余 input 报 BroadcastUtils 错。
+        size_t num_inputs = 1;
         bool active = false;
     };
 

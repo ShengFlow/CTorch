@@ -40,6 +40,7 @@ static void tempCrashHandler(int sig) {
 #include "C3/FusionCostModel.h"
 #include "C3/C3KernelRegistry.h"
 #include "C3/C3HotPathManager.h"
+#include "C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 调试用,看 backward fusion hit
 #endif
 #include "mnist/mnist_loader.h"
 #include "ctQALS/Random.h"
@@ -388,6 +389,12 @@ int main() {
                     epoch + 1, s.active_entries, s.fused_entries, s.hit_count, s.miss_count,
                     s.bypass_count, s.fused_hit_count,
                     hp.compilations_triggered, hp.calls_tracked);
+            // DEBT-NEW-7 v0.5.1+ C3 backward stats
+            auto bw = c3::C3BackwardCapture::getInstance().getStats();
+            fprintf(stderr, "[C3-BW-STAT] epoch=%d capture=%zu compile=%zu bw_hit=%zu bw_miss=%zu exec_fail=%zu fusion_compile=%zu fusion_hit=%zu fusion_miss=%zu\n",
+                    epoch + 1, bw.capture_count, bw.compile_count,
+                    bw.cache_hit_count, bw.cache_miss_count, bw.execution_failures,
+                    bw.fusion_compile_count, bw.fusion_hit_count, bw.fusion_miss_count);
         }
 #endif
 #ifdef CT_PROFILE_PERF

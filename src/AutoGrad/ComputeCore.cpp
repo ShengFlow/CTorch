@@ -16,6 +16,9 @@
 #include "../../include/ThreadPool.h"
 #include "../../include/Arena.h"
 #include "../../include/AutoGrad.h"
+#ifndef CT_DISABLE_C3
+#include "../../include/C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 接通 C3 backward fusion
+#endif
 #ifdef __OBJC__
 #include "../../src/kernels/kernels.h"
 #endif
@@ -191,6 +194,24 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         }
 
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
+
+        // DEBT-NEW-7 v0.5.1+ 阶段性策略:c3 backward wiring 暂未启用
+        // 原因 (按 H5 → 🅐 顺序):
+        //   1. C3BackwardCapture 1583 行实装完整,但 c3 kernel 输出 tensor shape 由
+        //      ConcreteCompiledKernel 用 a.shape() 决定 (跟 grad 形状一致),不是
+        //      backward graph 注册时的 out_shape,导致 MatMul backward 输出 shape
+        //      跟上游 GradAccumulator 期望的 shape 不匹配 → BroadcastUtils 抛错。
+        //   2. C3KernelRegistry::tryExecuteBackward 已实装 (含 num_inputs / shape 校验),
+        //      C3BackwardCapture 编译/查询路径接通,Phase 1/2 接口 ready。
+        //   3. HandwrittenKernelGen 已加 SumReduceNode 支持 (🅐-2 完成)。
+        //   4. 但 ConcreteCompiledKernel 输出 shape bug 属于 v0.5.2 范畴
+        //      (需要新增 out_shape-aware tensor 构造接口),本 commit 暂不接
+        //      ComputeCore::backward 调用,避免破坏 4.6% 慢 baseline。
+        // 5. v0.5.2 待办:
+        //      a. CompiledKernel 添加 out_shape 字段 + execute() 用 out_shape 构造
+        //      b. MLIRKernelGen 同样支持
+        //      c. C3KernelRegistry::installBackward 把 out_shape 透传给 kernel
+        //      d. 然后恢复 ComputeCore::backward 的 c3 接线
         std::vector<GradPack> result = node->backward(grads);
 
         if (!result.empty()) {

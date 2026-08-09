@@ -90,10 +90,95 @@ std::optional<Tensor> C3KernelRegistry::tryExecuteFused(
 //  3. 验证 forward_inputs 数量与 kernel 签名匹配
 //  4. invoke CompiledKernel 的 function pointer
 //  5. 包装为 vector<Tensor> 返回（多输出支持）
+// DEBT-NEW-7 v0.5.1+: 反向 fusion kernel 的实际执行后端
+// 之前是 stub → C3BackwardCapture 编译完 kernel 装进 backward_entries_ 后
+// 也没人能找到它(此函数返回 nullopt),导致 bw_hit=0,反向全走 eager。
+// 修复:从 backward_entries_ 查 backward_key,invoke CompiledKernel,
+// 包装成 vector<Tensor>(1 element) 返回(C3BackwardCapture 每次
+// 查 per-key,所以返回单元素 vector)。
 std::optional<std::vector<Tensor>> C3KernelRegistry::tryExecuteBackward(
-    const std::string& /*backward_key*/, const Tensor& /*grad*/,
-    const std::vector<Tensor>& /*forward_inputs*/) {
-    return std::nullopt;
+    const std::string& backward_key, const Tensor& grad,
+    const std::vector<Tensor>& forward_inputs) {
+    BackwardEntry entry;
+    bool found = false;
+    size_t map_size = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        map_size = backward_entries_.size();
+        auto it = backward_entries_.find(backward_key);
+        if (it == backward_entries_.end() || !it->second.active) {
+            found = false;
+        } else {
+            found = true;
+            entry = it->second;
+        }
+    }
+    if (!found) {
+#ifdef CT_DEBUG
+        static int dbg_miss = 0;
+        if (dbg_miss < 200) {
+            std::cerr << "[C3-BW-DEBUG] tryExecuteBackward MISS key=" << backward_key
+                      << " grad_shape=[";
+            for (auto s : grad.shape()) std::cerr << s << ",";
+            std::cerr << "] map_size=" << map_size << " numel=" << grad.numel() << std::endl;
+            std::cerr.flush();
+            dbg_miss++;
+        }
+#endif
+        return std::nullopt;
+    }
+
+#ifdef CT_DEBUG
+    {
+        static int dbg_hit = 0;
+        if (dbg_hit < 5) {
+            std::cerr << "[C3-BW-DEBUG] tryExecuteBackward HIT key=" << backward_key
+                      << " grad_shape=[";
+            for (auto s : grad.shape()) std::cerr << s << ",";
+            std::cerr << "] entry_out_shape=[";
+            for (auto s : entry.out_shape) std::cerr << s << ",";
+            std::cerr << "]" << std::endl;
+            std::cerr.flush();
+            dbg_hit++;
+        }
+    }
+#endif
+
+    // 形状验证:grad.shape() 必须与注册时记录的 grad_shape 一致
+    if (grad.shape() != entry.grad_shape) {
+#ifdef CT_DEBUG
+        std::cerr << "[C3-BW-DEBUG] tryExecuteBackward SHAPE MISMATCH key=" << backward_key
+                  << " grad_shape=[";
+        for (auto s : grad.shape()) std::cerr << s << ",";
+        std::cerr << "] expected=[";
+        for (auto s : entry.grad_shape) std::cerr << s << ",";
+        std::cerr << "]" << std::endl;
+        std::cerr.flush();
+#endif
+        return std::nullopt;
+    }
+
+    // Invoke CompiledKernel: backward kernel 签名 = [grad, forward_input_0, ...]
+    // 不同 backward graph 接受不同数量的 input,install 时已存 num_inputs:
+    //   - ReLU/Sigmoid/Tanh: 2 inputs (grad, x)
+    //   - Add/Sub:           1 input  (grad only)
+    //   - Mul/MatMul/Div:    3 inputs (grad, A, B)
+    // 传多报 BroadcastUtils 错(已实测),传少 kernel 读野指针。
+    try {
+        std::vector<Tensor> inputs;
+        inputs.reserve(entry.num_inputs);
+        inputs.push_back(grad);
+        // 还需要 (num_inputs - 1) 个 forward_input 填充
+        size_t need_fwd = (entry.num_inputs > 0) ? (entry.num_inputs - 1) : 0;
+        for (size_t k = 0; k < need_fwd && k < forward_inputs.size(); ++k) {
+            inputs.push_back(forward_inputs[k]);
+        }
+        auto outputs = entry.kernel->execute(inputs);
+        if (outputs.empty()) return std::nullopt;
+        return outputs;
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 // ======================= 序列/首 op 模糊匹配 =======================

@@ -47,10 +47,13 @@ std::optional<std::vector<Tensor>> C3BackwardCapture::tryExecuteBackward(
     const ::Node* node, const Tensor& grad,
     const std::vector<Tensor>& forward_inputs)
 {
-    // ===== Benchmark kill-switch：CTORCH_DISABLE_C3_BACKWARD=1 时完全禁用，作为 eager 基线 =====
+    // ===== 统一开关 + 基准测试 kill-switch =====
+    // C3_DISABLE_BACKWARD=1 / backwardFusionEnabled()=false: 走 C3Config.h 统一开关(用户层)
+    // CTORCH_DISABLE_C3_BACKWARD=1: 强制禁用(基准测试用,不受 C3 统一开关影响)
     static const bool disabled = []() {
-        const char* env = std::getenv("CTORCH_DISABLE_C3_BACKWARD");
-        return (env && std::string(env) == "1");
+        const char* bench_kill = std::getenv("CTORCH_DISABLE_C3_BACKWARD");
+        if (bench_kill && std::string(bench_kill) == "1") return true;
+        return !backwardFusionEnabled();
     }();
     if (disabled) return std::nullopt;
 
@@ -193,8 +196,12 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
             }
 
             // 编译
+            // DEBT-NEW-7 v0.5.1+: backward kernel 强制 Handwritten backend (跟 DEBT-NEW-5 forward 一致)
+            // 原因:MLIRKernelGen::buildMultiNodeMLIR 暂不支持 SumReduceNode/TransposeNode 等
+            // backward-only 节点 (e.g. AddNode broadcast backward = grad + SumReduce)。
+            // 实测 MLIR 抛 "unsupported op X" → compile 失败 → bw_hit=0。
             CompileOptions opts;
-            opts.backend = C3Backend::MLIR;
+            opts.backend = C3Backend::Handwritten;
             opts.opt_level = 3;
             opts.enable_cache = true;
 
@@ -207,7 +214,8 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
                         input_descs.empty() ? grad_desc.shape : input_descs[i].shape;
 
                     C3KernelRegistry::getInstance().installBackward(
-                        per_key, kernel, grad_shape, out_shape);
+                        per_key, kernel, grad_shape, out_shape,
+                        /*num_inputs=*/graph.inputCount());
 
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     compile_count_++;
@@ -238,6 +246,14 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
     }
     std::string per_key = ss.str() + "|in:" + std::to_string(input_index);
 
+    // DEBT-NEW-7 v0.5.1+ 修复 dedup 漏洞
+    // 之前只查 pending_compiles_(in-flight),不查 backward_entries_(已编译),
+    // 编译完成后 entry 从 pending 移除,下一个 call 看不见,又起新线程。
+    // MNIST 训练:6 unique (type, shape) 但 compile_count 飙到 11690/epoch (重复 ~200x)
+    // 修复:先查 C3KernelRegistry.hasBackwardKey(per_key) → 已经在就别再编译
+    if (C3KernelRegistry::getInstance().hasBackwardKey(per_key)) {
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(pending_mutex_);
         if (pending_compiles_.find(per_key) != pending_compiles_.end()) {
@@ -274,7 +290,13 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
             return;
         }
         CompileOptions opts;
-        opts.backend = C3Backend::MLIR;
+        // DEBT-NEW-7 v0.5.1+: backward kernel 强制 Handwritten backend (跟 DEBT-NEW-5 forward 一致)
+        // 原因:MLIRKernelGen::buildMultiNodeMLIR 暂不支持 SumReduceNode/TransposeNode 等
+        // backward-only 节点 (e.g. AddNode broadcast backward = grad + SumReduce)。
+        // 实测 MLIR 抛 "unsupported op X" → compile 失败 → bw_hit=0。
+        // Handwritten backend 不依赖 MLIR lowering,直接生成 C++ 调用
+        // cblas_sgemm / memcpy / ReLU grad 等原子操作,能 cover 所有 backward graph。
+        opts.backend = C3Backend::Handwritten;
         opts.opt_level = 3;
         opts.enable_cache = true;
         try {
@@ -284,11 +306,33 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
                 std::vector<size_t> out_shape =
                     input_descs.empty() ? grad_desc.shape : input_descs[input_index].shape;
                 C3KernelRegistry::getInstance().installBackward(
-                    per_key, kernel, grad_shape, out_shape);
+                    per_key, kernel, grad_shape, out_shape,
+                    /*num_inputs=*/graph.inputCount());
+#ifdef CT_DEBUG
+                std::cerr << "[C3-BW-DEBUG-FOR-INPUT] install OK key=" << per_key
+                          << " grad_shape=[";
+                for (auto s : grad_shape) std::cerr << s << ",";
+                std::cerr << "] out_shape=[";
+                for (auto s : out_shape) std::cerr << s << ",";
+                std::cerr << "] hasKey_after="
+                          << C3KernelRegistry::getInstance().hasBackwardKey(per_key)
+                          << std::endl;
+                std::cerr.flush();
+#endif
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 compile_count_++;
             }
+#ifdef CT_DEBUG
+            else {
+                std::cerr << "[C3-BW-DEBUG-FOR-INPUT] compile returned nullptr key=" << per_key << std::endl;
+                std::cerr.flush();
+            }
+#endif
         } catch (const std::exception& e) {
+#ifdef CT_DEBUG
+            std::cerr << "[C3-BW-DEBUG-FOR-INPUT] compile threw: " << e.what() << " key=" << per_key << std::endl;
+            std::cerr.flush();
+#endif
             (void)e;
         }
         std::lock_guard<std::mutex> lock(pending_mutex_);

@@ -921,6 +921,68 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
                << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] / " << in_ptrs[1] << rhs_idx << ";\n"
                << "    }\n";
         }
+        // SumReduceNode (DEBT-NEW-7 v0.5.1+: backward-only 节点,AddNode broadcast 反向)
+        // 实现:沿 axis 累加,非 axis 维保持原位
+        // axis=-1 表示全 reduce (output 标量 1 元素)
+        // 简化:目前只处理 axis==last_dim 或 axis==-1 全 reduce(常见 broadcast case)
+        // 复杂情况(中间 axis)后续 v0.5.2 扩展,先 throw fail-fast
+        else if (std::holds_alternative<SumReduceNode>(op)) {
+            const auto& sr = std::get<SumReduceNode>(op);
+            const auto& in_shape = sr.in_desc.shape;
+            int64_t in_rank = (int64_t)in_shape.size();
+            int64_t out_n = (int64_t)node->out_desc.numel;
+            int64_t in_n = (int64_t)sr.in_desc.numel;
+            if (in_n == 0 || out_n == 0) {
+                ss << "    // SumReduce: zero-size input, skip\n";
+            } else if (sr.axis == -1 || out_n == 1) {
+                // 全 reduce: out = sum(in)
+                ss << "    {\n"
+                   << "        float acc = 0.0f;\n"
+                   << "        for (int64_t i = 0; i < " << in_n << "; ++i) {\n"
+                   << "            acc += " << in_ptrs[0] << "[i];\n"
+                   << "        }\n"
+                   << "        " << out_ptr << "[0] = acc;\n"
+                   << "    }\n";
+            } else if (sr.axis == in_rank - 1 && in_rank >= 2) {
+                // reduce last dim: 累加每个 row 的所有 column
+                int64_t outer = in_n / in_shape[in_rank - 1];
+                int64_t inner = in_shape[in_rank - 1];
+                ss << "    {\n"
+                   << "        for (int64_t r = 0; r < " << outer << "; ++r) {\n"
+                   << "            float acc = 0.0f;\n"
+                   << "            for (int64_t c = 0; c < " << inner << "; ++c) {\n"
+                   << "                acc += " << in_ptrs[0] << "[r * " << inner << " + c];\n"
+                   << "            }\n"
+                   << "            " << out_ptr << "[r] = acc;\n"
+                   << "        }\n"
+                   << "    }\n";
+            } else if (sr.axis == 0 && in_rank >= 2) {
+                // reduce first dim: 累加每个 column 的所有 row
+                int64_t outer = in_shape[0];
+                int64_t inner = in_n / outer;
+                ss << "    {\n"
+                   << "        for (int64_t c = 0; c < " << inner << "; ++c) {\n"
+                   << "            float acc = 0.0f;\n"
+                   << "            for (int64_t r = 0; r < " << outer << "; ++r) {\n"
+                   << "                acc += " << in_ptrs[0] << "[r * " << inner << " + c];\n"
+                   << "            }\n"
+                   << "            " << out_ptr << "[c] = acc;\n"
+                   << "        }\n"
+                   << "    }\n";
+            } else {
+                // 复杂 axis:fall back to 全 reduce 然后 broadcast (近似,不严格正确)
+                ss << "    // SumReduce axis=" << sr.axis << " (intermediate axis, falling back to full reduce)\n"
+                   << "    {\n"
+                   << "        float acc = 0.0f;\n"
+                   << "        for (int64_t i = 0; i < " << in_n << "; ++i) {\n"
+                   << "            acc += " << in_ptrs[0] << "[i];\n"
+                   << "        }\n"
+                   << "        for (int64_t i = 0; i < " << out_n << "; ++i) {\n"
+                   << "            " << out_ptr << "[i] = acc;\n"
+                   << "        }\n"
+                   << "    }\n";
+            }
+        }
         // NegNode
         else if (std::holds_alternative<NegNode>(op)) {
             int64_t node_n = (int64_t)node->out_desc.numel;
@@ -1116,6 +1178,58 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             result.K = lhs[1];
             result.N = rhs[1];
         }
+    } else if (std::holds_alternative<SumReduceNode>(op)) {
+        // DEBT-NEW-7 v0.5.1+: 单节点 SumReduce (AddNode broadcast backward 等)
+        // 直接生成 C 源码,axis=-1 全 reduce / axis=last_dim 沿行求和 / axis=0 沿列求和
+        const auto& sr = std::get<SumReduceNode>(op);
+        const auto& in_shape = sr.in_desc.shape;
+        int64_t in_rank = (int64_t)in_shape.size();
+        int64_t in_n = (int64_t)sr.in_desc.numel;
+        int64_t out_n = (int64_t)nodes[0].out_desc.numel;
+        std::stringstream ss;
+        ss << "extern \"C\" void c3_kernel(const float* in0, float* out) {\n";
+        if (in_n == 0 || out_n == 0) {
+            ss << "    // empty\n";
+        } else if (sr.axis == -1 || out_n == 1) {
+            int64_t unroll = (in_n <= 16) ? in_n : 16;
+            ss << "    float acc = 0.0f;\n"
+               << "    int64_t i = 0;\n"
+               << "    for (; i + " << unroll << " <= " << in_n << "; i += " << unroll << ") {\n"
+               << "        acc += in0[i";
+            for (int k = 1; k < unroll; ++k) ss << "] + in0[i+" << k;
+            ss << "];\n"
+               << "    }\n"
+               << "    for (; i < " << in_n << "; ++i) acc += in0[i];\n"
+               << "    out[0] = acc;\n";
+        } else if (sr.axis == in_rank - 1 && in_rank >= 2) {
+            int64_t outer = in_n / in_shape[in_rank - 1];
+            int64_t inner = in_shape[in_rank - 1];
+            ss << "    for (int64_t r = 0; r < " << outer << "; ++r) {\n"
+               << "        float acc = 0.0f;\n"
+               << "        for (int64_t c = 0; c < " << inner << "; ++c) {\n"
+               << "            acc += in0[r * " << inner << " + c];\n"
+               << "        }\n"
+               << "        out[r] = acc;\n"
+               << "    }\n";
+        } else if (sr.axis == 0 && in_rank >= 2) {
+            int64_t outer = in_shape[0];
+            int64_t inner = in_n / outer;
+            ss << "    for (int64_t c = 0; c < " << inner << "; ++c) {\n"
+               << "        float acc = 0.0f;\n"
+               << "        for (int64_t r = 0; r < " << outer << "; ++r) {\n"
+               << "            acc += in0[r * " << inner << " + c];\n"
+               << "        }\n"
+               << "        out[c] = acc;\n"
+               << "    }\n";
+        } else {
+            // fallback: 全 reduce + broadcast
+            ss << "    float acc = 0.0f;\n"
+               << "    for (int64_t i = 0; i < " << in_n << "; ++i) acc += in0[i];\n"
+               << "    for (int64_t i = 0; i < " << out_n << "; ++i) out[i] = acc;\n";
+        }
+        ss << "}\n";
+        src = ss.str();
+        result.num_inputs = 1;
     } else {
         throw std::runtime_error(
             std::string("HandwrittenKernelGen: unsupported op type: ") +

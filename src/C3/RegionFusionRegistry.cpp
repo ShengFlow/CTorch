@@ -92,10 +92,14 @@ void RegionFusionRegistry::installWithCost(
     entry.len = op_seq.size();
     entry.cost = cost;
     entry.first_input_shapes = first_input_shapes;
-    // 仅当成本模型判定值得融合时才激活
-    // 临时(2026-08-09 DEBT-NEW-7 实施阶段):让 cost 模型不再过滤,所有 region 都激活。
-    // 这样可以验证 region fusion 整条链路通不通,后续再调优 cost 模型。
-    entry.active = out_numels.size() == op_seq.size();
+    // DEBT-NEW-7 P1 修复:恢复成本模型 gating
+    // 仅当:
+    //   1. out_numels 跟 op_seq 长度一致(基本完整性检查)
+    //   2. 成本模型判定值得融合(节省的内存/launch > 阈值)
+    // 才激活 region entry。临时"全部激活"代码已删除,避免低收益 region 拖累 perf。
+    bool basic_valid = (out_numels.size() == op_seq.size());
+    bool worth_it = cost.worthwhile;  // FusionCost.worthwhile 是字段,不是函数
+    entry.active = basic_valid && worth_it;
     entries_[hash] = std::move(entry);
 }
 
