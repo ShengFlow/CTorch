@@ -291,7 +291,13 @@ static mlir::LLVM::LLVMFuncOp getOrDeclareSgemm(mlir::OpBuilder& builder, mlir::
 // 小矩阵 MatMul 阈值：当 M*K*N < 该值时，使用内联三重循环替代 cblas_sgemm
 // 小矩阵的 BLAS 函数调用开销（参数检查、分块策略选择等）可能超过计算本身，
 // 内联实现直接生成 MLIR 循环，避免调用开销且更易被 LLVM 自动向量化。
-static constexpr int64_t kSmallMatMulThreshold = 4096;
+// [Fix 2026-08-09 DEBT-NEW-5 真根因修]: 根因是 buildFusedEpilogue 对列向量 bias
+//   的广播索引错误 (idx%N 在 N=1 时恒 0), 已修复. 原 workaround 把阈值改成 0
+//   强制全走 cblas, 但牺牲了小矩阵内联性能. 真根因修复后恢复合理阈值.
+//   注意: 内联累加顺序与 cblas 数值不完全等价 (浮点不可结合), 但小矩阵 K 小,
+//   误差在 1e-6 精度要求内可接受 (已实测 MLP 全 PASS). 中矩阵 (≥kTiled阈值)
+//   仍走 cblas 保证精度.
+static constexpr int64_t kSmallMatMulThreshold = 256;
 
 /// 为小矩阵生成内联三重循环 MatMul（替代 cblas_sgemm 调用）
 /// 生成 MLIR 代码：
@@ -381,7 +387,9 @@ static void buildFusedEpilogue(mlir::OpBuilder& builder, mlir::Location loc,
                                 mlir::Value n, mlir::Value bias = nullptr,
                                 MatMulActivation act = MatMulActivation::None,
                                 int64_t known_numel = 0,
-                                mlir::Value N_for_bias = nullptr) {
+                                mlir::Value N_for_bias = nullptr,
+                                size_t bias_numel = 0,
+                                size_t matM = 0, size_t matN = 0) {
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
 
@@ -392,13 +400,24 @@ static void buildFusedEpilogue(mlir::OpBuilder& builder, mlir::Location loc,
 
             mlir::Value val = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
 
-            // 偏置加法（广播语义：bias[j] 使用列索引）
-            // 【P0 修复 DEBT-NEW-4 2026-08-08】之前 bug：用 idx_i64 (0..M*N-1) 索引 1D bias [N] → 越界
-            // 修复：用 idx_i64 % N 当 j 索引（当 caller 传 N_for_bias 时）
+            // 偏置加法（广播语义）：依据 bias 形状选择索引
+            //  - bias_numel==matN (行向量 (1,N)) → j = idx % N (跨行广播, MNIST bias[N])
+            //  - bias_numel==matM (列向量 (M,1)) → j = idx / N (跨列广播, MLP bias[out_dim,1])
+            //  - bias_numel==1 (标量)            → j = 0
+            //  - 否则 (全量 (M,N))               → j = idx
+            // 【P0 DEBT-NEW-5】之前固定 idx % N, 对列向量 bias (M,1) 时 N=1 → j 恒 0
+            //   → 每个元素都加 bias[0] 而非 bias[idx], 与 eager 的 x+bias 逐元素不一致
             if (bias) {
                 mlir::Value j = idx_i64;
-                if (N_for_bias) {
-                    j = b.create<mlir::arith::RemUIOp>(loc, idx_i64, N_for_bias);
+                if (bias_numel == 1) {
+                    j = b.create<mlir::arith::ConstantIntOp>(loc, 0, 64); // 标量广播
+                } else if (N_for_bias) {
+                    if (matN > 0 && bias_numel == static_cast<size_t>(matN)) {
+                        j = b.create<mlir::arith::RemUIOp>(loc, idx_i64, N_for_bias); // 行向量
+                    } else if (matM > 0 && bias_numel == static_cast<size_t>(matM)) {
+                        j = b.create<mlir::arith::DivUIOp>(loc, idx_i64, N_for_bias); // 列向量
+                    }
+                    // 否则为全量 (M,N): j = idx
                 }
                 mlir::Value bias_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{j});
                 mlir::Value bias_val = b.create<mlir::LLVM::LoadOp>(loc, f32, bias_ptr);
@@ -445,7 +464,9 @@ static void buildTiledMatMulWithEpilogue(mlir::OpBuilder& builder, mlir::Locatio
                                           mlir::Value bias = nullptr,
                                           MatMulActivation act = MatMulActivation::None,
                                           int64_t tile_m = kDefaultTileM,
-                                          int64_t tile_n = kDefaultTileN) {
+                                          int64_t tile_n = kDefaultTileN,
+                                          size_t bias_numel = 0,
+                                          size_t matM = 0, size_t matN = 0) {
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
 
@@ -456,6 +477,29 @@ static void buildTiledMatMulWithEpilogue(mlir::OpBuilder& builder, mlir::Locatio
     mlir::Value M_i = i64ToIndex(builder, loc, M);
     mlir::Value N_i = i64ToIndex(builder, loc, N);
     mlir::Value K_i = i64ToIndex(builder, loc, K);
+
+    // 偏置索引（广播语义）：与 buildFusedEpilogue 对齐
+    //  - bias_numel==matN (行向量 (1,N)) → bias[col] (每行共享)
+    //  - bias_numel==matM && matN==1 (列向量 (M,1)) → bias[row] (每列共享)
+    //  - bias_numel==1 (标量)            → bias[0]
+    //  - 否则 (全量 (M,N))               → bias[row*N + col]
+    auto makeBiasIdx = [&](mlir::Location bloc,
+                           mlir::Value i64_row, mlir::Value i64_col,
+                           mlir::Value N_i64) {
+        mlir::Value bidx = i64_col; // 默认行向量 bias[col]
+        if (bias_numel == 1) {
+            bidx = builder.create<mlir::arith::ConstantIntOp>(bloc, 0, 64); // 标量
+        } else if (matM > 0 && matN == 1 && bias_numel == static_cast<size_t>(matM)) {
+            bidx = i64_row; // 列向量 (M,1) → bias[row]
+        } else if (matM > 0 && matN > 0 &&
+                   bias_numel == static_cast<size_t>(matM * matN)) {
+            // 全量 (M,N) → bias[row*N + col]
+            bidx = builder.create<mlir::arith::MulIOp>(bloc, i64_row, N_i64);
+            bidx = builder.create<mlir::arith::AddIOp>(bloc, bidx, i64_col);
+        }
+        // 否则行向量 (1,N) → bias[col]
+        return bidx;
+    };
 
     if (tile_m > 0 && tile_n > 0) {
         // ========== tiled 版本：2D tiling on M and N ==========
@@ -517,7 +561,8 @@ static void buildTiledMatMulWithEpilogue(mlir::OpBuilder& builder, mlir::Locatio
 
         // 偏置加法（广播语义：bias[j] 对每行共享）
         if (bias) {
-            mlir::Value bias_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{j_i64});
+            mlir::Value bias_idx = makeBiasIdx(loc, i_i64, j_i64, N);
+            mlir::Value bias_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{bias_idx});
             mlir::Value bias_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, bias_ptr);
             result = builder.create<mlir::arith::AddFOp>(loc, result, bias_val);
         }
@@ -579,7 +624,8 @@ static void buildTiledMatMulWithEpilogue(mlir::OpBuilder& builder, mlir::Locatio
 
         // 偏置加法
         if (bias) {
-            mlir::Value bias_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{j_i64});
+            mlir::Value bias_idx = makeBiasIdx(loc, i_i64, j_i64, N);
+            mlir::Value bias_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, bias, mlir::ValueRange{bias_idx});
             mlir::Value bias_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, bias_ptr);
             result = builder.create<mlir::arith::AddFOp>(loc, result, bias_val);
         }
@@ -1337,6 +1383,7 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             mlir::Value fused_bias_ptr = nullptr;
             MatMulActivation fused_act = MatMulActivation::None;
             int64_t fused_skip = 0; // 跳过的后续节点数
+            size_t fused_bias_numel = 0; // DEBT-NEW-5: bias 张量元素数 (0=无 bias)
 
             // 检查下一个节点是否为 Add（偏置加法）
             if (ci + 1 < compute_nodes.size()) {
@@ -1348,6 +1395,10 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                     size_t bias_node_id = next_node->inputs[1];
                     fused_bias_ptr = getInputPtr(bias_node_id);
                     fused_skip = 1;
+                    // DEBT-NEW-5: 记录 bias 形状 numel, 供 epilogue 选择行/列广播索引
+                    fused_bias_numel = 1;
+                    for (size_t d : std::get<AddNode>(next_node->op).rhs_desc.shape)
+                        fused_bias_numel *= d;
 
                     // 检查再下一个节点是否为激活函数
                     if (ci + 2 < compute_nodes.size()) {
@@ -1400,17 +1451,25 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             bool use_tiling = (total_ops >= kSmallMatMulThreshold &&
                                total_ops < kTiledMatMulThreshold &&
                                matM >= tile_m && matN >= tile_n);
+#ifdef CT_DEBUG
+            fprintf(stderr, "[DBG-5D-MLP] MatMul total_ops=%lld kSmall=%lld use_tiling=%d branch=%s\n",
+                    (long long)total_ops, (long long)kSmallMatMulThreshold, (int)use_tiling,
+                    total_ops < kSmallMatMulThreshold ? "small_inline"
+                    : (use_tiling ? "tiled_inline" : "cblas"));
+#endif
             if (total_ops < kSmallMatMulThreshold) {
                 // 小矩阵：使用无 tiling 的内联循环（带 epilogue 融合）
                 buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
                                              mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
-                                             /*tile_m=*/0, /*tile_n=*/0);
+                                             /*tile_m=*/0, /*tile_n=*/0,
+                                             fused_bias_numel, (size_t)matM, (size_t)matN);
             } else if (use_tiling) {
                 // 中矩阵：使用 2D tiling 的融合版本（改善缓存利用率）
                 // tile 来自 AutoTuner 调优 (M1 1.2 接通)
                 buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
                                              mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
-                                             tile_m, tile_n);
+                                             tile_m, tile_n,
+                                             fused_bias_numel, (size_t)matM, (size_t)matN);
             } else {
                 // 大矩阵：委托 cblas_sgemm（BLAS 对大型矩阵有最优实现）
                 // epilogue（bias + activation）在 sgemm 之后单独执行
@@ -1422,11 +1481,13 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                     if (out_numel > 0 && out_numel <= 16) {
                         buildFusedEpilogue(builder, loc, out_buf, out_buf,
                                            builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act, out_numel, mm_N);
+                                           fused_bias_ptr, fused_act, out_numel, mm_N,
+                                           fused_bias_numel, (size_t)matM, (size_t)matN);
                     } else {
                         buildFusedEpilogue(builder, loc, out_buf, out_buf,
                                            builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act, /*known_numel=*/0, mm_N);
+                                           fused_bias_ptr, fused_act, /*known_numel=*/0, mm_N,
+                                           fused_bias_numel, (size_t)matM, (size_t)matN);
                     }
                 }
             }

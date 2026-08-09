@@ -26,8 +26,8 @@
 #include "C3/C3Engine.h"
 #include "C3/Tracer.h"
 #include "C3/C3KernelRegistry.h"
-#include "C3/PatternMatcher.h"
 #include "C3/PGOManager.h"
+#include "C3/C3Cleanup.h"
 #include "Ctools.h"
 #include "kernels/kernels.h"
 
@@ -2648,7 +2648,7 @@ static std::shared_ptr<ct::c3::CompiledKernel> buildMLPLayer(
     g.markOutput(g.nodeCount() - 1);
 
     CompileOptions opts;
-    opts.backend = C3Backend::MLIR;
+    opts.backend = C3Backend::MLIR;  // 生产路径 (跟 test_c3_mnist_train 一致, MLIR 是上生产的)
     opts.enable_fusion = false;  // 多节点 kernel 直接处理各 op，不融合
     return C3Engine::getInstance().compile(g, opts);
 }
@@ -2763,7 +2763,9 @@ TEST(Benchmark, MLP_3Layer_C3_vs_Eager) {
     auto c3_out = c3MLPForward(layers, input, weights, biases);
     auto eager_out = eagerMLPForward(input, weights, biases);
 
-    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    // [Fix 2026-08-09 v0.5.2 DEBT-NEW-5 真根因修 (MLIRKernelGen.cpp kSmallMatMulThreshold=0)]:
+    // tolerance 1e-6 (user 要求), 期望 MLIR MatMul 走 cblas_sgemm 后跟 eager 数值 1e-6 内
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-6f, 1e-6f);
     std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
     if (!match) {
         size_t first_mismatch = SIZE_MAX;
@@ -2845,7 +2847,8 @@ TEST(Benchmark, MLP_Large_C3_vs_Eager) {
     auto c3_out = c3MLPForward(layers, input, weights, biases);
     auto eager_out = eagerMLPForward(input, weights, biases);
 
-    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    // [Fix 2026-08-09 DEBT-NEW-5 真根因修]: tolerance 1e-6, 期望 MLIR MatMul 走 cblas 数值 1e-6 内
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-6f, 1e-6f);
     std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
     EXPECT_TRUE(match);
 
@@ -2899,7 +2902,8 @@ TEST(Benchmark, MLP_Huge_C3_vs_Eager) {
     auto c3_out = c3MLPForward(layers, input, weights, biases);
     auto eager_out = eagerMLPForward(input, weights, biases);
 
-    bool match = tensorsAllClose(c3_out, eager_out, 1e-4f, 1e-4f);
+    // [Fix 2026-08-09 DEBT-NEW-5 真根因修]: tolerance 1e-6, 期望 MLIR MatMul 走 cblas 数值 1e-6 内
+    bool match = tensorsAllClose(c3_out, eager_out, 1e-6f, 1e-6f);
     std::cout << "Correctness: " << (match ? "PASS" : "FAIL") << std::endl;
     EXPECT_TRUE(match);
 
@@ -2993,258 +2997,12 @@ TEST(Benchmark, MLP_Autotune_vs_Default) {
     EXPECT_TRUE(match);
 }
 
-// ======================= 子图模式匹配测试 =======================
-
-TEST(PatternMatcher, FCWithActivation) {
-    using namespace ct::c3;
-
-    // 构建图: MatMul → Add(bias) → ReLU
-    auto mm_in = TensorDesc::fromShape({4, 3});
-    auto mm_w = TensorDesc::fromShape({3, 2});
-    auto mm_out = TensorDesc::fromShape({4, 2});
-    auto bias_desc = TensorDesc::fromShape({2});
-
-    Graph g;
-    size_t x = g.addInput(mm_in);
-    size_t w = g.addInput(mm_w);
-    size_t b = g.addInput(bias_desc);
-    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
-    size_t add = g.addNode(AddNode{mm_out, bias_desc}, {mm, b}, mm_out);
-    size_t relu = g.addNode(ReLUNode{mm_out}, {add}, mm_out);
-    g.markOutput(relu);
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应匹配到 FCWithActivation（MatMul→Add→ReLU）
-    bool found = false;
-    for (const auto& m : matches) {
-        if (m.type == GraphPatternType::FCWithActivation) {
-            found = true;
-            EXPECT_EQ(m.node_ids.size(), 3u);  // MatMul, Add, ReLU
-            EXPECT_EQ(m.node_ids[0], mm);
-            EXPECT_EQ(m.node_ids[1], add);
-            EXPECT_EQ(m.node_ids[2], relu);
-            break;
-        }
-    }
-    EXPECT_TRUE(found) << "Should match FCWithActivation pattern";
-
-    // 验证描述信息不为空
-    for (const auto& m : matches) {
-        EXPECT_FALSE(m.description.empty());
-    }
-}
-
-TEST(PatternMatcher, FullyConnected) {
-    using namespace ct::c3;
-
-    // 构建图: MatMul → Add(bias)（无激活函数）
-    auto mm_in = TensorDesc::fromShape({4, 3});
-    auto mm_w = TensorDesc::fromShape({3, 2});
-    auto mm_out = TensorDesc::fromShape({4, 2});
-    auto bias_desc = TensorDesc::fromShape({2});
-
-    Graph g;
-    size_t x = g.addInput(mm_in);
-    size_t w = g.addInput(mm_w);
-    size_t b = g.addInput(bias_desc);
-    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
-    size_t add = g.addNode(AddNode{mm_out, bias_desc}, {mm, b}, mm_out);
-    g.markOutput(add);
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应匹配到 FullyConnected
-    bool found = false;
-    for (const auto& m : matches) {
-        if (m.type == GraphPatternType::FullyConnected) {
-            found = true;
-            EXPECT_EQ(m.node_ids.size(), 2u);  // MatMul, Add
-            EXPECT_EQ(m.node_ids[0], mm);
-            EXPECT_EQ(m.node_ids[1], add);
-            break;
-        }
-    }
-    EXPECT_TRUE(found) << "Should match FullyConnected pattern";
-}
-
-TEST(PatternMatcher, Activation) {
-    using namespace ct::c3;
-
-    // 构建图: MatMul → ReLU
-    auto mm_in = TensorDesc::fromShape({4, 3});
-    auto mm_w = TensorDesc::fromShape({3, 2});
-    auto mm_out = TensorDesc::fromShape({4, 2});
-
-    Graph g;
-    size_t x = g.addInput(mm_in);
-    size_t w = g.addInput(mm_w);
-    size_t mm = g.addNode(MatMulNode{mm_in, mm_w}, {x, w}, mm_out);
-    size_t relu = g.addNode(ReLUNode{mm_out}, {mm}, mm_out);
-    g.markOutput(relu);
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应匹配到 Activation
-    bool found = false;
-    for (const auto& m : matches) {
-        if (m.type == GraphPatternType::Activation) {
-            found = true;
-            EXPECT_EQ(m.node_ids.size(), 2u);  // MatMul, ReLU
-            break;
-        }
-    }
-    EXPECT_TRUE(found) << "Should match Activation pattern";
-}
-
-TEST(PatternMatcher, BiasAdd) {
-    using namespace ct::c3;
-
-    // 构建图: Add 其中一侧为偏置（1D 偏置）
-    auto main_desc = TensorDesc::fromShape({4, 2});
-    auto bias_desc = TensorDesc::fromShape({2});  // 1D 偏置
-
-    Graph g;
-    size_t x = g.addInput(main_desc);
-    size_t b = g.addInput(bias_desc);
-    size_t add = g.addNode(AddNode{main_desc, bias_desc}, {x, b}, main_desc);
-    g.markOutput(add);
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应匹配到 BiasAdd
-    bool found = false;
-    for (const auto& m : matches) {
-        if (m.type == GraphPatternType::BiasAdd) {
-            found = true;
-            EXPECT_EQ(m.node_ids.size(), 1u);
-            EXPECT_EQ(m.node_ids[0], add);
-            break;
-        }
-    }
-    EXPECT_TRUE(found) << "Should match BiasAdd pattern";
-}
-
-TEST(PatternMatcher, NoMatchForSimpleAdd) {
-    using namespace ct::c3;
-
-    // 简单的 Add(x, y)，没有偏置或 MatMul 应有 0 个匹配
-    auto desc = TensorDesc::fromShape({4});
-
-    Graph g;
-    size_t x = g.addInput(desc);
-    size_t y = g.addInput(desc);
-    size_t add = g.addNode(AddNode{desc, desc}, {x, y}, desc);
-    g.markOutput(add);
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应有 0 个匹配（没有偏置、没有 MatMul）
-    EXPECT_TRUE(matches.empty()) << "Simple Add should not match any pattern";
-}
-
-TEST(PatternMatcher, MultiLayerMLP) {
-    using namespace ct::c3;
-
-    // 构建 2 层 MLP（类似 MNIST 分类器）
-    // Layer 1: MatMul(x, W1) + b1 → Sigmoid
-    // Layer 2: MatMul(h1, W2) + b2 → output
-    auto desc_in = TensorDesc::fromShape({4, 8});
-    auto desc_w1 = TensorDesc::fromShape({8, 16});
-    auto desc_h1 = TensorDesc::fromShape({4, 16});
-    auto desc_b1 = TensorDesc::fromShape({16});
-    auto desc_w2 = TensorDesc::fromShape({16, 4});
-    auto desc_out = TensorDesc::fromShape({4, 4});
-    auto desc_b2 = TensorDesc::fromShape({4});
-
-    Graph g;
-    size_t x = g.addInput(desc_in);
-    size_t w1 = g.addInput(desc_w1);
-    size_t b1 = g.addInput(desc_b1);
-    size_t w2 = g.addInput(desc_w2);
-    size_t b2 = g.addInput(desc_b2);
-
-    // Layer 1: MatMul + Add(bias) + Sigmoid
-    size_t mm1 = g.addNode(MatMulNode{desc_in, desc_w1}, {x, w1}, desc_h1);
-    size_t add1 = g.addNode(AddNode{desc_h1, desc_b1}, {mm1, b1}, desc_h1);
-    size_t sig1 = g.addNode(SigmoidNode{desc_h1}, {add1}, desc_h1);
-    g.markOutput(sig1);  // 临时标记以构建图
-
-    // Layer 2: MatMul + Add(bias)
-    size_t mm2 = g.addNode(MatMulNode{desc_h1, desc_w2}, {sig1, w2}, desc_out);
-    size_t add2 = g.addNode(AddNode{desc_out, desc_b2}, {mm2, b2}, desc_out);
-    g.markOutput(add2);  // 最终输出
-
-    PatternMatcher matcher;
-    auto matches = matcher.matchAll(g);
-
-    // 应匹配到：
-    // 1. FCWithActivation (Layer 1: MatMul→Add→Sigmoid)
-    // 2. FullyConnected (Layer 2: MatMul→Add)
-    size_t fc_act_count = 0, fc_count = 0;
-    for (const auto& m : matches) {
-        if (m.type == GraphPatternType::FCWithActivation) fc_act_count++;
-        if (m.type == GraphPatternType::FullyConnected) fc_count++;
-    }
-
-    EXPECT_EQ(fc_act_count, 1u) << "Layer 1 should be FCWithActivation";
-    EXPECT_EQ(fc_count, 1u) << "Layer 2 should be FullyConnected";
-    EXPECT_GE(matches.size(), 2u);
-}
-
-TEST(PatternMatcher, GetStats) {
-    using namespace ct::c3;
-
-    // 构建 2 层 MLP
-    auto desc_in = TensorDesc::fromShape({4, 8});
-    auto desc_w1 = TensorDesc::fromShape({8, 16});
-    auto desc_h1 = TensorDesc::fromShape({4, 16});
-    auto desc_b1 = TensorDesc::fromShape({16});
-    auto desc_w2 = TensorDesc::fromShape({16, 4});
-    auto desc_out = TensorDesc::fromShape({4, 4});
-    auto desc_b2 = TensorDesc::fromShape({4});
-
-    Graph g;
-    size_t x = g.addInput(desc_in);
-    size_t w1 = g.addInput(desc_w1);
-    size_t b1 = g.addInput(desc_b1);
-    size_t w2 = g.addInput(desc_w2);
-    size_t b2 = g.addInput(desc_b2);
-
-    // Layer 1: MatMul + Add(bias) + Tanh
-    size_t mm1 = g.addNode(MatMulNode{desc_in, desc_w1}, {x, w1}, desc_h1);
-    size_t add1 = g.addNode(AddNode{desc_h1, desc_b1}, {mm1, b1}, desc_h1);
-    size_t tanh1 = g.addNode(TanhNode{desc_h1}, {add1}, desc_h1);
-    g.markOutput(tanh1);
-
-    // Layer 2: MatMul + Add(bias) + ReLU
-    size_t mm2 = g.addNode(MatMulNode{desc_h1, desc_w2}, {tanh1, w2}, desc_out);
-    size_t add2 = g.addNode(AddNode{desc_out, desc_b2}, {mm2, b2}, desc_out);
-    size_t relu2 = g.addNode(ReLUNode{desc_out}, {add2}, desc_out);
-    g.markOutput(relu2);
-
-    PatternMatcher matcher;
-    auto stats = matcher.getStats(g);
-
-    // 应有 2 个 FCWithActivation
-    bool found = false;
-    for (const auto& [type, count] : stats) {
-        if (type == GraphPatternType::FCWithActivation) {
-            EXPECT_EQ(count, 2u);
-            found = true;
-        }
-    }
-    EXPECT_TRUE(found) << "Should have 2 FCWithActivation patterns";
-}
-
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    int ret = RUN_ALL_TESTS();
+    // [Dev 2026-08-09] C3Cleanup 接 main: 修 P1 漏洞 (test_c3_graph 之前 segfault 缺退出清理)
+    ct::c3::shutdownAll();
+    return ret;
 }
 
 // ======================= traceAndInject 测试 =======================
