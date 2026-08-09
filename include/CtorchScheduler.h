@@ -161,6 +161,12 @@ class CtorchScheduler{
     /// @return 物化器（携带 eager 前缀重放闭包）；缓存为空时返回 nullptr
     std::shared_ptr<LazyMaterializer> buildLazyMaterializer(
         const std::vector<PrewalkEntry>& cache, size_t target_idx, DeviceType dev);
+
+    /// true prewalk 配套:创建 placeholder Tensor (空 storage + LazyMaterializer)
+    /// 闭包 re-run 当前 op(简化:cache 仅用于 future 优化,当前版本不重跑 prefix)
+    Tensor createPrewalkPlaceholder(
+        op op_type, const std::vector<Tensor>& inputs,
+        const std::vector<PrewalkEntry>& cache);
 #endif
 
 private:

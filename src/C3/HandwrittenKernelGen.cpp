@@ -433,6 +433,185 @@ static bool isComputeNode(const Node& node, const std::vector<size_t>& input_ids
     return true;
 }
 
+/// DEBT-NEW-7 性能优化（v0.5.1+）：AMX region kernel generator
+/// @brief 检测 MatMul + Add(bias) [+ ReLU] 模式,生成专用的 AMX 加速 kernel
+/// @details 目标:消除 generateMultiNodeKernel 在这种 3 节点 pattern 下产生的 2 个
+///          中间 buffer(cblas_sgemm 写 tmp0 + Add 写 tmp1 + ReLU 写 output),
+///          改为:cblas_sgemm 直接写 output + 一次 fused bias+ReLU pass 复用 output
+///
+/// 性能来源:
+///  - cblas_sgemm 仍走 Accelerate/AMX(M1/M2 上是 5-10 TFLOPS),保留矩阵乘吞吐
+///  - Add+ReLU 折叠为单次 pass,无需中间写(原 3-pass 写 2 个 tmp buffer)
+///  - 单 pass 让 clang 的 auto-vectorizer 看到完整的 bias+ReLU 模式,通常能生成
+///    比 2 个独立 loop 更好的 NEON 代码
+///
+/// 触发条件(由调用方在 generateFromGraph 决定):
+///  - Pattern A:MatMul([M,K],[K,N]) → Add(bias[N] 广播) → ReLU   (MNIST 隐藏层)
+///  - Pattern B:MatMul([M,K],[K,N]) → Add(bias[N] 广播)          (MNIST 输出层)
+static bool isMatmulBiasReluPattern(const Graph& graph,
+                                    bool& has_relu_after_bias,
+                                    size_t& matM, size_t& matK, size_t& matN) {
+    const auto& nodes = graph.nodes();
+    const auto& inputs = graph.inputs();
+    has_relu_after_bias = false;
+    matM = matK = matN = 0;
+
+    // 收集所有计算节点
+    std::vector<const Node*> compute;
+    for (const auto& node : nodes) {
+        if (isComputeNode(node, inputs)) {
+            compute.push_back(&node);
+        }
+    }
+    if (compute.size() < 2 || compute.size() > 4) return false;
+
+    // 第一个必须是 MatMul
+    if (!std::holds_alternative<MatMulNode>(compute[0]->op)) return false;
+    const auto& mm = std::get<MatMulNode>(compute[0]->op);
+    if (mm.lhs_desc.shape.size() != 2 || mm.rhs_desc.shape.size() != 2) return false;
+    matM = mm.lhs_desc.shape[0];
+    matK = mm.lhs_desc.shape[1];
+    matN = mm.rhs_desc.shape[1];
+
+    // DEBT-NEW-7 性能优化:支持 fuse 后的 FusedNode 形态
+    // fuse() 步骤会把 elementwise 链(Add+ReLU)合并成单个 FusedNode。
+    // 所以计算图可能是:
+    //   形态 A: [MatMul, Add, ReLU]              (3 个独立 compute 节点)
+    //   形态 B: [MatMul, Add]                    (2 个独立 compute 节点,无 ReLU)
+    //   形态 C: [MatMul, FusedNode(Add,ReLU)]    (fuse 后,FusedNode 包裹 Add+ReLU)
+    //   形态 D: [MatMul, FusedNode(Add)]         (fuse 后,无 ReLU)
+    //
+    // 统一处理:从 compute[1] 提取 Add + (可选) ReLU,然后判定是否形成 MatMul+bias 模式。
+    auto extractAddAndRelu = [&](const Node* second_node,
+                                 bool& found_add, bool& found_relu,
+                                 const AddNode*& add_ref) -> bool {
+        found_add = false;
+        found_relu = false;
+        add_ref = nullptr;
+
+        if (std::holds_alternative<AddNode>(second_node->op)) {
+            // 形态 A / B:独立 AddNode(可后跟 ReLU)
+            found_add = true;
+            add_ref = &std::get<AddNode>(second_node->op);
+            // 形态 A:ReLU 是 compute[2]
+            if (compute.size() == 3 && std::holds_alternative<ReLUNode>(compute[2]->op)) {
+                found_relu = true;
+            }
+            return true;
+        }
+        if (std::holds_alternative<FusedNode>(second_node->op)) {
+            // 形态 C / D:FusedNode 包裹
+            const auto& fn = std::get<FusedNode>(second_node->op);
+            // FusedNode 内必须包含一个 AddNode
+            for (const auto& op_inside : fn.ops) {
+                if (std::holds_alternative<AddNode>(op_inside)) {
+                    found_add = true;
+                    // 找到 Add 在 ops 中的索引
+                    size_t add_idx = 0;
+                    for (; add_idx < fn.ops.size(); ++add_idx) {
+                        if (std::holds_alternative<AddNode>(fn.ops[add_idx])) break;
+                    }
+                    // ReLU 必须在 Add 之后
+                    for (size_t i = add_idx + 1; i < fn.ops.size(); ++i) {
+                        if (std::holds_alternative<ReLUNode>(fn.ops[i])) {
+                            found_relu = true;
+                            break;
+                        }
+                    }
+                    // 构造一个 AddNode 引用(指向 FusedNode 内的 AddNode)
+                    // 注意:这里 add_ref 的生命周期由 graph 保证
+                    add_ref = &std::get<AddNode>(op_inside);
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    bool found_add = false, found_relu = false;
+    const AddNode* add_ptr = nullptr;
+    if (!extractAddAndRelu(compute[1], found_add, found_relu, add_ptr)) return false;
+    if (!found_add || !add_ptr) return false;
+
+    const AddNode& add = *add_ptr;
+    // bias 的特征:rhs 是 1D 且长度 == N,或 rhs 总元素数较小
+    bool rhs_is_bias = (add.rhs_desc.shape.size() == 1 && add.rhs_desc.shape[0] == matN);
+    if (!rhs_is_bias) {
+        // 兜底:rhs.numel < lhs.numel(可能 shape 不规则但仍是广播)
+        rhs_is_bias = (add.rhs_desc.numel < add.lhs_desc.numel &&
+                       !add.rhs_desc.shape.empty() &&
+                       add.rhs_desc.shape.back() == matN);
+    }
+    if (!rhs_is_bias) return false;
+
+    has_relu_after_bias = found_relu;
+#ifdef CT_DEBUG
+    {
+        std::ostringstream oss;
+        oss << "[C3-AMXRegion] MATCH M=" << matM << " K=" << matK << " N=" << matN
+            << " has_relu=" << (has_relu_after_bias ? "yes" : "no");
+        CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN, oss.str());
+    }
+#endif
+    return true;
+}
+
+/// DEBT-NEW-7 性能优化:AMX region kernel 源码生成
+/// @details 签名与 MultiNodeKernelFunc 一致:
+///          void c3_kernel(const float* const* inputs, float* output,
+///                        size_t n, size_t M, size_t K, size_t N)
+///          inputs[0] = A[M,K], inputs[1] = B[K,N], inputs[2] = bias[N]
+static std::string generateFusedMatmulBiasKernel(bool has_relu,
+                                                  size_t M, size_t K, size_t N) {
+    // M, K, N 烘焙到生成的 kernel 字符串字面量中,本身不参与本函数的 C++ 计算
+    (void)M; (void)K; (void)N;
+    std::ostringstream ss;
+    ss << "#include <cstddef>\n"
+       << "#include <Accelerate/Accelerate.h>\n"
+       << "extern \"C\" void c3_kernel(const float* const* inputs, float* output,\n"
+       << "                          size_t n, size_t M, size_t K, size_t N) {\n"
+       << "    const float* A = inputs[0];\n"
+       << "    const float* B = inputs[1];\n";
+
+    if (has_relu) {
+        // Pattern A: cblas_sgemm + fused bias + ReLU
+        ss << "    const float* bias = inputs[2];\n"
+           << "    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+           << "                (int)M, (int)N, (int)K,\n"
+           << "                1.0f, A, (int)K,\n"
+           << "                B, (int)N,\n"
+           << "                0.0f, output, (int)N);\n"
+           << "    // Fused bias + ReLU: 单 pass 复用 output buffer (无中间写)\n"
+           << "    #pragma clang loop vectorize(enable)\n"
+           << "    for (size_t m = 0; m < M; ++m) {\n"
+           << "        float* row = output + m * N;\n"
+           << "        for (size_t n_idx = 0; n_idx < N; ++n_idx) {\n"
+           << "            float v = row[n_idx] + bias[n_idx];\n"
+           << "            row[n_idx] = v > 0.0f ? v : 0.0f;\n"
+           << "        }\n"
+           << "    }\n";
+    } else {
+        // Pattern B: cblas_sgemm + fused bias only
+        ss << "    const float* bias = inputs[2];\n"
+           << "    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,\n"
+           << "                (int)M, (int)N, (int)K,\n"
+           << "                1.0f, A, (int)K,\n"
+           << "                B, (int)N,\n"
+           << "                0.0f, output, (int)N);\n"
+           << "    // Fused bias only: 单 pass 复用 output buffer (无中间写)\n"
+           << "    #pragma clang loop vectorize(enable)\n"
+           << "    for (size_t m = 0; m < M; ++m) {\n"
+           << "        float* row = output + m * N;\n"
+           << "        for (size_t n_idx = 0; n_idx < N; ++n_idx) {\n"
+           << "            row[n_idx] = row[n_idx] + bias[n_idx];\n"
+           << "        }\n"
+           << "    }\n";
+    }
+
+    ss << "}\n";
+    return ss.str();
+}
+
 /// 为多节点图生成 kernel 源码
 /// @details 收集所有计算节点，按拓扑顺序生成代码，中间节点输出到临时缓冲区，
 ///          最后一个节点输出到 output。支持 MatMul + 逐元素操作的混合图。
@@ -815,6 +994,39 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         AOTCache::currentBackendVersion());
 
     size_t num_compute = countComputeNodes(graph);
+
+    // DEBT-NEW-7 性能优化:AMX region kernel 专用路径
+    // 当图是 MatMul + Add(bias) [+ ReLU] 时,用 generateFusedMatmulBiasKernel 生成
+    // 专用 kernel,消除 2 个中间 buffer(cblas_sgemm 写 tmp0 + Add 写 tmp1 + ReLU 写 output)
+    // → 1 个 buffer (cblas_sgemm 写 output + 一次 fused bias[+ReLU] pass 复用 output)
+    bool has_relu_after_bias = false;
+    size_t matM = 0, matK = 0, matN = 0;
+    if (isMatmulBiasReluPattern(graph, has_relu_after_bias, matM, matK, matN)) {
+        std::string src = generateFusedMatmulBiasKernel(has_relu_after_bias, matM, matK, matN);
+        GeneratedKernel result;
+        result.is_multi_node = true;
+        result.num_inputs = graph.inputCount();
+        result.M = matM;
+        result.K = matK;
+        result.N = matN;
+        result.elem_n = matM * matN;
+
+        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
+        result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
+        result.handle = dl_handle;
+        result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
+#ifdef CT_DEBUG
+        {
+            std::ostringstream oss;
+            oss << "[C3-AMXRegion] M=" << matM << " K=" << matK << " N=" << matN
+                << " has_relu=" << (has_relu_after_bias ? "yes" : "no")
+                << " num_inputs=" << result.num_inputs;
+            CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
+                ErrorType::UNKNOWN, oss.str());
+        }
+#endif
+        return result;
+    }
 
     // 多节点图：使用新的多节点 kernel 生成
     if (num_compute > 1) {

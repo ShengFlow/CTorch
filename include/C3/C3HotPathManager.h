@@ -776,9 +776,32 @@ private:
             // 使用新的 Graph 构建方法
             Graph g = buildFusedGraph(records, pattern_name);
 
-            // 编译
+            // 编译选项：DEBT-NEW-7 性能优化（v0.5.1+）
+            // MatMul-rooted region 强制 Handwritten backend，原因：
+            //   1. MLIR backend 的 MatMul (buildTiledMatMulWithEpilogue / buildMatMul)
+            //      数值精度跟 cblas_sgemm 不等价（DEBT-NEW-5 修复集,2026-08-08）
+            //   2. Handwritten 的 cblas_sgemm 直接调 Accelerate 走 AMX,吞吐最优
+            //   3. v0.5.1+ 新增 generateFusedMatmulBiasKernel(cblas_sgemm + 单次 fused
+            //      bias[+ReLU] pass) 走 Handwritten 才能命中性能优化路径
+            CompileOptions opts;
+            opts.backend = C3Backend::Handwritten;
+#ifdef CT_DEBUG
+            {
+                std::ostringstream oss;
+                oss << "[C3-HotPath] buildFusedGraph returned, pattern=" << pattern_name
+                    << " total_nodes=" << g.nodes().size()
+                    << " inputs=" << g.inputs().size();
+                for (size_t i = 0; i < g.nodes().size(); ++i) {
+                    oss << " n" << i << ":op" << g.nodes()[i].op.index()
+                        << "(in=" << g.nodes()[i].inputs.size() << ")";
+                }
+                CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN, oss.str());
+            }
+#endif
+
+            // 编译(强制 Handwritten backend,见上 CompileOptions opts 的注释)
             auto& engine = C3Engine::getInstance();
-            auto kernel = engine.compile(g, CompileOptions{});
+            auto kernel = engine.compile(g, opts);
 
             if (kernel) {
                 KernelShapeInfo info;

@@ -88,10 +88,14 @@
 ### 已知限制 / 后续工作
 
 - **c3 on 训练期间 single kernel 实际被全 bypass**：H2 fix 让 c3 single kernel 在 forward+backward 都跳过，行为退化为 c3 off 状态。这是 H2 fix 的预期行为（牺牲性能换精度），等 region fusion 完整实现后 region fusion 接管整条 op 序列，可恢复 c3 加速
-- **c3 on + region fusion 训练比 c3 off 慢 6.8%**：region fusion 真正 invoke（`fused_hit=4668/epoch`），acc 跟 c3 off 一致 97.1755%，但耗时 c3 off 10310ms vs c3 on + RF 11011ms。根因：JIT 编译的 region kernel（`-O3 -ffast-math`）在 Apple Silicon 上比 AMX 优化的 eager MatMul+Add+ReLU 慢。需 v0.6.0 调优（手写 AMX-aware region kernel 或 prewalk + LazyMaterializer 消除 double work）
+- **c3 on + region fusion 训练比 c3 off 慢 4.6%**（v0.5.1 AMX region kernel 优化后）：5 轮 median 耗时 c3 off 1955ms/epoch vs c3 on + AMX RF 2046ms/epoch，100% precision parity。剩余 4.6% 慢根因：JIT 编译的 region kernel 走 Handwritten cblas_sgemm + 1 次 fused bias+ReLU pass，跟 eager AMX 仍有差距（prewalk double work + region kernel 启动开销）。需 v0.6.0 继续调优（true prewalk 消除 double work 或加 matmul+bias+relu 真正 inline AMX kernel）
 - **region fusion 触发点导致 double work**：tryRegionDispatch 在 region 末尾（ReLU）才 match，之前的 MatMul/Add eager 已跑过，region kernel 重算。8% 慢里约一半是这个
-- **kernel output 拷贝开销**：`tryRegionDispatch` 把 kernel 分配的 output 拷贝到 pre-allocated out_tensor 保持 autograd 身份稳定，每次 region match 多一次 memcpy
+- **kernel output 拷贝开销**：`tryRegionDispatch` 把 kernel 分配的 output 拷贝到 pre-allocated out_tensor 保持 autograd 身份稳定，每次 region match 多一次 memcpy。v0.5.1 fix (#8)：FusedCompiledKernel 直接返回 kernel 分配的 Tensor，autograd 视角身份 = 唯一
 - **region fusion backend stub 状态**：`C3KernelRegistry::tryExecuteFused` / `tryExecuteBackward` / `findFusedKernelFor*` 当前是 stub（return nullopt），`executeFusedWithInputs` 已实装真 invoke。`tryExecuteBackward` 仍需在 v0.6.0 完成真实现
+- **AMX region kernel**（v0.5.1 性能优化，新增）：`HandwrittenKernelGen::generateFusedMatmulBiasKernel` 专门处理 `MatMul + Add(bias) [+ ReLU]` pattern：cblas_sgemm（走 AMX）+ 单次 fused bias[+ReLU] pass 复用 output buffer，消除 2 个中间 tmp buffer。`isMatmulBiasReluPattern` 支持 4 种形态（独立 Add/ReLU vs fuse 后的 FusedNode）。**submitFusedCompileAsync 强制 MatMul-rooted region 走 Handwritten backend**（与 DEBT-NEW-5 单 MatMul 修复保持一致）
+  - 5 轮 MNIST 验证：c3 off 1955ms/epoch median vs c3 on + AMX region 2046ms/epoch median = 4.6% 慢（v0.5.1 初版 6.8% 慢 → 4.6% 慢，性能差距收窄 32%）
+  - 100% precision parity（5/5 runs all 97.1755%）
+  - C3-STAT：`fused_hit=3294~4668/epoch`（实际 invoke AMX region kernel 次数），bypass 不变
 - **C3 backward graph IR 节点**（GtNode/SumReduceNode/TransposeNode/ExpNode/LogNode）的 MLIR kernel 生成（`MLIRKernelGen.cpp::buildMultiNodeMLIR` 分发）需要分别补全，v0.6.0 工作
 - **DEBT-NEW-6 · MNIST 5 轮 stability baseline**：已建立（6×97.18% deterministic，c3 off + c3 on 各 3 轮），未来所有 C3 修改必须先 5 轮验证不破坏 baseline
 - **未提交 untracked 文件**：JITCache.cpp / bench_*.cpp / poc_*.cpp / test_*.cpp 等已被 build 使用但未 commit，v0.5.x 后续版本补 commit
