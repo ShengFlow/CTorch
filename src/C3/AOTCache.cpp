@@ -304,6 +304,7 @@ std::string AOTCache::store(const std::string& cache_key, const std::string& so_
     std::string final_path = dir + "/c3_" + cache_key + ".so";
     std::string meta_path = dir + "/c3_" + cache_key + ".meta";
     std::string tmp_so = dir + "/.c3_" + cache_key + ".so.tmp";
+    std::string tmp_meta = dir + "/.c3_" + cache_key + ".meta.tmp";
 
     // 读取 .so 内容并写到 .tmp
     std::ifstream src(so_path, std::ios::binary);
@@ -324,6 +325,17 @@ std::string AOTCache::store(const std::string& cache_key, const std::string& so_
             return "";
         }
     }
+    // [Fix 2026-08-10 code-review-001910 P0-1]: fsync tmp_so
+    //   之前 rename 前没 fsync tmp_so, 系统崩溃时 rename 后的 .so 实际内容可能没落盘,
+    //   下次 dlopen 失败但 cache 表面"已写" → 静默损坏
+    //   修法: reopen tmp_so 拿 fd, fsync, close. rename 前必须 fsync 数据文件
+    {
+        int fd = ::open(tmp_so.c_str(), O_RDONLY);
+        if (fd >= 0) {
+            ::fsync(fd);
+            ::close(fd);
+        }
+    }
 
     // 原子 rename 到最终路径
     if (std::rename(tmp_so.c_str(), final_path.c_str()) != 0) {
@@ -331,16 +343,41 @@ std::string AOTCache::store(const std::string& cache_key, const std::string& so_
         std::remove(tmp_so.c_str());
         return "";
     }
-
-    // 写 .meta 文件
+    // [Fix 2026-08-10 code-review-001910 P0-1]: fsync 父目录
+    //   rename 后必须 fsync 父目录, 确保目录项变更 (新文件名) 落盘.
+    //   否则系统崩溃时 .so 文件存在但目录项没更新 → 文件名找不到 → 静默损坏
     {
-        std::ofstream meta(meta_path);
+        int dirfd = ::open(dir.c_str(), O_RDONLY);
+        if (dirfd >= 0) {
+            ::fsync(dirfd);
+            ::close(dirfd);
+        }
+    }
+
+    // 写 .meta 文件 (per P2-1 合并修法: 同样 atomic rename + fsync 父目录)
+    {
+        std::ofstream meta(tmp_meta);
         if (!meta) {
-            // .so 已写入，.meta 失败不算致命（下次启动会重新生成）
+            // .so 已写入, .meta 失败不算致命 (下次启动会重新生成)
             stats_.disk_errors++;
         } else {
             meta << "backend_version=" << currentBackendVersion() << "\n";
             meta << "cache_key=" << cache_key << "\n";
+        }
+    }
+    // [Fix 2026-08-10 code-review-001910 P2-1]: .meta 也走 atomic rename
+    //   之前直接 ofstream 写 final .meta, 中途崩溃会留半截文件
+    //   修法: 写 .tmp_meta + atomic rename, 跟 .so 一致
+    if (std::rename(tmp_meta.c_str(), meta_path.c_str()) != 0) {
+        // .meta 失败不算致命 (.so 已落盘), 但记录 disk_errors
+        std::remove(tmp_meta.c_str());
+        stats_.disk_errors++;
+    } else {
+        // .meta rename 成功, fsync 父目录
+        int dirfd = ::open(dir.c_str(), O_RDONLY);
+        if (dirfd >= 0) {
+            ::fsync(dirfd);
+            ::close(dirfd);
         }
     }
 
