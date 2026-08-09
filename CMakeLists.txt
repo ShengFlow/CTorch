@@ -93,7 +93,6 @@ set(CT-Core
         src/C3/HandwrittenKernelGen.cpp
         src/C3/C3Engine.cpp
         src/C3/GraphMerger.cpp
-        src/C3/PatternMatcher.cpp
         src/C3/PGOManager.cpp
         src/C3/AOTCache.cpp
         src/C3/C3BackwardCapture.cpp
@@ -128,7 +127,6 @@ set(CT-Core-Headers
         include/C3/GraphMerger.h
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
-        include/C3/PatternMatcher.h
         include/C3/AOTCache.h
         include/C3/C3BackwardCapture.h
 )

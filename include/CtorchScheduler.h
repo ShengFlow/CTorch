@@ -176,10 +176,6 @@ class CtorchScheduler{
     std::vector<size_t> computeOutputShape(op op_type,
                                            const std::vector<Tensor>& inputs) const;
 
-    /// 执行 eager fallback：重新执行所有缓存的 op
-    Tensor executeEagerFallback(const std::vector<Tensor>& current_inputs,
-                                op current_op_type, DeviceType dev);
-
     /// 为预走占位张量构造惰性物化器（LazyBox）
     /// @param cache 预走缓存（到目标 op 为止的前缀）
     /// @param target_idx 目标 op 在 region op_seq 中的索引（物化到该 op 的输出）
@@ -320,9 +316,6 @@ public:
         cached_region_ = nullptr;
         cached_hash_ = 0;
     }
-
-    /// 打印区域融合 dispatch 计时统计（调试用）
-    friend void c3_print_region_timing();
 #endif
 
     template <op OpType>
@@ -690,8 +683,4 @@ public:
     }
 };
 
-#ifndef CT_DISABLE_C3
-/// 打印区域融合 dispatch 计时统计（调试用）
-void c3_print_region_timing();
-#endif
 #endif //CTORCH_SCHEDULER_H

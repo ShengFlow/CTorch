@@ -569,16 +569,4 @@ std::vector<size_t> CtorchScheduler::computeOutputShape(
     }
     return out;
 }
-
-Tensor CtorchScheduler::executeEagerFallback(
-    const std::vector<Tensor> & /*current_inputs*/, op /*current_op_type*/, DeviceType /*dev*/) {
-    // Stub: 不可达（tryRegionDispatch 永远 nullopt 不会触发）
-    return Tensor();
-}
-
-// 区域融合 dispatch 计时统计打印（stub：当前无 region fusion 活动，no-op）
-void c3_print_region_timing() {
-    // 当前 region fusion 关闭（C3 编译期 CT_C3_DISABLE_REGION_FUSION=ON），
-    // 所有计时计数器未被触发，无可打印内容。
-}
 #endif // CT_DISABLE_C3

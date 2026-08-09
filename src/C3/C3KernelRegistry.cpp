@@ -80,6 +80,137 @@ std::optional<Tensor> C3KernelRegistry::tryExecuteFused(
     return std::nullopt;
 }
 
+// ======================= 二元/一元 forward kernel 执行 =======================
+
+// [Fix 2026-08-09 + v0.5.2 修 (2026-08-09)]: tryExecute/tryExecuteUnary out-of-line
+// 之前 inline 在 C3KernelRegistry.h, 调 entry.func (老路径), 但 install 新接口
+// (shared_ptr<CompiledKernel>) 只设 entry.kernel 没设 entry.func → entry.func
+// 永远是 nullptr → 调 nullptr → segfault. test_c3_graph C3HotReplace.InstallAndDispatch
+// 暴露这个 bug. 改用 entry.kernel->execute() (跟 tryExecuteBackward 一致).
+std::optional<Tensor> C3KernelRegistry::tryExecute(
+    op op_type, const Tensor& a, const Tensor& b) {
+    auto key = makeKeyFromShapes(op_type, a.device(), a.shape(), b.shape());
+
+    C3Entry entry;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it == entries_.end() || !it->second.active) {
+            found = false;
+        } else {
+            found = true;
+            entry = it->second;
+        }
+    }
+#ifdef CT_DEBUG
+    fprintf(stderr, "[DBG] tryBin op=%d key3=%zu found=%d a=[%s] b=[%s]\n",
+            (int)op_type, key.third, (int)found,
+            shapeDebug(a.shape()).c_str(), shapeDebug(b.shape()).c_str());
+#endif
+    if (!found) return std::nullopt;
+
+    if (a.shape() != entry.shapes.lhs_shape ||
+        b.shape() != entry.shapes.rhs_shape) {
+        return std::nullopt;
+    }
+
+    try {
+#ifdef CT_PROFILE_PERF
+        auto t0 = std::chrono::steady_clock::now();
+#endif
+        if (!entry.kernel) {
+            return std::nullopt;
+        }
+        std::vector<Tensor> inputs = {a, b};
+        auto outputs = entry.kernel->execute(inputs);
+        if (outputs.empty()) {
+            return std::nullopt;
+        }
+        Tensor out = outputs[0];
+#ifdef CT_PROFILE_PERF
+        auto t1 = std::chrono::steady_clock::now();
+        recordPerfC3SingleInvoke(
+            (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+#endif
+        hit_count_.fetch_add(1, std::memory_order_relaxed);
+
+        if (!validateOutputShape(op_type, a.device(), out, entry.shapes.out_shape)) {
+            return std::nullopt;
+        }
+
+#ifdef CT_DEBUG
+        {
+            const float* out_data = out.data_read<float>();
+            size_t n = std::min(size_t(5), out.numel());
+            fprintf(stderr, "[C3-VALIDATE] binary op=%d out=[", (int)op_type);
+            for (size_t i = 0; i < out.shape().size(); ++i) {
+                if (i > 0) fprintf(stderr, ",");
+                fprintf(stderr, "%zu", out.shape()[i]);
+            }
+            fprintf(stderr, "] first_%zu=[", n);
+            for (size_t i = 0; i < n; ++i) {
+                if (i > 0) fprintf(stderr, ",");
+                fprintf(stderr, "%.6f", out_data[i]);
+            }
+            fprintf(stderr, "]\n");
+        }
+#endif
+        return out;
+    } catch (...) {
+        miss_count_.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+}
+
+std::optional<Tensor> C3KernelRegistry::tryExecuteUnary(op op_type, const Tensor& a) {
+    auto key = makeKeyFromShapes(op_type, a.device(), a.shape(), {});
+
+    C3Entry entry;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = entries_.find(key);
+        if (it == entries_.end() || !it->second.active) {
+            found = false;
+        } else {
+            found = true;
+            entry = it->second;
+        }
+    }
+#ifdef CT_DEBUG
+    fprintf(stderr, "[DBG] tryUnary op=%d key3=%zu found=%d a=[%s]\n",
+            (int)op_type, key.third, (int)found,
+            shapeDebug(a.shape()).c_str());
+#endif
+    if (!found) return std::nullopt;
+
+    if (a.shape() != entry.shapes.lhs_shape) {
+        return std::nullopt;
+    }
+
+    try {
+        if (!entry.kernel) {
+            return std::nullopt;
+        }
+        std::vector<Tensor> inputs = {a};
+        auto outputs = entry.kernel->execute(inputs);
+        if (outputs.empty()) {
+            return std::nullopt;
+        }
+        Tensor out = outputs[0];
+        hit_count_.fetch_add(1, std::memory_order_relaxed);
+
+        if (!validateOutputShape(op_type, a.device(), out, entry.shapes.out_shape)) {
+            return std::nullopt;
+        }
+        return out;
+    } catch (...) {
+        miss_count_.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+}
+
 // ======================= 反向 kernel 执行 =======================
 
 // TODO(c3-backward): 反向 fusion kernel 的实际执行后端。

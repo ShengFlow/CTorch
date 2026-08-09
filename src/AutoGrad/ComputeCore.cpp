@@ -207,11 +207,14 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         //   4. 但 ConcreteCompiledKernel 输出 shape bug 属于 v0.5.2 范畴
         //      (需要新增 out_shape-aware tensor 构造接口),本 commit 暂不接
         //      ComputeCore::backward 调用,避免破坏 4.6% 慢 baseline。
-        // 5. v0.5.2 待办:
-        //      a. CompiledKernel 添加 out_shape 字段 + execute() 用 out_shape 构造
-        //      b. MLIRKernelGen 同样支持
-        //      c. C3KernelRegistry::installBackward 把 out_shape 透传给 kernel
-        //      d. 然后恢复 ComputeCore::backward 的 c3 接线
+        // 5. v0.5.2 (1a-4): 124 阶段实装完成 (out_shape 修复 + JITCache 1.0 store-only +
+        //      c3 path overhead 优化), 累计 6.9% 加速 (2023ms/epoch)。
+        // 6. v0.5.2 (5d-1/2/3): c3 bw 接线尝试 → 5d-1 TransposeNode 公式跟 c3 内部
+        //      forward_inputs 顺序耦合错位 (ext_map[2] 实际指向 inputs[1]), c3 算的
+        //      grad 全 0 → 训练 nan → 5d 跨 session 留 follow-up (重启 5d-1 公式
+        //      调研 + 重写 multi-node kernel input 索引协议)。
+        // 7. v0.5.2 路线 (新): 1a out_shape 5a-5c + c3 path overhead 5 fixes +
+        //      JITCache 1.0 store-only + 1b 5d 接线跨 session follow-up。
         std::vector<GradPack> result = node->backward(grads);
 
         if (!result.empty()) {
