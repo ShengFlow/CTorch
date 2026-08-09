@@ -89,6 +89,12 @@ public:
     [[nodiscard]] DeviceType targetDevice() const override { return device_; }
     [[nodiscard]] size_t workspaceBytes() const override { return 0; }
 
+    /// v0.5.2 out_shape 修复: FusedKernel 已有 out_shape_ 字段,直接 expose
+    [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (out_shape_.empty()) return std::nullopt;
+        return out_shape_;
+    }
+
     bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
         (void)op_type; (void)shapes;
         return false; // 融合 kernel 暂不注册到 registry
@@ -153,6 +159,13 @@ public:
     [[nodiscard]] DeviceType targetDevice() const override { return device_; }
     [[nodiscard]] size_t workspaceBytes() const override { return 0; }
 
+    /// v0.5.2 out_shape 修复: MultiNode 用 M×N (2D) 或 elem_n (1D) 作为 out_shape
+    [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (M_ > 0 && N_ > 0) return std::vector<size_t>{M_, N_};
+        if (elem_n_ > 0)       return std::vector<size_t>{elem_n_};
+        return std::nullopt;
+    }
+
     bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
         (void)op_type; (void)shapes;
         return false; // 多节点 kernel 暂不注册到 registry
@@ -177,10 +190,12 @@ public:
     ConcreteCompiledKernel(C3KernelFunc func,
                            std::function<void()> deleter,
                            std::string cache_key, DeviceType device,
-                           bool is_matmul, size_t M, size_t K, size_t N)
+                           bool is_matmul, size_t M, size_t K, size_t N,
+                           std::vector<size_t> out_shape = {})
         : func_(func), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
-          is_matmul_(is_matmul), M_(M), K_(K), N_(N) {}
+          is_matmul_(is_matmul), M_(M), K_(K), N_(N),
+          out_shape_(std::move(out_shape)) {}
 
     ~ConcreteCompiledKernel() override {
         if (deleter_) deleter_();
@@ -195,10 +210,20 @@ public:
         // 二元算子用第二个输入，一元算子复用第一个（kernel 内部忽略不用的参数）
         const Tensor& b = (inputs.size() >= 2) ? inputs[1] : a;
 
-        // 创建输出张量
+        // v0.5.2 (2026-08-09) out_shape 修复: 优先用注册时记录的 out_shape_,
+        // 解决 backward 路径 grad 形状 ≠ forward output 形状的 bug。
+        // 优先级: 1) out_shape_ (注册时透传)  2) is_matmul → {M_,N_}  3) a.shape() 启发式
         Tensor out;
-        if (is_matmul_) {
+        if (!out_shape_.empty()) {
+            out = Tensor(ShapeTag{}, out_shape_);
+        } else if (is_matmul_) {
             out = Tensor(ShapeTag{}, {M_, N_});
+        } else {
+            out = Tensor(ShapeTag{}, a.shape());
+        }
+
+        size_t n = out.numel();
+        if (is_matmul_) {
             func_(
                 a.data_read<float>(),
                 b.data_read<float>(),
@@ -206,8 +231,6 @@ public:
                 0, M_, K_, N_
             );
         } else {
-            size_t n = a.numel();
-            out = Tensor(ShapeTag{}, a.shape());
             func_(
                 a.data_read<float>(),
                 b.data_read<float>(),
@@ -222,6 +245,12 @@ public:
     [[nodiscard]] const std::string& cacheKey() const override { return cache_key_; }
     [[nodiscard]] DeviceType targetDevice() const override { return device_; }
     [[nodiscard]] size_t workspaceBytes() const override { return 0; }
+
+    /// v0.5.2 out_shape 修复: 暴露注册时的 out_shape
+    [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (out_shape_.empty()) return std::nullopt;
+        return out_shape_;
+    }
 
     bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
         KernelShapeInfo s = shapes;
@@ -240,6 +269,7 @@ private:
     DeviceType device_;
     bool is_matmul_;
     size_t M_, K_, N_;
+    std::vector<size_t> out_shape_;  ///< v0.5.2: 注册时透传的 out_shape (backward 用)
 };
 
 // ======================= C3Engine 实现 =======================
@@ -428,9 +458,18 @@ static std::shared_ptr<CompiledKernel> doCompile(
                 options.target_device, gen.num_inputs, gen.fused_out_shape
             );
         } else {
+            // v0.5.2 (2026-08-09) out_shape 修复: 从 working_graph 提取真实 out_shape
+            // 透传给 ConcreteCompiledKernel, 让 execute() 用 out_shape 构造 Tensor
+            // 解决 backward 路径 grad.shape() ≠ forward output shape 的 bug
+            std::vector<size_t> out_shape;
+            if (working_graph.outputCount() > 0) {
+                size_t out_id = working_graph.outputs().back();
+                out_shape = working_graph.node(out_id).out_desc.shape;
+            }
             kernel = std::make_shared<ConcreteCompiledKernel>(
                 gen.func, gen.deleter, makeCacheKey(working_graph, options),
-                options.target_device, gen.is_matmul, gen.M, gen.K, gen.N
+                options.target_device, gen.is_matmul, gen.M, gen.K, gen.N,
+                out_shape
             );
         }
 

@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -170,6 +171,20 @@ public:
 
     /** @brief 返回执行时所需的工作空间字节数（0 表示不需要额外内存） */
     [[nodiscard]] virtual size_t workspaceBytes() const = 0;
+
+    /**
+     * @brief v0.5.2 (2026-08-09): 返回该 kernel 的输出 shape（注册时记录的"真实"out_shape）
+     * @details 默认返回 std::nullopt,execute() 沿用 a.shape() / M×N 等启发式。
+     *          Concrete/Fused/Multi 三个派生类覆写后,execute() 优先用此字段构造 Tensor,
+     *          解决 backward 路径 grad 形状 ≠ forward output 形状的 bug (out_shape 修复)。
+     *          - FusedCompiledKernel: 已有 out_shape_ 字段,1 行覆写
+     *          - MultiNodeCompiledKernel: 用 M×N 或 elem_n
+     *          - ConcreteCompiledKernel: 加 out_shape_ 字段,install 时透传
+     * @return optional,空表示 kernel 不声明 out_shape (沿用启发式)
+     */
+    [[nodiscard]] virtual std::optional<std::vector<size_t>> outShape() const {
+        return std::nullopt;
+    }
 
     /**
      * @brief 将编译产物安装到 C3 内核注册表，启用热替换
