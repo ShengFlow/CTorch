@@ -41,6 +41,7 @@ static void tempCrashHandler(int sig) {
 #include "C3/C3KernelRegistry.h"
 #include "C3/C3HotPathManager.h"
 #include "C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 调试用,看 backward fusion hit
+#include "C3/JITCache.h"             // [Dev] v0.5.2 (4) JITCache 1.0 stats 输出
 #endif
 #include "mnist/mnist_loader.h"
 #include "ctQALS/Random.h"
@@ -435,6 +436,16 @@ int main() {
     std::cout << "\n============================================" << std::endl;
     std::cout << "  训练完成" << std::endl;
     std::cout << "============================================" << std::endl;
+
+    // [Dev] v0.5.2 (4) JITCache 1.0 stats (2026-08-09)
+#ifndef CT_DISABLE_C3
+    {
+        auto& jc = ct::c3::JITCache::getInstance();
+        std::cout << "  [JITCache] 1.0 store-only stats: hits=" << jc.hits()
+                  << " stores=" << jc.stores() << " cache_dir=" << jc.cacheDir() << std::endl;
+        std::cout << "  [JITCache] (read path 实装后, hits>0 表示从 .bc 加载, 0 加速当前不体现)" << std::endl;
+    }
+#endif
 
     double total_time = 0.0;
     for (double t : times) total_time += t;

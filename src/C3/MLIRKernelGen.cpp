@@ -25,6 +25,8 @@
 #include <variant>
 
 #include "C3/TuningState.h"
+#include "C3/JITCache.h"
+#include <mlir/Target/LLVMIR/Export.h>
 
 // ======================= Profile timestamps (region fusion 探针) =======================
 // 由 test_region_fusion.cpp 通过 extern "C" 引用。JIT kernel 内部应调用
@@ -1653,6 +1655,34 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
         : (opt_level == 2) ? llvm::CodeGenOptLevel::Default
         : (opt_level == 1) ? llvm::CodeGenOptLevel::Less
         : llvm::CodeGenOptLevel::None;
+
+    // [Dev] v0.5.2 (4) JITCache 1.0 store-only (2026-08-09):
+    // 在 ExecutionEngine::create 之前,翻译 MLIR module → LLVM module → 写 bitcode 落盘
+    // 1.0 实装: store 完整 (写 .bc + .meta), lookup 走 disk check 但不实际反序列化
+    // read path (loadBitcode → ExecutionEngine) 留 v0.5.2 follow-up (需要 ExecutionEngine 重建 hook)
+    // 用户测试注意 (per 洛锦 2026-08-09):
+    //   - 性能测试前必须 JITCache::evict() (避免命中作弊)
+    //   - MLIR backend 改动后必须 evict() (旧 .bc 跟新 MLIR IR 不兼容)
+    //   - 正确性测试允许 warm cache (cache deterministic)
+    if (JITCache::isEnabled()) {
+        try {
+            std::string jit_key = JITCache::makeKey(graph.toString(), opt_level);
+            std::string bc_path = JITCache::getInstance().lookup(jit_key);
+            if (bc_path.empty()) {
+                // miss: 翻译 + 写 bitcode
+                llvm::LLVMContext bc_ctx;
+                auto llvm_module = mlir::translateModuleToLLVMIR(*module, bc_ctx);
+                if (llvm_module) {
+                    JITCache::getInstance().store(jit_key, *llvm_module);
+                }
+            } else {
+                // 命中 (有 .bc 文件),但 1.0 不实际反序列化,直接走正常 ExecutionEngine
+                JITCache::getInstance().recordHit();
+            }
+        } catch (...) {
+            // 静默失败,不影响正常 ExecutionEngine 编译
+        }
+    }
 
     auto maybeEngine = mlir::ExecutionEngine::create(*module, engineOpts);
     if (!maybeEngine)
