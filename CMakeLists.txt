@@ -101,12 +101,10 @@ set(CT-Core
         src/C3/RegionFusionRegistry.cpp
 )
 
-# [Fix] v0.5.2 Linux build: Metal/MPS 文件 macOS 专属, Linux/DCU 节点不编译
+# [Fix] v0.5.2 Linux build: Metal/MPS .mm 文件 macOS 专属, 下面 if APPLE 块条件添加
 # (DTK clang 17 不支持 Objective-C runtime, 编 .mm 文件会失败)
-if(APPLE)
-    list(APPEND CT-Core src/MetalDevice.mm)
-    list(APPEND CT-Core src/DeviceAllocator/MPSAllocator.mm)
-endif()
+# 注: 完整 if 块 (含 ${CT-MPS-OPs} 引用) 必须在 set(CT-MPS-OPs) 之后
+#     L106 这里只 list APPEND MetalDevice.mm + MPSAllocator.mm (单独 set)
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
 if(CT_ENABLE_MLIR)
@@ -277,6 +275,15 @@ set(CT-MPS-OPs
         src/kernels/MPS/MPS_kernel_dispatch.mm
 )
 
+# [Fix] v0.5.2 Linux build: Metal/MPS 文件 macOS 专属, Linux/DCU 节点不编译
+# (DTK clang 17 不支持 Objective-C runtime, 编 .mm 文件会失败)
+# 必须放在 set(CT-MPS-OPs) 之后, add_library 之前
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    list(APPEND CT-Core src/MetalDevice.mm)
+    list(APPEND CT-Core src/DeviceAllocator/MPSAllocator.mm)
+    list(APPEND CT-Core ${CT-MPS-OPs})
+endif()
+
 # 暂时禁用CPU-SIMD相关文件，因为需要AVX指令集支持
 # set(CT-CPU-SIMD-OPs
 #         src/kernels/CPU-SIMD/Add_SIMD_kernel.cpp
@@ -370,10 +377,6 @@ add_library(CTorch OBJECT
         ${CT-Distributed}
         ${ctQALS}
 )
-# [Fix] v0.5.2 Linux build: CT-MPS-OPs (MPS_kernel_dispatch.mm) macOS 专属
-if(APPLE)
-    list(APPEND CT-Core ${CT-MPS-OPs})
-endif()
 
 set_target_properties(CTorch PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION ${CT_ENABLE_LTO}
@@ -790,7 +793,7 @@ target_compile_options(CTorch PRIVATE
 
 
 # 检测平台并添加相应的编译选项
-if(APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     # macOS 特定选项
     target_compile_options(CTorch PRIVATE
             -march=native

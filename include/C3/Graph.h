@@ -21,6 +21,12 @@
 #include <variant>
 #include <vector>
 
+// [Fix] v0.5.2 Linux build: std::function / std::optional 头显式 include
+// (DTK clang 17 严格模式, 不 transitive 从 <utility> 拿 <optional> 跟 <functional>)
+// macOS clang transitive include 拿到, 但显式 include 不冲突
+#include <functional>
+#include <optional>
+
 #include "../Ctools.h"
 
 namespace ct {
