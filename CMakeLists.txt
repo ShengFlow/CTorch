@@ -86,8 +86,8 @@ set(CT-Core
         src/Arena.cpp
         src/Assertion.cpp
         src/AutoGrad.cpp
-        src/MetalDevice.mm
-        src/DeviceAllocator/MPSAllocator.mm
+        # [Fix] v0.5.2 Linux build: Metal/MPS .mm 文件 macOS 专属, 下面 if(APPLE) 块条件添加
+        # (DTK clang 17 不支持 Objective-C runtime, 编 .mm 会失败)
         src/DeviceAllocator/AllocatorManager.cpp
         src/C3/Graph.cpp
         src/C3/HandwrittenKernelGen.cpp
