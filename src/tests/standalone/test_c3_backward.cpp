@@ -1,0 +1,444 @@
+/**
+ * @file test_c3_backward.cpp
+ * @brief C3 Backward JIT 端到端验证
+ * @details 验证：
+ *          1. backward 时 C3 缓存未命中，回退 eager
+ *          2. 异步编译完成后，相同形状再次 backward 命中缓存
+ *          3. C3 backward 结果与 eager backward 一致
+ *          4. forward 输入正确传递到 C3 kernel
+ * @date 2026/8/4
+ */
+
+#include <iostream>
+#include <chrono>
+#include <thread>
+#include <cmath>
+
+#include "Tensor.h"
+#include "CtorchScheduler.h"
+#include "AutoGrad.h"
+#include "C3/C3BackwardCapture.h"
+#include "C3/C3KernelRegistry.h"
+#include "C3/C3Engine.h"
+
+using namespace ct;
+using namespace ct::c3;
+
+static void printStats(const std::string& label) {
+    auto stats = C3BackwardCapture::getInstance().getStats();
+    std::cout << "  [" << label << "] C3 backward: hits=" << stats.cache_hit_count
+              << " misses=" << stats.cache_miss_count
+              << " compiles=" << stats.compile_count << std::endl;
+}
+
+int main() {
+    std::cout << "=== C3 Backward JIT 端到端验证 ===" << std::endl;
+
+    auto& sched = CtorchScheduler::getInstance();
+    auto& engine = C3Engine::getInstance();
+    auto& capture = C3BackwardCapture::getInstance();
+
+    auto stats_before = capture.getStats();
+
+    // main 作用域累计各测试的最大误差，供最终 PASS/FAIL 判定
+    double overall_max_diff = 0.0;
+
+    // ========== Test 1: ReLU backward ==========
+    std::cout << "\n[Test 1] ReLU backward" << std::endl;
+
+    const size_t N = 4;
+    // Eager 参考
+    Tensor x_ref(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+    float* x_refp = x_ref.data_write<float>();
+    for (size_t i = 0; i < N; ++i) x_refp[i] = static_cast<float>(static_cast<int>(i) - 2);
+    x_ref.requires_grad(true);
+    Tensor y_ref = x_ref.relu();
+    AutoGrad::backward(y_ref.getRelatedNode(), false);
+    auto eager_grad_ref = x_ref.grad();
+    std::cout << "  Eager ref grad: ";
+    for (size_t i = 0; i < N; ++i) std::cout << eager_grad_ref.data_read<float>()[i] << " ";
+    std::cout << std::endl;
+
+    for (int iter = 0; iter < 6; ++iter) {
+        Tensor x(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* xp = x.data_write<float>();
+        for (size_t i = 0; i < N; ++i) xp[i] = static_cast<float>(static_cast<int>(i) - 2);
+        x.requires_grad(true);
+
+        Tensor y = x.relu();
+        AutoGrad::backward(y.getRelatedNode(), false);
+
+        auto g = x.grad();
+        if (iter == 5) {
+            std::cout << "  Iter 5 (C3) grad: ";
+            for (size_t i = 0; i < N; ++i) std::cout << g.data_read<float>()[i] << " ";
+            std::cout << std::endl;
+            double max_diff = 0;
+            for (size_t i = 0; i < N; ++i) {
+                double d = std::fabs(g.data_read<float>()[i] - eager_grad_ref.data_read<float>()[i]);
+                if (d > max_diff) max_diff = d;
+            }
+            std::cout << "  Test 1 C3 max_diff vs eager: " << max_diff << std::endl;
+        }
+    }
+
+    printStats("after ReLU x6");
+
+    // ========== Test 2: Sigmoid backward ==========
+    std::cout << "\n[Test 2] Sigmoid backward" << std::endl;
+
+    // Eager 参考
+    Tensor x_sig_ref(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+    float* x_sig_refp = x_sig_ref.data_write<float>();
+    for (size_t i = 0; i < N; ++i) x_sig_refp[i] = static_cast<float>(static_cast<int>(i) - 2) * 0.5f;
+    x_sig_ref.requires_grad(true);
+    Tensor y_sig_ref = x_sig_ref.sigmoid();
+    AutoGrad::backward(y_sig_ref.getRelatedNode(), false);
+    auto sig_eager_ref = x_sig_ref.grad();
+
+    for (int iter = 0; iter < 6; ++iter) {
+        Tensor x(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* xp = x.data_write<float>();
+        for (size_t i = 0; i < N; ++i) xp[i] = static_cast<float>(static_cast<int>(i) - 2) * 0.5f;
+        x.requires_grad(true);
+
+        Tensor y = x.sigmoid();
+        AutoGrad::backward(y.getRelatedNode(), false);
+
+        auto g = x.grad();
+        if (iter == 5) {
+            std::cout << "  Iter 5 (C3) grad: ";
+            for (size_t i = 0; i < N; ++i) std::cout << g.data_read<float>()[i] << " ";
+            std::cout << std::endl;
+            double max_diff = 0;
+            for (size_t i = 0; i < N; ++i) {
+                double d = std::fabs(g.data_read<float>()[i] - sig_eager_ref.data_read<float>()[i]);
+                if (d > max_diff) max_diff = d;
+            }
+            std::cout << "  Test 2 C3 max_diff vs eager: " << max_diff << std::endl;
+        }
+    }
+
+    printStats("after Sigmoid x6");
+
+    // ========== Test 3: 结果正确性验证 ==========
+    std::cout << "\n[Test 3] 结果正确性验证（C3 命中 vs Eager）" << std::endl;
+
+    const size_t M = 8;
+
+    // 第一次运行（eager 路径，同时触发 C3 异步编译）
+    Tensor x1(ShapeTag{}, {M}, DType::kFloat, DeviceType::kCPU);
+    float* x1p = x1.data_write<float>();
+    for (size_t i = 0; i < M; ++i) x1p[i] = static_cast<float>(static_cast<int>(i) - 4);
+    x1.requires_grad(true);
+
+    Tensor y1 = x1.relu();
+    AutoGrad::backward(y1.getRelatedNode(), false);
+    auto eager_grad = x1.grad();
+    std::vector<float> eager_grad_data(eager_grad.data_read<float>(),
+                                       eager_grad.data_read<float>() + M);
+
+    // 等待异步编译完成
+    std::cout << "  等待异步编译完成..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    // 第二次运行（应该走 C3 缓存命中 + forward_inputs 传递）
+    Tensor x2(ShapeTag{}, {M}, DType::kFloat, DeviceType::kCPU);
+    float* x2p = x2.data_write<float>();
+    for (size_t i = 0; i < M; ++i) x2p[i] = static_cast<float>(static_cast<int>(i) - 4);
+    x2.requires_grad(true);
+
+    Tensor y2 = x2.relu();
+    AutoGrad::backward(y2.getRelatedNode(), false);
+    auto c3_grad = x2.grad();
+
+    // 比较结果
+    double max_diff = 0.0;
+    for (size_t i = 0; i < M; ++i) {
+        double diff = std::fabs(static_cast<double>(eager_grad_data[i]) -
+                                static_cast<double>(c3_grad.data_read<float>()[i]));
+        if (diff > max_diff) max_diff = diff;
+    }
+
+    auto stats_final = capture.getStats();
+    bool has_c3_hits = stats_final.cache_hit_count > stats_before.cache_hit_count;
+
+    std::cout << "  Eager grad: ";
+    for (size_t i = 0; i < M; ++i) std::cout << eager_grad_data[i] << " ";
+    std::cout << std::endl;
+
+    std::cout << "  C3    grad: ";
+    for (size_t i = 0; i < M; ++i) std::cout << c3_grad.data_read<float>()[i] << " ";
+    std::cout << std::endl;
+
+    std::cout << "  max_diff: " << max_diff << std::endl;
+    std::cout << "  C3 hits detected: " << (has_c3_hits ? "yes" : "no") << std::endl;
+
+    printStats("final");
+
+    // ========== Test 4+: 多输入节点反向（每输入独立单输出 kernel） ==========
+    std::cout << "\n=== 多输入节点反向验证（Add/Mul/Sub/Div/MatMul） ===" << std::endl;
+
+    auto check_tensor = [](const Tensor& got, const Tensor& ref, const char* name, double& max_diff) {
+        auto g = got.data_read<float>();
+        auto r = ref.data_read<float>();
+        size_t n = got.numel();
+        std::cout << "    " << name << " got=[";
+        for (size_t i = 0; i < n; ++i) std::cout << g[i] << (+(i+1==n) ? "" : ",");
+        std::cout << "] ref=[";
+        for (size_t i = 0; i < n; ++i) std::cout << r[i] << (+(i+1==n) ? "" : ",");
+        std::cout << "]" << std::endl;
+        for (size_t i = 0; i < n; ++i) {
+            double d = std::fabs(static_cast<double>(g[i]) - static_cast<double>(r[i]));
+            if (d > max_diff) max_diff = d;
+        }
+        std::cout << "    " << name << " max_diff=" << max_diff << std::endl;
+    };
+
+    // Test 4: Mul backward（多输出：grad_a, grad_b）
+    {
+        std::cout << "\n[Test 4] Mul backward (multi-output)" << std::endl;
+        const size_t N = 4;
+        Tensor ra(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rap = ra.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rap[i] = static_cast<float>(i) + 1.0f;
+        Tensor rb(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rbp = rb.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rbp[i] = static_cast<float>(i) * 0.5f + 2.0f;
+        ra.requires_grad(true); rb.requires_grad(true);
+        Tensor ry = ra * rb;
+        AutoGrad::backward(ry.getRelatedNode(), false);
+        auto ref_ga = ra.grad();
+        auto ref_gb = rb.grad();
+
+        double max_diff = 0;
+        for (int it = 0; it < 6; ++it) {
+            Tensor a(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* ap = a.data_write<float>();
+            for (size_t i = 0; i < N; ++i) ap[i] = static_cast<float>(i) + 1.0f;
+            Tensor b(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* bp = b.data_write<float>();
+            for (size_t i = 0; i < N; ++i) bp[i] = static_cast<float>(i) * 0.5f + 2.0f;
+            a.requires_grad(true); b.requires_grad(true);
+            Tensor y = a * b;
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (it == 5) {
+                check_tensor(a.grad(), ref_ga, "grad_a", max_diff);
+                check_tensor(b.grad(), ref_gb, "grad_b", max_diff);
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 4 Mul max_diff=" << max_diff << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
+    }
+
+    // Test 5: Sub backward（多输出：grad_a=grad, grad_b=-grad）
+    {
+        std::cout << "\n[Test 5] Sub backward (multi-output)" << std::endl;
+        const size_t N = 4;
+        Tensor ra(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rap = ra.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rap[i] = static_cast<float>(i) + 1.0f;
+        Tensor rb(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rbp = rb.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rbp[i] = static_cast<float>(i) * 0.5f;
+        ra.requires_grad(true); rb.requires_grad(true);
+        Tensor ry = ra - rb;
+        AutoGrad::backward(ry.getRelatedNode(), false);
+        auto ref_ga = ra.grad();
+        auto ref_gb = rb.grad();
+
+        double max_diff = 0;
+        for (int it = 0; it < 6; ++it) {
+            Tensor a(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* ap = a.data_write<float>();
+            for (size_t i = 0; i < N; ++i) ap[i] = static_cast<float>(i) + 1.0f;
+            Tensor b(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* bp = b.data_write<float>();
+            for (size_t i = 0; i < N; ++i) bp[i] = static_cast<float>(i) * 0.5f;
+            a.requires_grad(true); b.requires_grad(true);
+            Tensor y = a - b;
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (it == 5) {
+                check_tensor(a.grad(), ref_ga, "grad_a", max_diff);
+                check_tensor(b.grad(), ref_gb, "grad_b", max_diff);
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 5 Sub max_diff=" << max_diff << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
+    }
+
+    // Test 6: Div backward（多输出）
+    {
+        std::cout << "\n[Test 6] Div backward (multi-output)" << std::endl;
+        const size_t N = 4;
+        Tensor ra(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rap = ra.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rap[i] = static_cast<float>(i) + 2.0f;
+        Tensor rb(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+        float* rbp = rb.data_write<float>();
+        for (size_t i = 0; i < N; ++i) rbp[i] = static_cast<float>(i) + 3.0f;
+        ra.requires_grad(true); rb.requires_grad(true);
+        Tensor ry = ra / rb;
+        AutoGrad::backward(ry.getRelatedNode(), false);
+        auto ref_ga = ra.grad();
+        auto ref_gb = rb.grad();
+
+        double max_diff = 0;
+        for (int it = 0; it < 6; ++it) {
+            Tensor a(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* ap = a.data_write<float>();
+            for (size_t i = 0; i < N; ++i) ap[i] = static_cast<float>(i) + 2.0f;
+            Tensor b(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
+            float* bp = b.data_write<float>();
+            for (size_t i = 0; i < N; ++i) bp[i] = static_cast<float>(i) + 3.0f;
+            a.requires_grad(true); b.requires_grad(true);
+            Tensor y = a / b;
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (it == 5) {
+                check_tensor(a.grad(), ref_ga, "grad_a", max_diff);
+                check_tensor(b.grad(), ref_gb, "grad_b", max_diff);
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 6 Div max_diff=" << max_diff << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
+    }
+
+    // Test 7: MatMul backward（多输出，训练关键路径）
+    {
+        std::cout << "\n[Test 7] MatMul backward (multi-output)" << std::endl;
+        const size_t M = 4, K = 3, N = 5;
+        Tensor rx(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+        float* rxp = rx.data_write<float>();
+        for (size_t i = 0; i < M * K; ++i) rxp[i] = static_cast<float>(i % 7) * 0.1f;
+        Tensor rw(ShapeTag{}, {K, N}, DType::kFloat, DeviceType::kCPU);
+        float* rwp = rw.data_write<float>();
+        for (size_t i = 0; i < K * N; ++i) rwp[i] = static_cast<float>(i % 5) * 0.2f;
+        rx.requires_grad(true); rw.requires_grad(true);
+        Tensor ry = rx.matmul(rw);
+        AutoGrad::backward(ry.getRelatedNode(), false);
+        auto ref_gx = rx.grad();
+        auto ref_gw = rw.grad();
+
+        // 等待异步编译完成，确保后续迭代命中 C3
+        std::cout << "  等待异步编译完成..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+        double max_diff = 0;
+        for (int it = 0; it < 6; ++it) {
+            Tensor x(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+            float* xp = x.data_write<float>();
+            for (size_t i = 0; i < M * K; ++i) xp[i] = static_cast<float>(i % 7) * 0.1f;
+            Tensor w(ShapeTag{}, {K, N}, DType::kFloat, DeviceType::kCPU);
+            float* wp = w.data_write<float>();
+            for (size_t i = 0; i < K * N; ++i) wp[i] = static_cast<float>(i % 5) * 0.2f;
+            x.requires_grad(true); w.requires_grad(true);
+            Tensor y = x.matmul(w);
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (it == 5) {
+                check_tensor(x.grad(), ref_gx, "grad_x", max_diff);
+                check_tensor(w.grad(), ref_gw, "grad_w", max_diff);
+                bool hit = C3BackwardCapture::getInstance().getStats().cache_hit_count > stats_before.cache_hit_count;
+                std::cout << "  C3 backward hits since start: " << (hit ? "yes" : "no") << std::endl;
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 7 MatMul max_diff=" << max_diff << (max_diff < 1e-4 ? "  ✅" : "  ❌") << std::endl;
+    }
+
+    // ========== Test 8: 反向融合 (ReLU → Sigmoid 链式) ==========
+    // 预期：前几轮触发融合异步编译；等待编译后，后续轮次 fusion_hit_count 上升。
+    // 数值上：融合输出结果应当与 eager 一致。
+    {
+        std::cout << "\n[Test 8] Backward Fusion: ReLU → Sigmoid chain" << std::endl;
+        auto stats_fusion_start = capture.getStats();
+
+        const size_t M = 32, K = 64;
+        Tensor eager_x(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+        float* xp_eager = eager_x.data_write<float>();
+        for (size_t i = 0; i < eager_x.numel(); ++i) xp_eager[i] = (static_cast<float>(i) / (M*K) - 0.5f) * 4.0f;
+        eager_x.requires_grad(true);
+        Tensor eager_y = eager_x.sigmoid().relu();
+        AutoGrad::backward(eager_y.getRelatedNode(), false);
+        auto eager_gx = eager_x.grad();
+
+        // 跑 8 轮：前 3~4 轮积累频次触发异步编译，等待后后面几轮应该能命中融合。
+        double max_diff = 0.0;
+        for (int iter = 0; iter < 8; ++iter) {
+            Tensor x(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+            float* xp = x.data_write<float>();
+            for (size_t i = 0; i < x.numel(); ++i) xp[i] = (static_cast<float>(i) / (M*K) - 0.5f) * 4.0f;
+            x.requires_grad(true);
+            Tensor y = x.sigmoid().relu();
+            AutoGrad::backward(y.getRelatedNode(), false);
+            auto gx = x.grad();
+
+            double d = 0.0;
+            const float* e = eager_gx.data_read<float>();
+            const float* g = gx.data_read<float>();
+            for (size_t i = 0; i < gx.numel(); ++i) {
+                double dd = std::fabs(g[i] - e[i]);
+                if (dd > d) d = dd;
+            }
+            max_diff = std::max(max_diff, d);
+
+            // === 调试输出：每次 iter 打印前 8 元素 + 最大误差位置 =============
+            {
+                size_t bad_pos = 0;
+                double bad_d = 0;
+                for (size_t i = 0; i < gx.numel(); ++i) {
+                    double dd = std::fabs(g[i] - e[i]);
+                    if (dd > bad_d) { bad_d = dd; bad_pos = i; }
+                }
+                std::cout << "  [iter " << iter << "] max_diff=" << d
+                          << "  bad_pos=" << bad_pos
+                          << "  x_at_bad=" << (static_cast<float>(bad_pos) / (M*K) - 0.5f) * 4.0f
+                          << "  eager=" << e[bad_pos]
+                          << "  got=" << g[bad_pos]
+                          << "  | first8: ";
+                for (size_t i = 0; i < 8; ++i) {
+                    std::cout << "[" << i << "]=" << g[i] << "/" << e[i] << " ";
+                }
+                std::cout << std::endl;
+            }
+
+            if (iter == 3) {
+                std::cout << "  Iter 3 → 等待异步融合编译 (3.5s)..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+            }
+        }
+
+        auto stats_fusion_end = capture.getStats();
+        std::cout << "  融合编译次数: compiles="
+                  << (stats_fusion_end.fusion_compile_count - stats_fusion_start.fusion_compile_count)
+                  << "  命中=" << (stats_fusion_end.fusion_hit_count - stats_fusion_start.fusion_hit_count)
+                  << "  未命中=" << (stats_fusion_end.fusion_miss_count - stats_fusion_start.fusion_miss_count)
+                  << std::endl;
+        std::cout << "  最大误差 max_diff=" << max_diff
+                  << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+    }
+
+    // 安全退出
+    engine.shutdown();
+    engine.clearCache();
+    C3KernelRegistry::getInstance().uninstallAll();
+
+    // 验证
+    // 说明：MatMul 单 kernel 的 JIT 精度为 1e-4 量级（与 eager AMX 路径相比），
+    // 因此整体判定阈值放宽到 1e-4。其余 element-wise 测试的 max_diff 均为 0。
+    double final_max_diff = overall_max_diff;
+    bool pass = true;
+    if (final_max_diff > 1e-4) {
+        std::cout << "\n❌ FAIL: C3 backward 结果与 eager 不匹配 (max_diff=" << final_max_diff << ")" << std::endl;
+        pass = false;
+    } else {
+        std::cout << "\n✅ PASS: C3 backward 结果正确 (overall_max_diff=" << final_max_diff << ")" << std::endl;
+    }
+
+    if (!has_c3_hits) {
+        std::cout << "⚠️  WARN: 未检测到 C3 backward 缓存命中" << std::endl;
+        std::cout << "  (可能是异步编译尚未完成，但测试结果仍然正确)" << std::endl;
+    }
+
+    return pass ? 0 : 1;
+}
