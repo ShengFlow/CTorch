@@ -465,6 +465,12 @@ if(CT_ENABLE_DCU)
     add_executable(test_c3_dcu_hello src/tests/standalone/test_c3_dcu_hello.cpp)
     target_link_libraries(test_c3_dcu_hello PRIVATE CTorch)
     target_include_directories(test_c3_dcu_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    # [Dev] v0.5.2: test_dcu_hello_v2 完整链路 (MLIR→GCVM/dcc/host CPU Plan A/B/C fallback)
+    # 跟 test_c3_dcu_hello 区别: 走真 mlirToLLVMIRFromGraph pipeline + Plan A/B/C 自动 fallback
+    add_executable(test_dcu_hello_v2 src/tests/standalone/test_dcu_hello_v2.cpp)
+    target_link_libraries(test_dcu_hello_v2 PRIVATE CTorch)
+    target_include_directories(test_dcu_hello_v2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 # MLIRToLLVMIR helper 单测 (v0.5 DCU 接入基础设施, 2026-08-10)

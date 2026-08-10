@@ -17,6 +17,7 @@
 #include "C3/C3Engine.h"
 #include "C3/C3KernelRegistry.h"
 #include "C3/GCVMBridge.h"
+#include "C3/MLIRToLLVMIR.h"
 #include "C3/DCUCompiledKernel.h"
 #include "CtorchError.h"
 #include "Tensor.h"
@@ -97,17 +98,24 @@ int main() {
     std::cout << std::endl;
 
     // === Phase 2c: MLIR → LLVM IR → GCVM ===
-    // TODO: probe-adjust: 用真实 LLVM Module (从 MLIRKernelGen 拿)
-    // 当前: 占位字符串
+    // [Dev] v0.5.2 (2026-08-10): 用 mlirToLLVMIRFromGraph 拿真 LLVM IR (替代之前 placeholder)
     std::cout << "--- Phase 2c: MLIR → LLVM IR → GCVM ---" << std::endl;
-    std::string fake_llvm_ir = "; placeholder LLVM IR (待 probe-adjust)\n"
-                                "define float @c3_kernel(float* %a, float* %b, float* %out, i64 %n) {\n"
-                                "  ret float 0.0\n"
-                                "}\n";
-    auto gcvvm_result = ct::c3::compileLLVMToDCUObject(fake_llvm_ir, "c3_kernel", 2);
+    ct::c3::MLIRToLLVMIROptions ir_opts;
+    ir_opts.opt_level = 2;
+    ir_opts.verify_llvm_ir = true;
+    auto ir_result = ct::c3::mlirToLLVMIRFromGraph(g, ir_opts);
+    if (!ir_result.success) {
+        std::cerr << "  MLIR → LLVM IR ❌: " << ir_result.error_message << std::endl;
+        return 1;
+    }
+    std::cout << "  MLIR → LLVM IR ✅ (" << ir_result.elapsed_ms << " ms, "
+              << ir_result.text.size() << " chars text, "
+              << ir_result.bitcode.size() << " bytes bitcode)" << std::endl;
+
+    auto gcvvm_result = ct::c3::compileLLVMToDCUObject(ir_result.text, "c3_kernel", 2);
     if (!gcvvm_result.success) {
         std::cerr << "  GCVM compile ❌: " << gcvvm_result.error_message << std::endl;
-        std::cerr << "  (注意: 当前 GCVM API 是 stub, 真实函数名待 probe-dcu-dtk24.sh 探针后调整)"
+        std::cerr << "  (注意: GCVM 1.6 = LLVM 7 vs C3 MLIR 22 = LLVM 14, 可能 IR_VERSION_MISMATCH)"
                   << std::endl;
         return 1;
     }
