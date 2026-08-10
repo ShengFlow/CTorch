@@ -145,24 +145,62 @@ void testEmptyModule() {
 }
 
 void testHighLevelAPIIsStub() {
-    std::cout << "\n[TEST 4] mlirToLLVMIRFromGraph 当前是 stub (跨 session TODO)" << std::endl;
+    std::cout << "\n[TEST 4] mlirToLLVMIRFromGraph 走真 pipeline (v0.5.2 实装)" << std::endl;
 
-    // 构造最小 Graph (空 graph, 反正 helper 不会真用它, 直接走 stub 分支)
-    ct::c3::Graph g;
+    // 空 graph: 应该报 "no compute node", 而不是 "not implemented"
+    // (说明高层 API 真的走了, 只是 graph 本身不合法)
+    {
+        ct::c3::Graph g;
+        ct::c3::MLIRToLLVMIROptions opts;
+        opts.opt_level = 2;
 
-    ct::c3::MLIRToLLVMIROptions opts;
-    opts.opt_level = 2;
-    opts.dump_mlir = false;
-    opts.verify_llvm_ir = true;
+        auto result = ct::c3::mlirToLLVMIRFromGraph(g, opts);
+        CHECK(!result.success, "空 graph → success=false (no compute node)");
+        CHECK(!result.error_message.empty(), "error_message 非空, 说明真跑了");
+        CHECK(result.error_message.find("not implemented") == std::string::npos,
+              "不再是 stub (error_message 不含 'not implemented')");
+        CHECK(result.error_message.find("no compute node") != std::string::npos
+              || result.error_message.find("compute") != std::string::npos,
+              "error_message 含 'compute' 字样 (graph 校验失败)");
 
-    auto result = ct::c3::mlirToLLVMIRFromGraph(g, opts);
-    CHECK(!result.success, "mlirToLLVMIRFromGraph 当前 success=false (stub)");
-    CHECK(!result.error_message.empty(), "error_message 非空, 说明 stub 状态");
-    CHECK(result.error_message.find("not implemented") != std::string::npos,
-          "error_message 含 'not implemented' 字样");
+        std::cout << "  error_message: " << result.error_message.substr(0, 100)
+                  << "..." << std::endl;
+    }
 
-    std::cout << "  error_message: " << result.error_message.substr(0, 100)
-              << "..." << std::endl;
+    // 最小有效 graph: {a, b, Add} (单 Add 节点)
+    // 期望: 走 buildMLIRModule + applyLoweringPipeline + emit, 产出 valid LLVM IR text
+    {
+        std::cout << "  [TEST 4b] 最小有效 graph {a, b, Add}" << std::endl;
+        ct::c3::Graph g;
+        auto a_desc = ct::c3::TensorDesc::fromShape({16});
+        auto b_desc = ct::c3::TensorDesc::fromShape({16});
+        auto out_desc = ct::c3::TensorDesc::fromShape({16});
+        auto a = g.addInput(a_desc);
+        auto b = g.addInput(b_desc);
+        g.addNode(ct::c3::AddNode{a_desc, b_desc}, {a, b}, out_desc);
+        g.markOutput(g.nodeCount() - 1);
+
+        ct::c3::MLIRToLLVMIROptions opts;
+        opts.opt_level = 2;
+
+        auto result = ct::c3::mlirToLLVMIRFromGraph(g, opts);
+        if (result.success) {
+            std::cout << "  --- 真实 LLVM IR text (前 400 chars) ---" << std::endl;
+            std::string preview = result.text.substr(0, std::min<size_t>(400, result.text.size()));
+            std::cout << "  " << preview << (result.text.size() > 400 ? "..." : "") << std::endl;
+            std::cout << "  --- text 长度: " << result.text.size()
+                      << "  elapsed: " << result.elapsed_ms << "ms ---" << std::endl;
+        }
+        CHECK(result.success, "有效 graph → success=true");
+        CHECK(!result.text.empty(), "text 非空");
+        CHECK(result.text.find("define") != std::string::npos, "text 含 'define' (LLVM IR)");
+        CHECK(result.text.find("@c3_kernel") != std::string::npos, "text 含 '@c3_kernel'");
+        CHECK(!result.bitcode.empty(), "bitcode 非空");
+        CHECK(result.bitcode.size() >= 4, "bitcode 长度 >= 4");
+        CHECK(result.bitcode[0] == 'B' && result.bitcode[1] == 'C'
+              && result.bitcode[2] == 0xC0 && result.bitcode[3] == 0xDE,
+              "bitcode magic 头 BC \\xC0\\xDE");
+    }
 }
 
 }  // anonymous namespace

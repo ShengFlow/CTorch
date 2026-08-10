@@ -22,15 +22,25 @@
 #ifdef CT_ENABLE_MLIR
 
 #include "C3/Graph.h"  // 高层 API mlirToLLVMIRFromGraph 用
+#include "MLIRKernelGen.h"  // ct::c3::buildMLIRModule + applyLoweringPipeline 公开 API
 
 // MLIR 头
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
+#include <mlir/IR/DialectRegistry.h>
 // 注: MLIR 22.x 把 Module 相关定义整合到 BuiltinOps.h, 没有独立 Module.h
 #include <mlir/Target/LLVMIR/Export.h>
 // MLIR 22.x 翻译接口需要显式 include (跟 MLIRKernelGen.cpp:65-66 一致)
 #include <mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h>
 #include <mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h>
+
+// 各 dialect 头 (mlirToLLVMIRFromGraph 需要显式 include, 避免 transitive 依赖)
+#include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Math/IR/Math.h>
+#include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 
 // LLVM 头
 #include <llvm/IR/Module.h>
@@ -135,28 +145,76 @@ std::vector<uint8_t> mlirModuleToLLVMBitcode(mlir::ModuleOp module) {
 }
 
 // 高层 API: 跨 session follow-up
-// TODO (跨 session, 待 MLIRKernelGen refactor):
-//   1. 把 src/C3/MLIRKernelGen.cpp 内部 static 函数 buildMLIRModule (L1551) + 
-//      applyLoweringPipeline (L1662) 改成非 static, 加 include/C3/MLIRKernelGen.h 公开
-//   2. 把 generateFromGraphMLIR (L1679) 拆成两步:
-//      a) buildMLIRModule 阶段 (返 OwningOpRef<ModuleOp>)
-//      b) JIT 阶段 (原 ExecutionEngine::create 部分)
-//   3. 复用 buildMLIRModule + applyLoweringPipeline, 在本函数里跑完 emit text/bitcode
-//   4. test_c3_dcu_hello.cpp Phase 2c 改调 mlirToLLVMIRFromGraph(g), 喂 compileLLVMToDCUObject
-//
-// 当前 stub 实现: 直接返 "not implemented", 引导调用方用底层 API + 自己构建 module
-MLIRToLLVMIRResult mlirToLLVMIRFromGraph(const Graph& /*graph*/,
-                                          const MLIRToLLVMIROptions& /*opts*/) {
+// [Dev] v0.5.2 DCU 接入 refactor (2026-08-10): 实装完成
+//   复用 src/C3/MLIRKernelGen.cpp 公开的 buildMLIRModule + applyLoweringPipeline,
+//   跟 generateFromGraphMLIR 共享同一份 build / lower 逻辑
+//   区别: 不走 ExecutionEngine JIT, 改 emit LLVM IR text / bitcode 给 GCVM/dcc
+MLIRToLLVMIRResult mlirToLLVMIRFromGraph(const Graph& graph,
+                                          const MLIRToLLVMIROptions& opts) {
     MLIRToLLVMIRResult result;
-    result.success = false;
-    result.error_message =
-        "mlirToLLVMIRFromGraph: not implemented yet. "
-        "Cross-session TODO: refactor src/C3/MLIRKernelGen.cpp to expose "
-        "buildMLIRModule + applyLoweringPipeline as public API (currently "
-        "file-static). After that, this function will reuse them and emit "
-        "LLVM IR for DCU Plan A/B. "
-        "For now, use mlirModuleToLLVMIRText/Bitcode directly with a "
-        "pre-built lowered MLIR module.";
+    auto t0 = std::chrono::steady_clock::now();
+
+    try {
+        // 1. 创建 MLIRContext + 注册必要 dialect (跟 MLIRKernelGen::generateFromGraphMLIR 对齐)
+        mlir::DialectRegistry reg;
+        reg.insert<mlir::arith::ArithDialect>();
+        reg.insert<mlir::math::MathDialect>();
+        reg.insert<mlir::scf::SCFDialect>();
+        reg.insert<mlir::func::FuncDialect>();
+        reg.insert<mlir::memref::MemRefDialect>();
+        reg.insert<mlir::LLVM::LLVMDialect>();
+
+        mlir::MLIRContext context(reg);
+        context.loadDialect<mlir::arith::ArithDialect>();
+        context.loadDialect<mlir::math::MathDialect>();
+        context.loadDialect<mlir::scf::SCFDialect>();
+        context.loadDialect<mlir::func::FuncDialect>();
+        context.loadDialect<mlir::memref::MemRefDialect>();
+        context.loadDialect<mlir::LLVM::LLVMDialect>();
+
+        // 2. Build MLIR module (复用公开 API)
+        auto module = ct::c3::buildMLIRModule(context, graph);
+
+        // 3. 调试 dump
+        if (opts.dump_mlir) {
+            llvm::errs() << "=== MLIR module BEFORE lowering ===\n";
+            module->dump();
+        }
+
+        // 4. Apply lowering pipeline (复用公开 API)
+        ct::c3::applyLoweringPipeline(*module);
+
+        if (opts.dump_mlir) {
+            llvm::errs() << "=== MLIR module AFTER lowering (LLVM dialect) ===\n";
+            module->dump();
+        }
+
+        // 5. 翻译 MLIR module → LLVM IR (调用底层 API)
+        result.text = mlirModuleToLLVMIRText(*module);
+        if (result.text.empty()) {
+            result.error_message = "mlirModuleToLLVMIRText returned empty (translate/verify failed)";
+            return result;
+        }
+
+        // 6. 同步 emit bitcode (供 Plan B dcc 备用)
+        result.bitcode = mlirModuleToLLVMBitcode(*module);
+        if (result.bitcode.empty() && opts.verify_llvm_ir) {
+            // text 验证过但 bitcode 失败 — 罕见, 警告但不当作错误
+            llvm::errs() << "[MLIRToLLVMIR] warning: bitcode emit failed but text succeeded"
+                         << " (might be a tmp issue, text path is enough for Plan A)\n";
+        }
+
+        result.success = true;
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = std::string("mlirToLLVMIRFromGraph exception: ") + e.what();
+    } catch (...) {
+        result.success = false;
+        result.error_message = "mlirToLLVMIRFromGraph: unknown exception";
+    }
+
+    auto t1 = std::chrono::steady_clock::now();
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     return result;
 }
 

@@ -1548,7 +1548,10 @@ static size_t countComputeNodesMLIR(const Graph& graph) {
 
 // ======================= 模块构建 =======================
 
-static mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
+// [Dev] v0.5.2 DCU 接入 refactor (2026-08-10):
+// buildMLIRModule 从 file-static 改成公开 API, 跟 MLIRToLLVMIR.cpp 的
+// mlirToLLVMIRFromGraph 复用同一份 build / lower 逻辑
+mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
     mlir::MLIRContext& context, const Graph& graph)
 {
     // 多节点图：使用多节点 MLIR kernel
@@ -1659,7 +1662,9 @@ static void runPass(mlir::ModuleOp module, std::unique_ptr<mlir::Pass> pass, con
     }
 }
 
-static void applyLoweringPipeline(mlir::ModuleOp module) {
+// [Dev] v0.5.2 DCU 接入 refactor (2026-08-10):
+// applyLoweringPipeline 从 file-static 改成公开 API
+void applyLoweringPipeline(mlir::ModuleOp module) {
     runPass(module, mlir::createCanonicalizerPass(), "Canonicalizer");
     runPass(module, mlir::createCSEPass(), "CSE");
     runPass(module, mlir::createLoopInvariantCodeMotionPass(), "LICM");
