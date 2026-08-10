@@ -105,6 +105,7 @@ set(CT-Core
 if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
     list(APPEND CT-Core src/C3/JITCache.cpp)
+    list(APPEND CT-Core src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
@@ -435,6 +436,14 @@ if(CT_ENABLE_DCU)
     add_executable(test_c3_dcu_hello src/tests/standalone/test_c3_dcu_hello.cpp)
     target_link_libraries(test_c3_dcu_hello PRIVATE CTorch)
     target_include_directories(test_c3_dcu_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# MLIRToLLVMIR helper 单测 (v0.5 DCU 接入基础设施, 2026-08-10)
+# 只需 CT_ENABLE_MLIR=ON, 不依赖 DCU
+if(CT_ENABLE_MLIR)
+    add_executable(test_mlir_to_llvm_ir src/tests/standalone/test_mlir_to_llvm_ir.cpp)
+    target_link_libraries(test_mlir_to_llvm_ir PRIVATE CTorch)
+    target_include_directories(test_mlir_to_llvm_ir PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_executable(test_bidiag_svd_accuracy src/tests/standalone/test_bidiag_svd_accuracy.cpp)
