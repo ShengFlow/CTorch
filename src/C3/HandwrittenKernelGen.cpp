@@ -1085,7 +1085,11 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         result.N = matN;
         result.elem_n = matM * matN;
 
-        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
+        // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, lambda 不能 capture
+        //   structured binding. 用 named 变量替代 auto [a, b] = ...
+        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto func_ptr = _compile_result.first;
+        auto dl_handle = _compile_result.second;
         result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
         result.handle = dl_handle;
         result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
@@ -1124,7 +1128,10 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             }
         }
 
-        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
+        // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
+        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto func_ptr = _compile_result.first;
+        auto dl_handle = _compile_result.second;
         result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
         result.handle = dl_handle;
         result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
@@ -1156,7 +1163,10 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         result.fused_out_shape = fnode.out_desc.shape;
 
         // 编译融合 kernel（使用 FusedKernelFunc 签名）
-        auto [func_ptr, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
+        // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
+        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto func_ptr = _compile_result.first;
+        auto dl_handle = _compile_result.second;
         result.fused_func = reinterpret_cast<FusedKernelFunc>(func_ptr);
         result.handle = dl_handle;
         result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };
@@ -1248,7 +1258,10 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             std::to_string(op.index()));
     }
 
-    auto [func, dl_handle] = compileAndLoad(src, "c3_kernel", cache_key);
+    // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
+    auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+    auto func = _compile_result.first;
+    auto dl_handle = _compile_result.second;
     result.func = func;
     result.handle = dl_handle;
     result.deleter = [dl_handle]() { if (dl_handle) dlclose(dl_handle); };

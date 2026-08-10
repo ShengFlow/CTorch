@@ -240,7 +240,12 @@ MergedGraphInfo GraphMerger::merge(const std::vector<Graph>& sub_graphs,
 
     // 5. 清理：链接覆盖的占位节点不再被引用，需彻底移除（从 nodes_ 和 inputs_）
     //    使用 _eliminateDeadCodeForMergedInternal：它返回新图以及 old_to_new 映射
-    auto [cleaned_graph, old_to_new] = g._eliminateDeadCodeForMergedInternal();
+    // [Fix] v0.5.2 Linux build: 用 named 变量替代 structured binding
+    //   DTK clang 17 OpenMP 严格模式: lambda 不能 capture structured binding
+    //   (L248 下面 lambda 引用 old_to_new, 必须 named)
+    auto _elim_result = g._eliminateDeadCodeForMergedInternal();
+    auto& cleaned_graph = _elim_result.first;
+    auto& old_to_new = _elim_result.second;
     info.graph = cleaned_graph;
 
     // 6. 更新所有 ID 映射到新图
