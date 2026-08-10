@@ -8,6 +8,8 @@
 #ifndef CTORCH_ARENA_H
 #define CTORCH_ARENA_H
 
+#include <cstddef>  // [Fix] v0.5.2 Linux build: std::max_align_t 定义在此
+                     // macOS clang transitive include 拿到, DTK 26.04 clang 17 严格, 必须显式 include
 #include <vector>
 #include <functional>
 #include <memory>
