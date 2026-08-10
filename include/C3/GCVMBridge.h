@@ -19,8 +19,8 @@
 // 仅在 WITH_DCU 时包含 GCVM 头文件
 #ifdef WITH_DCU
     // 路径: /opt/dtk/llvm/gcvm/include/gcvm.h (DTK 24.04+)
-    __has_include 检查 (在 CMakeLists.txt 用 try_compile 验证)
-    #include <gcvm.h>  // GCVM C API
+    // macOS 上 WITH_DCU 默认 OFF, 不需要 GCVM 头
+    #include <gcvm.h>  // GCVM C API (verified via CMakeLists try_compile)
 #endif
 
 namespace ct {

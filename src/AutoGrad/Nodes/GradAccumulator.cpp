@@ -24,7 +24,9 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
 
     if (auto tensor = _tensor.lock()) {
         if (tensor->device() == DeviceType::kMPS) {
+#ifdef __APPLE__
             MPS_flush_wait(true);
+#endif
             Tensor accumulated = downStreamGrads[0];
 
             for (size_t i = 1; i < downStreamGrads.size(); ++i) {

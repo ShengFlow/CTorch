@@ -44,9 +44,11 @@ std::vector<GradPack> GELUNode::backward(const std::vector<Tensor> &downStreamGr
     const Tensor &grad_out = downStreamGrads[0];
 
     // (SYNC) MPS 路径：确保 accumulator 中所有元素级 kernel 写回完成后再读取 buffer
+#ifdef __APPLE__
     if (x.device() == DeviceType::kMPS) {
         MPS_flush_wait(true);
     }
+#endif
 
     Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
 

@@ -205,7 +205,9 @@ private:
     // 详见 ABI_POLICY.md 第 3.2 节“新增算子 ABI 检查清单”。
     static_assert(static_cast<size_t>(op::kCount) == 28,
                   "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md)");
-    static_assert(static_cast<size_t>(DeviceType::kCount) == 7,
+    // [Dev] v0.5.2 DCU 接入: kDCU = 7 加到 DeviceType 后, kCount 改 8
+    // 注: DeviceType 跟 ABI_POLICY 一起看, DCU 节点 activation 后重新 review
+    static_assert(static_cast<size_t>(DeviceType::kCount) == 8,
                   "DeviceType::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md)");
 
     std::array<std::array<std::atomic<BinaryKernelFunc>, DEVICE_COUNT>, OP_COUNT> binary_kernels_{};

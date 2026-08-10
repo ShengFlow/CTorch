@@ -271,6 +271,13 @@ set(CT-AMX-OPs
         src/kernels/AMX/ApplyHk_AMX_kernel.cpp
 )
 
+# [Fix] v0.5.2 Linux build: AMX kernels 用 Accelerate framework, macOS 专属
+# (AMX = Apple Matrix coprocessor + Accelerate BLAS, Linux 都没)
+# Linux 上 CT-AMX-OPs 跳过, CtorchScheduler.cpp AMX registration 也用 #ifdef __APPLE__ 守
+if(APPLE)
+    list(APPEND CT-Core ${CT-AMX-OPs})
+endif()
+
 set(CT-MPS-OPs
         src/kernels/MPS/MPS_kernel_dispatch.mm
 )
@@ -431,6 +438,15 @@ add_compile_options(-march=native)
 target_link_libraries(CTorch PUBLIC "-framework Accelerate")
 target_link_libraries(CTorch PUBLIC "-framework Metal")
 target_link_libraries(CTorch PUBLIC "-framework Foundation")
+
+# [Fix] v0.5.2 Linux build: <filesystem> 在 libstdc++ 早期版本 (12.3 之前) 需要
+# link -lstdc++fs 兜底. macOS libc++ 自带 filesystem, 不需要.
+# find_library 失败时 stdc++fs 库不存在, link_libraries noop 跳过
+find_library(STDCPPEFS_LIB NAMES stdc++fs PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/lib64)
+if(STDCPPEFS_LIB)
+    target_link_libraries(CTorch PUBLIC ${STDCPPEFS_LIB})
+    message(STATUS "Linked stdc++fs for <filesystem> support (Linux libstdc++-12 < 12.3)")
+endif()
 
 add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 

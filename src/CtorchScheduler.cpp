@@ -147,8 +147,12 @@ void CtorchScheduler::initKernels() {
     set_softmax(DeviceType::kSIMD, Softmax_SIMD_kernel);
 
     // AMX kernels（目前只有 MatMul 有 AMX 实现）
+    // [Fix] v0.5.2 Linux build: AMX 是 macOS 专属 (Accelerate framework), Linux 跳过
+    //   DeviceType::kAMX 在 Linux 上不存在, kernel 也不编, 不 register 即可
+#ifdef __APPLE__
     set_bin(op::MatMul, DeviceType::kAMX, MatMul_AMX_kernel);
     set_unary(op::GELU, DeviceType::kAMX, GELU_AMX_kernel);
+#endif
 
     // MPS kernels
     set_bin(op::Add, DeviceType::kMPS, Add_MPS_kernel);
@@ -196,15 +200,23 @@ void CtorchScheduler::initKernels() {
     // 优先 AMX 路径（Apple Accelerate cblas_srot / cblas_sgemv + cblas_sger）
     // 其它设备暂未实现（cblas_srot/cblas_sger 在非 Apple 平台也能用 cblas 接口，
     // 后续如果上 CUDA/CPU-x86 可在对应 backend 加 SIMD/BASIC 回退）
+#ifdef __APPLE__
     register_rot_kernel(DeviceType::kAMX, Rot_AMX_kernel);
-    register_rot_kernel(DeviceType::kMPS, Rot_AMX_kernel);  // MPS 内存是 shared，AMX kernel 可用
+#endif
+#ifdef __APPLE__
+    register_rot_kernel(DeviceType::kMPS, Rot_AMX_kernel);  // MPS 内存是 shared，AMX kernel 可用 (但 MPS 也 macOS only)
     register_rot_kernel(DeviceType::kCPU, Rot_AMX_kernel);  // CPU 也走 AMX（Accelerate 框架）
     register_rot_kernel(DeviceType::kSIMD, Rot_AMX_kernel);
+#endif
 
+#ifdef __APPLE__
     register_applyhk_kernel(DeviceType::kAMX, ApplyHk_AMX_kernel);
+#endif
+#ifdef __APPLE__
     register_applyhk_kernel(DeviceType::kMPS, ApplyHk_AMX_kernel);
     register_applyhk_kernel(DeviceType::kCPU, ApplyHk_AMX_kernel);
     register_applyhk_kernel(DeviceType::kSIMD, ApplyHk_AMX_kernel);
+#endif
 }
 
 // ============================================================

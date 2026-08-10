@@ -150,8 +150,9 @@ enum class DeviceType {
     kSIMD = 4,     ///< SIMD优化设备
     kUNKNOWN = 5,  ///< 未知设备
     kGENERAL = 6,  ///< 通用设备
+    kDCU = 7,      ///< [Dev] v0.5 DCU 接入: 海光 DCU 设备 (Hygon C86 7285 / ZIFANG C878180)
 
-    kCount = 7,    ///< 设备数量（哨兵值，不参与运算）
+    kCount = 8,    ///< 设备数量（哨兵值，不参与运算）
 };
 
 /**
