@@ -101,6 +101,13 @@ set(CT-Core
         src/C3/RegionFusionRegistry.cpp
 )
 
+# [Fix] v0.5.2 Linux build: Metal/MPS 文件 macOS 专属, Linux/DCU 节点不编译
+# (DTK clang 17 不支持 Objective-C runtime, 编 .mm 文件会失败)
+if(APPLE)
+    list(APPEND CT-Core src/MetalDevice.mm)
+    list(APPEND CT-Core src/DeviceAllocator/MPSAllocator.mm)
+endif()
+
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
 if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
@@ -358,12 +365,15 @@ add_library(CTorch OBJECT
         ${CT-CPU-BASIC-OPs}
         ${CT-CPU-SIMD-OPs}
         ${CT-AMX-OPs}
-        ${CT-MPS-OPs}
         ${CT-Nodes}
         ${CT-Nodes-Headers}
         ${CT-Distributed}
         ${ctQALS}
 )
+# [Fix] v0.5.2 Linux build: CT-MPS-OPs (MPS_kernel_dispatch.mm) macOS 专属
+if(APPLE)
+    list(APPEND CT-Core ${CT-MPS-OPs})
+endif()
 
 set_target_properties(CTorch PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION ${CT_ENABLE_LTO}
