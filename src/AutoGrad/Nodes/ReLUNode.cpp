@@ -35,9 +35,11 @@ std::vector<GradPack> ReLUNode::backward(const std::vector<Tensor> &downStreamGr
     Tensor grad_x = mask * grad_out;
 
     // MPS：确保反向中的元素级 kernel 写回完成后再把梯度传递出去，避免后续深拷贝读到旧值
+#ifdef __APPLE__
     if (x.device() == DeviceType::kMPS) {
         MPS_flush_wait(true);
     }
+#endif
 
     ret.push_back(GradPack{_upStreamNodes[0], std::vector({grad_x}), 0});
 

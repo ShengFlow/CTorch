@@ -423,9 +423,11 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
     size_t src_numel = numel();
     size_t dst_numel = result.numel();
 
+#ifdef __APPLE__
     if (_device == DeviceType::kMPS) {
         MPS_flush_wait(true);
     }
+#endif
 
     if (src_numel == 1) {
         size_t elem_size       = dtypeSize(_dtype);
@@ -1205,9 +1207,11 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
 
     result = Tensor(ShapeTag{}, output_shape, _dtype, _device);
 
+#ifdef __APPLE__
     if (_device == DeviceType::kMPS) {
         MPS_flush_wait(true);
     }
+#endif
 
     size_t dim_size   = _shape[dim];
     size_t stride_dim = _strides[dim];
@@ -1395,9 +1399,11 @@ Tensor Tensor::to(DeviceType target_device) const {
                                     "to(device): 无法获取源或目标存储指针");
     }
 
+#ifdef __APPLE__
     if (_device == DeviceType::kMPS) {
         MPS_flush_wait(true);
     }
+#endif
 
     if (_device == DeviceType::kCPU || target_device == DeviceType::kCPU) {
         std::memcpy(dst, src, bytes);
