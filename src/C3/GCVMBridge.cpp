@@ -1,34 +1,30 @@
 /**
  * @file GCVMBridge.cpp
- * @brief GCVM C API 桥接实现 (v0.5 DCU 接入, 2026-08-10)
- * @details 核心 ~30 行 + 错误处理. 真实 API 签名以 gcvm.h 为准.
+ * @brief GCVM C API 桥接实现 (v0.5 DCU 接入, 2026-08-10, 探针后调整)
+ * @details 按 gcvm.h 真实 API 重写 (v0.5.1 调整)
  *
- * 关键约束:
- *   - 仅 WITH_DCU 时编译, macOS 上不在 CMakeLists 加这个 .cpp
- *   - API 函数名是按 IREE 接入示例推断, 探针回来后可能调整
- *   - 错误信息要清晰 (return error_message 而非 abort)
+ * 关键调整 (vs v0.5.0 推测):
+ *   - gcvmAddModuleToProgram: 5 参数 (prog, buffer, size, name, SourceType), 不是 1 参数
+ *   - gcvmCompileProgram: 4 参数 (prog, numOptions, options, ResultType), 不是 1 参数
+ *   - gcvmSetArch: 用 -arch=gfx906 (CUDA compute_xx 风格可能不适用, 待节点验证)
+ *   - ResultType::Hsaco: 拿 HSACO
+ *   - 错误码用 gcvmGetErrorString 转字符串
+ *
+ * 已知风险:
+ *   - GCVM IR version 1.6 = LLVM 7.0.1, C3 MLIR 22.1.8 输出 LLVM 14 IR
+ *     → IR_VERSION_MISMATCH 风险 (节点实测)
+ *   - arch 选项 cuda 命名 vs DCU gfx906 → 实测才知道
+ *   - 节点缺 mlir-translate, C3 MLIR → LLVM IR 转换要装 LLVM/MLIR 工具链
  */
 #include "../../include/C3/GCVMBridge.h"
 #include "../../include/CtorchError.h"
 
-#include <iostream>
+#include <cstring>
+#include <vector>
 
 #ifdef WITH_DCU
-    // GCVM C API (按 IREE 接入示例推断的函数名)
-    // 真实函数名以 /opt/dtk/llvm/gcvm/include/gcvm.h 为准
-    // 探针 (probe-dcu-dtk24.sh) 跑通后根据 gcvm.h 调整
-    extern "C" {
-        // IREE 接入示例展示的 3 个 API
-        int gcvmCreateProgram(void** prog);          // gcvmProgram* = void*
-        int gcvmGetCompiledResult(void* prog, const char** result);
-        int gcvmDestroyProgram(void* prog);
-
-        // 推断的 API (探针后调整)
-        int gcvmAddLLVMIR(void* prog, const char* ir);
-        int gcvmSetTargetTriple(void* prog, const char* triple);
-        int gcvmSetOptLevel(void* prog, int opt_level);
-        int gcvmCompile(void* prog);
-    }
+    // GCVM C API 头文件 (per dcu-probe-dtk24-b02r2n11.md, DTK 26.04 路径)
+    #include <gcvm.h>
 #endif
 
 namespace ct {
@@ -36,11 +32,21 @@ namespace c3 {
 
 bool isGCVMAvailable() {
 #ifdef WITH_DCU
-    return true;  // 编译时已确定 WITH_DCU, 运行时检查移到 probe-dcu-dtk24.sh
+    return true;
 #else
     return false;
 #endif
 }
+
+#ifdef WITH_DCU
+
+/// 把 GCVM API 错误码转可读字符串 (代替直接用 magic number)
+static std::string gcvmErrorToString(gcvmResult rc) {
+    const char* msg = gcvmGetErrorString(rc);
+    return std::string(msg ? msg : "unknown") + " (rc=" + std::to_string(rc) + ")";
+}
+
+#endif
 
 GCVMCompileResult compileLLVMToDCUObject(const std::string& llvm_ir_source,
                                           const std::string& kernel_name,
@@ -59,66 +65,105 @@ GCVMCompileResult compileLLVMToDCUObject(const std::string& llvm_ir_source,
     }
 
     // 1. 创建 GCVM Program
-    void* gcvm_prog = nullptr;
-    int rc = gcvmCreateProgram(&gcvm_prog);
-    if (rc != 0 || gcvm_prog == nullptr) {
-        result.error_message = "gcvmCreateProgram failed (rc=" + std::to_string(rc) + ")";
+    gcvmProgram prog = nullptr;
+    gcvmResult rc = gcvmCreateProgram(&prog);
+    if (rc != GCVM_SUCCESS || prog == nullptr) {
+        result.error_message = "gcvmCreateProgram failed: " + gcvmErrorToString(rc);
         return result;
     }
 
-    // 2. 喂 LLVM IR
-    rc = gcvmAddLLVMIR(gcvm_prog, llvm_ir_source.c_str());
-    if (rc != 0) {
-        result.error_message = "gcvmAddLLVMIR failed (rc=" + std::to_string(rc) + ")";
-        gcvmDestroyProgram(gcvm_prog);
+    // RAII 清理: 任何 return 路径前都调 gcvmDestroyProgram
+    struct ProgramGuard {
+        gcvmProgram* p;
+        ~ProgramGuard() { if (p && *p) gcvmDestroyProgram(p); }
+    } guard{&prog};
+
+    // 2. 设置 arch (gfx906 = Hygon C86 7285)
+    // 注意: GCVM 头注释 arch 是 CUDA compute_xx 风格, DCU arch 名待节点验证
+    // 尝试 gfx906 (LLVM/AMDGPU 命名), 失败回退 compute_80 (最高 CUDA compute)
+    const char* arch_attempts[] = {"gfx906", "compute_80", nullptr};
+    bool arch_set = false;
+    for (int i = 0; arch_attempts[i]; ++i) {
+        rc = gcvmSetArch(prog, arch_attempts[i]);
+        if (rc == GCVM_SUCCESS) {
+            arch_set = true;
+            break;
+        }
+    }
+    if (!arch_set) {
+        result.error_message = "gcvmSetArch failed (tried gfx906, compute_80): " + gcvmErrorToString(rc);
         return result;
     }
 
-    // 3. 设置 target triple (gfx906 = Hygon C86 7285)
-    const char* target = "amdgcn-amd-amdhsa--gfx906";
-    rc = gcvmSetTargetTriple(gcvm_prog, target);
-    if (rc != 0) {
-        result.error_message = "gcvmSetTargetTriple failed (rc=" + std::to_string(rc) + ", target=" + target + ")";
-        gcvmDestroyProgram(gcvm_prog);
+    // 3. 设置优化级别
+    rc = gcvmSetOptLevel(prog, opt_level);
+    if (rc != GCVM_SUCCESS) {
+        result.error_message = "gcvmSetOptLevel failed: " + gcvmErrorToString(rc);
         return result;
     }
 
-    // 4. 设置优化级别
-    rc = gcvmSetOptLevel(gcvm_prog, opt_level);
-    if (rc != 0) {
-        result.error_message = "gcvmSetOptLevel failed (rc=" + std::to_string(rc) + ", level=" + std::to_string(opt_level) + ")";
-        gcvmDestroyProgram(gcvm_prog);
+    // 4. Add module (LLVM IR text representation)
+    // SourceType::LLVMIR 表示 LLVM IR text (vs bitcode)
+    rc = gcvmAddModuleToProgram(prog,
+                                 llvm_ir_source.c_str(),
+                                 llvm_ir_source.size(),
+                                 kernel_name.c_str(),
+                                 LLVMIR);
+    if (rc != GCVM_SUCCESS) {
+        result.error_message = "gcvmAddModuleToProgram failed: " + gcvmErrorToString(rc) +
+                               " (可能 GCVM IR version 1.6 vs LLVM " +
+                               "(C3 MLIR 22.1.8 输出) 不兼容)";
         return result;
     }
 
-    // 5. 编译
-    rc = gcvmCompile(gcvm_prog);
-    if (rc != 0) {
-        result.error_message = "gcvmCompile failed (rc=" + std::to_string(rc) + ")";
-        gcvmDestroyProgram(gcvm_prog);
+    // 5. Compile with options
+    // 选项: -opt=N 映射 opt_level, -g 关闭 (release), -ftz=1
+    std::vector<const char*> options;
+    std::string opt_flag = "-opt=" + std::to_string(opt_level);
+    options.push_back(opt_flag.c_str());
+    options.push_back("-ftz=1");
+    options.push_back("-fma=1");
+
+    rc = gcvmCompileProgram(prog,
+                            static_cast<int>(options.size()),
+                            options.data(),
+                            Hsaco);
+    if (rc != GCVM_SUCCESS) {
+        // 拿错误日志
+        size_t log_size = 0;
+        if (gcvmGetProgramLogSize(prog, &log_size) == GCVM_SUCCESS && log_size > 0) {
+            std::vector<char> log_buf(log_size);
+            if (gcvmGetProgramLog(prog, log_buf.data()) == GCVM_SUCCESS) {
+                result.error_message = "gcvmCompileProgram failed: " + gcvmErrorToString(rc) +
+                                       " | log: " + std::string(log_buf.data());
+            } else {
+                result.error_message = "gcvmCompileProgram failed: " + gcvmErrorToString(rc);
+            }
+        } else {
+            result.error_message = "gcvmCompileProgram failed: " + gcvmErrorToString(rc);
+        }
         return result;
     }
 
-    // 6. 拿编译结果 (Code Object bytes)
-    const char* code_object_ptr = nullptr;
-    rc = gcvmGetCompiledResult(gcvm_prog, &code_object_ptr);
-    if (rc != 0 || code_object_ptr == nullptr) {
-        result.error_message = "gcvmGetCompiledResult failed (rc=" + std::to_string(rc) + ")";
-        gcvmDestroyProgram(gcvm_prog);
+    // 6. 拿 Code Object 大小
+    size_t code_size = 0;
+    rc = gcvmGetCompiledResultSize(prog, &code_size);
+    if (rc != GCVM_SUCCESS || code_size == 0) {
+        result.error_message = "gcvmGetCompiledResultSize failed: " + gcvmErrorToString(rc);
         return result;
     }
 
-    // 7. 复制到 std::string (own copy, 不依赖 GCVM 内部 buffer)
-    // 注: GCVM API 没给 result_size, 用 strlen 推测. 探针后可能需要改成带 size 参数
-    result.code_object = std::string(code_object_ptr);
-
-    // 8. 清理
-    gcvmDestroyProgram(gcvm_prog);
-
-    result.success = !result.code_object.empty();
-    if (!result.success) {
-        result.error_message = "GCVM returned empty code object";
+    // 7. 拿 Code Object bytes
+    std::vector<char> code_buf(code_size);
+    rc = gcvmGetCompiledResult(prog, code_buf.data());
+    if (rc != GCVM_SUCCESS) {
+        result.error_message = "gcvmGetCompiledResult failed: " + gcvmErrorToString(rc);
+        return result;
     }
+
+    // 8. 复制到 std::string (own copy)
+    result.code_object.assign(code_buf.data(), code_size);
+    result.success = true;
     return result;
 #endif
 }
