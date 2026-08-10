@@ -107,6 +107,48 @@ if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/JITCache.cpp)
 endif()
 
+# ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
+# 仅在 DCU 节点 build (需要 DTK 24.04+ + libgcvm.so + hipBLAS)
+# macOS 上 WITH_DCU 默认 OFF (build 不会失败)
+option(CT_ENABLE_DCU "Enable Hygon DCU (gfx906) backend for C3" OFF)
+if(CT_ENABLE_DCU)
+    # 1. ROCM 路径 (DTK 24.04+)
+    if(NOT DEFINED ROCM_PATH)
+        set(ROCM_PATH "/opt/dtk" CACHE STRING "Default ROCM installation directory.")
+    endif()
+
+    set(GCVM_INCLUDE_DIR "${ROCM_PATH}/llvm/gcvm/include")
+    set(GCVM_LIBRARY "${ROCM_PATH}/llvm/gcvm/lib/libgcvm.so")
+    set(HIPBLAS_LIBRARY "${ROCM_PATH}/lib/libhipblas.so")
+
+    # 2. 验证 GCVM 库存在
+    if(NOT EXISTS "${GCVM_INCLUDE_DIR}")
+        message(FATAL_ERROR "GCVM include directory not found: ${GCVM_INCLUDE_DIR}. DTK 24.04+ required.")
+    endif()
+    if(NOT EXISTS "${GCVM_LIBRARY}")
+        message(FATAL_ERROR "GCVM library not found: ${GCVM_LIBRARY}. DTK 24.04+ required.")
+    endif()
+    if(NOT EXISTS "${HIPBLAS_LIBRARY}")
+        message(FATAL_ERROR "hipBLAS library not found: ${HIPBLAS_LIBRARY}. DTK 24.04+ required.")
+    endif()
+
+    # 3. 导入 GCVM + hip 库
+    add_library(gcvm SHARED IMPORTED)
+    set_target_properties(gcvm PROPERTIES
+        IMPORTED_LOCATION "${GCVM_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${GCVM_INCLUDE_DIR}"
+    )
+
+    find_package(hip REQUIRED)
+
+    # 4. DCU 编译宏 + 源文件
+    add_definitions(-DCT_ENABLE_DCU=1 -DWITH_DCU=1)
+    list(APPEND CT-Core src/C3/GCVMBridge.cpp)
+    list(APPEND CT-Core src/C3/DCUCompiledKernel.cpp)
+
+    message(STATUS "DCU backend enabled: GCVM at ${GCVM_LIBRARY}, hipBLAS at ${HIPBLAS_LIBRARY}")
+endif()
+
 set(CT-Core-Headers
         include/Tensor.h
         include/Storage.h
@@ -211,6 +253,8 @@ set(CT-CPU-BASIC-OPs
 set(CT-AMX-OPs
         src/kernels/AMX/MatMul_AMX_kernel.cpp
         src/kernels/AMX/GELU_AMX_kernel.cpp
+        src/kernels/AMX/Rot_AMX_kernel.cpp
+        src/kernels/AMX/ApplyHk_AMX_kernel.cpp
 )
 
 set(CT-MPS-OPs
@@ -350,6 +394,15 @@ if(CT_ENABLE_MLIR)
         MLIRExecutionEngine
     )
 endif()
+
+# 海光 DCU 链接 (v0.5 DCU 接入, 2026-08-10)
+# 仅 WITH_DCU=ON 时生效, 在 DCU 节点 build
+if(CT_ENABLE_DCU)
+    target_link_libraries(CTorch PUBLIC gcvm hip::host hip::device hipblas ${HIPBLAS_LIBRARY})
+    target_include_directories(CTorch SYSTEM PUBLIC ${GCVM_INCLUDE_DIR})
+    target_compile_definitions(CTorch PUBLIC CT_ENABLE_DCU=1 WITH_DCU=1)
+endif()
+
 add_compile_options(-march=native)
 
 # 链接 Accelerate 框架（用于 AMX BLAS 加速）
@@ -363,6 +416,22 @@ add_executable(MnistTest mnist/mnist.cpp mnist/mnist_loader.cpp mnist/mnist_load
 add_executable(test_matmul_stride src/tests/standalone/test_matmul_stride.cpp)
 target_link_libraries(test_matmul_stride PRIVATE CTorch)
 target_include_directories(test_matmul_stride PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_rsvd_tensor src/tests/standalone/test_rsvd_tensor.cpp)
+target_link_libraries(test_rsvd_tensor PRIVATE CTorch)
+target_include_directories(test_rsvd_tensor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# DCU Hello World test (v0.5 DCU 接入, 2026-08-10)
+# 仅在 WITH_DCU=ON 时 build (DCU 节点)
+if(CT_ENABLE_DCU)
+    add_executable(test_c3_dcu_hello src/tests/standalone/test_c3_dcu_hello.cpp)
+    target_link_libraries(test_c3_dcu_hello PRIVATE CTorch)
+    target_include_directories(test_c3_dcu_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+add_executable(test_bidiag_svd_accuracy src/tests/standalone/test_bidiag_svd_accuracy.cpp)
+target_link_libraries(test_bidiag_svd_accuracy PRIVATE CTorch)
+target_include_directories(test_bidiag_svd_accuracy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_cross_entropy src/tests/standalone/test_cross_entropy.cpp)
 target_link_libraries(test_cross_entropy PRIVATE CTorch)

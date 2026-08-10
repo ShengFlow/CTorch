@@ -213,6 +213,13 @@ private:
     std::array<std::array<std::atomic<UnaryInplaceKernelFunc>, DEVICE_COUNT>, OP_COUNT> unary_inplace_kernels_{};
     std::array<std::atomic<Tensor (*)(const Tensor&, int)>, DEVICE_COUNT> softmax_kernels_{};
 
+    // ========== 线性代数专用 kernel 表（不走 op enum）==========
+    // 2026-08-10：Rot (Givens 旋转) 和 ApplyHk (Householder apply)
+    // 这些 op 有特殊参数签名（Rot 需要 c,s；ApplyHk 需要 v,tau,k,p），
+    // 不适合塞进 op enum，所以单独注册表。
+    std::array<std::atomic<RotKernelFunc>, DEVICE_COUNT>     rot_kernels_{};
+    std::array<std::atomic<ApplyHkKernelFunc>, DEVICE_COUNT> applyhk_kernels_{};
+
     void initKernels();
 
     static BinaryKernelFunc selectBestBinary(op op_type, DeviceType dev,
@@ -295,6 +302,29 @@ public:
     void replace_softmax_kernel(DeviceType dev, Tensor (*new_kernel)(const Tensor&, int)) {
         softmax_kernels_[static_cast<size_t>(dev)].store(new_kernel, std::memory_order_release);
     }
+
+    // ========== 线性代数专用 kernel 注册 / dispatch（2026-08-10）==========
+    // 不走 op enum，因为 Rot/ApplyHk 的参数签名与现有 Unary/Binary 不同
+    void register_rot_kernel(DeviceType dev, RotKernelFunc f) {
+        rot_kernels_[static_cast<size_t>(dev)].store(f, std::memory_order_release);
+    }
+    void register_applyhk_kernel(DeviceType dev, ApplyHkKernelFunc f) {
+        applyhk_kernels_[static_cast<size_t>(dev)].store(f, std::memory_order_release);
+    }
+    RotKernelFunc get_rot_kernel(DeviceType dev) const {
+        return rot_kernels_[static_cast<size_t>(dev)].load(std::memory_order_acquire);
+    }
+    ApplyHkKernelFunc get_applyhk_kernel(DeviceType dev) const {
+        return applyhk_kernels_[static_cast<size_t>(dev)].load(std::memory_order_acquire);
+    }
+
+    /// Givens 旋转 dispatch：原地旋转两向量，自动按 device 选 kernel
+    /// 选 kernel 优先级：MPS > AMX > SIMD > CPU
+    void dispatch_rot(Tensor& x, Tensor& y, float c, float s);
+
+    /// Householder apply dispatch：原地更新 M 子块
+    void dispatch_applyhk(Tensor& M, const Tensor& v, float tau,
+                          std::size_t k_offset, std::size_t p_cols);
 
     Tensor dispatch(const Tensor& a, const Tensor& b, op op_type);
     Tensor dispatch(const Tensor& a, op op_type);

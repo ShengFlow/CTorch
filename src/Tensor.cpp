@@ -705,6 +705,22 @@ Tensor &Tensor::neg_() {
     return *this;
 }
 
+//  ======================= 线性代数专用（2026-08-10）=======================
+
+void Tensor::rot(Tensor& other, float c, float s) {
+    // in-place op：要求两向量都不能在 autograd 追踪
+    check_inplace_safe_("rot");
+    other.check_inplace_safe_("rot");
+    CtorchScheduler::getInstance().dispatch_rot(*this, other, c, s);
+}
+
+void Tensor::applyHouseholder(const Tensor& v, float tau, std::size_t k_offset) {
+    check_inplace_safe_("applyHouseholder");
+    // 默认 p_cols = self.shape()[1]
+    const std::size_t p_cols = (this->shape().size() == 2) ? this->shape()[1] : 0;
+    CtorchScheduler::getInstance().dispatch_applyhk(*this, v, tau, k_offset, p_cols);
+}
+
 // 求和操作
 Tensor Tensor::sum() const {
     // ============= P2 修复：sum() 改为用 dot(ones) 实现，自动通过 AutoGrad::dispatch 挂 Node =============

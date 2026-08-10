@@ -888,6 +888,32 @@ class Tensor {
      */
     Tensor &neg_();
 
+    //  ======================= 线性代数专用（2026-08-10，走 CtorchScheduler）=======================
+
+    /**
+     * @brief Givens 旋转：原地修改两个等长向量
+     * @param other 第二个向量（被原地修改）
+     * @param c cos 系数
+     * @param s sin 系数
+     * @details 数学定义：
+     *            x[i] ← c * x[i] + s * other[i]
+     *            other[i] ← c * other[i] - s * x[i]
+     *          底层走 cblas_srot（Apple Accelerate）
+     */
+    void rot(Tensor& other, float c, float s);
+
+    /**
+     * @brief Householder 反射应用：原地更新 self
+     * @param v Householder 反射向量（m 维，v[0..k_offset-1] 应为 0）
+     * @param tau 反射系数
+     * @param k_offset 起始行（从哪一行开始 apply，默认 0）
+     * @details 操作：
+     *            H = I - tau * v * v^T
+     *            self[k_offset:, :] := H @ self[k_offset:, :]
+     *          底层走 cblas_sgemv + cblas_sger（Apple Accelerate）
+     */
+    void applyHouseholder(const Tensor& v, float tau, std::size_t k_offset = 0);
+
     /**
      * @brief 比较操作符重载：大于标量
      * @param scalar 标量值

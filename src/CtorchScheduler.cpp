@@ -189,6 +189,71 @@ void CtorchScheduler::initKernels() {
     set_unary_inplace(op::Abs, DeviceType::kMPS, Abs_MPS_inplace);
 
     set_softmax(DeviceType::kMPS, Softmax_MPS_kernel);
+
+    // ========== 线性代数专用 kernel 注册（2026-08-10）==========
+    // Rot (Givens 旋转) — 用于 JacobiSVD 的列对正交化
+    // ApplyHk (Householder 反射应用) — 用于 HouseholderQR 的反射器 apply
+    // 优先 AMX 路径（Apple Accelerate cblas_srot / cblas_sgemv + cblas_sger）
+    // 其它设备暂未实现（cblas_srot/cblas_sger 在非 Apple 平台也能用 cblas 接口，
+    // 后续如果上 CUDA/CPU-x86 可在对应 backend 加 SIMD/BASIC 回退）
+    register_rot_kernel(DeviceType::kAMX, Rot_AMX_kernel);
+    register_rot_kernel(DeviceType::kMPS, Rot_AMX_kernel);  // MPS 内存是 shared，AMX kernel 可用
+    register_rot_kernel(DeviceType::kCPU, Rot_AMX_kernel);  // CPU 也走 AMX（Accelerate 框架）
+    register_rot_kernel(DeviceType::kSIMD, Rot_AMX_kernel);
+
+    register_applyhk_kernel(DeviceType::kAMX, ApplyHk_AMX_kernel);
+    register_applyhk_kernel(DeviceType::kMPS, ApplyHk_AMX_kernel);
+    register_applyhk_kernel(DeviceType::kCPU, ApplyHk_AMX_kernel);
+    register_applyhk_kernel(DeviceType::kSIMD, ApplyHk_AMX_kernel);
+}
+
+// ============================================================
+// 线性代数专用 dispatch（不走 op enum，2026-08-10）
+// ============================================================
+
+void CtorchScheduler::dispatch_rot(Tensor& x, Tensor& y, float c, float s) {
+    // 按 device 选 kernel：MPS > AMX > SIMD > CPU > CPU_BASIC
+    DeviceType dev = x.device();
+    RotKernelFunc f = get_rot_kernel(dev);
+    if (f == nullptr) {
+        // 回退：MPS → AMX → SIMD → CPU
+        if (isDeviceAvailable(DeviceType::kAMX)) {
+            f = get_rot_kernel(DeviceType::kAMX);
+        }
+        if (f == nullptr) {
+            f = get_rot_kernel(DeviceType::kSIMD);
+        }
+        if (f == nullptr) {
+            f = get_rot_kernel(DeviceType::kCPU);
+        }
+    }
+    if (f == nullptr) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT,
+                                     "dispatch_rot: 没有可用的 Rot kernel");
+    }
+    f(x, y, c, s);
+}
+
+void CtorchScheduler::dispatch_applyhk(Tensor& M, const Tensor& v, float tau,
+                                        std::size_t k_offset, std::size_t p_cols) {
+    DeviceType dev = M.device();
+    ApplyHkKernelFunc f = get_applyhk_kernel(dev);
+    if (f == nullptr) {
+        if (isDeviceAvailable(DeviceType::kAMX)) {
+            f = get_applyhk_kernel(DeviceType::kAMX);
+        }
+        if (f == nullptr) {
+            f = get_applyhk_kernel(DeviceType::kSIMD);
+        }
+        if (f == nullptr) {
+            f = get_applyhk_kernel(DeviceType::kCPU);
+        }
+    }
+    if (f == nullptr) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT,
+                                     "dispatch_applyhk: 没有可用的 ApplyHk kernel");
+    }
+    f(M, v, tau, k_offset, p_cols);
 }
 
 BinaryKernelFunc CtorchScheduler::selectBestBinary(

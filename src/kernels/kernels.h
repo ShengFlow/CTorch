@@ -377,4 +377,36 @@ extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
 void MPS_flush(bool wait = true);
 #endif
 
+// ============================================================
+// 线性代数专用 kernel（不走 op enum，由 CtorchScheduler 单独 dispatch）
+// 2026-08-10 添加：用于 RSVD 加速
+// ============================================================
+
+/**
+ * @brief Givens 旋转算子函数指针类型
+ * @details 原地修改两向量：x[i] ← c*x[i] + s*y[i], y[i] ← c*y[i] - s*x[i]
+ *          用于 JacobiSVD 的列对正交化（一侧 Jacobi 算法核心）
+ */
+typedef void (*RotKernelFunc)(Tensor& x, Tensor& y, float c, float s);
+
+/**
+ * @brief Householder 反射应用算子函数指针类型
+ * @details 原地更新矩阵 M 的 [k_offset:, :p_cols] 子块：
+ *            M -= tau * v * (v^T M)（在子块范围内）
+ *          用于 HouseholderQR 的反射器链式 apply
+ */
+typedef void (*ApplyHkKernelFunc)(Tensor& M, const Tensor& v, float tau,
+                                  std::size_t k_offset, std::size_t p_cols);
+
+/**
+ * @brief Givens 旋转算子（AMX 加速，cblas_srot）
+ */
+void Rot_AMX_kernel(Tensor& x, Tensor& y, float c, float s);
+
+/**
+ * @brief Householder 反射应用算子（AMX 加速，cblas_sgemv + cblas_sger）
+ */
+void ApplyHk_AMX_kernel(Tensor& M, const Tensor& v, float tau,
+                        std::size_t k_offset, std::size_t p_cols);
+
 #endif //KERNELS_H
