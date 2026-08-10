@@ -589,16 +589,18 @@ public:
      *          - 调试：避免 cache 污染影响测试结果
      *          - 临时关闭：怀疑 cache 损坏时
      *          - 性能对比：AOT on vs off
+     *
+     *          [Dev] v0.5.2 P1 解耦: 通过 setAOTCacheImpl() 注入替代实现, 否则用默认 AOTCache 单例
      */
     void setAOTCacheEnabled(bool enabled) {
-        AOTCache::getInstance().setEnabled(enabled);
+        aotCache_().setEnabled(enabled);
     }
 
     /**
      * @brief 查询 AOT cache 是否启用
      */
     [[nodiscard]] bool isAOTCacheEnabled() const {
-        return AOTCache::getInstance().isEnabled();
+        return aotCache_().isEnabled();
     }
 
     /**
@@ -613,7 +615,7 @@ public:
      *          - total_files / total_bytes: 当前磁盘占用
      */
     [[nodiscard]] AOTCacheStats getAOTCacheStats() const {
-        return AOTCache::getInstance().getStats();
+        return aotCache_().getStats();
     }
 
     /**
@@ -623,7 +625,7 @@ public:
      *          下次编译时重新走 AOT 写入路径。
      */
     void evictAOTCache() {
-        AOTCache::getInstance().evict();
+        aotCache_().evict();
     }
 
     /**
@@ -633,14 +635,41 @@ public:
      *          优先级：setAOTCacheDir() > C3_AOT_CACHE_DIR 环境变量 > $HOME/.c3cache
      */
     void setAOTCacheDir(const std::string& dir) {
-        AOTCache::getInstance().setCacheDir(dir);
+        aotCache_().setCacheDir(dir);
     }
 
     /**
      * @brief 获取当前 AOT cache 目录
      */
     [[nodiscard]] std::string getAOTCacheDir() const {
-        return AOTCache::getInstance().getCacheDir();
+        return aotCache_().getCacheDir();
+    }
+
+    /**
+     * @brief 注入自定义 IAOTCache 实现 (P1 解耦 refactor, 2026-08-10)
+     * @details 默认 nullptr → C3Engine 6 个 facade 方法走 AOTCache::getInstance() 单例
+     *          注入非 null 指针 → 所有 facade 方法转给该实现 (用于 mock 测试 / 跨 backend cache)
+     *
+     *          线程: 非线程安全, 应在 C3Engine 启动早期、并发调用前一次性设置
+     *          生命周期: 调用方保证 IAOTCache 实例生命周期覆盖 C3Engine 使用期
+     *
+     *          例子 (mock 测试):
+     *          @code
+     *          MockAOTCache mock;
+     *          C3Engine::getInstance().setAOTCacheImpl(&mock);
+     *          // ... 测试 ...
+     *          C3Engine::getInstance().setAOTCacheImpl(nullptr);  // 恢复默认
+     *          @endcode
+     */
+    void setAOTCacheImpl(IAOTCache* cache_impl) {
+        aot_cache_override_ = cache_impl;
+    }
+
+    /**
+     * @brief 获取当前注入的 IAOTCache 实现 (nullptr 表示用默认 AOTCache 单例)
+     */
+    [[nodiscard]] IAOTCache* getAOTCacheImpl() const {
+        return aot_cache_override_;
     }
 
     /** @brief 清空全部编译缓存（不取消进行中的异步编译） */
@@ -689,6 +718,17 @@ private:
     /// 之前是函数内 static EngineState + Meyers C3Engine 单例，跨 TU 析构顺序未定义 → SIGABRT
     /// 现在 std::unique_ptr 成员在 C3Engine 析构时**最后**释放（unique_ptr 析构在 C3Engine 自身之后）
     std::unique_ptr<EngineState> state_;
+
+    /// [Dev] v0.5.2 P1 解耦: AOTCache 实现注入点
+    /// nullptr = 用 AOTCache::getInstance() 单例 (默认)
+    /// 非 null = 用注入实现 (mock / 跨 backend cache)
+    /// mutable: 让 const 方法 (isAOTCacheEnabled / getAOTCacheStats / getAOTCacheDir) 可读 override 指针
+    mutable IAOTCache* aot_cache_override_ = nullptr;
+
+    /// 内部 helper: 返当前生效的 IAOTCache 引用
+    /// 非 null override → 注入实现; null → AOTCache 单例
+    /// 允许 const 方法访问 (mutable aot_cache_override_)
+    IAOTCache& aotCache_() const;
 };
 
 } // namespace c3

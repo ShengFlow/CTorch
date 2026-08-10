@@ -29,6 +29,7 @@
 #define CTORCH_C3_AOT_CACHE_H
 
 #include "C3Config.h"
+#include "IAOTCache.h"  // [Dev] v0.5.2 P1 解耦 refactor: AOTCache 实现 IAOTCache 接口
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -36,22 +37,6 @@
 
 namespace ct {
 namespace c3 {
-
-/**
- * @struct AOTCacheStats
- * @brief AOT cache 运行时统计
- */
-struct AOTCacheStats {
-    uint64_t hits = 0;            ///< 命中次数（避免重新编译）
-    uint64_t misses = 0;          ///< miss 次数（需重新编译并写入）
-    uint64_t writes = 0;          ///< 写入磁盘次数
-    uint64_t evictions = 0;       ///< 显式清空次数（evictAOTCache）
-    uint64_t load_failures = 0;   ///< dlopen 失败次数（fallback 到 in-memory）
-    uint64_t invalidations = 0;   ///< 因 backend version / meta 不匹配而失效的次数
-    uint64_t disk_errors = 0;     ///< 磁盘 I/O 错误次数（权限、空间等）
-    size_t total_files = 0;       ///< 当前 .so 文件数（最近一次统计）
-    size_t total_bytes = 0;       ///< 占用磁盘字节数（最近一次统计）
-};
 
 /**
  * @struct AOTCacheConfig
@@ -84,7 +69,7 @@ struct AOTCacheConfig {
  *   }
  * @endcode
  */
-class AOTCache {
+class AOTCache : public IAOTCache {
 public:
     static AOTCache& getInstance();
 
@@ -95,7 +80,7 @@ public:
      * @details 线程安全。会检查 backend version 是否匹配，不匹配返回空并增加 invalidations。
      *          dlopen 由调用方负责（不在此 API 内执行，因为调用方需要拿到 func pointer）。
      */
-    [[nodiscard]] std::string lookup(const std::string& cache_key);
+    [[nodiscard]] std::string lookup(const std::string& cache_key) override;
 
     /**
      * @brief 将新编译的 .so 写入 cache
@@ -105,13 +90,13 @@ public:
      * @details 写入采用"先 .tmp 再 rename"模式避免读到半截文件。
      *          失败时（如磁盘满）返回空 string 并增加 disk_errors，调用方应继续使用 in-memory。
      */
-    [[nodiscard]] std::string store(const std::string& cache_key, const std::string& so_path);
+    [[nodiscard]] std::string store(const std::string& cache_key, const std::string& so_path) override;
 
     /**
      * @brief 记录一次 dlopen 失败（用于统计）
      * @details 调用方在 dlopen 失败时应调用本方法，AOTCache 会增加 load_failures 计数。
      */
-    void recordLoadFailure() {
+    void recordLoadFailure() override {
         std::lock_guard<std::mutex> lock(mutex_);
         stats_.load_failures++;
     }
@@ -121,12 +106,12 @@ public:
      * @details 删除 ~/.c3cache/c3_* 下所有文件。
      *          不影响 in-memory cache。
      */
-    void evict();
+    void evict() override;
 
     /**
      * @brief 获取统计信息
      */
-    [[nodiscard]] AOTCacheStats getStats() const {
+    [[nodiscard]] AOTCacheStats getStats() const override {
         std::lock_guard<std::mutex> lock(mutex_);
         return stats_;
     }
@@ -134,11 +119,11 @@ public:
     /**
      * @brief 启用/禁用
      */
-    void setEnabled(bool enabled) {
+    void setEnabled(bool enabled) override {
         std::lock_guard<std::mutex> lock(mutex_);
         config_.enabled = enabled;
     }
-    [[nodiscard]] bool isEnabled() const {
+    [[nodiscard]] bool isEnabled() const override {
         std::lock_guard<std::mutex> lock(mutex_);
         // 全局开关：编译期 CT_C3_DISABLE_AOT 宏或运行时 C3_DISABLE_AOT=1 均强制禁用
         return config_.enabled && aotCacheEnabled();
@@ -149,7 +134,7 @@ public:
      * @details 下次 lookup/store 时生效。
      *          设置为 "" 恢复默认 $HOME/.c3cache。
      */
-    void setCacheDir(std::string dir) {
+    void setCacheDir(std::string dir) override {
         std::lock_guard<std::mutex> lock(mutex_);
         config_.custom_dir = std::move(dir);
         dir_initialized_ = false; // 强制下次 getCacheDir 重新解析
@@ -158,7 +143,7 @@ public:
     /**
      * @brief 获取当前 cache 目录
      */
-    [[nodiscard]] std::string getCacheDir() const;
+    [[nodiscard]] std::string getCacheDir() const override;
 
     /**
      * @brief 计算 cache key（从 graph toString + 编译参数派生）
