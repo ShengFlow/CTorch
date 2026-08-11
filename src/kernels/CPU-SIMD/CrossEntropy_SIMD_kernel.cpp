@@ -22,6 +22,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <memory>
 
 CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
     if (a.device() != DeviceType::kCPU || b.device() != DeviceType::kCPU) [[unlikely]] {
@@ -43,16 +44,21 @@ CT_HOT Tensor CrossEntropy_SIMD_kernel(const Tensor& a, const Tensor& b) {
     }
 
     // 临时 buffer：用于 vexp 写入中间 exp 结果
-    // 分配在堆上避免栈溢出（large num_classes）
+    // [HPC 2026-08-11] 消除每行堆分配：num_classes 小时用固定栈数组（零 malloc），
+    // 仅大 num_classes 回退堆。避免交叉熵训练热路径上 batch_size 次 allocation。
+    static constexpr size_t kStackBufElems = 256;  // 覆盖 MNIST(10)/常见分类(<=256)类
     auto compute_logsumexp = [](const float* row, size_t n) -> float {
         // 1. max
         float m = row[0];
         for (size_t j = 1; j < n; ++j) m = std::max(m, row[j]);
 
         // 2. exp(x - m) 累加：先 shift by max，再 vexp，再 horizontal sum
-        std::vector<float> tmp(n);
+        float stack_buf[kStackBufElems];
+        float* tmp = stack_buf;
+        std::unique_ptr<float[]> heap_buf;
+        if (n > kStackBufElems) { heap_buf = std::make_unique<float[]>(n); tmp = heap_buf.get(); }
         for (size_t j = 0; j < n; ++j) tmp[j] = row[j] - m;
-        ct::kernels::simd::vexp(tmp.data(), tmp.data(), n);
+        ct::kernels::simd::vexp(tmp, tmp, n);
         float s = 0.0f;
 #if defined(__AVX2__)
         size_t j = 0;

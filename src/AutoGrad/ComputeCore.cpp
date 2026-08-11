@@ -195,27 +195,61 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
 
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
 
-        // DEBT-NEW-7 v0.5.1+ 阶段性策略:c3 backward wiring 暂未启用
-        // 原因 (按 H5 → 🅐 顺序):
-        //   1. C3BackwardCapture 1583 行实装完整,但 c3 kernel 输出 tensor shape 由
-        //      ConcreteCompiledKernel 用 a.shape() 决定 (跟 grad 形状一致),不是
-        //      backward graph 注册时的 out_shape,导致 MatMul backward 输出 shape
-        //      跟上游 GradAccumulator 期望的 shape 不匹配 → BroadcastUtils 抛错。
-        //   2. C3KernelRegistry::tryExecuteBackward 已实装 (含 num_inputs / shape 校验),
-        //      C3BackwardCapture 编译/查询路径接通,Phase 1/2 接口 ready。
-        //   3. HandwrittenKernelGen 已加 SumReduceNode 支持 (🅐-2 完成)。
-        //   4. 但 ConcreteCompiledKernel 输出 shape bug 属于 v0.5.2 范畴
-        //      (需要新增 out_shape-aware tensor 构造接口),本 commit 暂不接
-        //      ComputeCore::backward 调用,避免破坏 4.6% 慢 baseline。
-        // 5. v0.5.2 (1a-4): 124 阶段实装完成 (out_shape 修复 + JITCache 1.0 store-only +
-        //      c3 path overhead 优化), 累计 6.9% 加速 (2023ms/epoch)。
-        // 6. v0.5.2 (5d-1/2/3): c3 bw 接线尝试 → 5d-1 TransposeNode 公式跟 c3 内部
-        //      forward_inputs 顺序耦合错位 (ext_map[2] 实际指向 inputs[1]), c3 算的
-        //      grad 全 0 → 训练 nan → 5d 跨 session 留 follow-up (重启 5d-1 公式
-        //      调研 + 重写 multi-node kernel input 索引协议)。
-        // 7. v0.5.2 路线 (新): 1a out_shape 5a-5c + c3 path overhead 5 fixes +
-        //      JITCache 1.0 store-only + 1b 5d 接线跨 session follow-up。
-        std::vector<GradPack> result = node->backward(grads);
+        // ===== C3 backward fusion 接线 (5d follow-up 完成, 2026-08-11) =====
+        // 尝试用 C3 JIT 编译的反向 kernel 计算梯度;未命中/形状不匹配/禁用时回退 eager。
+        // 安全护栏: 仅当 ① grad 恰好 1 个(聚合梯度) ② 有输入 ③ 上游节点数==输入数
+        // ④ C3 返回梯度数==输入数 且 每个梯度 shape 与对应输入 shape 一致, 才接受。
+        // 任一不满足 → result 保持空 → 走 eager node->backward(grads)。
+        std::vector<GradPack> result;
+#ifndef CT_DISABLE_C3
+        if (grads.size() == 1 && !node->getInputs().empty()) {
+            const auto& fwd_inputs = node->getInputs();
+            auto upstream = node->getUpStreamNodes();
+            if (upstream.size() == fwd_inputs.size()) {
+                // 记录反向节点序列（累积频次触发反向融合异步编译）。
+                // 内部仅登记 supportsNodeType 的 element-wise 节点；多输入节点安全跳过。
+                // 必须在 tryExecuteBackward 之前调用，使序列频次在 execute 前已累计。
+                ct::c3::C3BackwardCapture::getInstance().recordBackwardNode(
+                    typeid(*node).name(),
+                    grads[0].sizes(),
+                    fwd_inputs[0].sizes(),
+                    fwd_inputs);
+                auto c3_result = ct::c3::C3BackwardCapture::getInstance().tryExecuteBackward(
+                    node.get(), grads[0], fwd_inputs);
+                if (c3_result.has_value() && c3_result->size() == fwd_inputs.size()) {
+                    bool shape_ok = true;
+                    for (size_t i = 0; i < c3_result->size(); ++i) {
+                        if ((*c3_result)[i].sizes() != fwd_inputs[i].sizes()) {
+                            shape_ok = false;
+                            break;
+                        }
+                    }
+                    if (shape_ok) {
+                        result.reserve(c3_result->size());
+                        for (size_t i = 0; i < c3_result->size(); ++i) {
+                            result.push_back(GradPack{
+                                upstream[i], {(*c3_result)[i]}, static_cast<int>(i)});
+                        }
+#ifdef CT_DEBUG
+                        std::cerr << "[DBG-C3BW-WIRE] node=" << typeid(*node).name()
+                                  << " C3-HIT n_grads=" << c3_result->size() << std::endl;
+                        std::cerr.flush();
+#endif
+                    }
+#ifdef CT_DEBUG
+                    else {
+                        std::cerr << "[DBG-C3BW-WIRE] node=" << typeid(*node).name()
+                                  << " C3-SHAPE-MISMATCH fallback eager" << std::endl;
+                        std::cerr.flush();
+                    }
+#endif
+                }
+            }
+        }
+#endif
+        if (result.empty()) {
+            result = node->backward(grads);
+        }
 
         if (!result.empty()) {
             CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding " + std::to_string(result.size()) + " grad packs");

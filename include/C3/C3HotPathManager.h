@@ -495,20 +495,21 @@ private:
 
     /// 判断是否为 C3 支持的算子
     static bool isSupportedOp(op op_type) {
-        switch (op_type) {
-        case op::Add:
-        case op::Sub:
-        case op::Mul:
-        case op::Div:
-        case op::MatMul:
-        case op::Neg:
-        case op::ReLU:
-        case op::Tanh:
-        case op::Sigmoid:
-            return true;
-        default:
-            return false;
-        }
+        // [位掩码 2026-08-11] C3 支持算子集合 → 单 uint64 位掩码, O(1) 查表,
+        // 消除 switch 的分支预测失败惩罚 (submitCompileAsync 每次触发时调用).
+        static_assert(static_cast<size_t>(op::kCount) <= 64,
+                      "op::kCount exceeds uint64 bitmask capacity");
+        static constexpr uint64_t kSupportedMask =
+              (1ull << static_cast<size_t>(op::Add))
+            | (1ull << static_cast<size_t>(op::Sub))
+            | (1ull << static_cast<size_t>(op::Mul))
+            | (1ull << static_cast<size_t>(op::Div))
+            | (1ull << static_cast<size_t>(op::MatMul))
+            | (1ull << static_cast<size_t>(op::Neg))
+            | (1ull << static_cast<size_t>(op::ReLU))
+            | (1ull << static_cast<size_t>(op::Tanh))
+            | (1ull << static_cast<size_t>(op::Sigmoid));
+        return (kSupportedMask >> static_cast<size_t>(op_type)) & 1ull;
     }
 
     // ======================= 异步编译 =======================
@@ -619,14 +620,23 @@ private:
 
     /// 判断一个 op 是一元算子还是二元算子
     static bool isUnaryOp(op op_type) {
-        switch (op_type) {
-        case op::Neg: case op::ReLU: case op::Tanh: case op::Sigmoid:
-        case op::GELU: case op::LReLU: case op::Log: case op::Exp:
-        case op::Abs: case op::Sin: case op::Cos:
-            return true;
-        default:
-            return false;
-        }
+        // [位掩码 2026-08-11] 一元算子集合 → uint64 位掩码, O(1) 查表,
+        // 消除 switch 的分支预测失败惩罚 (buildFusedGraph 构建时调用).
+        static_assert(static_cast<size_t>(op::kCount) <= 64,
+                      "op::kCount exceeds uint64 bitmask capacity");
+        static constexpr uint64_t kUnaryMask =
+              (1ull << static_cast<size_t>(op::Neg))
+            | (1ull << static_cast<size_t>(op::ReLU))
+            | (1ull << static_cast<size_t>(op::Tanh))
+            | (1ull << static_cast<size_t>(op::Sigmoid))
+            | (1ull << static_cast<size_t>(op::GELU))
+            | (1ull << static_cast<size_t>(op::LReLU))
+            | (1ull << static_cast<size_t>(op::Log))
+            | (1ull << static_cast<size_t>(op::Exp))
+            | (1ull << static_cast<size_t>(op::Abs))
+            | (1ull << static_cast<size_t>(op::Sin))
+            | (1ull << static_cast<size_t>(op::Cos));
+        return (kUnaryMask >> static_cast<size_t>(op_type)) & 1ull;
     }
 
 public:

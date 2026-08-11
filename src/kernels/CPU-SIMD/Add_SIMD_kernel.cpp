@@ -84,6 +84,52 @@ CT_HOT Tensor Add_SIMD_kernel(const Tensor& a, const Tensor& b) {
         return result;
     }
 
+    // [HPC 2026-08-11] 快速路径：2D + 1D 行广播（如 [M,N] + [N]，MLP bias 的典型形态）
+    // 避免通用广播路径内层循环的逐元素 stride 乘法（a_row_offset + j*a_strides[1]），
+    // 让 NEON/AVX 干净向量化。a 需为默认连续（stride [N,1]）。
+    if (a.sizes().size() == 2 && b.sizes().size() == 1 &&
+        a.sizes()[1] == b.sizes()[0] &&
+        a.strides()[0] == a.sizes()[1] && a.strides()[1] == 1) {
+        size_t rows = a.sizes()[0];
+        size_t cols = a.sizes()[1];
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        float* CT_RESTRICT result_data = result.data_write<float>();
+        const float* CT_RESTRICT a_data = a.data_read<float>();
+        const float* CT_RESTRICT b_data = b.data_read<float>();
+#if defined(__AVX2__)
+        for (size_t i = 0; i < rows; ++i) {
+            const float* CT_RESTRICT ar = a_data + i * cols;
+            float* CT_RESTRICT rr = result_data + i * cols;
+            size_t j = 0;
+            for (; j + 7 < cols; j += 8) {
+                __m256 av = _mm256_loadu_ps(&ar[j]);
+                __m256 bv = _mm256_loadu_ps(&b_data[j]);
+                _mm256_storeu_ps(&rr[j], _mm256_add_ps(av, bv));
+            }
+            for (; j < cols; ++j) rr[j] = ar[j] + b_data[j];
+        }
+#elif defined(__aarch64__)
+        for (size_t i = 0; i < rows; ++i) {
+            const float* CT_RESTRICT ar = a_data + i * cols;
+            float* CT_RESTRICT rr = result_data + i * cols;
+            size_t j = 0;
+            for (; j + 3 < cols; j += 4) {
+                float32x4_t av = vld1q_f32(&ar[j]);
+                float32x4_t bv = vld1q_f32(&b_data[j]);
+                vst1q_f32(&rr[j], vaddq_f32(av, bv));
+            }
+            for (; j < cols; ++j) rr[j] = ar[j] + b_data[j];
+        }
+#else
+        for (size_t i = 0; i < rows; ++i) {
+            const float* ar = a_data + i * cols;
+            float* rr = result_data + i * cols;
+            for (size_t j = 0; j < cols; ++j) rr[j] = ar[j] + b_data[j];
+        }
+#endif
+        return result;
+    }
+
     // 形状不同：计算公共广播形状和stride（零拷贝）
     size_t max_dims = std::max(a.sizes().size(), b.sizes().size());
     std::vector<size_t> broadcast_shape(max_dims);

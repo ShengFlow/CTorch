@@ -175,7 +175,10 @@ const char* AOTCache::currentBackendVersion() {
     //   v1: 初始版本（支持单节点 + 多节点）
     //   v2: 引入 multi-node kernel，签名变化
     //   v3: 引入 fused kernel（cache key 前缀区分）
-    return "handwritten-v3";
+    //   v4: 2026-08-11 反向图 bug 修复：TransposeNode 改用 external_input_map 解析
+    //       输入指针 + 新增 GtNode/ExpNode/LogNode 处理 + 多输出平面 buffer 布局。
+    //       生成代码签名变化，必须 bump 以便失效旧 AOT 缓存（否则旧 kernel 持续被加载）。
+    return "handwritten-v4";
 }
 
 std::string AOTCache::makeKey(

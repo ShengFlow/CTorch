@@ -119,10 +119,13 @@ public:
                             std::function<void()> deleter,
                             std::string cache_key, DeviceType device,
                             size_t num_inputs, size_t M, size_t K, size_t N,
-                            size_t elem_n)
+                            size_t elem_n,
+                            size_t num_outputs,
+                            std::vector<std::vector<size_t>> out_shapes)
         : func_(func), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
-          num_inputs_(num_inputs), M_(M), K_(K), N_(N), elem_n_(elem_n) {}
+          num_inputs_(num_inputs), M_(M), K_(K), N_(N), elem_n_(elem_n),
+          num_outputs_(num_outputs), out_shapes_(std::move(out_shapes)) {}
 
     ~MultiNodeCompiledKernel() override {
         if (deleter_) deleter_();
@@ -141,18 +144,25 @@ public:
             in_ptrs.push_back(inputs[i].data_read<float>());
         }
 
-        // 确定输出形状：使用 elem_n 或 M×N
-        std::vector<size_t> out_shape;
-        if (M_ > 0 && N_ > 0) {
-            out_shape = {M_, N_};
-        } else {
-            out_shape = {elem_n_};
+        // 多输出支持：kernel 把所有输出节点写入一个平面 buffer（每段 elem_n 对齐），
+        //   output 段 k 对应 graph.outputs()[k]。这里分配 num_outputs * elem_n 的平面 buffer，
+        //   调用 kernel 后按各输出形状拆分回 Tensor。
+        const size_t seg_n = (num_outputs_ > 0) ? num_outputs_ : 1;
+        std::vector<float> flat(seg_n * elem_n_, 0.0f);
+        func_(in_ptrs.data(), flat.data(), elem_n_, M_, K_, N_);
+
+        std::vector<Tensor> outs;
+        outs.reserve(seg_n);
+        for (size_t k = 0; k < seg_n; ++k) {
+            std::vector<size_t> shape = (k < out_shapes_.size()) ? out_shapes_[k]
+                                                                 : std::vector<size_t>{elem_n_};
+            size_t n = 1;
+            for (auto s : shape) n *= s;
+            Tensor t(ShapeTag{}, shape);
+            std::memcpy(t.data_write<float>(), flat.data() + k * elem_n_, n * sizeof(float));
+            outs.push_back(std::move(t));
         }
-        Tensor out(ShapeTag{}, out_shape);
-
-        func_(in_ptrs.data(), out.data_write<float>(), elem_n_, M_, K_, N_);
-
-        return {out};
+        return outs;
     }
 
     [[nodiscard]] const std::string& cacheKey() const override { return cache_key_; }
@@ -161,6 +171,7 @@ public:
 
     /// v0.5.2 out_shape 修复: MultiNode 用 M×N (2D) 或 elem_n (1D) 作为 out_shape
     [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (!out_shapes_.empty()) return out_shapes_.front();
         if (M_ > 0 && N_ > 0) return std::vector<size_t>{M_, N_};
         if (elem_n_ > 0)       return std::vector<size_t>{elem_n_};
         return std::nullopt;
@@ -179,6 +190,8 @@ private:
     size_t num_inputs_;
     size_t M_, K_, N_;
     size_t elem_n_;
+    size_t num_outputs_;
+    std::vector<std::vector<size_t>> out_shapes_;
 };
 
 /**
@@ -477,10 +490,19 @@ static std::shared_ptr<CompiledKernel> doCompile(
 
         std::shared_ptr<CompiledKernel> kernel;
         if (gen.is_multi_node) {
+            // 多输出支持：从 working_graph 提取所有输出节点的形状（顺序与 graph.outputs() 一致）
+            std::vector<std::vector<size_t>> out_shapes;
+            for (size_t out_id : working_graph.outputs()) {
+                out_shapes.push_back(working_graph.node(out_id).out_desc.shape);
+            }
+            if (out_shapes.empty()) {
+                // 安全网：无显式输出 → 视为单输出（elem_n）
+                out_shapes.push_back({gen.elem_n});
+            }
             kernel = std::make_shared<MultiNodeCompiledKernel>(
                 gen.multi_func, gen.deleter, makeCacheKey(working_graph, options),
                 options.target_device, gen.num_inputs, gen.M, gen.K, gen.N,
-                gen.elem_n
+                gen.elem_n, out_shapes.size(), out_shapes
             );
         } else if (gen.is_fused) {
             kernel = std::make_shared<FusedCompiledKernel>(

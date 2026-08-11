@@ -21,6 +21,13 @@ endif()
 
 include(FetchContent)
 
+# ---- 性能采样开关 ----（临时测量用，默认 OFF）
+option(CT_ENABLE_PERF "Enable CT_PROFILE_PERF dispatch/eager timing sampling" OFF)
+if(CT_ENABLE_PERF)
+    add_definitions(-DCT_PROFILE_PERF)
+    message(STATUS "CT_PROFILE_PERF timing sampling ENABLED")
+endif()
+
 # ---- C3 开关 ----
 option(CT_DISABLE_C3 "Disable C3 JIT compilation and fusion optimizations" OFF)
 if(CT_DISABLE_C3)
@@ -622,6 +629,14 @@ target_include_directories(test_debug_fused PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(test_c3_backward src/tests/standalone/test_c3_backward.cpp)
 target_link_libraries(test_c3_backward PRIVATE CTorch)
 target_include_directories(test_c3_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(probe_extmap src/tests/standalone/probe_extmap.cpp)
+target_link_libraries(probe_extmap PRIVATE CTorch)
+target_include_directories(probe_extmap PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(probe_mnist_bw_num src/tests/standalone/probe_mnist_bw_num.cpp)
+target_link_libraries(probe_mnist_bw_num PRIVATE CTorch)
+target_include_directories(probe_mnist_bw_num PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_backward_fusion src/tests/standalone/bench_backward_fusion.cpp)
 target_link_libraries(bench_backward_fusion PRIVATE CTorch)

@@ -185,7 +185,9 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
                 return;
             }
 
-            auto& graph = graph_opt.value();
+            auto& graph_pair = graph_opt.value();
+            Graph& graph = graph_pair.first;
+            const std::vector<size_t>& fwd_input_map = graph_pair.second;
 
             // 跳过无计算节点的图（如 Add 的 identity 反向）
             // 无计算节点：nodeCount 仅含输入节点，没有实际计算操作
@@ -215,6 +217,7 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
 
                     C3KernelRegistry::getInstance().installBackward(
                         per_key, kernel, grad_shape, out_shape,
+                        /*fwd_input_map=*/fwd_input_map,
                         /*num_inputs=*/graph.inputCount());
 
                     std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -283,7 +286,9 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
             pending_compiles_.erase(per_key);
             return;
         }
-        auto& graph = graph_opt.value();
+        auto& graph_pair = graph_opt.value();
+        Graph& graph = graph_pair.first;
+        const std::vector<size_t>& fwd_input_map = graph_pair.second;
         if (graph.nodeCount() <= graph.inputCount()) {
             std::lock_guard<std::mutex> lock(pending_mutex_);
             pending_compiles_.erase(per_key);
@@ -307,6 +312,7 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
                     input_descs.empty() ? grad_desc.shape : input_descs[input_index].shape;
                 C3KernelRegistry::getInstance().installBackward(
                     per_key, kernel, grad_shape, out_shape,
+                    /*fwd_input_map=*/fwd_input_map,
                     /*num_inputs=*/graph.inputCount());
 #ifdef CT_DEBUG
                 std::cerr << "[C3-BW-DEBUG-FOR-INPUT] install OK key=" << per_key
@@ -358,10 +364,13 @@ std::optional<Graph> C3BackwardCapture::buildBackwardGraphForInput(
 {
     // 通过 typeid 获取节点类型字符串，再走字符串分发（与异步编译线程一致）
     std::string type_name = typeid(*node).name();
-    return buildBackwardGraphForTypeAndIndex(type_name, input_index, grad_desc, input_descs);
+    auto opt = buildBackwardGraphForTypeAndIndex(type_name, input_index, grad_desc, input_descs);
+    if (!opt.has_value()) return std::nullopt;
+    // 兼容入口：只返回 Graph，丢弃 fwd_input_map（调用方不关心运行时喂入）
+    return opt->first;
 }
 
-std::optional<Graph> C3BackwardCapture::buildBackwardGraphForTypeAndIndex(
+std::optional<C3BackwardCapture::BackwardGraph> C3BackwardCapture::buildBackwardGraphForTypeAndIndex(
     const std::string& node_type,
     size_t input_index,
     const TensorDesc& grad_desc,
@@ -421,7 +430,7 @@ std::optional<Graph> C3BackwardCapture::buildBackwardGraphForTypeAndIndex(
     return std::nullopt;
 }
 
-std::optional<Graph> C3BackwardCapture::buildBackwardGraphForType(
+std::optional<C3BackwardCapture::BackwardGraph> C3BackwardCapture::buildBackwardGraphForType(
     const std::string& node_type,
     const TensorDesc& grad_desc,
     const std::vector<TensorDesc>& input_descs)
@@ -473,7 +482,7 @@ C3BackwardCapture::Stats C3BackwardCapture::getStats() const {
 
 // ======================= 反向 Graph 构建 =======================
 
-Graph C3BackwardCapture::buildReLUBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildReLUBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& input_desc)
 {
@@ -498,10 +507,11 @@ Graph C3BackwardCapture::buildReLUBackwardGraph(
         TensorDesc::fromShape(input_desc.shape));
 
     g.markOutput(mul_node);
-    return g;
+    // [Fix 2026-08-11 最小集 build] 图输入 [grad, x]，x 对应 forward_inputs[0]
+    return {std::move(g), {0}};
 }
 
-Graph C3BackwardCapture::buildSigmoidBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildSigmoidBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& input_desc)
 {
@@ -536,10 +546,11 @@ Graph C3BackwardCapture::buildSigmoidBackwardGraph(
     size_t result = g.addNode(MulNode{grad_desc, neg_desc}, {grad_in, sig_times_one_minus}, neg_desc);
 
     g.markOutput(result);
-    return g;
+    // [Fix 2026-08-11 最小集 build] 图输入 [grad, x]，x 对应 forward_inputs[0]
+    return {std::move(g), {0}};
 }
 
-Graph C3BackwardCapture::buildTanhBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildTanhBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& input_desc)
 {
@@ -584,10 +595,11 @@ Graph C3BackwardCapture::buildTanhBackwardGraph(
     size_t result = g.addNode(MulNode{grad_desc, same_desc}, {grad_in, one_minus}, same_desc);
 
     g.markOutput(result);
-    return g;
+    // [Fix 2026-08-11 最小集 build] 图输入 [grad, x]，x 对应 forward_inputs[0]
+    return {std::move(g), {0}};
 }
 
-Graph C3BackwardCapture::buildAddBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildAddBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& lhs_desc,
     const TensorDesc& rhs_desc,
@@ -611,10 +623,11 @@ Graph C3BackwardCapture::buildAddBackwardGraph(
         g.markOutput(grad_in);
     }
 
-    return g;
+    // [Fix 2026-08-11 最小集 build] 图只有 grad 输入，无 forward 输入 → 空索引表
+    return {std::move(g), {}};
 }
 
-Graph C3BackwardCapture::buildMulBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildMulBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& a_desc,
     const TensorDesc& b_desc,
@@ -622,31 +635,34 @@ Graph C3BackwardCapture::buildMulBackwardGraph(
 {
     Graph g;
 
-    // 输入: [grad, A, B]
+    // [Fix 2026-08-11 最小集 build] 以前总是加 [grad, A, B]，未用输入被 DCE 剪枝 →
+    // ext_map 索引平移 → 运行时喂错张量。现在只加实际用到的 forward 输入，
+    // DCE 无可剪，图输入顺序稳定，配合 fwd_input_map 精确喂入。
+    // grad 输入始终是图输入 0；后续图输入按 fwd_input_map 对应 forward_inputs。
     size_t grad_in = g.addInput(grad_desc);
-    size_t a_in = g.addInput(a_desc);
-    size_t b_in = g.addInput(b_desc);
 
     if (input_index == 0) {
-        // grad_a = grad * B
+        // grad_a = grad * B → 只需 B，B 是 forward_inputs[1]
+        size_t b_in = g.addInput(b_desc);
         size_t o = g.addNode(
             MulNode{grad_desc, b_desc},
             {grad_in, b_in},
             TensorDesc::fromShape(a_desc.shape));
         g.markOutput(o);
+        return {std::move(g), {1}};
     } else {
-        // grad_b = A * grad
+        // grad_b = A * grad → 只需 A，A 是 forward_inputs[0]
+        size_t a_in = g.addInput(a_desc);
         size_t o = g.addNode(
             MulNode{a_desc, grad_desc},
             {a_in, grad_in},
             TensorDesc::fromShape(b_desc.shape));
         g.markOutput(o);
+        return {std::move(g), {0}};
     }
-
-    return g;
 }
 
-Graph C3BackwardCapture::buildMatMulBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildMatMulBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& a_desc,
     const TensorDesc& b_desc,
@@ -654,20 +670,18 @@ Graph C3BackwardCapture::buildMatMulBackwardGraph(
 {
     Graph g;
 
-    // 输入: [grad, A, B]
+    // [Fix 2026-08-11 最小集 build] 以前总是加 [grad, A, B]，未用输入被 DCE 剪枝 →
+    // ext_map 索引平移 → 运行时喂错张量（A 当 B）→ grad_x 数值爆炸、grad_w 碰巧正确。
+    // 现在只加实际用到的 forward 输入，DCE 无可剪，图输入顺序稳定，配合 fwd_input_map 精确喂入。
+    // grad 输入始终是图输入 0；后续图输入按 fwd_input_map 对应 forward_inputs。
     size_t grad_in = g.addInput(grad_desc);
-    size_t a_in = g.addInput(a_desc);
-    size_t b_in = g.addInput(b_desc);
-
-    // 转置输出形状
-    std::vector<size_t> bT_shape = {b_desc.shape[1], b_desc.shape[0]};
-    std::vector<size_t> aT_shape = {a_desc.shape[1], a_desc.shape[0]};
-
-    TensorDesc bT_desc = TensorDesc::fromShape(bT_shape);
-    TensorDesc aT_desc = TensorDesc::fromShape(aT_shape);
 
     if (input_index == 0) {
-        // grad_A = grad @ B^T ；MatMul: (M, N) @ (N, K) → (M, K)
+        // grad_A = grad @ B^T → 只需 B（forward_inputs[1]）
+        size_t b_in = g.addInput(b_desc);
+        // 转置输出形状
+        std::vector<size_t> bT_shape = {b_desc.shape[1], b_desc.shape[0]};
+        TensorDesc bT_desc = TensorDesc::fromShape(bT_shape);
         size_t bT = g.addNode(TransposeNode{b_desc, 0, 1}, {b_in}, bT_desc);
         TensorDesc grad_a_desc = TensorDesc::fromShape({grad_desc.shape[0], bT_desc.shape[1]});
         size_t o = g.addNode(
@@ -675,8 +689,12 @@ Graph C3BackwardCapture::buildMatMulBackwardGraph(
             {grad_in, bT},
             grad_a_desc);
         g.markOutput(o);
+        return {std::move(g), {1}};
     } else {
-        // grad_B = A^T @ grad
+        // grad_B = A^T @ grad → 只需 A（forward_inputs[0]）
+        size_t a_in = g.addInput(a_desc);
+        std::vector<size_t> aT_shape = {a_desc.shape[1], a_desc.shape[0]};
+        TensorDesc aT_desc = TensorDesc::fromShape(aT_shape);
         size_t aT = g.addNode(TransposeNode{a_desc, 0, 1}, {a_in}, aT_desc);
         TensorDesc grad_b_desc = TensorDesc::fromShape({aT_desc.shape[0], grad_desc.shape[1]});
         size_t o = g.addNode(
@@ -684,12 +702,11 @@ Graph C3BackwardCapture::buildMatMulBackwardGraph(
             {aT, grad_in},
             grad_b_desc);
         g.markOutput(o);
+        return {std::move(g), {0}};
     }
-
-    return g;
 }
 
-Graph C3BackwardCapture::buildNegBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildNegBackwardGraph(
     const TensorDesc& grad_desc)
 {
     Graph g;
@@ -704,10 +721,11 @@ Graph C3BackwardCapture::buildNegBackwardGraph(
         grad_desc);
 
     g.markOutput(result);
-    return g;
+    // 图只有 grad 输入，无 forward 输入 → 空索引表
+    return {std::move(g), {}};
 }
 
-Graph C3BackwardCapture::buildSubBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildSubBackwardGraph(
     const TensorDesc& grad_desc,
     size_t input_index)
 {
@@ -727,10 +745,11 @@ Graph C3BackwardCapture::buildSubBackwardGraph(
             grad_desc);
         g.markOutput(grad_b);
     }
-    return g;
+    // 图只有 grad 输入，无 forward 输入 → 空索引表
+    return {std::move(g), {}};
 }
 
-Graph C3BackwardCapture::buildDivBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildDivBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& a_desc,
     const TensorDesc& b_desc,
@@ -738,20 +757,24 @@ Graph C3BackwardCapture::buildDivBackwardGraph(
 {
     Graph g;
 
-    // 输入: [grad, A, B]
+    // [Fix 2026-08-11 最小集 build] 只加实际用到的 forward 输入，DCE 无可剪。
+    // grad 输入始终是图输入 0；后续图输入按 fwd_input_map 对应 forward_inputs。
     size_t grad_in = g.addInput(grad_desc);
-    size_t a_in = g.addInput(a_desc);
-    size_t b_in = g.addInput(b_desc);
 
     if (input_index == 0) {
-        // grad_a = grad / B
+        // grad_a = grad / B → 只需 B（forward_inputs[1]）
+        size_t b_in = g.addInput(b_desc);
         size_t o = g.addNode(
             DivNode{grad_desc, b_desc},
             {grad_in, b_in},
             TensorDesc::fromShape(a_desc.shape));
         g.markOutput(o);
+        return {std::move(g), {1}};
     } else {
-        // grad_b = -(A / (B * B)) * grad
+        // grad_b = -(A / (B * B)) * grad → 需 A、B（forward_inputs[0], forward_inputs[1]）
+        size_t a_in = g.addInput(a_desc);
+        size_t b_in = g.addInput(b_desc);
+
         // B * B
         size_t b_sq = g.addNode(
             MulNode{b_desc, b_desc},
@@ -777,11 +800,11 @@ Graph C3BackwardCapture::buildDivBackwardGraph(
             TensorDesc::fromShape(b_desc.shape));
 
         g.markOutput(grad_b);
+        return {std::move(g), {0, 1}};
     }
-    return g;
 }
 
-Graph C3BackwardCapture::buildExpBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildExpBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& input_desc,
     const TensorDesc& output_desc)
@@ -805,10 +828,11 @@ Graph C3BackwardCapture::buildExpBackwardGraph(
         TensorDesc::fromShape(input_desc.shape));
 
     g.markOutput(result);
-    return g;
+    // 图输入 [grad, x]，x 对应 forward_inputs[0]
+    return {std::move(g), {0}};
 }
 
-Graph C3BackwardCapture::buildLogBackwardGraph(
+C3BackwardCapture::BackwardGraph C3BackwardCapture::buildLogBackwardGraph(
     const TensorDesc& grad_desc,
     const TensorDesc& input_desc)
 {
@@ -825,7 +849,8 @@ Graph C3BackwardCapture::buildLogBackwardGraph(
         TensorDesc::fromShape(input_desc.shape));
 
     g.markOutput(result);
-    return g;
+    // 图输入 [grad, x]，x 对应 forward_inputs[0]
+    return {std::move(g), {0}};
 }
 
 // ======================= 反向融合检测 (Phase 2) =======================
@@ -855,7 +880,17 @@ void C3BackwardCapture::recordBackwardNode(
         std::vector<std::string> chain(recent_sequence_.begin(), recent_sequence_.end());
         std::vector<std::vector<size_t>> gs(recent_grad_shapes_.begin(), recent_grad_shapes_.end());
         std::vector<std::vector<size_t>> is_(recent_input_shapes_.begin(), recent_input_shapes_.end());
-        if (isFusableSequence(chain)) {
+        // [Fix 2026-08-11 反向融合 SIGBUS] 形状一致性校验：
+        // recordBackwardNode 只登记 C3 支持的 element-wise 节点，中间的 Add/MatMul
+        // 会被跳过，导致「隔着 MatMul 的两个 ReLU」在序列里看似相邻（如 MNIST
+        // z2.ReLU grad=[128,128] 与 z1.ReLU grad=[128,256]）。融合 kernel 用统一
+        // elem_n 分段 output + 链式 grad 传播，隐含要求链内所有节点 grad 形状一致；
+        // 否则越界读 → SIGBUS。故编译前强制链内 grad_shapes 全等，不一致则不融合。
+        bool shape_consistent = true;
+        for (size_t si = 1; si < gs.size(); ++si) {
+            if (gs[si] != gs[0]) { shape_consistent = false; break; }
+        }
+        if (shape_consistent && isFusableSequence(chain)) {
             const std::vector<size_t>& reg_grad_shape = gs.front();
             const std::vector<size_t>& reg_input_shape = is_.back();
             std::string seq_key = makeSequenceKey(chain);
@@ -1118,7 +1153,8 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                     return;
                 }
 
-                auto& sub_graph = graph_opt.value();
+                auto& sub_graph_pair = graph_opt.value();
+                Graph& sub_graph = sub_graph_pair.first;
 
                 // 为 sub_graph 的每个**外部输入节点 ID（sub_graph.inputs() vector）**创建映射。
                 // 注意 sub_graph 的 inputs_ 是独立 vector（不是 nodes_ 的前缀），必须通过 inputs()[j] 取 id。
@@ -1242,8 +1278,19 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                 // 注册时的形状与 makeFusedBackwardKey 生成时保持一致：
                 // - reg_grad_shape：最下游 grad 形状（tryExecuteBackward 传入的 grad.shape 必须匹配）
                 // - reg_input_shape：最上游 input 形状（仅作匹配签名，reshape 时 out_shape 用 kernel 产出形状）
+                // num_inputs = fused_graph.inputCount() = 1 (grad) + N (每节点 forward input)，
+                //   与 tryExecuteFusedBackward 传入 [grad, best_fwd_inputs(0..N-1)] 严格一致。
+                // [Fix 2026-08-11 DCE 输入平移] 融合图输入顺序 = [grad, fwd0, fwd1, ...]，
+                //   tryExecuteFusedBackward 按 forward_inputs[0..N-1] 顺序喂 → 恒等索引表。
+                std::vector<size_t> fused_fwd_map;
+                fused_fwd_map.reserve(fused_graph.inputCount() - 1);
+                for (size_t fi = 1; fi < fused_graph.inputCount(); ++fi) {
+                    fused_fwd_map.push_back(fi - 1);
+                }
                 C3KernelRegistry::getInstance().installBackward(
-                    fused_key, kernel, reg_grad_shape, reg_input_shape);
+                    fused_key, kernel, reg_grad_shape, reg_input_shape,
+                    /*fwd_input_map=*/fused_fwd_map,
+                    /*num_inputs=*/fused_graph.inputCount());
 
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 fusion_compile_count_++;
@@ -1426,9 +1473,18 @@ std::optional<Tensor> C3BackwardCapture::tryExecuteFusedBackward(
                 c2 = cand2.get(); s2++;
             }
             if (!fused_sp) break;
+            // [Fix 2026-08-11 反向融合 SIGBUS] 形状一致性校验：
+            // 融合 kernel 用「统一 elem_n 分段 output 平面 buffer + 链式 grad 传播」，
+            // 隐含假设链内所有 element-wise 节点的 grad/input 形状一致（都 == 最下游
+            // grad 形状）。若 traverse 跳过中间 Add/MatMul 等 wrapper 而撞上形状发生
+            // 变化的节点（如 MNIST 两个 ReLU 隔着 MatMul，z2 grad=[128,128] 而 z1
+            // input=[128,256]），把形状不同的节点拼进同链会越界读 → SIGBUS。
+            // 因此：上游节点 forward input[0] 形状必须 == 最下游 grad 形状，否则 break。
+            auto fused_inputs = fused_sp->getInputs();
+            if (fused_inputs.empty() || fused_inputs[0].sizes() != grad.sizes()) break;
             chain_nodes.push_back(fused_sp);
             chain_types.push_back(tname);
-            chain_forward_inputs.push_back(fused_sp->getInputs());
+            chain_forward_inputs.push_back(fused_inputs);
 
             // 下一轮 traverse 从这个可融合节点本身出发（它的上游是更上一层）
             cur = fused_sp.get();

@@ -20,7 +20,6 @@
 #include <memory>
 #include <mutex>
 #include <cstdint>
-#include <set>
 #include <atomic>
 
 namespace ct {
@@ -97,10 +96,10 @@ public:
         return installed_count_.load(std::memory_order_acquire);
     }
 
-    /// [Dev 2026-08-09 tryRegionDispatch 无候选短路] 候选过滤
+    /// [Dev 2026-08-11 tryRegionDispatch 位掩码] 候选过滤
     /// @details tryRegionDispatch 入口第二道短路: 当前 op 不可能作为任何已注册
     ///          region 的末尾 op 时直接返回 false
-    ///          实现: 查 installed_last_ops_ set (用 mutex 保护, 训练期更新少)
+    ///          实现: 查 installed_last_ops_ 位掩码 (atomic load + 位测试, O(1) 无锁)
     /// @param last_op 候选 region 的最后一个 op (即当前 dispatch 的 op)
     /// @return 是否有任何已注册 region 以 last_op 结尾
     bool mayMatchAsLastOp(op last_op) const;
@@ -119,14 +118,15 @@ private:
     /// [Dev 2026-08-09 tryRegionDispatch 无候选短路] 已注册 region 数量 (无锁查询)
     mutable std::atomic<size_t> installed_count_{0};
 
-    /// [Dev 2026-08-09 tryRegionDispatch 无候选短路] 已注册 region 末尾 op 集合
+    /// [Dev 2026-08-11 tryRegionDispatch 位掩码] 已注册 region 末尾 op 位掩码
     /// @details tryRegionDispatch 入口查 installed_last_ops_ 判断当前 op 是否可能
-    ///          作为 region 末尾. install 时插入, uninstallAll/clear 时清空.
-    ///          训练期更新少 (region 注册主要在 epoch 1 warmup), mutex 锁可接受
-    ///          用 std::set<op> 而非 unordered_set<op>: op 是 enum class,
-    ///          std::hash<enum class> 标准库支持但非必, op 数量 < 30 二分查找够快
-    mutable std::mutex last_op_mutex_;
-    std::set<op> installed_last_ops_;
+    ///          作为 region 末尾. install 时置位, uninstallAll/clear 时清空.
+    ///          用 atomic<uint64_t> 位掩码: mayMatchAsLastOp 变成 O(1) 无锁
+    ///          (atomic load + 位测试), 消除热路径每次 dispatch 的 last_op_mutex_ 锁.
+    ///          op 是连续枚举 (0..kCount-1), 单 uint64 足够 (kCount=28 < 64).
+    static_assert(static_cast<size_t>(op::kCount) <= 64,
+                  "op::kCount exceeds uint64 bitmask capacity");
+    mutable std::atomic<uint64_t> installed_last_ops_{0};
 };
 
 } // namespace c3

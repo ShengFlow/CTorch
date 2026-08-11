@@ -60,6 +60,14 @@ namespace c3 {
  */
 class C3BackwardCapture {
 public:
+    /**
+     * @brief backward 子图构建结果：{Graph, fwd_input_map}
+     * @details fwd_input_map[k] = 该反向图的第 (k+1) 个输入（grad 之后的第 k 个）
+     *          对应的 forward_inputs 索引。因最小集 build 只加实际用到的 forward 输入，
+     *          图输入顺序 ≠ forward_inputs 顺序，运行时必须按此表喂入（见 C3KernelRegistry）。
+     */
+    using BackwardGraph = std::pair<Graph, std::vector<size_t>>;
+
     /** @brief 获取 C3BackwardCapture 单例实例 */
     static C3BackwardCapture& getInstance();
 
@@ -138,7 +146,7 @@ public:
      * @details 供异步编译线程使用（不持有 Node 指针，规避 UAF），
      *          与 buildBackwardGraphForInput 逻辑一致，仅改用字符串分发。
      */
-    std::optional<Graph> buildBackwardGraphForTypeAndIndex(
+    std::optional<BackwardGraph> buildBackwardGraphForTypeAndIndex(
         const std::string& node_type,
         size_t input_index,
         const TensorDesc& grad_desc,
@@ -206,7 +214,7 @@ private:
      * @param input_desc forward 输入描述符
      * @return C3 Graph: Mul(Gt(x, 0), grad)
      */
-    Graph buildReLUBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildReLUBackwardGraph(const TensorDesc& grad_desc,
                                   const TensorDesc& input_desc);
 
     /**
@@ -215,7 +223,7 @@ private:
      * @param input_desc forward 输入描述符
      * @return C3 Graph: Mul(Mul(Sigmoid(x), Sub(1, Sigmoid(x))), grad)
      */
-    Graph buildSigmoidBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildSigmoidBackwardGraph(const TensorDesc& grad_desc,
                                      const TensorDesc& input_desc);
 
     /**
@@ -224,7 +232,7 @@ private:
      * @param input_desc forward 输入描述符
      * @return C3 Graph: Mul(Sub(1, Mul(Tanh(x), Tanh(x))), grad)
      */
-    Graph buildTanhBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildTanhBackwardGraph(const TensorDesc& grad_desc,
                                   const TensorDesc& input_desc);
 
     /**
@@ -235,7 +243,7 @@ private:
      * @param input_index 目标上游输入索引（0=左, 1=右）
      * @return C3 Graph: grad（广播时 SumReduce 缩小）
      */
-    Graph buildAddBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildAddBackwardGraph(const TensorDesc& grad_desc,
                                  const TensorDesc& lhs_desc,
                                  const TensorDesc& rhs_desc,
                                  size_t input_index);
@@ -248,7 +256,7 @@ private:
      * @param input_index 目标上游输入索引（0=左, 1=右）
      * @return C3 Graph: Mul(grad, B) 或 Mul(A, grad)
      */
-    Graph buildMulBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildMulBackwardGraph(const TensorDesc& grad_desc,
                                  const TensorDesc& a_desc,
                                  const TensorDesc& b_desc,
                                  size_t input_index);
@@ -261,7 +269,7 @@ private:
      * @param input_index 目标上游输入索引（0=左, 1=右）
      * @return C3 Graph: MatMul(grad, Transpose(B)) 或 MatMul(Transpose(A), grad)
      */
-    Graph buildMatMulBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildMatMulBackwardGraph(const TensorDesc& grad_desc,
                                     const TensorDesc& a_desc,
                                     const TensorDesc& b_desc,
                                     size_t input_index);
@@ -271,7 +279,7 @@ private:
      * @param grad_desc 下游梯度描述符
      * @return C3 Graph: Neg(grad)
      */
-    Graph buildNegBackwardGraph(const TensorDesc& grad_desc);
+    BackwardGraph buildNegBackwardGraph(const TensorDesc& grad_desc);
 
     /**
      * @brief 构建 Sub backward 的 C3 Graph（单输出：指定输入索引）
@@ -279,7 +287,7 @@ private:
      * @param input_index 目标上游输入索引（0=左, 1=右）
      * @return C3 Graph: grad 或 Neg(grad)
      */
-    Graph buildSubBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildSubBackwardGraph(const TensorDesc& grad_desc,
                                  size_t input_index);
 
     /**
@@ -290,7 +298,7 @@ private:
      * @param input_index 目标上游输入索引（0=左, 1=右）
      * @return C3 Graph: Div(grad, B) 或 Neg(Mul(A, Div(grad, Mul(B, B))))
      */
-    Graph buildDivBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildDivBackwardGraph(const TensorDesc& grad_desc,
                                  const TensorDesc& a_desc,
                                  const TensorDesc& b_desc,
                                  size_t input_index);
@@ -302,7 +310,7 @@ private:
      * @param output_desc forward 输出描述符（exp(x) 的值）
      * @return C3 Graph: Mul(Exp(x), grad) = Mul(output, grad)
      */
-    Graph buildExpBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildExpBackwardGraph(const TensorDesc& grad_desc,
                                  const TensorDesc& input_desc,
                                  const TensorDesc& output_desc);
 
@@ -312,7 +320,7 @@ private:
      * @param input_desc forward 输入描述符
      * @return C3 Graph: Div(grad, x)
      */
-    Graph buildLogBackwardGraph(const TensorDesc& grad_desc,
+    BackwardGraph buildLogBackwardGraph(const TensorDesc& grad_desc,
                                  const TensorDesc& input_desc);
 
     /**
@@ -324,7 +332,7 @@ private:
      * @details 与 buildBackwardGraph 功能相同，但使用字符串匹配而非 typeid。
      *          用于融合编译场景，此时只有节点类型字符串，无实际节点对象。
      */
-    std::optional<Graph> buildBackwardGraphForType(
+    std::optional<BackwardGraph> buildBackwardGraphForType(
         const std::string& node_type,
         const TensorDesc& grad_desc,
         const std::vector<TensorDesc>& input_descs);

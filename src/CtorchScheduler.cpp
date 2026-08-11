@@ -458,7 +458,7 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 // kernel 会重新计算(浪费了 past op 的 eager work,但保证正确性)。
 #ifndef CT_DISABLE_C3
 std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
-    op op_type, const std::vector<Tensor>& inputs, DeviceType /*dev*/) {
+    op op_type, const Tensor* inputs, size_t num_inputs, DeviceType /*dev*/) {
 #ifdef CT_PROFILE_PERF
     auto _t0 = std::chrono::steady_clock::now();
     // RAII-like defer:把 dispatch 耗时统计放这里,确保所有 return 路径都统计到
@@ -475,7 +475,19 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 第一道: 0 region 时 O(1) 返回
     // 53848 dispatch/epoch 大量 trace 拷贝 + hash + 7 次循环是无谓开销
     // 训练开始时 region 还没注册, 或 evict 后清空, 此分支直接返回
-    if (ct::c3::RegionFusionRegistry::getInstance().installedCountNoLock() == 0) {
+    auto& registry = ct::c3::RegionFusionRegistry::getInstance();
+    if (registry.installedCountNoLock() == 0) {
+        return std::nullopt;
+    }
+
+    // [Dev 2026-08-11 候选短路提前] 第二道: 当前 op 不可能作为任何已注册 region
+    // 的末尾 op 时 O(1) 返回. 注意: 这是"末尾"过滤 (当前 dispatch 触发的 op),
+    // 不是"任意位置"过滤 (region 可以任意 op 结尾, 但匹配窗口只到当前 op,
+    // 所以末尾匹配即可)。
+    // 放在 trace 快照之前: mayMatchAsLastOp 只依赖 op_type + 已注册 region,
+    // 与 trace 无关。提前过滤可省掉下面 region_trace_mutex_ 锁 + vector 拷贝
+    // (训练期大多数 op 都不是任一 region 末尾, 此分支命中率高)。
+    if (!registry.mayMatchAsLastOp(op_type)) {
         return std::nullopt;
     }
 
@@ -484,16 +496,6 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     {
         std::lock_guard<std::mutex> lk(region_trace_mutex_);
         trace_snapshot = region_trace_;
-    }
-
-    auto& registry = ct::c3::RegionFusionRegistry::getInstance();
-
-    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 第二道: 当前 op 不可能作为
-    // 任何已注册 region 的末尾 op 时 O(1) 返回. 省掉 extended trace hash + 7 次循环.
-    // 注意: 这是"末尾"过滤 (当前 dispatch 触发的 op), 不是"任意位置"过滤
-    // (region 可能以任意 op 结尾, 但匹配窗口只到当前 op, 所以末尾匹配即可)
-    if (!registry.mayMatchAsLastOp(op_type)) {
-        return std::nullopt;
     }
 
     // 构建 extended trace: [current trace] + [current op]
@@ -509,15 +511,17 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     // DEBT-NEW-7:跟 installWithCost 一样,把 shape 混入 hash
     uint64_t shape_hash = 0;
     if (op_type == op::MatMul) {
-        if (!inputs.empty()) {
-            for (auto s : inputs.front().shape()) {
+        if (num_inputs > 0) {
+            for (auto s : inputs[0].shape()) {
                 shape_hash = shape_hash * 31 + s + 1;
             }
         }
-    } else if (!prewalk_cache_.empty()) {
-        for (auto it = prewalk_cache_.rbegin(); it != prewalk_cache_.rend(); ++it) {
-            if (it->op_type == op::MatMul && !it->original_inputs.empty()) {
-                for (auto s : it->original_inputs.front().shape()) {
+    } else if (prewalk_cache_count_ > 0) {
+        // 从新到旧 (逻辑下标递减) 找最近一个 MatMul 的输入 shape
+        for (size_t li = prewalk_cache_count_; li-- > 0;) {
+            const auto& e = prewalkAt(li);
+            if (e.op_type == op::MatMul && !e.original_inputs.empty()) {
+                for (auto s : e.original_inputs.front().shape()) {
                     shape_hash = shape_hash * 31 + s + 1;
                 }
                 break;
@@ -557,7 +561,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
 
     // 匹配成功!需要从 prewalk_cache_ 里取最近 (match.len - 1) 个 dispatch 的 external inputs
     size_t needed = match->len - 1;
-    if (prewalk_cache_.size() < needed) {
+    if (prewalk_cache_count_ < needed) {
         return std::nullopt;
     }
 
@@ -565,7 +569,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     // 会产生相同 hash(registry 多次 install 会互相覆盖)。所以 match 之后必须
     // 验证 shape,否则会用错 shape 的 kernel 计算。
     if (!match->first_input_shapes.empty() && needed > 0) {
-        const auto& first_cached = prewalk_cache_[prewalk_cache_.size() - needed].original_inputs;
+        const auto& first_cached = prewalkAt(prewalk_cache_count_ - needed).original_inputs;
         if (!first_cached.empty()) {
             const auto& expected_shape = match->first_input_shapes.front();
             const auto& actual_shape = first_cached.front().shape();
@@ -577,20 +581,20 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
 
     // 收集所有 external inputs
     std::vector<Tensor> external_inputs;
-    for (size_t i = prewalk_cache_.size() - needed; i < prewalk_cache_.size(); ++i) {
-        for (const auto& t : prewalk_cache_[i].original_inputs) {
+    for (size_t i = prewalk_cache_count_ - needed; i < prewalk_cache_count_; ++i) {
+        for (const auto& t : prewalkAt(i).original_inputs) {
             external_inputs.push_back(t);
         }
     }
     if (op_type == op::MatMul) {
-        for (const auto& t : inputs) external_inputs.push_back(t);
-    } else if (inputs.size() > 1) {
+        for (size_t k = 0; k < num_inputs; ++k) external_inputs.push_back(inputs[k]);
+    } else if (num_inputs > 1) {
         external_inputs.push_back(inputs[1]);
     } else {
         // 一元 op:input 是 chain,不取
     }
 
-    std::vector<size_t> out_shape = computeOutputShape(op_type, inputs);
+    std::vector<size_t> out_shape = computeOutputShape(op_type, inputs, num_inputs);
     if (out_shape.empty()) {
         return std::nullopt;
     }
@@ -621,25 +625,39 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
 }
 
 std::vector<size_t> CtorchScheduler::computeOutputShape(
-    op op_type, const std::vector<Tensor>& inputs) const {
+    op op_type, const Tensor* inputs, size_t num_inputs) const {
     // DEBT-NEW-7 region fusion 配套：每个 op 的真实输出 shape 计算
     // 用于 prewalk 期间创建 placeholder Tensor(空 storage + LazyMaterializer)
-    if (inputs.empty()) return {};
+    if (num_inputs == 0) return {};
 
     // 一元算子：输出 shape = 输入 shape
+    // [位掩码 2026-08-11] 一元算子集合 → 单 uint64 位掩码, O(1) 查表,
+    // 消除多条件 OR 的分支预测失败惩罚. computeOutputShape 在每次 dispatch
+    // 末尾 (prewalk_cache 记录) 调用于热路径, 位掩码化有真实收益.
+    // op 连续枚举 (0..kCount-1=27 < 64), 静态断言兜底.
+    static_assert(static_cast<size_t>(op::kCount) <= 64,
+                  "op::kCount exceeds uint64 bitmask capacity");
+    static constexpr uint64_t kUnaryOpMask =
+          (1ull << static_cast<size_t>(op::ReLU))
+        | (1ull << static_cast<size_t>(op::Tanh))
+        | (1ull << static_cast<size_t>(op::Sigmoid))
+        | (1ull << static_cast<size_t>(op::Neg))
+        | (1ull << static_cast<size_t>(op::Exp))
+        | (1ull << static_cast<size_t>(op::Log))
+        | (1ull << static_cast<size_t>(op::Abs))
+        | (1ull << static_cast<size_t>(op::GELU))
+        | (1ull << static_cast<size_t>(op::Softmax));
     auto isUnary = [](op t) {
-        return t == op::ReLU || t == op::Tanh || t == op::Sigmoid ||
-               t == op::Neg  || t == op::Exp  || t == op::Log    ||
-               t == op::Abs  || t == op::GELU || t == op::Softmax;
+        return (kUnaryOpMask >> static_cast<size_t>(t)) & 1ull;
     };
 
-    if (isUnary(op_type) || inputs.size() == 1) {
-        return inputs.front().sizes();
+    if (isUnary(op_type) || num_inputs == 1) {
+        return inputs[0].sizes();
     }
 
     // 二元算子：分两类
     const auto& a = inputs[0].sizes();
-    const auto& b = inputs.size() > 1 ? inputs[1].sizes() : a;
+    const auto& b = num_inputs > 1 ? inputs[1].sizes() : a;
 
     if (op_type == op::MatMul) {
         // [M, K] @ [K, N] → [M, N]（最常见的 2D matmul；高维暂不支持）

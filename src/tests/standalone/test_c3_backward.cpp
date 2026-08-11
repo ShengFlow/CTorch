@@ -418,6 +418,111 @@ int main() {
         overall_max_diff = std::max(overall_max_diff, max_diff);
     }
 
+    // ========== Test 9: 反向融合 (ReLU → ReLU 直接串联) ==========
+    // 复现 MNIST 反向融合 SIGBUS：两个 ReLU 直接相邻（无 MatMul 间隔）时，
+    // 融合 kernel 的多输出平面 buffer 是否越界。
+    {
+        std::cout << "\n[Test 9] Backward Fusion: ReLU → ReLU chain" << std::endl;
+
+        const size_t M = 32, K = 64;
+        Tensor eager_x(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+        float* xp_eager = eager_x.data_write<float>();
+        for (size_t i = 0; i < eager_x.numel(); ++i) xp_eager[i] = (static_cast<float>(i) / (M*K) - 0.5f) * 4.0f;
+        eager_x.requires_grad(true);
+        Tensor eager_y = eager_x.relu().relu();
+        AutoGrad::backward(eager_y.getRelatedNode(), false);
+        auto eager_gx = eager_x.grad();
+
+        double max_diff = 0.0;
+        for (int iter = 0; iter < 8; ++iter) {
+            Tensor x(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
+            float* xp = x.data_write<float>();
+            for (size_t i = 0; i < x.numel(); ++i) xp[i] = (static_cast<float>(i) / (M*K) - 0.5f) * 4.0f;
+            x.requires_grad(true);
+            Tensor y = x.relu().relu();
+            AutoGrad::backward(y.getRelatedNode(), false);
+            auto gx = x.grad();
+
+            double d = 0.0;
+            const float* e = eager_gx.data_read<float>();
+            const float* g = gx.data_read<float>();
+            for (size_t i = 0; i < gx.numel(); ++i) {
+                double dd = std::fabs(g[i] - e[i]);
+                if (dd > d) d = dd;
+            }
+            max_diff = std::max(max_diff, d);
+            std::cout << "  [iter " << iter << "] max_diff=" << d << std::endl;
+
+            if (iter == 3) {
+                std::cout << "  Iter 3 → 等待异步融合编译 (3.5s)..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+            }
+        }
+        std::cout << "  Test 9 ReLU+ReLU 最大误差 max_diff=" << max_diff << std::endl;
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+    }
+
+    // ========== Test 10: 反向融合 (不同尺寸 ReLU 隔着 MatMul) ==========
+    // 复现 MNIST 反向融合 SIGBUS：h2.ReLU(grad=[B,16]) 与 h1.ReLU(grad=[B,32])
+    // 隔着 MatMul，recordBackwardNode 跳过 MatMul 后二者在序列里假相邻，
+    // 形状不一致但仍可能被错误拼进融合链。
+    {
+        std::cout << "\n[Test 10] Backward Fusion: ReLU(16) → MatMul → ReLU(32)" << std::endl;
+        const size_t B = 8, D = 64, H1 = 32, H2 = 16;
+
+        // eager 参考
+        Tensor W1(ShapeTag{}, {D, H1}, DType::kFloat, DeviceType::kCPU);
+        Tensor b1(ShapeTag{}, {H1}, DType::kFloat, DeviceType::kCPU);
+        Tensor W2(ShapeTag{}, {H1, H2}, DType::kFloat, DeviceType::kCPU);
+        Tensor b2(ShapeTag{}, {H2}, DType::kFloat, DeviceType::kCPU);
+        for (size_t i = 0; i < W1.numel(); ++i) W1.data_write<float>()[i] = (static_cast<float>(i) / W1.numel() - 0.5f) * 0.2f;
+        for (size_t i = 0; i < b1.numel(); ++i) b1.data_write<float>()[i] = 0.1f;
+        for (size_t i = 0; i < W2.numel(); ++i) W2.data_write<float>()[i] = (static_cast<float>(i) / W2.numel() - 0.5f) * 0.2f;
+        for (size_t i = 0; i < b2.numel(); ++i) b2.data_write<float>()[i] = 0.1f;
+        W1.requires_grad(true); b1.requires_grad(true); W2.requires_grad(true); b2.requires_grad(true);
+
+        Tensor x(ShapeTag{}, {B, D}, DType::kFloat, DeviceType::kCPU);
+        for (size_t i = 0; i < x.numel(); ++i) x.data_write<float>()[i] = (static_cast<float>(i) / x.numel() - 0.5f) * 2.0f;
+        x.requires_grad(true);
+        Tensor z1 = x.matmul(W1) + b1;
+        Tensor h1 = z1.relu();
+        Tensor z2 = h1.matmul(W2) + b2;
+        Tensor h2 = z2.relu();
+        Tensor loss = h2.sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        auto eager_gx = x.grad();
+        auto eager_gw1 = W1.grad();
+        auto eager_gw2 = W2.grad();
+
+        double max_diff = 0.0;
+        for (int iter = 0; iter < 8; ++iter) {
+            for (size_t i = 0; i < x.numel(); ++i) x.data_write<float>()[i] = (static_cast<float>(i) / x.numel() - 0.5f) * 2.0f;
+            Tensor z1i = x.matmul(W1) + b1;
+            Tensor h1i = z1i.relu();
+            Tensor z2i = h1i.matmul(W2) + b2;
+            Tensor h2i = z2i.relu();
+            Tensor lossi = h2i.sum();
+            AutoGrad::backward(lossi.getRelatedNode(), false);
+            auto gx = x.grad();
+
+            double d = 0.0;
+            const float* e = eager_gx.data_read<float>();
+            const float* g = gx.data_read<float>();
+            for (size_t i = 0; i < gx.numel(); ++i) {
+                double dd = std::fabs(g[i] - e[i]);
+                if (dd > d) d = dd;
+            }
+            max_diff = std::max(max_diff, d);
+            std::cout << "  [iter " << iter << "] max_diff=" << d << std::endl;
+            if (iter == 3) {
+                std::cout << "  Iter 3 → 等待异步融合编译 (3.5s)..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+            }
+        }
+        std::cout << "  Test 10 MLP 最大误差 max_diff=" << max_diff << std::endl;
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+    }
+
     // 安全退出
     engine.shutdown();
     engine.clearCache();

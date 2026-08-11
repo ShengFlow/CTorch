@@ -295,14 +295,23 @@ std::optional<std::vector<Tensor>> C3KernelRegistry::tryExecuteBackward(
     //   - Add/Sub:           1 input  (grad only)
     //   - Mul/MatMul/Div:    3 inputs (grad, A, B)
     // 传多报 BroadcastUtils 错(已实测),传少 kernel 读野指针。
+    // [Fix 2026-08-11 DCE 输入平移] 不再按「前 num_inputs-1 个 forward_input」前缀喂入，
+    // 而是严格按 entry.fwd_input_map 逐一取 forward_inputs[map[k]]。因为最小集 build
+    // 的图输入顺序 ≠ forward_inputs 顺序（如 MatMul grad_x 图=[grad,B]，B=forward_inputs[1]）。
     try {
         std::vector<Tensor> inputs;
-        inputs.reserve(entry.num_inputs);
+        inputs.reserve(1 + entry.fwd_input_map.size());
         inputs.push_back(grad);
-        // 还需要 (num_inputs - 1) 个 forward_input 填充
-        size_t need_fwd = (entry.num_inputs > 0) ? (entry.num_inputs - 1) : 0;
-        for (size_t k = 0; k < need_fwd && k < forward_inputs.size(); ++k) {
-            inputs.push_back(forward_inputs[k]);
+        for (size_t fwd_idx : entry.fwd_input_map) {
+            if (fwd_idx >= forward_inputs.size()) {
+                // 防御：索引越界 → 回退 eager（正确性优先）
+                return std::nullopt;
+            }
+            inputs.push_back(forward_inputs[fwd_idx]);
+        }
+        if (inputs.size() != entry.num_inputs) {
+            // 防御：输入数量与注册时不符 → 回退 eager
+            return std::nullopt;
         }
         auto outputs = entry.kernel->execute(inputs);
         if (outputs.empty()) return std::nullopt;

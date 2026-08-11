@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <fstream>
+#include <iomanip>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -638,27 +639,35 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         external_input_map[inputs[i]] = i;
     }
 
-    // 步骤 3: 为每个计算节点分配缓冲区，记录每个缓冲区的 numel
-    // buffer_index[node_id] = 0,1,2,... 表示中间缓冲区索引
-    // SIZE_MAX 表示直接写入 output（最终输出节点）
+    // 步骤 3: 为每个计算节点分配缓冲区，记录每个缓冲区的 numel。
+    // 支持多输出（反向融合图）：输出节点写入 output 平面 buffer 的对应段
+    //   （output_index[id] * elem_n），非输出节点写入中间 tmp buffer。
+    //   SIZE_MAX 表示该节点是输出节点（写入 output 平面 buffer）。
     std::unordered_map<size_t, size_t> node_to_buffer;
-    std::vector<size_t> buffer_numels; // buffer index → numel
+    std::unordered_map<size_t, size_t> output_index; // 输出节点 id → 平面 buffer 段索引（按 graph.outputs() 顺序）
+    std::vector<size_t> buffer_numels;               // 中间 buffer index → numel
     size_t num_intermediates = 0;
+    auto assign_output = [&](size_t node_id) {
+        if (output_index.count(node_id)) return; // 已分配输出段（去重）
+        const size_t seg = output_index.size();
+        output_index[node_id] = seg;
+        node_to_buffer[node_id] = SIZE_MAX;
+    };
     for (size_t i = 0; i < compute_nodes.size(); ++i) {
         size_t node_id = compute_nodes[i]->id;
         bool is_output = false;
         for (size_t out_id : outputs) {
             if (node_id == out_id) { is_output = true; break; }
         }
-        if (i == compute_nodes.size() - 1) is_output = true; // 最后一个节点也作为输出
-
-        if (!is_output) {
+        if (is_output) {
+            assign_output(node_id);
+        } else {
             node_to_buffer[node_id] = num_intermediates++;
             buffer_numels.push_back(compute_nodes[i]->out_desc.numel);
-        } else {
-            node_to_buffer[node_id] = SIZE_MAX;
         }
     }
+    // 安全网：确保最后一个计算节点总是输出（forward 单输出情形）
+    assign_output(compute_nodes.back()->id);
 
     // 步骤 3a: Buffer 原地复用分析（与 MLIR 后端相同逻辑）
     std::unordered_map<size_t, size_t> node_buffer_reuse;
@@ -714,7 +723,11 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         auto buf_it = node_to_buffer.find(in_node_id);
         if (buf_it != node_to_buffer.end()) {
             if (buf_it->second == SIZE_MAX) {
-                return "output";
+                // 输出节点：读 output 平面 buffer 的对应段（output_index * elem_n）。
+                // 必须带段偏移，否则多输出时误读第 0 段。
+                auto oi = output_index.find(in_node_id);
+                size_t seg = (oi != output_index.end()) ? oi->second : 0;
+                return "(output + " + std::to_string(seg * elem_n) + ")";
             }
             return "tmp" + std::to_string(buf_it->second);
         }
@@ -722,14 +735,64 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         return "inputs[" + std::to_string(in_node_id) + "]";
     };
 
-    // 生成每个计算节点的代码
+    // [Fix 2026-08-11 反向图接线 E2E]: 提供统一的二元/一元操作数表达式生成。
+    // 背景：ReLU backward 的 Gt(x, 0) / Sigmoid backward 的 Div(1, denom) 里，
+    //       addConstant 生成的真常量（ConstNode，不在 graph.inputs()）被当作普通
+    //       buffer 指针引用会越界（标量 buffer 只有 1 元素却用 [i] 索引），
+    //       且 address 是字面量时 `(val)[i]` 语法非法。
+    // 方案：isTrueConst 识别真常量；nodeConstValue 取常量值；operandExpr 统一
+    //       生成操作数表达式——常量→字面量 / 标量 buffer→[0] / 全量→[i] /
+    //       尾维广播→[i % numel]。
+    auto isTrueConst = [&](size_t nid) -> bool {
+        for (const auto& gn : nodes) {
+            if (gn.id == nid && std::holds_alternative<ConstNode>(gn.op)) {
+                bool is_input = false;
+                for (size_t iid : inputs) { if (iid == nid) { is_input = true; break; } }
+                return !is_input; // 排除输入占位符（inputs_ 中的 ConstNode{0.0}）
+            }
+        }
+        return false;
+    };
+    auto nodeConstValue = [&](size_t nid) -> double {
+        for (const auto& gn : nodes) {
+            if (gn.id == nid && std::holds_alternative<ConstNode>(gn.op)) {
+                return std::get<ConstNode>(gn.op).value;
+            }
+        }
+        return 0.0;
+    };
+    // 生成合法的浮点字面量：整数常量（如 1、0）必须带小数点（1f 非法，1.0f 合法），
+    // 且对科学计数法（如 1e-07）保持原样不追加小数点。
+    auto floatLit = [](double v) -> std::string {
+        std::ostringstream os;
+        os << std::setprecision(9) << v;
+        std::string s = os.str();
+        if (s.find_first_of(".eE") == std::string::npos) s += ".0";
+        s += "f";
+        return s;
+    };
+    // 生成操作数表达式：ptr 是该输入节点的 in_ptrs 指针名，node_n 是当前输出 numel
+    auto operandExpr = [&](size_t nid, const std::string& ptr, int64_t node_n) -> std::string {
+        if (isTrueConst(nid)) return floatLit(nodeConstValue(nid));
+        int64_t on = 1;
+        for (const auto& gn : nodes) if (gn.id == nid) { on = (int64_t)gn.out_desc.numel; break; }
+        if (on == node_n) return ptr + "[i]";
+        if (on == 1) return ptr + "[0]";
+        if (on < node_n && node_n % on == 0) return ptr + "[i % " + std::to_string(on) + "]";
+        return ptr + "[i]";
+    };
+
+// 生成每个计算节点的代码
     for (size_t ci = 0; ci < compute_nodes.size(); ++ci) {
         const Node* node = compute_nodes[ci];
-        bool is_last = (ci == compute_nodes.size() - 1);
-        // 确定输出 buffer：优先使用原地复用的 buffer
+        // 确定输出 buffer：输出节点 → 写入 output 平面 buffer 对应段（output_index * elem_n）；
+        //   否则写中间 tmp buffer（优先原地复用）。
         std::string out_ptr;
-        if (is_last) {
-            out_ptr = "output";
+        auto oci = output_index.find(node->id);
+        if (oci != output_index.end()) {
+            // 输出节点：写 output 平面 buffer 的对应段（output_index * elem_n）。
+            // 用括号包裹成 (output + N)，后续拼接 [i] 生成合法语句 (output + N)[i]。
+            out_ptr = "(output + " + std::to_string(oci->second * elem_n) + ")";
         } else {
             auto reuse_it = node_buffer_reuse.find(node->id);
             if (reuse_it != node_buffer_reuse.end()) {
@@ -758,7 +821,21 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
             }
 
             // 辅助 lambda：生成输入访问表达式（支持广播）
+            // [Fix 2026-08-11 Tanh+ReLU backward chain]: addConstant 创建的 ConstNode
+            // (真实常量, 不在 graph.inputs()) 必须返回浮点字面量, 否则 inputPtrName
+            // fallback 到 inputs[N] 引用会导致读取越界 (1 元素 buffer 用 [i] 索引)。
             auto loadExpr = [&](size_t node_id, const std::string& idx_var) -> std::string {
+                for (const auto& gn : nodes) {
+                    if (gn.id == node_id && std::holds_alternative<ConstNode>(gn.op)) {
+                        bool is_input = false;
+                        for (size_t iid : inputs) {
+                            if (iid == node_id) { is_input = true; break; }
+                        }
+                        if (!is_input) {
+                            return floatLit(std::get<ConstNode>(gn.op).value);
+                        }
+                    }
+                }
                 auto it = arg_numels.find(node_id);
                 if (it != arg_numels.end() && it->second > 0 && (size_t)it->second < (size_t)node_n) {
                     // 需要广播：用 modulo 索引
@@ -882,43 +959,71 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         }
         // AddNode
         else if (std::holds_alternative<AddNode>(op)) {
-            int64_t bmod = getBroadcastMod(op);
             int64_t node_n = (int64_t)node->out_desc.numel;
-            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
+            std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
                << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] + " << in_ptrs[1] << rhs_idx << ";\n"
+               << "        " << out_ptr << "[i] = " << lhs_e << " + " << rhs_e << ";\n"
                << "    }\n";
         }
         // SubNode
         else if (std::holds_alternative<SubNode>(op)) {
-            int64_t bmod = getBroadcastMod(op);
             int64_t node_n = (int64_t)node->out_desc.numel;
-            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
+            std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
                << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] - " << in_ptrs[1] << rhs_idx << ";\n"
+               << "        " << out_ptr << "[i] = " << lhs_e << " - " << rhs_e << ";\n"
                << "    }\n";
         }
         // MulNode
         else if (std::holds_alternative<MulNode>(op)) {
-            int64_t bmod = getBroadcastMod(op);
             int64_t node_n = (int64_t)node->out_desc.numel;
-            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
+            std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
                << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] * " << in_ptrs[1] << rhs_idx << ";\n"
+               << "        " << out_ptr << "[i] = " << lhs_e << " * " << rhs_e << ";\n"
                << "    }\n";
         }
         // DivNode
         else if (std::holds_alternative<DivNode>(op)) {
-            int64_t bmod = getBroadcastMod(op);
             int64_t node_n = (int64_t)node->out_desc.numel;
-            std::string rhs_idx = (bmod > 0) ? ("[i % " + std::to_string(bmod) + "]") : "[i]";
+            std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
                << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
-               << "        if (" << in_ptrs[1] << rhs_idx << " == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
-               << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] / " << in_ptrs[1] << rhs_idx << ";\n"
+               << "        if (" << rhs_e << " == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
+               << "        " << out_ptr << "[i] = " << lhs_e << " / " << rhs_e << ";\n"
+               << "    }\n";
+        }
+        // GtNode — out = (lhs > rhs) ? 1.0f : 0.0f (ReLU backward mask)
+        else if (std::holds_alternative<GtNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = " << lhs_e << " > " << rhs_e << " ? 1.0f : 0.0f;\n"
+               << "    }\n";
+        }
+        // ExpNode — out = expf(x) (Sigmoid/Tanh backward)
+        else if (std::holds_alternative<ExpNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string in_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = expf(" << in_e << ");\n"
+               << "    }\n";
+        }
+        // LogNode — out = logf(x) (Log backward)
+        else if (std::holds_alternative<LogNode>(op)) {
+            int64_t node_n = (int64_t)node->out_desc.numel;
+            std::string in_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
+            ss << "    #pragma clang loop vectorize(enable)\n"
+               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "        " << out_ptr << "[i] = logf(" << in_e << ");\n"
                << "    }\n";
         }
         // SumReduceNode (DEBT-NEW-7 v0.5.1+: backward-only 节点,AddNode broadcast 反向)
@@ -1016,13 +1121,29 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
                << "        " << out_ptr << "[i] = (expf(x) - expf(-x)) / (expf(x) + expf(-x));\n"
                << "    }\n";
         }
+        // TransposeNode — 2D 转置:out[n*M + m] = in[m*N + n] (in 形状 [M,N] → out 形状 [N,M])
+        // [Fix 2026-08-11 5d follow-up]: in_ptrs[0] 经 external_input_map 解析成真实内核输入指针
+        // (grad_A 情形 = inputs[2] = B; grad_B 情形 = inputs[1] = A), 与 c3 内部 caller 传入的
+        // inputs=[grad, A, B] 顺序严格一致, 消除 5d 的 ext_map 错位 bug。
+        else if (std::holds_alternative<TransposeNode>(op)) {
+            const auto& tn = std::get<TransposeNode>(op);
+            if (tn.in_desc.shape.size() != 2) {
+                throw std::runtime_error(
+                    "HandwrittenKernelGen: TransposeNode only supports 2D input, got rank " +
+                    std::to_string(tn.in_desc.shape.size()));
+            }
+            int64_t M = (int64_t)tn.in_desc.shape[0];
+            int64_t N = (int64_t)tn.in_desc.shape[1];
+            ss << "    for (int64_t m = 0; m < " << M << "; ++m) {\n"
+               << "        for (int64_t n = 0; n < " << N << "; ++n) {\n"
+               << "            " << out_ptr << "[n * " << M << " + m] = "
+               << in_ptrs[0] << "[m * " << N << " + n];\n"
+               << "        }\n"
+               << "    }\n";
+        }
         // [Fix 2026-08-09 用户审查 P0]: 之前 L1020 '// unsupported op type {op.index()}'
         // 只写注释, 不生成代码 → 静默跳过, 跟 MLIRKernelGen #2 同源 bug。
         // 改: 显式 throw, 强制 fallback 走 eager 而非 c3 bw 路径。
-        // 注: 2026-08-09 临时实装过 TransposeNode handler, 但生成代码跟 c3 内部
-        //      forward_inputs 顺序耦合错位 (ext_map[2] 实际指向 inputs[1]),
-        //      c3 算的 grad 全 0 → 训练 nan → 5d 跨 session 留 follow-up。
-        //      这里 throw 让 c3 内部 catch 走 fallback, 不破坏训练。
         else {
             const std::string op_name = std::visit(
                 [](const auto& n) -> std::string { return typeid(n).name(); },
@@ -1128,6 +1249,16 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             }
         }
 
+        #ifdef CT_DEBUG
+        {
+            static std::ofstream dbgf("/tmp/c3_kernel_dump_" + cache_key.substr(0, 8) + ".c",
+                                      std::ios::out | std::ios::trunc);
+            dbgf << "// M=" << result.M << " K=" << result.K << " N=" << result.N
+                 << " num_inputs=" << result.num_inputs << " elem_n=" << result.elem_n << "\n";
+            dbgf << src;
+            dbgf.close();
+        }
+#endif
         // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
         auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
         auto func_ptr = _compile_result.first;

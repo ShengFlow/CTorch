@@ -356,12 +356,14 @@ public:
                          std::shared_ptr<CompiledKernel> kernel,
                          const std::vector<size_t>& grad_shape,
                          const std::vector<size_t>& out_shape,
+                         const std::vector<size_t>& fwd_input_map,
                          size_t num_inputs = 1) {
         std::lock_guard<std::mutex> lock(mutex_);
         BackwardEntry e;
         e.kernel = std::move(kernel);
         e.grad_shape = grad_shape;
         e.out_shape = out_shape;
+        e.fwd_input_map = fwd_input_map;
         e.num_inputs = num_inputs;
         e.active = true;
         backward_entries_[backward_key] = std::move(e);
@@ -474,6 +476,12 @@ private:
         std::shared_ptr<CompiledKernel> kernel;
         std::vector<size_t> grad_shape;
         std::vector<size_t> out_shape;
+        // [Fix 2026-08-11 DCE 输入平移] 图输入(grad 之后) → forward_inputs 的显式索引表。
+        // 因为 backward 图按「最小集 build」（只加实际用到的 forward 输入），
+        // 图输入顺序不一定等于 forward_inputs 顺序（如 MatMul grad_x 只需 [grad,B]，
+        // 但 B 是 forward_inputs[1]）。运行时必须按此表喂入，否则 DCE 剪枝后
+        // ext_map 索引平移会喂错张量（A 当 B）→ grad_x 数值爆炸。
+        std::vector<size_t> fwd_input_map;
         // DEBT-NEW-7 v0.5.1+: backward kernel graph 的 input 数量,决定 tryExecuteBackward
         // 传几个 tensor。ReLU/Sigmoid/Tanh:2(grad,x); Add/Sub:1(grad); Mul/MatMul/Div:3(grad,A,B)。
         // 缺这字段会导致 Add kernel 收到多余 input 报 BroadcastUtils 错。

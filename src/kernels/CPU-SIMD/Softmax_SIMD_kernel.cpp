@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <vector>
 #include <cstring>
+#include <memory>
 
 CT_HOT Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
     if (a.device() != DeviceType::kCPU) [[unlikely]] {
@@ -53,6 +54,9 @@ CT_HOT Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
     size_t axis_stride = inner;
 
     // 当 inner==1（即 contiguous 沿 axis）时，可以直接对 axis 维做向量化 exp
+    // [HPC 2026-08-11] 每行临时 buffer 用固定栈数组（axis_size<=256 时零 malloc），
+    // 仅大 axis 回退堆。消除 OMP parallel-for 循环内每行的堆分配。
+    static constexpr size_t kStackBufElems = 256;
     if (inner == 1) {
         // axis 维连续存储，每个 (outer) 行独立处理
         #pragma omp parallel for
@@ -67,9 +71,12 @@ CT_HOT Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
             }
 
             // 2. 先 shift by max，再 vexp（exp(x - max) 而非 exp(x) - max）
-            std::vector<float> tmp(axis_size);
+            float stack_buf[kStackBufElems];
+            float* tmp = stack_buf;
+            std::unique_ptr<float[]> heap_buf;
+            if (axis_size > kStackBufElems) { heap_buf = std::make_unique<float[]>(axis_size); tmp = heap_buf.get(); }
             for (size_t j = 0; j < axis_size; ++j) tmp[j] = row_in[j] - max_val;
-            ct::kernels::simd::vexp(tmp.data(), row_out, axis_size);
+            ct::kernels::simd::vexp(tmp, row_out, axis_size);
 
             // 3. sum row_out（horizontal reduction）
             float exp_sum = 0.0f;

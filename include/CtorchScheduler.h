@@ -139,7 +139,6 @@ class CtorchScheduler{
     /// 区域融合 trace：记录 dispatch 的 op 类型序列，用于 rolling hash 匹配
     std::vector<op> region_trace_;
     mutable std::mutex region_trace_mutex_;
-    std::vector<uint64_t> region_prefix_hashes_;  // 缓存的前缀哈希
 
     // ======================= 区域融合（Region Fusion） =======================
 
@@ -153,11 +152,28 @@ class CtorchScheduler{
     struct PrewalkEntry {
         op op_type;
         std::vector<Tensor> original_inputs;  // 原始输入（非占位符）
-        std::vector<size_t> output_shape;     // 输出形状
     };
 
     PrewalkState prewalk_state_ = PrewalkState::kIdle;
-    std::vector<PrewalkEntry> prewalk_cache_;
+    // [Dev 2026-08-11] prewalk_cache_ 固定容量环形缓冲：
+    //   - 消除 std::vector 每次 push_back 的 realloc + erase(begin()) 的 O(n) 前移
+    //   - prewalk_cache_head_ 指向最旧元素物理下标，prewalk_cache_count_ 为有效元素数
+    //   - 逻辑下标 0 = 最旧，prewalkAt(logical) = 物理下标
+    // [HPC 2026-08-11] kPrewalkCacheCapacity=8 是 2 的幂，取模改写为位与：
+    //   %8 → &7，消除整数除法（慢约 20-50 cycles），纯位运算无分支。
+    static constexpr size_t kPrewalkCacheCapacity = 8;
+    static constexpr size_t kPrewalkCacheMask   = kPrewalkCacheCapacity - 1;
+    static_assert((kPrewalkCacheCapacity & kPrewalkCacheMask) == 0,
+                  "kPrewalkCacheCapacity must be a power of two for & mask");
+    std::array<PrewalkEntry, kPrewalkCacheCapacity> prewalk_cache_;
+    size_t prewalk_cache_head_ = 0;
+    size_t prewalk_cache_count_ = 0;
+    PrewalkEntry& prewalkAt(size_t logical_idx) {
+        return prewalk_cache_[(prewalk_cache_head_ + logical_idx) & kPrewalkCacheMask];
+    }
+    const PrewalkEntry& prewalkAt(size_t logical_idx) const {
+        return prewalk_cache_[(prewalk_cache_head_ + logical_idx) & kPrewalkCacheMask];
+    }
     ct::c3::RegionEntry* matched_region_ = nullptr;
     size_t prewalk_pos_ = 0;  // 当前预走到的位置（在 region 的 op_seq 中）
 
@@ -169,12 +185,12 @@ class CtorchScheduler{
     /// @return 非空：区域融合结果（占位符/region 执行结果/回退结果）
     ///         nullopt：继续正常 eager dispatch
     std::optional<Tensor> tryRegionDispatch(op op_type,
-                                            const std::vector<Tensor>& inputs,
+                                            const Tensor* inputs, size_t num_inputs,
                                             DeviceType dev);
 
     /// 计算 op 的输出形状（用于预走占位符）
     std::vector<size_t> computeOutputShape(op op_type,
-                                           const std::vector<Tensor>& inputs) const;
+                                           const Tensor* inputs, size_t num_inputs) const;
 
     /// 为预走占位张量构造惰性物化器（LazyBox）
     /// @param cache 预走缓存（到目标 op 为止的前缀）
@@ -339,10 +355,10 @@ public:
         {
             std::lock_guard<std::mutex> lk(region_trace_mutex_);
             region_trace_.clear();
-            region_prefix_hashes_.clear();
         }
         prewalk_state_ = PrewalkState::kIdle;
-        prewalk_cache_.clear();
+        prewalk_cache_count_ = 0;
+        prewalk_cache_head_ = 0;
         matched_region_ = nullptr;
         prewalk_pos_ = 0;
         cached_region_ = nullptr;
@@ -355,7 +371,8 @@ public:
 #ifndef CT_DISABLE_C3
         // [区域融合] 快速路径：预走模式中跳过 dtype/shape 检查，直接调用 tryRegionDispatch
         if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()) {
-            auto region_result = tryRegionDispatch(OpType, {a, b}, getTargetDevice(a, b));
+            std::array<Tensor, 2> region_in = {a, b};
+            auto region_result = tryRegionDispatch(OpType, region_in.data(), region_in.size(), getTargetDevice(a, b));
             if (region_result.has_value()) {
                 return std::move(region_result.value());
             }
@@ -406,13 +423,13 @@ public:
         #ifndef CT_DISABLE_C3
         // [区域融合] 预走/匹配检查
         if (ct::c3::regionFusionEnabled()) {
-            std::vector<Tensor> region_inputs = {a, b};
+            std::array<Tensor, 2> region_inputs = {a, b};
 #ifdef C3_DISPATCH_TIMING
             t1 = std::chrono::high_resolution_clock::now();
             g_vec_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
             t0 = t1;
 #endif
-            auto region_result = tryRegionDispatch(OpType, region_inputs, target_dev);
+            auto region_result = tryRegionDispatch(OpType, region_inputs.data(), region_inputs.size(), target_dev);
 #ifdef C3_DISPATCH_TIMING
             t1 = std::chrono::high_resolution_clock::now();
             g_region_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
@@ -491,10 +508,15 @@ public:
         // 跟 install 时的 key 不一致 → 永远 miss 静默回退 eager (单 kernel 永远不命中)
         // 修法: 直接传 a.shape(), b.shape() 分开, 让 C3HotPathManager 内部
         // 用跟 tryExecute 一致的 hash 算法 (a, b 分开 hash 组合)
-        if (target_dev != DeviceType::kMPS) {
+        // [优化② 2026-08-11] autograd scope 调用点短路 recordCall:
+        //   recordCall 内部虽有 in_autograd 短路(跳过编译触发), 但仍会做 shape
+        //   vector 拼接 + rb_mutex_ 锁 + RingBuffer 写. 而 RingBuffer 只在
+        //   !in_autograd 的 should_compile 分支被 tryFuseRecentDispatches 消费,
+        //   autograd scope 写了也没人读 → 调用点直接短路, 省掉整段.
+        if (target_dev != DeviceType::kMPS && !in_autograd) {
             ct::c3::C3HotPathManager::instance().recordCall(
                 OpType, target_dev, a.shape(), b.shape(),
-                /*in_autograd=*/in_autograd);
+                /*in_autograd=*/false);
         }
 #endif
 
@@ -553,16 +575,15 @@ public:
             if (region_trace_.size() > 64) {
                 region_trace_.erase(region_trace_.begin());
             }
-            region_prefix_hashes_ = ct::c3::RollingHash::computePrefixHashes(region_trace_);
 
             // DEBT-NEW-7:同步更新 prewalk_cache_（region fusion match 用）,
             // 按 buildFusedGraph 约定只缓存每个 dispatch 的 external inputs:
             //   - MatMul: 2 external（区域入口）
             //   - 二元非 MatMul: 1 external（inputs[0] 是 chain）
             //   - 一元: 0 external（input 是 chain）
+            // [Dev 2026-08-11] 环形缓冲 push: 固定容量, 无 realloc / erase(begin()) 前移
             PrewalkEntry entry;
             entry.op_type = OpType;
-            entry.output_shape = computeOutputShape(OpType, {a, b});
             if constexpr (OpType == op::MatMul) {
                 entry.original_inputs = {a, b};
             } else if constexpr (OpType == op::Add || OpType == op::Sub ||
@@ -572,9 +593,11 @@ public:
             } else {
                 entry.original_inputs = {};
             }
-            prewalk_cache_.push_back(std::move(entry));
-            if (prewalk_cache_.size() > 8) {
-                prewalk_cache_.erase(prewalk_cache_.begin());
+            prewalkAt(prewalk_cache_count_) = std::move(entry);
+            if (prewalk_cache_count_ < kPrewalkCacheCapacity) {
+                ++prewalk_cache_count_;
+            } else {
+                prewalk_cache_head_ = (prewalk_cache_head_ + 1) & kPrewalkCacheMask;
             }
         }
 #endif
@@ -595,7 +618,7 @@ public:
 #ifndef CT_DISABLE_C3
         // [区域融合] 快速路径：预走模式中跳过检查，直接调用 tryRegionDispatch
         if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()) {
-            auto region_result = tryRegionDispatch(OpType, {a}, a.device());
+            auto region_result = tryRegionDispatch(OpType, &a, 1, a.device());
             if (region_result.has_value()) {
                 return std::move(region_result.value());
             }
@@ -607,8 +630,8 @@ public:
 #ifndef CT_DISABLE_C3
         // [区域融合] 预走/匹配检查
         if (ct::c3::regionFusionEnabled()) {
-            std::vector<Tensor> region_inputs = {a};
-            auto region_result = tryRegionDispatch(OpType, region_inputs, target_dev);
+            std::array<Tensor, 1> region_inputs = {a};
+            auto region_result = tryRegionDispatch(OpType, region_inputs.data(), region_inputs.size(), target_dev);
             if (region_result.has_value()) {
                 return std::move(region_result.value());
             }
@@ -659,9 +682,11 @@ public:
 
 #ifndef CT_DISABLE_C3
         // 记录热路径
-        if (target_dev != DeviceType::kMPS) {
+        // [优化② 2026-08-11] 同 binary: autograd scope 调用点短路, 省 shape vector
+        // 拼接 + rb_mutex_ 锁 + RingBuffer 写 (RingBuffer 仅 !in_autograd 时被消费)
+        if (target_dev != DeviceType::kMPS && !in_autograd_u) {
             ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, a.shape(), {},
-                /*in_autograd=*/in_autograd_u);
+                /*in_autograd=*/false);
         }
 #endif
 
@@ -699,16 +724,17 @@ public:
             if (region_trace_.size() > 64) {
                 region_trace_.erase(region_trace_.begin());
             }
-            region_prefix_hashes_ = ct::c3::RollingHash::computePrefixHashes(region_trace_);
 
             // DEBT-NEW-7:同步更新 prewalk_cache_。一元 op 的 input 是 chain,无 external
+            // [Dev 2026-08-11] 环形缓冲 push
             PrewalkEntry entry;
             entry.op_type = OpType;
-            entry.output_shape = computeOutputShape(OpType, {a});
             entry.original_inputs = {};  // 一元 op:无 external input
-            prewalk_cache_.push_back(std::move(entry));
-            if (prewalk_cache_.size() > 8) {
-                prewalk_cache_.erase(prewalk_cache_.begin());
+            prewalkAt(prewalk_cache_count_) = std::move(entry);
+            if (prewalk_cache_count_ < kPrewalkCacheCapacity) {
+                ++prewalk_cache_count_;
+            } else {
+                prewalk_cache_head_ = (prewalk_cache_head_ + 1) & kPrewalkCacheMask;
             }
         }
 #endif
