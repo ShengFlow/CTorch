@@ -508,15 +508,19 @@ public:
         // 跟 install 时的 key 不一致 → 永远 miss 静默回退 eager (单 kernel 永远不命中)
         // 修法: 直接传 a.shape(), b.shape() 分开, 让 C3HotPathManager 内部
         // 用跟 tryExecute 一致的 hash 算法 (a, b 分开 hash 组合)
-        // [优化② 2026-08-11] autograd scope 调用点短路 recordCall:
-        //   recordCall 内部虽有 in_autograd 短路(跳过编译触发), 但仍会做 shape
-        //   vector 拼接 + rb_mutex_ 锁 + RingBuffer 写. 而 RingBuffer 只在
-        //   !in_autograd 的 should_compile 分支被 tryFuseRecentDispatches 消费,
-        //   autograd scope 写了也没人读 → 调用点直接短路, 省掉整段.
-        if (target_dev != DeviceType::kMPS && !in_autograd) {
+        // [Dev 2026-08-12 inAutogradScope 解短路 (修法 C-0 配套)]
+        //   原 [优化② 2026-08-11] 短路: !in_autograd 条件让训练期根本不调 recordCall,
+        //   RingBuffer 永远空, tryFuseRecentDispatches 找不到 MatMul+Add+ReLU 模式,
+        //   region fusion 训练期零命中 (fusion_compile=0).
+        //   修法: 去掉 !in_autograd 短路, 让 forward 也调 recordCall. recordCall 内部
+        //   保留 in_autograd 短路 (单 kernel 编译 ROI 低), 但 tryFuseRecentDispatches
+        //   在 return 前被调 (修法 C-0), 消费 RingBuffer 检测 [MatMul, Add, ReLU] 模式.
+        //   开销: shape 拼接 + rb_mutex_ 锁 + RingBuffer 写, 53848 dispatch/epoch 约 200ms,
+        //   但换来 region fusion ROI (gain=0.8) 训练期命中, 净收益远大于开销.
+        if (target_dev != DeviceType::kMPS) {
             ct::c3::C3HotPathManager::instance().recordCall(
                 OpType, target_dev, a.shape(), b.shape(),
-                /*in_autograd=*/false);
+                in_autograd);  // 透传 in_autograd 给 recordCall 内部决策
         }
 #endif
 
@@ -682,11 +686,12 @@ public:
 
 #ifndef CT_DISABLE_C3
         // 记录热路径
-        // [优化② 2026-08-11] 同 binary: autograd scope 调用点短路, 省 shape vector
-        // 拼接 + rb_mutex_ 锁 + RingBuffer 写 (RingBuffer 仅 !in_autograd 时被消费)
-        if (target_dev != DeviceType::kMPS && !in_autograd_u) {
+        // [Dev 2026-08-12 inAutogradScope 解短路 (修法 C-0 配套)] 同 binary
+        //   去掉 !in_autograd_u 短路, forward 也调 recordCall. RingBuffer 有了内容,
+        //   tryFuseRecentDispatches 才能检测 [MatMul, Add, ReLU] 模式.
+        if (target_dev != DeviceType::kMPS) {
             ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, a.shape(), {},
-                /*in_autograd=*/false);
+                in_autograd_u);
         }
 #endif
 

@@ -141,10 +141,19 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
 #ifndef CT_DISABLE_C3
     bool prev_in_backward = ct::detail::g_in_backward();
     ct::detail::set_in_backward(true);
+    // [Dev 2026-08-12 修法 C-0.5 配套] 同步设置 ct::c3 内部 thread_local 标志,
+    //   C3HotPathManager.h 在 C3 内部用 in_backward() 检测 forward/backward,
+    //   不能直接 include CtorchScheduler.h (循环 include).
+    bool prev_in_backward_local = ct::c3::in_backward();
+    ct::c3::set_in_backward_local(true);
     struct FlagGuard {
         bool prev;
-        ~FlagGuard() { ct::detail::set_in_backward(prev); }
-    } guard{prev_in_backward};
+        bool prev_local;
+        ~FlagGuard() {
+            ct::detail::set_in_backward(prev);
+            ct::c3::set_in_backward_local(prev_local);
+        }
+    } guard{prev_in_backward, prev_in_backward_local};
 #endif
 
     bool original_enable_grad = AutoGrad::EnableGrad;
