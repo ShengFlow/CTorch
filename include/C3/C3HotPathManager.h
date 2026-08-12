@@ -34,21 +34,6 @@
 #include "C3/RegionFusion.h"
 #include "C3/C3Config.h"
 
-// [Dev 2026-08-12 修法 C-0.5] 用独立 thread_local 标志, 避免跟 CtorchScheduler.h 循环 include
-// CtorchScheduler.h 自身 include C3HotPathManager.h (line 25), 不能反向 include.
-// 复刻 g_in_backward 的 thread_local 标志 — 跟 ComputeCore::backward 的 set_in_backward(true/false)
-// 配套 (两个变量都 thread_local 静态, 不会冲突). 注意: 这里只读, set 在 CtorchScheduler.h 那侧.
-namespace ct { namespace c3 {
-namespace {
-inline bool& _local_in_backward_flag() {
-    static thread_local bool v = false;
-    return v;
-}
-inline bool in_backward() { return _local_in_backward_flag(); }
-inline void set_in_backward_local(bool v) { _local_in_backward_flag() = v; }
-}
-}}
-
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -224,12 +209,7 @@ public:
         shape.insert(shape.end(), rhs_shape.begin(), rhs_shape.end());
 
         // 记录到 RingBuffer，用于融合检测
-        // [Dev 2026-08-12 修法 C-0.5] RingBuffer 只装 forward 流, 不装 backward 流.
-        //   训练期 forward+backward 都触发 dispatch, RingBuffer 是混合流时末尾 3 个
-        //   dispatch 落在 backward 段 (e.g., [CE, Add, MatMul] 倒序) 永远不匹配
-        //   [MatMul, Add, ReLU] 模式. 用 g_in_backward() 区分, 仅 forward 写.
-        //   配套 tryFuseRecentDispatches 也只在 forward 调 (见下).
-        if (!in_backward()) {
+        {
             std::lock_guard<std::mutex> lk(rb_mutex_);
             DispatchRecord rec{op_type, shape, lhs_shape, rhs_shape,
                                std::chrono::steady_clock::now()};
@@ -239,27 +219,12 @@ public:
             }
         }
 
-        // [Dev 2026-08-12 inAutogradScope 修复 region fusion 训练期零命中 (修法 C-0)]
-        //   原 2026-08-09 短路: 训练态直接 return, 单 kernel 编译触发 + tryFuseRecentDispatches
-        //   都被跳过. 根因链: tryFuseRecentDispatches 在 if (should_compile) 块被调 →
-        //   should_compile 在 in_autograd return 之后才判断 → 训练态 should_compile 永 false
-        //   → tryFuseRecentDispatches 永不被调 → region 永不 install → tryRegionDispatch
-        //   训练期 fused_hit=0 (实测 fusion_miss=4680 但 fusion_hit=0).
-        //   修复: 在 return 之前调 tryFuseRecentDispatches, region fusion 是整图编译
-        //   (不引入 Eager→JIT 混合轨迹, 跟单 kernel 注入是两个问题). 保留单 kernel 短路
-        //   (单 kernel ROI 训练态低, region ROI 训练态高: [MatMul, Add, ReLU] gain_ratio=0.8).
-        //   实测预期: 5 epoch × 469 batch 触发 ~3 region compile, fused_hit 跟 miss 持平,
-        //   region kernel (Handwritten cblas_sgemm + fused epilogue) 替代 Eager MatMul/Add/ReLU.
+        // [Dev 2026-08-09 inAutogradScope 短路] 训练态跳过单 kernel 编译触发
+        //   训练 (autograd scope) 时单 kernel 编译 ROI 极低: kernel 编译完可能下一 epoch
+        //   shape 就变了/反向走完一次就丢. 仍保留 RingBuffer 写入 (tryFuseRecentDispatches
+        //   region fusion 检测需要历史 trace).
+        //   实测 53848 dispatch/epoch × mutex_ 锁 + entries_[key] hash ≈ ~200ms/epoch 浪费.
         if (in_autograd) {
-            // 提早 getConfig (原代码在 in_autograd return 后才 getConfig, 这里要在 return 前
-            // 调 tryFuseRecentDispatches 需要 cfg 参数). cfg 不可构造/不可拷贝, 需 getConfig 返回值
-            // [Dev 2026-08-12 修法 C-0.5] 仅 forward (g_in_backward=false) 调 tryFuseRecentDispatches.
-            //   backward 阶段 RingBuffer 也不写 (上面 g_in_backward() 短路), 调也没意义.
-            if (!in_backward()) {
-                HotPathConfig cfg_autograd = getConfig();
-                fprintf(stderr, "[DBG-IN-AUTOGRAD-FORCE] op=%d\n", (int)op_type);
-                tryFuseRecentDispatches(dev, cfg_autograd);
-            }
             return;
         }
 
@@ -552,72 +517,71 @@ private:
     /// 尝试融合最近的 dispatch 序列，检测多算子模式
     void tryFuseRecentDispatches(DeviceType dev, const HotPathConfig& cfg) {
         std::lock_guard<std::mutex> lk(rb_mutex_);
-        fprintf(stderr, "[DBG-TRYFUSE-FORCE] called rb_size=%zu in_back=%d\n",
-                recent_dispatches_.size(), (int)in_backward());
-        // 详细打印 RingBuffer 全部内容
-        fprintf(stderr, "[DBG-RB-CONTENT] ");
-        for (size_t i = 0; i < recent_dispatches_.size(); ++i) {
-            fprintf(stderr, "%d,", (int)recent_dispatches_[i].op_type);
-        }
-        fprintf(stderr, "\n");
         if (recent_dispatches_.size() < 3) return; // 至少需要 3 个 dispatch
 
         // 检查最近的序列是否匹配已知融合模式
         // 模式1: MatMul + Add + Sigmoid (FCWithActivation)
         // 模式2: MatMul + Add + ReLU (FCWithReLU)
         auto checkPattern = [&](const std::deque<DispatchRecord>& seq) -> bool {
-            fprintf(stderr, "[DBG-TRYFUSE-FORCE] checkPattern seq_size=%zu last3: op=%d/%d/%d\n",
-                    seq.size(),
-                    seq.size() >= 1 ? (int)seq[seq.size()-1].op_type : -1,
-                    seq.size() >= 2 ? (int)seq[seq.size()-2].op_type : -1,
-                    seq.size() >= 3 ? (int)seq[seq.size()-3].op_type : -1);
             if (seq.size() < 3) return false;
 
-            // 倒序扫描 (从最新到最旧), 找最近一个 [MM, Add, Activation] 模式
-            // [Dev 2026-08-12 修法 C-0.6] 不只查末尾 3 个, 训练期 forward 末 3 个是
-            //   [MM, Add, CE] 不匹配, 实际模式在 RingBuffer 中段 (forward 流前几层).
-            for (size_t i = seq.size(); i >= 3; --i) {
-                size_t a = i - 3, b = i - 2, c = i - 1;
-                const auto& r0 = seq[a];
-                const auto& r1 = seq[b];
-                const auto& r2 = seq[c];
+            const auto& last3_0 = seq[seq.size() - 3];
+            const auto& last3_1 = seq[seq.size() - 2];
+            const auto& last3_2 = seq[seq.size() - 1];
 
-                if (r0.op_type != op::MatMul || r1.op_type != op::Add) continue;
-                if (r0.shape.size() < 4 || r1.shape.size() < 2) continue;
-                size_t M = r0.shape[0];
-                size_t N = r0.shape[3];
-                if (r1.shape[0] != M || r1.shape[1] != N) continue;
-
-                if (r2.op_type == op::Sigmoid && r2.shape.size() >= 2 &&
-                    r2.shape[0] == M && r2.shape[1] == N) {
-                    submitFusedCompileAsync({r0, r1, r2}, dev, cfg, "MatMul+Add+Sigmoid");
-                    return true;
-                }
-                if (r2.op_type == op::ReLU && r2.shape.size() >= 2 &&
-                    r2.shape[0] == M && r2.shape[1] == N) {
-                    submitFusedCompileAsync({r0, r1, r2}, dev, cfg, "MatMul+Add+ReLU");
-                    return true;
+            // MatMul + Add + Sigmoid 模式
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Add &&
+                last3_2.op_type == op::Sigmoid) {
+                // 检查 shape 兼容性: MatMul 输出 (M,N) == Add 输入 == Sigmoid 输入
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 2 && last3_2.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        // 提交融合编译
+                        submitFusedCompileAsync({last3_0, last3_1, last3_2}, dev, cfg, "MatMul+Add+Sigmoid");
+                        return true;
+                    }
                 }
             }
 
-            // MatMul + Sigmoid 模式 (无 bias) — 倒序扫整个 RingBuffer
-            // [Dev 2026-08-12 修法 C-0.6] 跟 [MM, Add, Act] 一样, 倒序找最近一个匹配
-            for (size_t i = seq.size(); i >= 2; --i) {
-                size_t a = i - 2, b = i - 1;
-                const auto& r0 = seq[a];
-                const auto& r1 = seq[b];
-                if (r0.op_type != op::MatMul) continue;
-                if (r0.shape.size() < 4 || r1.shape.size() < 2) continue;
-                size_t M = r0.shape[0];
-                size_t N = r0.shape[3];
-                if (r1.shape[0] != M || r1.shape[1] != N) continue;
-                if (r1.op_type == op::Sigmoid) {
-                    submitFusedCompileAsync({r0, r1}, dev, cfg, "MatMul+Sigmoid");
-                    return true;
+            // MatMul + Add + ReLU 模式
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Add &&
+                last3_2.op_type == op::ReLU) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 2 && last3_2.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1, last3_2}, dev, cfg, "MatMul+Add+ReLU");
+                        return true;
+                    }
                 }
-                if (r1.op_type == op::ReLU) {
-                    submitFusedCompileAsync({r0, r1}, dev, cfg, "MatMul+ReLU");
-                    return true;
+            }
+
+            // MatMul + Sigmoid 模式 (无 bias)
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::Sigmoid) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+Sigmoid");
+                        return true;
+                    }
+                }
+            }
+
+            // MatMul + ReLU 模式 (无 bias)
+            if (last3_0.op_type == op::MatMul &&
+                last3_1.op_type == op::ReLU) {
+                if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
+                    size_t M = last3_0.shape[0];
+                    size_t N = last3_0.shape[3];
+                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                        submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+ReLU");
+                        return true;
+                    }
                 }
             }
 
