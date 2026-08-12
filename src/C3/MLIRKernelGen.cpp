@@ -1872,16 +1872,12 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
     mlir::registerLLVMDialectTranslation(*context);
 
     // 创建 TargetMachine 以启用 LLVM 自动向量化（NEON/SIMD）
-    // [Fix 2026-08-12] 添加 opt level 和 CPU native 探测
-    std::string triple = llvm::getDefaultTargetTriple();
-    auto engineBuilder = llvm::EngineBuilder()
-        .setEngineKind(llvm::EngineKind::JIT)
-        .setTargetTriple(triple);
-    
-    // 设置优化级别（LLVM 22.x 使用 unsigned）
-    engineBuilder.setOptLevel(static_cast<unsigned>(opt_level));
-    
-    auto tm = std::shared_ptr<llvm::TargetMachine>(engineBuilder.selectTarget());
+    // [Fix 2026-08-12] 添加 opt level pour correspondre au Pass Manager
+    auto tm = std::shared_ptr<llvm::TargetMachine>(
+        llvm::EngineBuilder()
+            .setEngineKind(llvm::EngineKind::JIT)
+            .setOptLevel(static_cast<llvm::CodeGenOptLevel>(opt_level))
+            .selectTarget());
 
     // 【dispatch 优化 2026-08-12】重新启用 LLVM 优化 transformer。
     // 此前 DEBT-NEW-5 实验置空（隔离 MLIR vs LLVM 数值差异来源），导致 MLIR 生成的
