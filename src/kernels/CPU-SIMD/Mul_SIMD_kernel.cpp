@@ -55,7 +55,22 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
 
-#ifdef __aarch64__
+#ifdef __x86_64__
+        size_t i = 0;
+#ifdef __AVX2__
+        // AVX2 路径：8-wide 向量乘法
+        for (; i + 7 < elem_count; i += 8) {
+            __m256 a_vec = _mm256_loadu_ps(&a_data[i]);
+            __m256 b_vec = _mm256_loadu_ps(&b_data[i]);
+            _mm256_storeu_ps(&result_data[i], _mm256_mul_ps(a_vec, b_vec));
+        }
+        for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
+#else
+        // 无 AVX2 时退化为标量循环
+        for (size_t i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
+#endif
+#elif defined(__aarch64__)
+        // ARM NEON 路径：4-wide 向量乘法
         size_t i = 0;
         for (; i + 3 < elem_count; i += 4) {
             float32x4_t a_vec = vld1q_f32(&a_data[i]);
@@ -64,6 +79,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         }
         for (; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
 #else
+        // 其他架构退化为标量循环
         for (size_t i = 0; i < elem_count; ++i) result_data[i] = a_data[i] * b_data[i];
 #endif
         return result;

@@ -9,6 +9,7 @@
 #include "Arena.h"
 #include "AutoGrad/Nodes/AddNode.h"
 #include "../../../kernels/kernels.h"
+#include "C3/C3Cleanup.h"
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -468,5 +469,9 @@ int main() {
     }
 
     std::cout << "\n通过: " << g_passed << " / 失败: " << g_failed << std::endl;
+    
+    // 优雅清理 C3，避免静态析构期的 recursive_mutex lock failed
+    ct::c3::shutdownAll();
+    
     return g_failed == 0 ? 0 : 1;
 }

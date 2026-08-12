@@ -9,6 +9,7 @@
 #include "Tensor.h"
 #include "CtorchError.h"
 #include "CtorchScheduler.h"
+#include "C3/C3Cleanup.h"
 #include <iostream>
 #include <cmath>
 #include <vector>
@@ -541,6 +542,9 @@ int main() {
 
     std::cout << "\n====================================" << std::endl;
     std::cout << "设备通过: " << device_passed << "/" << device_total << std::endl;
+
+    // 优雅清理 C3，避免静态析构期的 recursive_mutex lock failed
+    ct::c3::shutdownAll();
 
     if (device_passed == device_total) {
         std::cout << "🎉 所有可用后端广播梯度回归测试通过!" << std::endl;

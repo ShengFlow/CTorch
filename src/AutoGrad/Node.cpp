@@ -38,15 +38,19 @@ void Node::setCount(const size_t count) { _count = count; }
 
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
            const std::vector<Tensor> &inputs)
-               :_upStreamNodes(upStreamNodes),_inputs(inputs) {}
+               :_upStreamNodes(upStreamNodes),_inputs(inputs), _dependencies(upStreamNodes.size()) {
+    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队
+}
 
 Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs)
-               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)) {}
+               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)), _dependencies(upStreamNodes.size()) {
+    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队
+}
 
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
            const std::weak_ptr<Tensor> &result)
-               :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result)
+               :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result), _dependencies(upStreamNodes.size())
 {
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
@@ -56,7 +60,7 @@ Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::v
 Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs,
            const std::weak_ptr<Tensor>& result)
-               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),_result(result)
+               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),_result(result), _dependencies(upStreamNodes.size())
 {
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
@@ -64,8 +68,9 @@ Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
 }
 
 Node::Node(const std::weak_ptr<Tensor> &result)
-    :_upStreamNodes(std::vector<std::shared_ptr<Node>>()),_inputs(std::vector<Tensor>()),_result(result)
+    :_upStreamNodes(std::vector<std::shared_ptr<Node>>()),_inputs(std::vector<Tensor>()),_result(result), _dependencies(0)
 {
+    // Leaf 节点：无上游节点，依赖计数为 0，由注册时 increase() 设置
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
     }

@@ -22,7 +22,7 @@
 #ifdef CT_DEBUG
   #define CT_ASSERT(cond, ...) CT_INTERNAL_RUN_WHEN_FALSE(cond, ::ct::details::assertion_failed(__FILE__, __LINE__, CT_FUNC_NAME, __VA_ARGS__))
 #else
-  #define CT_ASSERT(cond ...) ((void) 0)
+  #define CT_ASSERT(cond, ...) ((void) 0)
 #endif
 
 /**
