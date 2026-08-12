@@ -1818,9 +1818,12 @@ static void runPass(mlir::ModuleOp module, std::unique_ptr<mlir::Pass> pass, con
 
 // [Dev] v0.5.2 DCU 接入 refactor (2026-08-10):
 // applyLoweringPipeline 从 file-static 改成公开 API
+// [线A 2026-08-12] 加 StripDebugInfo (开头) + SymbolDCE (canonicalize 后), 边际 1-2% + 跟 canonicalize 配对 DCE
 void applyLoweringPipeline(mlir::ModuleOp module) {
+    runPass(module, mlir::createStripDebugInfoPass(), "StripDebugInfo");
     runPass(module, mlir::createCanonicalizerPass(), "Canonicalizer");
     runPass(module, mlir::createCSEPass(), "CSE");
+    runPass(module, mlir::createSymbolDCEPass(), "SymbolDCE");
     runPass(module, mlir::createLoopInvariantCodeMotionPass(), "LICM");
     runPass(module, mlir::createSCFToControlFlowPass(), "SCFToCF");
 
