@@ -21,7 +21,7 @@ CT_HOT Tensor Neg_BASIC_kernel(const Tensor& a) {
     const float* CT_RESTRICT a_data = a.data_read<float>();
 
     // 创建结果Tensor
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     float* CT_RESTRICT result_data = result.data_write<float>();
 
     //  朴素逐元素加法

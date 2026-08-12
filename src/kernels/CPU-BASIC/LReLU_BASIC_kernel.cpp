@@ -17,7 +17,7 @@ CT_HOT Tensor LReLU_BASIC_kernel(const Tensor& a) {
     }
 
     constexpr float negative_slope = 0.01f;
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     size_t count = a.numel();
     const float* CT_RESTRICT a_data = a.data_read<float>();
     float* CT_RESTRICT result_data = result.data_write<float>();

@@ -17,7 +17,7 @@ CT_HOT Tensor Min_BASIC_kernel(const Tensor& a, const Tensor& b) {
         CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "CPU-BASIC Min_Kernel: Tensor形状不一致");
     }
 
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     const float* CT_RESTRICT a_data = a.data_read<float>();
     const float* CT_RESTRICT b_data = b.data_read<float>();
     float* CT_RESTRICT result_data = result.data_write<float>();

@@ -33,7 +33,7 @@ Tensor Sigmoid_SIMD_kernel(const Tensor& a) {
                           "CPU-SIMD Sigmoid_Kernel: 仅在CPU支持");
     }
 
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
 
     size_t count = a.numel();
     const float* a_data = a.data_read<float>();

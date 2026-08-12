@@ -52,7 +52,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         const float* CT_RESTRICT a_data = a.data_read<float>();
         const float* CT_RESTRICT b_data = b.data_read<float>();
         
-        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __aarch64__
@@ -75,7 +75,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         float b_val = b.data_read<float>()[0];
         const float* CT_RESTRICT a_data = a.data_read<float>();
         
-        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
         
 #ifdef __aarch64__
@@ -97,7 +97,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         float a_val = a.data_read<float>()[0];
         const float* CT_RESTRICT b_data = b.data_read<float>();
         
-        Tensor result(ShapeTag{}, b.sizes(), b.dtype(), b.device());
+        Tensor result(ShapeTag{}, b.sizes(), b.dtype(), b.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
         
 #ifdef __aarch64__
@@ -139,7 +139,7 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
     computeBroadcastStrides(a.sizes(), broadcast_shape, a_strides);
     computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
     
-    Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
+    Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device(), false);
     float* CT_RESTRICT result_data = result.data_write<float>();
     const float* CT_RESTRICT a_data = a.data_read<float>();
     const float* CT_RESTRICT b_data = b.data_read<float>();

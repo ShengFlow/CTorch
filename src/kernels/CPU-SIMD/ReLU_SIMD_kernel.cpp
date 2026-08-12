@@ -24,7 +24,7 @@ Tensor ReLU_SIMD_kernel(const Tensor& a) {
     }
 
     // 实现ReLU激活函数: max(x, 0)
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
 
     size_t count = a.numel();
     const float* a_data = a.data_read<float>();

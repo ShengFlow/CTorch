@@ -647,10 +647,8 @@ class Tensor {
         if (_storage.empty()) {
             return nullptr;
         }
-        if (!check_storage_offset()) {
-            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
-                                         "张量存储偏移量无效");
-        }
+        // storage_offset 合法性与溢出已在 view 构造期（operator[]）校验，
+        // 此处热路径不再重复检查，减少每次访问的固定开销。
 #ifdef __APPLE__
         // MPS 路径异步执行；通过 data_read() 暴露主机指针前必须确保 GPU 写入已完成，
         // 否则调用者可能读到未初始化的值（如 0）。
@@ -674,10 +672,7 @@ class Tensor {
         if (_storage.empty()) {
             return nullptr;
         }
-        if (!check_storage_offset()) {
-            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
-                                         "张量存储偏移量无效");
-        }
+        // storage_offset 已在 view 构造期校验，此处热路径不再重复检查。
         T* ptr = _storage.data<T>() + _storage_offset;
 #ifdef __APPLE__
         // MPS 路径下 host 写入 shared buffer 后需通知 Metal，使后续 GPU kernel 能看到更新。
@@ -714,10 +709,6 @@ class Tensor {
     template <typename T> [[nodiscard]] T *data() {
         if (_storage.empty()) {
             return nullptr;
-        }
-        if (!check_storage_offset()) {
-            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
-                                         "张量存储偏移量无效");
         }
 #ifdef __APPLE__
         // 保持兼容：非 const data() 仍先同步再返回指针，避免迁移期间读到旧值。

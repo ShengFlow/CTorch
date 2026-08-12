@@ -116,6 +116,59 @@ static void buildLoop(mlir::OpBuilder& builder, mlir::Location loc,
     }
 }
 
+/// 显式向量化逐元素二元运算（无广播场景）[线A 2026-08-12]
+/// 主段: 每 VL 个元素用一个 vector load/arith/store，显式向量化消除对 LLVM
+///       LoopVectorize"事后猜"的依赖（广播/融合形状 LLVM 常猜错），逼近手写 SIMD。
+/// 尾部: 剩余 <VL 个元素退回标量循环。
+/// 用 LLVM 层的 vector 类型（VectorType）+ arith 向量算术，贴合现有 LLVM 指针骨架，
+/// 无需引入 memref/vector dialect 的 buffer 心智，侵入最小。
+template <typename ArithOp>
+static void buildElementwiseBinaryVectorized(mlir::OpBuilder& builder, mlir::Location loc,
+                                             mlir::Value a, mlir::Value b, mlir::Value out,
+                                             mlir::Value n) {
+    constexpr int64_t VL = 8;  // 256-bit (AVX2/NEON 双入队)，LLVM 可自行拆分
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+    auto f32 = builder.getF32Type();
+    auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+    mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+    mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+    mlir::Value n_idx = i64ToIndex(builder, loc, n);
+    // n_vec = n - (n % VL)
+    mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+    mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+    // === 主 vector 段: for base in [0, n_vec) step VL ===
+    auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+    builder.setInsertionPointToStart(vloop.getBody());
+    mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+
+    mlir::Value a_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, a, mlir::ValueRange{base});
+    mlir::Value b_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, b, mlir::ValueRange{base});
+    mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+
+    mlir::Value av = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, a_ptr);
+    mlir::Value bv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, b_ptr);
+    mlir::Value rv = builder.create<ArithOp>(loc, av, bv);
+    builder.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
+    builder.setInsertionPointAfter(vloop);
+
+    // === 尾部标量段: for i in [n_vec, n) step 1 ===
+    auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+    builder.setInsertionPointToStart(tloop.getBody());
+    mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+    mlir::Value a_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, a, mlir::ValueRange{idx});
+    mlir::Value b_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, b, mlir::ValueRange{idx});
+    mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+    mlir::Value av_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, a_ptr_t);
+    mlir::Value bv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, b_ptr_t);
+    mlir::Value rv_t = builder.create<ArithOp>(loc, av_t, bv_t);
+    builder.create<mlir::LLVM::StoreOp>(loc, rv_t, out_ptr_t);
+    builder.setInsertionPointAfter(tloop);
+}
+
 // ======================= Kernel 构建（LLVM 指针版本） =======================
 
 template <typename ArithOp>
@@ -128,6 +181,19 @@ static void buildElementwiseBinary(mlir::OpBuilder& builder, mlir::Location loc,
 
     // 广播场景下不能展开（idx 可能被取模）
     int64_t effective_known = (rhs_broadcast_mod > 0) ? 0 : known_numel;
+
+    // [线A 显式向量化 2026-08-12] 无广播 时显式生成 vector 主段 + 标量尾部，
+    // 消除对 LLVM LoopVectorize"事后猜"的依赖。known_numel 在真实调用中基本为 0
+    // （n 运行时才知道），故以「无广播」为主要触发；已知小张量（<=16）仍走 buildLoop
+    // 展开，避免向量化间接层开销。逃生开关 C3_MLIR_NO_VECTORIZE=1 走旧标量路径。
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize
+        && rhs_broadcast_mod == 0
+        && !(known_numel > 0 && known_numel <= 16);
+    if (can_vectorize) {
+        buildElementwiseBinaryVectorized<ArithOp>(builder, loc, a, b, out, n);
+        return;
+    }
 
     buildLoop(builder, loc, n, effective_known,
         [&](mlir::OpBuilder& bld, mlir::Location loc, mlir::Value idx_i64) {
@@ -756,14 +822,55 @@ static void buildBiasPrefill(mlir::OpBuilder& builder, mlir::Location loc,
 static void buildNegate(mlir::OpBuilder& builder, mlir::Location loc,
                         mlir::Value in, mlir::Value out, mlir::Value n,
                         int64_t known_numel = 0) {
+    // [线A 显式向量化 2026-08-12, 续] Negate: out = -iv, 跟 buildReLU 一个套路
+    // (VL=8 主段 + 标量尾部, NegFOp, 已知 numel<=16 走旧 buildLoop).
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize && !(known_numel > 0 && known_numel <= 16);
+    if (can_vectorize) {
+        constexpr int64_t VL = 8;
+        auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+        auto f32 = builder.getF32Type();
+        auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+        mlir::Value n_idx = i64ToIndex(builder, loc, n);
+        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+        // === 主 vector 段 ===
+        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+        builder.setInsertionPointToStart(vloop.getBody());
+        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+        mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+        mlir::Value iv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+        mlir::Value rv = builder.create<mlir::arith::NegFOp>(loc, iv);
+        builder.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
+        builder.setInsertionPointAfter(vloop);
+
+        // === 尾部标量段 ===
+        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+        builder.setInsertionPointToStart(tloop.getBody());
+        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+        mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+        mlir::Value iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
+        mlir::Value rv_t = builder.create<mlir::arith::NegFOp>(loc, iv_t);
+        builder.create<mlir::LLVM::StoreOp>(loc, rv_t, out_ptr_t);
+        builder.setInsertionPointAfter(tloop);
+        return;
+    }
+
+    // 小张量走 buildLoop 标量 (跟旧逻辑一致)
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
-
     buildLoop(builder, loc, n, known_numel,
         [&](mlir::OpBuilder& b, mlir::Location loc, mlir::Value idx_i64) {
             mlir::Value in_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
             mlir::Value out_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
-
             mlir::Value iv = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
             mlir::Value rv = b.create<mlir::arith::NegFOp>(loc, iv);
             b.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
@@ -773,14 +880,61 @@ static void buildNegate(mlir::OpBuilder& builder, mlir::Location loc,
 static void buildReLU(mlir::OpBuilder& builder, mlir::Location loc,
                       mlir::Value in, mlir::Value out, mlir::Value n,
                       int64_t known_numel = 0) {
+    // [线A 显式向量化 2026-08-12, 续] ReLU: max(iv, 0) 是热路径 (MNIST 训练 ~1.4M 次).
+    // 跟 buildElementwiseBinaryVectorized 同套路: VL=8 主段 + 标量尾部, max(iv, zero_vec).
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize && !(known_numel > 0 && known_numel <= 16);
+    if (can_vectorize) {
+        constexpr int64_t VL = 8;
+        auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+        auto f32 = builder.getF32Type();
+        auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+        mlir::Value n_idx = i64ToIndex(builder, loc, n);
+        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+        // zero vector 常量 (8 个 0.0f, vector 初始化)
+        mlir::Value zero_vec = builder.create<mlir::arith::ConstantOp>(
+            loc, mlir::DenseElementsAttr::get(
+                vec_ty, llvm::ArrayRef<float>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}));
+
+        // === 主 vector 段 ===
+        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+        builder.setInsertionPointToStart(vloop.getBody());
+        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+        mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+        mlir::Value iv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+        mlir::Value rv = builder.create<mlir::arith::MaxNumFOp>(loc, iv, zero_vec);
+        builder.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
+        builder.setInsertionPointAfter(vloop);
+
+        // === 尾部标量段 ===
+        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+        builder.setInsertionPointToStart(tloop.getBody());
+        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+        mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+        mlir::Value iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
+        mlir::Value zero_t = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+        mlir::Value rv_t = builder.create<mlir::arith::MaxNumFOp>(loc, iv_t, zero_t);
+        builder.create<mlir::LLVM::StoreOp>(loc, rv_t, out_ptr_t);
+        builder.setInsertionPointAfter(tloop);
+        return;
+    }
+
+    // 小张量走 buildLoop 标量 (跟旧逻辑一致, known_numel <= 16)
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
-
     buildLoop(builder, loc, n, known_numel,
         [&](mlir::OpBuilder& b, mlir::Location loc, mlir::Value idx_i64) {
             mlir::Value in_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
             mlir::Value out_ptr = b.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
-
             mlir::Value iv = b.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
             mlir::Value zero = mlir::arith::ConstantFloatOp::create(b, loc, f32, llvm::APFloat(0.0f));
             mlir::Value rv = b.create<mlir::arith::MaxNumFOp>(loc, iv, zero);
@@ -1720,14 +1874,21 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
             .setEngineKind(llvm::EngineKind::JIT)
             .selectTarget());
 
+    // 【dispatch 优化 2026-08-12】重新启用 LLVM 优化 transformer。
+    // 此前 DEBT-NEW-5 实验置空（隔离 MLIR vs LLVM 数值差异来源），导致 MLIR 生成的
+    // 标量逐元素循环无 LoopVectorize/SLP 等 pass 自动向量化，实测比原生 SIMD kernel 慢 ~3.6x，
+    // 是 dispatch 中单 kernel 执行的主要开销来源。LLVM pass 语义保持，安全性由
+    // test_c3_backward / test_c3_mnist_train 数值回归保障。
+    // 生命周期: ① transformer 仅在 ExecutionEngine::create() 的 JIT 编译期调用，此时 tm 仍在
+    // 作用域，tm.get() 不悬垂；② engineOpts.transformer 是 llvm::function_ref（非拥有引用），
+    // 必须由命名局部量 opt_transformer 持有 std::function 存活到 create() 之后。
+    const bool mlir_noopt = std::getenv("C3_MLIR_NOOPT") != nullptr;
+    std::function<llvm::Error(llvm::Module *)> opt_transformer =
+        (!mlir_noopt && tm)
+        ? mlir::makeOptimizingTransformer(static_cast<unsigned>(opt_level), 0, tm.get())
+        : std::function<llvm::Error(llvm::Module *)>();
     mlir::ExecutionEngineOptions engineOpts;
-    if (tm) {
-        // 【DEBT-NEW-5 实验 2026-08-08 23:15】先置空 transformer（不做 LLVM pass），
-        // 隔离 MLIR-level vs LLVM-level 数值差异来源
-        engineOpts.transformer = {};
-    } else {
-        engineOpts.transformer = {};
-    }
+    engineOpts.transformer = opt_transformer;
     // 当 opt_level >= 3 时使用 Aggressive（Ofast），否则匹配 opt_level
     engineOpts.jitCodeGenOptLevel = (opt_level >= 3)
         ? llvm::CodeGenOptLevel::Aggressive

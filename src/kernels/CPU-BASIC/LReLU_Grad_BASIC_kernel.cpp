@@ -21,7 +21,7 @@ CT_HOT Tensor LReLU_Grad_BASIC_kernel(const Tensor& x, const Tensor& grad_out) {
     }
 
     constexpr float negative_slope = 0.01f;
-    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device());
+    Tensor grad_x(ShapeTag{}, x.sizes(), x.dtype(), x.device(), false);
     size_t count = x.numel();
     const float* CT_RESTRICT x_data = x.data_read<float>();
     const float* CT_RESTRICT grad_out_data = grad_out.data_read<float>();

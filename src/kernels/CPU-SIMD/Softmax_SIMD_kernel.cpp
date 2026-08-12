@@ -39,7 +39,7 @@ CT_HOT Tensor Softmax_SIMD_kernel(const Tensor& a, int dim) {
         return Tensor();
     }
 
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     const float* src = a.data_read<float>();
     float* dst = result.data_write<float>();
     const auto& shape = a.sizes();

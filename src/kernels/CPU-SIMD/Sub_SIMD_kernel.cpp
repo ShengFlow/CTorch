@@ -62,7 +62,7 @@ CT_HOT Tensor Sub_SIMD_kernel(const Tensor& a, const Tensor& b) {
     const float* CT_RESTRICT a_data = a.data_read<float>();
     const float* CT_RESTRICT b_data = b.data_read<float>();
     
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __x86_64__

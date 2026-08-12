@@ -34,7 +34,7 @@ CT_HOT Tensor MatMul_BASIC_kernel(const Tensor& a, const Tensor& b) {
     size_t k = a.shape()[1];
     size_t n = b.shape()[1];
     
-    Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device());
+    Tensor result(ShapeTag{}, {m, n}, a.dtype(), a.device(), false);
     // 考虑步长的矩阵乘法实现
     const std::vector<size_t>& a_strides = a.strides();
     const std::vector<size_t>& b_strides = b.strides();

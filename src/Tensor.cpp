@@ -243,6 +243,12 @@ Tensor Tensor::operator[](size_t index) const {
     result._storage_offset = checked_add(
         result._storage_offset, checked_mul(index, _strides[0], "Tensor index offset overflow"),
         "Tensor storage offset overflow");
+    // 构造期校验：view 一旦构造完成，其 storage_offset 在整个生命周期内保持合法，
+    // 因此只需在此处校验一次，避免 data_read()/data_write() 每次访问重复检查。
+    if (result._storage_offset >= result._storage.size()) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                                    "view storage offset 超出存储范围");
+    }
     return result;
 }
 

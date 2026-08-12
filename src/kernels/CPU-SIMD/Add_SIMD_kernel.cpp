@@ -59,7 +59,7 @@ CT_HOT Tensor Add_SIMD_kernel(const Tensor& a, const Tensor& b) {
         const float* CT_RESTRICT a_data = a.data_read<float>();
         const float* CT_RESTRICT b_data = b.data_read<float>();
         
-        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
 
 #ifdef __x86_64__
@@ -92,7 +92,7 @@ CT_HOT Tensor Add_SIMD_kernel(const Tensor& a, const Tensor& b) {
         a.strides()[0] == a.sizes()[1] && a.strides()[1] == 1) {
         size_t rows = a.sizes()[0];
         size_t cols = a.sizes()[1];
-        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+        Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
         float* CT_RESTRICT result_data = result.data_write<float>();
         const float* CT_RESTRICT a_data = a.data_read<float>();
         const float* CT_RESTRICT b_data = b.data_read<float>();
@@ -150,7 +150,7 @@ CT_HOT Tensor Add_SIMD_kernel(const Tensor& a, const Tensor& b) {
     computeBroadcastStrides(b.sizes(), broadcast_shape, b_strides);
     
     // 创建结果Tensor
-    Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device());
+    Tensor result(ShapeTag{}, broadcast_shape, a.dtype(), a.device(), false);
     float* CT_RESTRICT result_data = result.data_write<float>();
     const float* CT_RESTRICT a_data = a.data_read<float>();
     const float* CT_RESTRICT b_data = b.data_read<float>();

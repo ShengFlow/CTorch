@@ -43,7 +43,7 @@ CT_HOT Tensor Add_BASIC_kernel(const Tensor& a, const Tensor& b) {
     const float* CT_RESTRICT b_data = b.data_read<float>();
 
     // 创建结果Tensor
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     float* CT_RESTRICT result_data = result.data_write<float>();
 
     // 支持广播的逐元素加法

@@ -23,7 +23,7 @@ CT_HOT Tensor Abs_SIMD_kernel(const Tensor& a) {
                           "CPU-SIMD Abs_Kernel: 仅在CPU支持");
     }
 
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
     size_t count = a.numel();
     const float* CT_RESTRICT a_data = a.data_read<float>();
     float* CT_RESTRICT result_data = result.data_write<float>();

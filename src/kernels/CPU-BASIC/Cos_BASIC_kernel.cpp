@@ -17,7 +17,7 @@ CT_HOT Tensor Cos_BASIC_kernel(const Tensor &a) {
         CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()),
                           ErrorType::DEVICE_COMPAT, "CPU-BASIC Cos_Kernel: 仅在CPU支持");
     }
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
 
     size_t count = a.numel();
     const float* CT_RESTRICT a_data = a.data_read<float>();

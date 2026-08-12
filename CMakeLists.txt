@@ -601,6 +601,11 @@ target_link_libraries(bench_mlir_simd PRIVATE CTorch)
 target_include_directories(bench_mlir_simd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_options(bench_mlir_simd PRIVATE -rdynamic)
 
+add_executable(bench_mlir_profile src/tests/standalone/bench_mlir_profile.cpp)
+target_link_libraries(bench_mlir_profile PRIVATE CTorch)
+target_include_directories(bench_mlir_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_options(bench_mlir_profile PRIVATE -rdynamic)
+
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)
 target_include_directories(bench_subgraph_roi PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -629,6 +634,18 @@ target_include_directories(test_debug_fused PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(test_c3_backward src/tests/standalone/test_c3_backward.cpp)
 target_link_libraries(test_c3_backward PRIVATE CTorch)
 target_include_directories(test_c3_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_accessor_overhead src/tests/standalone/bench_accessor_overhead.cpp)
+target_link_libraries(bench_accessor_overhead PRIVATE CTorch)
+target_include_directories(bench_accessor_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_alloc_overhead src/tests/standalone/bench_alloc_overhead.cpp)
+target_link_libraries(bench_alloc_overhead PRIVATE CTorch)
+target_include_directories(bench_alloc_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_dispatch_overhead src/tests/standalone/bench_dispatch_overhead.cpp)
+target_link_libraries(bench_dispatch_overhead PRIVATE CTorch)
+target_include_directories(bench_dispatch_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(probe_extmap src/tests/standalone/probe_extmap.cpp)
 target_link_libraries(probe_extmap PRIVATE CTorch)

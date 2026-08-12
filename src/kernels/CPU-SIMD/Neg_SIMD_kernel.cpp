@@ -24,7 +24,7 @@ CT_HOT Tensor Neg_SIMD_kernel(const Tensor& a) {
     }
 
     // 实现取负操作: -a
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device());
+    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
 
     size_t count = a.numel();
     const float* CT_RESTRICT a_data = a.data_read<float>();
