@@ -14,6 +14,7 @@
 #include "C3/AutoTuner.h"
 #include "C3/TuningState.h"
 #include "HandwrittenKernelGen.h"
+#include "ThreadPool.h"
 
 #ifdef CT_ENABLE_MLIR
 #include "MLIRKernelGen.h"
@@ -152,14 +153,64 @@ public:
         const size_t seg_n = (num_outputs_ > 0) ? num_outputs_ : 1;
         std::vector<float> flat(seg_n * elem_n_, 0.0f);
 
-        // 动态分配大暂存，并使用 thread_local 缓存避免分配开销
-        thread_local std::vector<float> thread_scratchpad;
-        if (scratch_size_ > 0 && thread_scratchpad.size() < scratch_size_) {
-            thread_scratchpad.resize(scratch_size_);
-        }
-        float* scratch_ptr = (scratch_size_ > 0) ? thread_scratchpad.data() : nullptr;
+        // 设定并行阈值 (Threshold Gate)
+        constexpr size_t kParallelThreshold = 262144;
+        
+        // 仅当元素数足够大、单输出，且不是 MatMul（MatMul 自带并行）时才开启多线程并行
+        bool do_parallel = (elem_n_ >= kParallelThreshold && M_ == 0 && seg_n == 1);
+        
+        if (do_parallel) {
+            unsigned int num_threads = std::thread::hardware_concurrency();
+            if (num_threads == 0) num_threads = 4;
+            if (num_threads > 8) num_threads = 8; // 限制最大线程数避免超载
+            
+            size_t chunk_size = (elem_n_ + num_threads - 1) / num_threads;
+            std::vector<std::future<void>> futures;
+            futures.reserve(num_threads);
+            
+            for (unsigned int t = 0; t < num_threads; ++t) {
+                size_t start = t * chunk_size;
+                size_t end = std::min(start + chunk_size, elem_n_);
+                if (start >= end) break;
+                
+                size_t slice_n = end - start;
+                
+                futures.push_back(ThreadPool::getInstance().addTask([this, start, slice_n, in_ptrs, &flat]() {
+                    // 每个线程持有独立的 thread_local scratchpad
+                    thread_local std::vector<float> worker_scratchpad;
+                    if (scratch_size_ > 0 && worker_scratchpad.size() < scratch_size_) {
+                        worker_scratchpad.resize(scratch_size_);
+                    }
+                    float* w_scratch_ptr = (scratch_size_ > 0) ? worker_scratchpad.data() : nullptr;
+                    
+                    // 构造切片后的输入指针数组
+                    std::vector<const float*> slice_in_ptrs;
+                    slice_in_ptrs.reserve(num_inputs_);
+                    for (size_t i = 0; i < num_inputs_; ++i) {
+                        slice_in_ptrs.push_back(in_ptrs[i] + start);
+                    }
+                    
+                    float* slice_out_ptr = flat.data() + start;
+                    
+                    // 执行切片任务
+                    func_(slice_in_ptrs.data(), slice_out_ptr, slice_n, M_, K_, N_, w_scratch_ptr);
+                }));
+            }
+            
+            // 等待所有并行的切片任务完成
+            for (auto& f : futures) {
+                f.wait();
+            }
+        } else {
+            // 单核串行执行路径 (包括小张量或 MatMul)
+            thread_local std::vector<float> thread_scratchpad;
+            if (scratch_size_ > 0 && thread_scratchpad.size() < scratch_size_) {
+                thread_scratchpad.resize(scratch_size_);
+            }
+            float* scratch_ptr = (scratch_size_ > 0) ? thread_scratchpad.data() : nullptr;
 
-        func_(in_ptrs.data(), flat.data(), elem_n_, M_, K_, N_, scratch_ptr);
+            func_(in_ptrs.data(), flat.data(), elem_n_, M_, K_, N_, scratch_ptr);
+        }
 
         std::vector<Tensor> outs;
         outs.reserve(seg_n);
