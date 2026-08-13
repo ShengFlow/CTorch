@@ -281,14 +281,26 @@ BinaryKernelFunc CtorchScheduler::selectBestBinary(
         if (func != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
             return func;
         }
-        return nullptr;
+        // [Fix 2026-08-13] MPS kernel 不可用时 fallback 到 CPU
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, 
+                         ErrorType::PLATFORM_API,
+                         "selectBestBinary: no MPS kernel for op=" + std::to_string(static_cast<int>(op_type)) 
+                         + ", fallback to CPU");
+        return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 
-    // CPU/AMX/SIMD 张量：优先 AMX -> SIMD -> BASIC
-    if (isDeviceAvailable(DeviceType::kAMX)) {
+    // CPU/AMX/SIMD 张量：优先 AMX -> 直接到BASIC（AMX张量不能用SIMD kernel）
+    // [Fix 2026-08-13] AMX 仅支持部分 op（如 MatMul），其他 op 需 fallback 到 CPU BASIC
+    // 注意：AMX 张量不能调用 CPU-SIMD kernel（SIMD kernel 会拒绝非CPU设备），所以必须直接到BASIC
+    if (isDeviceAvailable(DeviceType::kAMX) && dev == DeviceType::kAMX) {
         BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
+        // AMX kernel 不可用，直接 fallback 到 CPU BASIC（跳过 SIMD）
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
+                         "selectBestBinary: no AMX kernel for op=" + std::to_string(static_cast<int>(op_type))
+                         + ", fallback to CPU BASIC (skip SIMD for AMX device)");
+        return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 
     BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
@@ -312,14 +324,26 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
         if (func != nullptr && isDeviceAvailable(DeviceType::kMPS)) {
             return func;
         }
-        return nullptr;
+        // [Fix 2026-08-13] MPS kernel 不可用时 fallback 到 CPU
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, 
+                         ErrorType::PLATFORM_API,
+                         "selectBestUnary: no MPS kernel for op=" + std::to_string(static_cast<int>(op_type)) 
+                         + ", fallback to CPU");
+        return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 
-    // CPU/AMX/SIMD 张量：优先 AMX -> SIMD -> BASIC
-    if (isDeviceAvailable(DeviceType::kAMX)) {
+    // CPU/AMX/SIMD 张量：优先 AMX -> 直接到BASIC（AMX张量不能用SIMD kernel）
+    // [Fix 2026-08-13] AMX 仅支持部分 op（如 GELU），其他 op 需 fallback 到 CPU BASIC
+    // 注意：AMX 张量不能调用 CPU-SIMD kernel（SIMD kernel 会拒绝非CPU设备），所以必须直接到BASIC
+    if (isDeviceAvailable(DeviceType::kAMX) && dev == DeviceType::kAMX) {
         UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
+        // AMX kernel 不可用，直接 fallback 到 CPU BASIC（跳过 SIMD）
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
+                         "selectBestUnary: no AMX kernel for op=" + std::to_string(static_cast<int>(op_type))
+                         + ", fallback to CPU BASIC (skip SIMD for AMX device)");
+        return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 
     UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]

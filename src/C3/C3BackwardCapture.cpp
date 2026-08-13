@@ -132,6 +132,17 @@ std::optional<std::vector<Tensor>> C3BackwardCapture::tryExecuteBackward(
 
 void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& grad)
 {
+    // [P0 Fix 2026-08-13] AMX/MPS 设备兼容性检查
+    // Handwritten backend 生成 CPU-SIMD kernel 调用，不支持 AMX/MPS
+    DeviceType target_dev = grad.device();
+    if (target_dev != DeviceType::kCPU) {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, 
+                         ErrorType::DEVICE_COMPAT,
+                         "C3 backward fusion not supported on device=" 
+                         + std::to_string(static_cast<int>(target_dev)) 
+                         + ", fallback to eager");
+        return;
+    }
     // 构建去重 key 前缀：node_type|grad:shape|inputs:shape
     // 必须与 tryExecuteBackward 中的 base_key 格式完全一致
     const std::string& type_name = typeid(*node).name();
@@ -238,6 +249,16 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
 void C3BackwardCapture::compileBackwardAsyncForInput(
     const ::Node* node, const Tensor& grad, size_t input_index)
 {
+    // [P0 Fix 2026-08-13] AMX/MPS 设备兼容性检查
+    DeviceType target_dev = grad.device();
+    if (target_dev != DeviceType::kCPU) {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL, 
+                         ErrorType::DEVICE_COMPAT,
+                         "C3 backward fusion not supported on device=" 
+                         + std::to_string(static_cast<int>(target_dev)) 
+                         + ", fallback to eager");
+        return;
+    }
     // 与 compileBackwardAsync 相同的 key 前缀构造
     const std::string& type_name = typeid(*node).name();
     std::stringstream ss;

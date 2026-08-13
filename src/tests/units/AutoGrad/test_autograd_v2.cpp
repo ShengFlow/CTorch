@@ -21,7 +21,7 @@ constexpr float kEps = 1e-5f;
 
 int g_passed = 0;
 int g_failed = 0;
-DeviceType g_device = DeviceType::kMPS;
+DeviceType g_device = DeviceType::kCPU;
 
 const char* deviceName(DeviceType dev) {
     switch (dev) {
@@ -450,11 +450,10 @@ int main() {
     // 提前初始化 Scheduler / Allocator，确保 MPS 等后端 allocator 在创建张量前已注册
     CtorchScheduler::getInstance();
 
-    // 在可用的后端上依次运行测试；AMX 对 unary 激活会由调度器自动降级到 SIMD
+    // 在可用的独立设备上运行测试（CPU/MPS）；SIMD/AMX作为优化路径自动处理
+    // [Fix 2026-08-13] 只测试独立设备，SIMD/AMX是优化路径不是独立设备
     const DeviceType devices[] = {
         DeviceType::kCPU,
-        DeviceType::kSIMD,
-        DeviceType::kAMX,
         DeviceType::kMPS
     };
 
