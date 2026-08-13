@@ -921,7 +921,7 @@ static void buildReLU(mlir::OpBuilder& builder, mlir::Location loc,
         mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
         mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
         mlir::Value iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
-        mlir::Value zero_t = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+        mlir::Value zero_t = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
         mlir::Value rv_t = builder.create<mlir::arith::MaxNumFOp>(loc, iv_t, zero_t);
         builder.create<mlir::LLVM::StoreOp>(loc, rv_t, out_ptr_t);
         builder.setInsertionPointAfter(tloop);
@@ -963,6 +963,36 @@ static void buildTanh(mlir::OpBuilder& builder, mlir::Location loc,
     auto fn = getOrDeclareCtSimdBatchFn<kCtSimdVtanh>(builder, loc);
     builder.create<mlir::LLVM::CallOp>(loc, fn, mlir::ValueRange{in, out, n});
     (void)known_numel; // 批量实现不依赖 known_numel
+}
+
+// [Fix 2026-08-13] SumReduceNode MLIR支持 - backward中广播梯度的收缩
+static void buildSumReduce(mlir::OpBuilder& builder, mlir::Location loc,
+                           mlir::Value in, mlir::Value out, mlir::Value n,
+                           int axis) {
+    // axis = -1 表示全 reduce (sum all elements)
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+    auto f32 = builder.getF32Type();
+    auto i64_type = builder.getI64Type();
+    
+    // 初始化输出为0
+    auto c0 = builder.create<mlir::arith::ConstantIntOp>(loc, 0, 64);
+    auto c0_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0});
+    auto c0_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+    builder.create<mlir::LLVM::StoreOp>(loc, c0_f, c0_ptr);
+    
+    // 循环累加: for i in 0..n-1: out[0] += in[i]
+    auto c1 = builder.create<mlir::arith::ConstantIntOp>(loc, 1, 64);
+    auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n, c1);
+    builder.setInsertionPointToStart(loop.getBody());
+    
+    auto idx = builder.create<mlir::arith::IndexCastOp>(loc, i64_type, loop.getInductionVar());
+    auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+    auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0});
+    
+    auto iv = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
+    auto ov = builder.create<mlir::LLVM::LoadOp>(loc, f32, out_ptr);
+    auto sum = builder.create<mlir::arith::AddFOp>(loc, ov, iv);
+    builder.create<mlir::LLVM::StoreOp>(loc, sum, out_ptr);
 }
 
 // ======================= 融合 Kernel 构建 =======================
@@ -1667,6 +1697,9 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             buildSigmoid(builder, loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<TanhNode>(op)) {
             buildTanh(builder, loc, in_ptrs[0], out_buf, node_n);
+        } else if (std::holds_alternative<SumReduceNode>(op)) {
+            const auto& sr = std::get<SumReduceNode>(op);
+            buildSumReduce(builder, loc, in_ptrs[0], out_buf, node_n, sr.axis);
         } else {
             // [Fix 2026-08-09 用户审查 P0]: 静默跳过是不允许的 (per user 审查:
             // 'Transpose/Exp/Log/SumReduce 进多节点仍静默跳过,比抛异常更危险')。
