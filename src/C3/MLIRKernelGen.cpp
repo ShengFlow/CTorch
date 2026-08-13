@@ -977,7 +977,7 @@ static void buildSumReduce(mlir::OpBuilder& builder, mlir::Location loc,
     // 初始化输出为0
     auto c0 = builder.create<mlir::arith::ConstantIntOp>(loc, 0, 64);
     auto c0_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0});
-    auto c0_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+    auto c0_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
     builder.create<mlir::LLVM::StoreOp>(loc, c0_f, c0_ptr);
     
     // 循环累加: for i in 0..n-1: out[0] += in[i]
@@ -1030,8 +1030,8 @@ static void buildGt(mlir::OpBuilder& builder, mlir::Location loc,
     // 常量: 0, 1
     auto c0 = builder.create<mlir::arith::ConstantIntOp>(loc, 0, 64);
     auto c1 = builder.create<mlir::arith::ConstantIntOp>(loc, 1, 64);
-    auto zero_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
-    auto one_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
+    auto zero_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+    auto one_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(1.0f));
     
     // 循环: for i in 0..n-1: out[i] = (lhs[i] > rhs[i]) ? 1.0f : 0.0f
     auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n, c1);
