@@ -570,7 +570,7 @@ static std::string generateFusedMatmulBiasKernel(bool has_relu,
     ss << "#include <cstddef>\n"
        << "#include <Accelerate/Accelerate.h>\n"
        << "extern \"C\" void c3_kernel(const float* const* inputs, float* output,\n"
-       << "                          size_t n, size_t M, size_t K, size_t N) {\n"
+       << "                          size_t n, size_t M, size_t K, size_t N, float* scratchpad) {\n"
        << "    const float* A = inputs[0];\n"
        << "    const float* B = inputs[1];\n";
 
@@ -707,7 +707,7 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
        << "#include <string>\n"
        << "#include <Accelerate/Accelerate.h>\n"
        << "extern \"C\" void c3_kernel(const float* const* inputs, float* output,\n"
-       << "                          size_t n, size_t M, size_t K, size_t N) {\n";
+       << "                          size_t n, size_t M, size_t K, size_t N, float* scratchpad) {\n";
 
     // 分配中间缓冲区（每个按节点实际输出 numel 分配）
     for (size_t i = 0; i < num_intermediates; ++i) {

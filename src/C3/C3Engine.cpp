@@ -121,11 +121,13 @@ public:
                             size_t num_inputs, size_t M, size_t K, size_t N,
                             size_t elem_n,
                             size_t num_outputs,
-                            std::vector<std::vector<size_t>> out_shapes)
+                            std::vector<std::vector<size_t>> out_shapes,
+                            size_t scratch_size = 0)
         : func_(func), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
           num_inputs_(num_inputs), M_(M), K_(K), N_(N), elem_n_(elem_n),
-          num_outputs_(num_outputs), out_shapes_(std::move(out_shapes)) {}
+          num_outputs_(num_outputs), out_shapes_(std::move(out_shapes)),
+          scratch_size_(scratch_size) {}
 
     ~MultiNodeCompiledKernel() override {
         if (deleter_) deleter_();
@@ -149,7 +151,15 @@ public:
         //   调用 kernel 后按各输出形状拆分回 Tensor。
         const size_t seg_n = (num_outputs_ > 0) ? num_outputs_ : 1;
         std::vector<float> flat(seg_n * elem_n_, 0.0f);
-        func_(in_ptrs.data(), flat.data(), elem_n_, M_, K_, N_);
+
+        // 动态分配大暂存，并使用 thread_local 缓存避免分配开销
+        thread_local std::vector<float> thread_scratchpad;
+        if (scratch_size_ > 0 && thread_scratchpad.size() < scratch_size_) {
+            thread_scratchpad.resize(scratch_size_);
+        }
+        float* scratch_ptr = (scratch_size_ > 0) ? thread_scratchpad.data() : nullptr;
+
+        func_(in_ptrs.data(), flat.data(), elem_n_, M_, K_, N_, scratch_ptr);
 
         std::vector<Tensor> outs;
         outs.reserve(seg_n);
@@ -192,6 +202,7 @@ private:
     size_t elem_n_;
     size_t num_outputs_;
     std::vector<std::vector<size_t>> out_shapes_;
+    size_t scratch_size_ = 0;
 };
 
 /**
@@ -502,7 +513,8 @@ static std::shared_ptr<CompiledKernel> doCompile(
             kernel = std::make_shared<MultiNodeCompiledKernel>(
                 gen.multi_func, gen.deleter, makeCacheKey(working_graph, options),
                 options.target_device, gen.num_inputs, gen.M, gen.K, gen.N,
-                gen.elem_n, out_shapes.size(), out_shapes
+                gen.elem_n, out_shapes.size(), out_shapes,
+                gen.scratch_size
             );
         } else if (gen.is_fused) {
             kernel = std::make_shared<FusedCompiledKernel>(

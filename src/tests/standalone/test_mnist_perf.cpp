@@ -2,6 +2,7 @@
 #include "AutoGrad.h"
 #include "CtorchError.h"
 #include "CtorchScheduler.h"
+#include "C3/C3Cleanup.h"
 #include "ctQALS/Random.h"
 #include "src/kernels/kernels.h"
 
@@ -398,5 +399,6 @@ int main(int argc, char** argv) {
         print_result(r);
     }
 
+    ct::c3::shutdownAll();
     return 0;
 }

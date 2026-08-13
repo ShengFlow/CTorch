@@ -76,7 +76,7 @@ using FusedKernelFunc = void (*)(const float* const*, float*, size_t);
  * @param K MatMul K 维度
  * @param N MatMul N 维度
  */
-using MultiNodeKernelFunc = void (*)(const float* const*, float*, size_t, size_t, size_t, size_t);
+using MultiNodeKernelFunc = void (*)(const float* const*, float*, size_t, size_t, size_t, size_t, float*);
 
 // ======================= 内核形状签名 =======================
 

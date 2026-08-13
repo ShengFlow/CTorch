@@ -325,6 +325,7 @@ int main() {
             sched.resetRegionFusion();
             hp_mgr.clear();
             region_reg.clear();
+            C3Engine::getInstance().clearCache();
 
             const size_t M = 32, K = 32, N = 32;
             const int warmup_iters = 5;
@@ -352,6 +353,13 @@ int main() {
             hp_mgr.waitForPendingCompiles();
             bool registered = (region_reg.entryCount() > 0);
             std::cout << "  ReLU region 已自动注册: " << (registered ? "✅" : "❌") << std::endl;
+            if (!registered) {
+                auto stats = hp_mgr.getStats();
+                std::cout << "    [DEBUG] hp_mgr: tracked=" << stats.calls_tracked
+                          << " triggered=" << stats.compilations_triggered
+                          << " pending=" << stats.pending_compiles << std::endl;
+                std::cout << "    [DEBUG] last_compile_error: " << C3Engine::getInstance().getLastCompileError() << std::endl;
+            }
             total++;
             if (registered) passed++;
 
@@ -390,6 +398,7 @@ int main() {
             sched.resetRegionFusion();
             hp_mgr.clear();
             region_reg.clear();
+            C3Engine::getInstance().clearCache();
 
             const size_t M = 1024, K = 1024, N = 1024;
             const int warmup_iters = 5;
@@ -416,7 +425,15 @@ int main() {
                 Tensor act = sched.dispatch<op::ReLU>(sum);
             }
             hp_mgr.waitForPendingCompiles();
-            std::cout << "  大 tensor ReLU region 已注册: " << (region_reg.entryCount() > 0 ? "✅" : "❌") << std::endl;
+            bool registered_big = (region_reg.entryCount() > 0);
+            std::cout << "  大 tensor ReLU region 已注册: " << (registered_big ? "✅" : "❌") << std::endl;
+            if (!registered_big) {
+                auto stats = hp_mgr.getStats();
+                std::cout << "    [DEBUG-BIG] hp_mgr: tracked=" << stats.calls_tracked
+                          << " triggered=" << stats.compilations_triggered
+                          << " pending=" << stats.pending_compiles << std::endl;
+                std::cout << "    [DEBUG-BIG] last_compile_error: " << C3Engine::getInstance().getLastCompileError() << std::endl;
+            }
 
             // 融合正确性
             Tensor mm = sched.dispatch<op::MatMul>(X, W);
@@ -567,6 +584,7 @@ int main() {
         sched.resetRegionFusion();
         hp_mgr.clear();
         region_reg.clear();
+        C3Engine::getInstance().clearCache();
 
         const size_t M = 32, K = 32, N = 32;
         const int warmup_iters = 5;
