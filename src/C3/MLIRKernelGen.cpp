@@ -1768,11 +1768,11 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             buildGt(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n);
         } else {
             // [Fix 2026-08-09 用户审查 P0]: 静默跳过是不允许的 (per user 审查:
-            // 'Transpose/Exp/Log/SumReduce 进多节点仍静默跳过,比抛异常更危险')。
+            // 'Exp/Log 进多节点仍静默跳过,比抛异常更危险')。
             // 改: 显式 throw,让编译失败 → compileAsync 走 fallback 路径。
-            // 支持的 op 列表 (M1 路线图 9/15 + SumReduceNode):
-            //   MatMul/Add/Sub/Mul/Div/Neg/ReLU/Sigmoid/Tanh + SumReduce
-            // 未支持 (M2 范畴): Transpose/Exp/Log/Gt/Const
+            // 支持的 op 列表 (M1 路线图 9/15 + M2 部分完成):
+            //   MatMul/Add/Sub/Mul/Div/Neg/ReLU/Sigmoid/Tanh/SumReduce/Transpose/Gt
+            // 未支持 (M2 未完成): Exp/Log/Const
             const std::string op_name = std::visit(
                 [](const auto& n) -> std::string { return typeid(n).name(); },
                 op);
