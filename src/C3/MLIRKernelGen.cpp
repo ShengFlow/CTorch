@@ -1019,6 +1019,43 @@ static void buildTranspose(mlir::OpBuilder& builder, mlir::Location loc,
     builder.create<mlir::LLVM::StoreOp>(loc, val, out_ptr);
 }
 
+// [Fix 2026-08-13] GtNode MLIR支持 - 大于比较（用于ReLU等激活函数的backward mask）
+static void buildGt(mlir::OpBuilder& builder, mlir::Location loc,
+                    mlir::Value lhs, mlir::Value rhs, mlir::Value out, mlir::Value n) {
+    // out = (lhs > rhs) ? 1.0f : 0.0f
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+    auto f32 = builder.getF32Type();
+    auto i64_type = builder.getI64Type();
+    
+    // 常量: 0, 1
+    auto c0 = builder.create<mlir::arith::ConstantIntOp>(loc, 0, 64);
+    auto c1 = builder.create<mlir::arith::ConstantIntOp>(loc, 1, 64);
+    auto zero_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+    auto one_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
+    
+    // 循环: for i in 0..n-1: out[i] = (lhs[i] > rhs[i]) ? 1.0f : 0.0f
+    auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n, c1);
+    builder.setInsertionPointToStart(loop.getBody());
+    
+    auto idx = builder.create<mlir::arith::IndexCastOp>(loc, i64_type, loop.getInductionVar());
+    auto lhs_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, lhs, mlir::ValueRange{idx});
+    auto rhs_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, rhs, mlir::ValueRange{idx});
+    auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+    
+    auto lhs_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, lhs_ptr);
+    auto rhs_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, rhs_ptr);
+    
+    // 比较: lhs > rhs
+    auto cmp = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs_val, rhs_val);
+    
+    // select: cmp ? 1.0f : 0.0f
+    auto result = builder.create<mlir::arith::SelectOp>(loc, f32, cmp, one_f, zero_f);
+    builder.create<mlir::LLVM::StoreOp>(loc, result, out_ptr);
+    
+    // 【关键】恢复插入点到循环之后
+    builder.setInsertionPointAfter(loop);
+}
+
 // ======================= 融合 Kernel 构建 =======================
 
 static void buildFused(mlir::OpBuilder& builder, mlir::Location loc,
@@ -1727,6 +1764,8 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
         } else if (std::holds_alternative<TransposeNode>(op)) {
             const auto& tr = std::get<TransposeNode>(op);
             buildTranspose(builder, loc, in_ptrs[0], out_buf, node_n, tr.dim0, tr.dim1);
+        } else if (std::holds_alternative<GtNode>(op)) {
+            buildGt(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n);
         } else {
             // [Fix 2026-08-09 用户审查 P0]: 静默跳过是不允许的 (per user 审查:
             // 'Transpose/Exp/Log/SumReduce 进多节点仍静默跳过,比抛异常更危险')。
