@@ -2062,7 +2062,10 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
         if (std::holds_alternative<FusedNode>(op)) {
             // 节点自身输出 numel
             int64_t node_numel = (int64_t)node->out_desc.numel;
-            auto fn_node_n = builder.create<mlir::arith::ConstantIntOp>(loc, node_numel, 64);
+            // [Fix 2026-08-15] 并行切片下 n_val < node_numel：循环上界必须取
+            //   min(node_numel, n)，否则每个线程写满全尺寸导致越界（同 Handwritten 侧修复）
+            auto node_numel_c = builder.create<mlir::arith::ConstantIntOp>(loc, node_numel, 64);
+            auto fn_node_n = builder.create<mlir::arith::MinSIOp>(loc, node_numel_c, n_val);
             const auto& fnode = std::get<FusedNode>(op);
             // 为每个 arg_node_id 获取输入指针（外部输入或中间缓冲区）
             std::unordered_map<size_t, mlir::Value> fused_arg_ptrs;
@@ -2125,7 +2128,10 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
 
         // 节点自身输出 numel（用于 element-wise 循环计数）
         int64_t node_numel = (int64_t)node->out_desc.numel;
-        auto node_n = builder.create<mlir::arith::ConstantIntOp>(loc, node_numel, 64);
+        // [Fix 2026-08-15] 并行切片下 n_val < node_numel：循环上界取
+        //   min(node_numel, n)（同 FusedNode 与 Handwritten 侧修复）
+        auto node_numel_c = builder.create<mlir::arith::ConstantIntOp>(loc, node_numel, 64);
+        auto node_n = builder.create<mlir::arith::MinSIOp>(loc, node_numel_c, n_val);
 
         if (std::holds_alternative<MatMulNode>(op)) {
             // 每个 MatMul 使用自己的 M, K, N 维度

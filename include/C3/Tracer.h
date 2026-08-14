@@ -318,7 +318,8 @@ Derived ProxyTensorBase<Derived>::scalarOp(float scalar, const char* op_name) co
             std::string("ProxyTensor::") + op_name + " scalar: tracer is null");
     }
 
-    const TensorDesc& desc = t->getDesc(self.handle());
+    // [Fix 2026-08-15] 按值拷贝 desc，避免 recordOp 引发 vector 扩容后引用悬垂
+    TensorDesc desc = t->getDesc(self.handle());
     size_t scalar_handle = t->recordOp(
         ConstNode{static_cast<double>(scalar)}, {}, desc);
     return Derived(t, t->recordOp(
@@ -340,7 +341,8 @@ inline ProxyTensor operator+(float lhs, const ProxyTensor& rhs) {
 inline ProxyTensor operator-(float lhs, const ProxyTensor& rhs) {
     Tracer* t = rhs.tracer();
     if (!t) throw std::runtime_error("ProxyTensor: tracer is null");
-    const TensorDesc& desc = t->getDesc(rhs.handle());
+    // [Fix 2026-08-15] 按值拷贝 desc，避免 recordOp 引发 vector 扩容后引用悬垂
+    TensorDesc desc = t->getDesc(rhs.handle());
     size_t lhs_handle = t->recordOp(
         ConstNode{static_cast<double>(lhs)}, {}, desc);
     size_t result_handle = t->recordOp(
@@ -351,7 +353,8 @@ inline ProxyTensor operator-(float lhs, const ProxyTensor& rhs) {
 inline ProxyTensor operator/(float lhs, const ProxyTensor& rhs) {
     Tracer* t = rhs.tracer();
     if (!t) throw std::runtime_error("ProxyTensor: tracer is null");
-    const TensorDesc& desc = t->getDesc(rhs.handle());
+    // [Fix 2026-08-15] 按值拷贝 desc，避免 recordOp 引发 vector 扩容后引用悬垂
+    TensorDesc desc = t->getDesc(rhs.handle());
     size_t lhs_handle = t->recordOp(
         ConstNode{static_cast<double>(lhs)}, {}, desc);
     size_t result_handle = t->recordOp(

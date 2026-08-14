@@ -178,7 +178,10 @@ const char* AOTCache::currentBackendVersion() {
     //   v4: 2026-08-11 反向图 bug 修复：TransposeNode 改用 external_input_map 解析
     //       输入指针 + 新增 GtNode/ExpNode/LogNode 处理 + 多输出平面 buffer 布局。
     //       生成代码签名变化，必须 bump 以便失效旧 AOT 缓存（否则旧 kernel 持续被加载）。
-    return "handwritten-v4";
+    //   v5: 2026-08-15 并行切片越界修复：所有逐元素循环上界从编译期 node_n
+    //       改为 std::min(node_n, n)（n=运行时切片大小），生成代码签名变化，
+    //       必须 bump 失效旧 AOT 缓存（否则旧 kernel 越界写继续被加载）。
+    return "handwritten-v5";
 }
 
 std::string AOTCache::makeKey(

@@ -846,7 +846,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
 
             ss << "    // Fused (" << fnode.ops.size() << " ops)\n";
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n";
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n";
 
             for (size_t op_idx = 0; op_idx < fnode.ops.size(); ++op_idx) {
                 const NodeVariant& fop = fnode.ops[op_idx];
@@ -963,7 +963,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = " << lhs_e << " + " << rhs_e << ";\n"
                << "    }\n";
         }
@@ -973,7 +973,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = " << lhs_e << " - " << rhs_e << ";\n"
                << "    }\n";
         }
@@ -983,7 +983,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = " << lhs_e << " * " << rhs_e << ";\n"
                << "    }\n";
         }
@@ -993,7 +993,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        if (" << rhs_e << " == 0.0f) throw std::runtime_error(\"C3 MultiNode Div: division by zero at index \" + std::to_string(i));\n"
                << "        " << out_ptr << "[i] = " << lhs_e << " / " << rhs_e << ";\n"
                << "    }\n";
@@ -1004,7 +1004,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             std::string lhs_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             std::string rhs_e = operandExpr(node->inputs[1], in_ptrs[1], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = " << lhs_e << " > " << rhs_e << " ? 1.0f : 0.0f;\n"
                << "    }\n";
         }
@@ -1013,7 +1013,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             int64_t node_n = (int64_t)node->out_desc.numel;
             std::string in_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = expf(" << in_e << ");\n"
                << "    }\n";
         }
@@ -1022,7 +1022,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
             int64_t node_n = (int64_t)node->out_desc.numel;
             std::string in_e = operandExpr(node->inputs[0], in_ptrs[0], node_n);
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = logf(" << in_e << ");\n"
                << "    }\n";
         }
@@ -1092,7 +1092,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
         else if (std::holds_alternative<NegNode>(op)) {
             int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = -" << in_ptrs[0] << "[i];\n"
                << "    }\n";
         }
@@ -1100,7 +1100,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
         else if (std::holds_alternative<ReLUNode>(op)) {
             int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = " << in_ptrs[0] << "[i] > 0.0f ? " << in_ptrs[0] << "[i] : 0.0f;\n"
                << "    }\n";
         }
@@ -1108,7 +1108,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
         else if (std::holds_alternative<SigmoidNode>(op)) {
             int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        " << out_ptr << "[i] = 1.0f / (1.0f + expf(-" << in_ptrs[0] << "[i]));\n"
                << "    }\n";
         }
@@ -1116,7 +1116,7 @@ static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scrat
         else if (std::holds_alternative<TanhNode>(op)) {
             int64_t node_n = (int64_t)node->out_desc.numel;
             ss << "    #pragma clang loop vectorize(enable)\n"
-               << "    for (size_t i = 0; i < " << node_n << "; ++i) {\n"
+               << "    for (size_t i = 0; i < std::min((size_t)" << node_n << ", n); ++i) {\n"
                << "        float x = " << in_ptrs[0] << "[i];\n"
                << "        " << out_ptr << "[i] = (expf(x) - expf(-x)) / (expf(x) + expf(-x));\n"
                << "    }\n";
@@ -1262,6 +1262,14 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             dbgf.close();
         }
 #endif
+        // [Dev] C3_DUMP_KERNEL=1 → 将多节点 kernel 源码 dump 到工作目录（便于审查生成代码）
+        if (getenv("C3_DUMP_KERNEL")) {
+            std::ofstream dbgf("./debug_multinode_kernel.c", std::ios::out | std::ios::trunc);
+            dbgf << "// M=" << result.M << " K=" << result.K << " N=" << result.N
+                 << " num_inputs=" << result.num_inputs << " elem_n=" << result.elem_n << "\n";
+            dbgf << src;
+            dbgf.close();
+        }
         // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
         auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
         auto func_ptr = _compile_result.first;
