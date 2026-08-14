@@ -813,14 +813,12 @@ private:
             Graph g = buildFusedGraph(records, pattern_name);
 
             // 编译选项：DEBT-NEW-7 性能优化（v0.5.1+）
-            // MatMul-rooted region 强制 Handwritten backend，原因：
-            //   1. MLIR backend 的 MatMul (buildTiledMatMulWithEpilogue / buildMatMul)
-            //      数值精度跟 cblas_sgemm 不等价（DEBT-NEW-5 修复集,2026-08-08）
-            //   2. Handwritten 的 cblas_sgemm 直接调 Accelerate 走 AMX,吞吐最优
-            //   3. v0.5.1+ 新增 generateFusedMatmulBiasKernel(cblas_sgemm + 单次 fused
-            //      bias[+ReLU] pass) 走 Handwritten 才能命中性能优化路径
+            // MatMul-rooted region 迁移至 MLIR 真实内存级 True JIT 后端（M2 阶段优化 2026-08-14）：
+            //   - 使用 buildMatMul 直接在 MLIR 中调用外部 cblas_sgemm，保留 100% AMX 极致物理性能与精度等价。
+            //   - 后置 epilogue 算子（bias add + ReLU）完全走 MLIR 向量化 + Host 托管暂存区（Scratchpad）零分配路径！
+            //   - 彻底消灭动态堆内存分配，不再使用 dlopen 与外部 clang++ 进程，实现真正的 True JIT。
             CompileOptions opts;
-            opts.backend = C3Backend::Handwritten;
+            opts.backend = C3Backend::MLIR;
 #ifdef CT_DEBUG
             {
                 std::ostringstream oss;

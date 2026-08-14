@@ -752,6 +752,7 @@ static void applyActivation(mlir::OpBuilder& builder, mlir::Location loc,
 static void buildMatMul(mlir::OpBuilder& builder, mlir::Location loc,
                         mlir::Value a, mlir::Value b, mlir::Value out,
                         mlir::Value M, mlir::Value K, mlir::Value N,
+                        int transA = 111, int transB = 111,
                         float beta = 0.0f) {
     auto* ctx = builder.getContext();
     auto i32 = builder.getI32Type();
@@ -759,9 +760,10 @@ static void buildMatMul(mlir::OpBuilder& builder, mlir::Location loc,
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(ctx);
 
     // 常量定义
-    // CblasRowMajor = 101, CblasNoTrans = 111
+    // CblasRowMajor = 101, CblasNoTrans = 111, CblasTrans = 112
     auto c_row_major = builder.create<mlir::arith::ConstantIntOp>(loc, 101, 32);
-    auto c_no_trans  = builder.create<mlir::arith::ConstantIntOp>(loc, 111, 32);
+    auto c_transA    = builder.create<mlir::arith::ConstantIntOp>(loc, transA, 32);
+    auto c_transB    = builder.create<mlir::arith::ConstantIntOp>(loc, transB, 32);
     auto c_alpha     = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
     auto c_beta      = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(beta));
 
@@ -770,9 +772,9 @@ static void buildMatMul(mlir::OpBuilder& builder, mlir::Location loc,
     auto K_i32 = builder.create<mlir::LLVM::TruncOp>(loc, i32, K);
     auto N_i32 = builder.create<mlir::LLVM::TruncOp>(loc, i32, N);
 
-    // lda = K, ldb = N, ldc = N (row-major)
-    auto lda = K_i32;
-    auto ldb = N_i32;
+    // lda, ldb, ldc (row-major)
+    auto lda = (transA == 111) ? K_i32 : M_i32;
+    auto ldb = (transB == 111) ? N_i32 : K_i32;
     auto ldc = N_i32;
 
     // 声明或复用 cblas_sgemm
@@ -781,7 +783,7 @@ static void buildMatMul(mlir::OpBuilder& builder, mlir::Location loc,
     // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
     //             M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
     builder.create<mlir::LLVM::CallOp>(loc, sgemm, mlir::ValueRange{
-        c_row_major, c_no_trans, c_no_trans,
+        c_row_major, c_transA, c_transB,
         M_i32, N_i32, K_i32,
         c_alpha, a, lda,
         b, ldb,
@@ -1921,6 +1923,29 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             auto mm_K = builder.create<mlir::arith::ConstantIntOp>(loc, matK, 64);
             auto mm_N = builder.create<mlir::arith::ConstantIntOp>(loc, matN, 64);
 
+            // === Transpose Folding 转置折叠优化 (M2 阶段 2026-08-14) ===
+            int transA = 111; // 111 = CblasNoTrans, 112 = CblasTrans
+            int transB = 111;
+            size_t in_id_a = node->inputs[0];
+            size_t in_id_b = node->inputs[1];
+            mlir::Value matmul_a_ptr = getInputPtr(in_id_a);
+            mlir::Value matmul_b_ptr = getInputPtr(in_id_b);
+
+            for (const auto& gn : nodes) {
+                if (gn.id == in_id_a && std::holds_alternative<TransposeNode>(gn.op)) {
+                    transA = 112;
+                    matmul_a_ptr = getInputPtr(gn.inputs[0]);
+                    break;
+                }
+            }
+            for (const auto& gn : nodes) {
+                if (gn.id == in_id_b && std::holds_alternative<TransposeNode>(gn.op)) {
+                    transB = 112;
+                    matmul_b_ptr = getInputPtr(gn.inputs[0]);
+                    break;
+                }
+            }
+
             // === MatMul Epilogue Fusion 检测 ===
             // 检测 MatMul→Add(bias)→Activation 模式并融合为一个 kernel
             mlir::Value fused_bias_ptr = nullptr;
@@ -2002,21 +2027,21 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
 #endif
             if (total_ops < kSmallMatMulThreshold) {
                 // 小矩阵：使用无 tiling 的内联循环（带 epilogue 融合）
-                buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
+                buildTiledMatMulWithEpilogue(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf,
                                              mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
                                              /*tile_m=*/0, /*tile_n=*/0,
                                              fused_bias_numel, (size_t)matM, (size_t)matN);
             } else if (use_tiling) {
                 // 中矩阵：使用 2D tiling 的融合版本（改善缓存利用率）
                 // tile 来自 AutoTuner 调优 (M1 1.2 接通)
-                buildTiledMatMulWithEpilogue(builder, loc, in_ptrs[0], in_ptrs[1], out_buf,
+                buildTiledMatMulWithEpilogue(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf,
                                              mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
                                              tile_m, tile_n,
                                              fused_bias_numel, (size_t)matM, (size_t)matN);
             } else {
                 // 大矩阵：委托 cblas_sgemm（BLAS 对大型矩阵有最优实现）
                 // epilogue（bias + activation）在 sgemm 之后单独执行
-                buildMatMul(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, mm_M, mm_K, mm_N);
+                buildMatMul(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf, mm_M, mm_K, mm_N, transA, transB);
                 if (fused_bias_ptr || fused_act != MatMulActivation::None) {
                     int64_t out_numel = matM * matN;
                     // 【P0 修复 DEBT-NEW-4 2026-08-08】传 mm_N 给 buildFusedEpilogue，
