@@ -3,6 +3,7 @@
 #include "CtorchError.h"
 #include "CtorchScheduler.h"
 #include "C3/C3Cleanup.h"
+#include "C3/JITCache.h"
 #include "ctQALS/Random.h"
 #include "src/kernels/kernels.h"
 
@@ -356,6 +357,7 @@ static void print_usage(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
+    ct::c3::JITCache::getInstance().evict();
     CtorchError::setPrintLevel(PrintLevel::MINIUM);
 
     std::string device_str = "mps";

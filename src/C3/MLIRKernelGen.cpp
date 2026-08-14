@@ -1004,8 +1004,72 @@ static void buildSumReduce(mlir::OpBuilder& builder, mlir::Location loc,
     auto c0_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0_i64});
     auto c0_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
     builder.create<mlir::LLVM::StoreOp>(loc, c0_f, c0_ptr);
+
+    // [线A 显式向量化 2026-08-14] SumReduce 向量化：VL=8 向量累加 + 尾部标量段
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize; // reduction can always be vectorized for large sizes
     
-    // 循环累加: for i in 0..n-1: out[0] += in[i]
+    if (can_vectorize) {
+        constexpr int64_t VL = 8;
+        auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+        // 1. 在栈上分配 8 个 float 暂存
+        auto c8 = builder.create<mlir::arith::ConstantIntOp>(loc, 8, 64);
+        auto stack_ptr = builder.create<mlir::LLVM::AllocaOp>(loc, ptr_type, f32, c8);
+
+        // 2. 初始化栈上暂存为 0.0f
+        for (int64_t i = 0; i < VL; ++i) {
+            auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
+            auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
+            builder.create<mlir::LLVM::StoreOp>(loc, c0_f, addr);
+        }
+
+        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+        mlir::Value n_idx = i64ToIndex(builder, loc, n);
+        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+        // === 3. 主 vector 累加段 ===
+        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+        builder.setInsertionPointToStart(vloop.getBody());
+        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+        
+        auto vacc = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, stack_ptr);
+        auto vin = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+        auto vres = builder.create<mlir::arith::AddFOp>(loc, vacc, vin);
+        builder.create<mlir::LLVM::StoreOp>(loc, vres, stack_ptr);
+        builder.setInsertionPointAfter(vloop);
+
+        // === 4. 栈上 8 元素水平累加 ===
+        mlir::Value sum_scalar = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+        for (int64_t i = 0; i < VL; ++i) {
+            auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
+            auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
+            auto val = builder.create<mlir::LLVM::LoadOp>(loc, f32, addr);
+            sum_scalar = builder.create<mlir::arith::AddFOp>(loc, sum_scalar, val);
+        }
+        builder.create<mlir::LLVM::StoreOp>(loc, sum_scalar, c0_ptr);
+
+        // === 5. 尾部标量累加段 ===
+        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+        builder.setInsertionPointToStart(tloop.getBody());
+        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+        
+        auto iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
+        auto cur_sum = builder.create<mlir::LLVM::LoadOp>(loc, f32, c0_ptr);
+        auto next_sum = builder.create<mlir::arith::AddFOp>(loc, cur_sum, iv_t);
+        builder.create<mlir::LLVM::StoreOp>(loc, next_sum, c0_ptr);
+        builder.setInsertionPointAfter(tloop);
+        
+        return;
+    }
+
+    // 标量降级（旧逻辑）
     auto c0_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
     auto c1_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
     auto n_idx = i64ToIndex(builder, loc, n);
