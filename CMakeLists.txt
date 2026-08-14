@@ -78,10 +78,13 @@ if(CT_ENABLE_MLIR)
     list(APPEND MLIR_TABLEGEN_FLAGS "-I${MLIR_INCLUDE_DIRS}")
     list(APPEND MLIR_TABLEGEN_FLAGS "-I${LLVM_INCLUDE_DIRS}")
 
-    mlir_tablegen(C3Ops.h.inc -gen-op-decls "-I${MLIR_INCLUDE_DIRS}")
-    mlir_tablegen(C3Ops.cpp.inc -gen-op-defs "-I${MLIR_INCLUDE_DIRS}")
-    mlir_tablegen(C3Dialect.h.inc -gen-dialect-decls -dialect=c3 "-I${MLIR_INCLUDE_DIRS}")
-    mlir_tablegen(C3Dialect.cpp.inc -gen-dialect-defs -dialect=c3 "-I${MLIR_INCLUDE_DIRS}")
+    mlir_tablegen(C3Ops.h.inc -gen-op-decls "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+    mlir_tablegen(C3Ops.cpp.inc -gen-op-defs "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+    mlir_tablegen(C3Dialect.h.inc -gen-dialect-decls -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+    mlir_tablegen(C3Dialect.cpp.inc -gen-dialect-defs -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+    set(LLVM_TARGET_DEFINITIONS "${CMAKE_CURRENT_SOURCE_DIR}/include/C3/C3Combine.td")
+    mlir_tablegen(C3Combine.cpp.inc -gen-rewriters "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
 
     add_public_tablegen_target(CTorchC3Gen)
     include_directories(${CMAKE_CURRENT_BINARY_DIR})

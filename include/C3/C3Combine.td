@@ -16,9 +16,9 @@ include "C3/C3Ops.td"
 //===----------------------------------------------------------------------===//
 
 // 规则 1: 双重转置消去
-// transpose(transpose(x, d0, d1), d2, d3) -> x
+// transpose(transpose(x, M1, N1, d0, d1), M2, N2, d2, d3) -> x
 def DoubleTransposeOptPattern : Pat<
-  (C3_TransposeOp (C3_TransposeOp $arg, $d0, $d1), $d2, $d3),
+  (C3_TransposeOp (C3_TransposeOp $arg, $M1, $N1, $d0, $d1), $M2, $N2, $d2, $d3),
   (replaceWithValue $arg)
 >;
 
