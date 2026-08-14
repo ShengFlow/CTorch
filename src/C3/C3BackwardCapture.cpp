@@ -209,12 +209,10 @@ void C3BackwardCapture::compileBackwardAsync(const ::Node* node, const Tensor& g
             }
 
             // 编译
-            // DEBT-NEW-7 v0.5.1+: backward kernel 强制 Handwritten backend (跟 DEBT-NEW-5 forward 一致)
-            // 原因:MLIRKernelGen::buildMultiNodeMLIR 暂不支持 SumReduceNode/TransposeNode 等
-            // backward-only 节点 (e.g. AddNode broadcast backward = grad + SumReduce)。
-            // 实测 MLIR 抛 "unsupported op X" → compile 失败 → bw_hit=0。
+            // [线A 2026-08-14]: 切换为 MLIR 后端，借由已经完备实装的 SumReduce/Transpose MLIR JIT，
+            // 实现全反向算子 100% 内存级编译，消除对 clang++ 磁盘编译的依赖。
             CompileOptions opts;
-            opts.backend = C3Backend::Handwritten;
+            opts.backend = C3Backend::MLIR;
             opts.opt_level = 3;
             opts.enable_cache = true;
 
@@ -316,13 +314,9 @@ void C3BackwardCapture::compileBackwardAsyncForInput(
             return;
         }
         CompileOptions opts;
-        // DEBT-NEW-7 v0.5.1+: backward kernel 强制 Handwritten backend (跟 DEBT-NEW-5 forward 一致)
-        // 原因:MLIRKernelGen::buildMultiNodeMLIR 暂不支持 SumReduceNode/TransposeNode 等
-        // backward-only 节点 (e.g. AddNode broadcast backward = grad + SumReduce)。
-        // 实测 MLIR 抛 "unsupported op X" → compile 失败 → bw_hit=0。
-        // Handwritten backend 不依赖 MLIR lowering,直接生成 C++ 调用
-        // cblas_sgemm / memcpy / ReLU grad 等原子操作,能 cover 所有 backward graph。
-        opts.backend = C3Backend::Handwritten;
+        // [线A 2026-08-14]: 切换为 MLIR 后端，借由已经完备实装的 SumReduce/Transpose MLIR JIT，
+        // 实现全反向算子 100% 内存级编译，消除对 clang++ 磁盘编译的依赖。
+        opts.backend = C3Backend::MLIR;
         opts.opt_level = 3;
         opts.enable_cache = true;
         try {

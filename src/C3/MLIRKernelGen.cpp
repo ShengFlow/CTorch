@@ -1066,165 +1066,234 @@ static void buildLog(mlir::OpBuilder& builder, mlir::Location loc,
 // [Fix 2026-08-13] SumReduceNode MLIR支持 - backward中广播梯度的收缩
 static void buildSumReduce(mlir::OpBuilder& builder, mlir::Location loc,
                            mlir::Value in, mlir::Value out, mlir::Value n,
-                           int axis) {
-    // axis = -1 表示全 reduce (sum all elements)
+                           const TensorDesc& in_desc, int axis) {
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
-    
-    // 初始化输出为0
-    auto c0 = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
-    auto c0_i64 = indexToI64(builder, loc, c0);
-    auto c0_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0_i64});
-    auto c0_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
-    builder.create<mlir::LLVM::StoreOp>(loc, c0_f, c0_ptr);
 
-    // [线A 显式向量化 2026-08-14] SumReduce 向量化：VL=8 向量累加 + 尾部标量段
-    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
-    const bool can_vectorize = !no_vectorize; // reduction can always be vectorized for large sizes
-    
-    if (can_vectorize) {
-        constexpr int64_t VL = 8;
-        auto vec_ty = mlir::VectorType::get({VL}, f32);
+    // 如果是全量 reduce，或者输入是 1D/标量，或者 axis == -1
+    if (axis == -1 || in_desc.shape.size() <= 1) {
+        // 先初始化 out[0] = 0
+        auto c0 = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        auto c0_i64 = indexToI64(builder, loc, c0);
+        auto c0_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0_i64});
+        auto c0_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+        builder.create<mlir::LLVM::StoreOp>(loc, c0_f, c0_ptr);
 
-        // 1. 在栈上分配 8 个 float 暂存
-        auto c8 = builder.create<mlir::arith::ConstantIntOp>(loc, 8, 64);
-        auto stack_ptr = builder.create<mlir::LLVM::AllocaOp>(loc, ptr_type, f32, c8);
+        static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+        const bool can_vectorize = !no_vectorize;
+        
+        if (can_vectorize) {
+            constexpr int64_t VL = 8;
+            auto vec_ty = mlir::VectorType::get({VL}, f32);
 
-        // 2. 初始化栈上暂存为 0.0f
-        for (int64_t i = 0; i < VL; ++i) {
-            auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
-            auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
-            builder.create<mlir::LLVM::StoreOp>(loc, c0_f, addr);
+            auto c8 = builder.create<mlir::arith::ConstantIntOp>(loc, 8, 64);
+            auto stack_ptr = builder.create<mlir::LLVM::AllocaOp>(loc, ptr_type, f32, c8);
+
+            for (int64_t i = 0; i < VL; ++i) {
+                auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
+                auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
+                builder.create<mlir::LLVM::StoreOp>(loc, c0_f, addr);
+            }
+
+            mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+            mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+            mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+            mlir::Value n_idx = i64ToIndex(builder, loc, n);
+            mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+            mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+            auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+            builder.setInsertionPointToStart(vloop.getBody());
+            mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+            mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+            
+            auto vacc = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, stack_ptr);
+            auto vin = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+            auto vres = builder.create<mlir::arith::AddFOp>(loc, vacc, vin);
+            builder.create<mlir::LLVM::StoreOp>(loc, vres, stack_ptr);
+            builder.setInsertionPointAfter(vloop);
+
+            mlir::Value sum_scalar = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+            for (int64_t i = 0; i < VL; ++i) {
+                auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
+                auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
+                auto val = builder.create<mlir::LLVM::LoadOp>(loc, f32, addr);
+                sum_scalar = builder.create<mlir::arith::AddFOp>(loc, sum_scalar, val);
+            }
+            builder.create<mlir::LLVM::StoreOp>(loc, sum_scalar, c0_ptr);
+
+            auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+            builder.setInsertionPointToStart(tloop.getBody());
+            mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+            mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+            
+            auto iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
+            auto cur_sum = builder.create<mlir::LLVM::LoadOp>(loc, f32, c0_ptr);
+            auto next_sum = builder.create<mlir::arith::AddFOp>(loc, cur_sum, iv_t);
+            builder.create<mlir::LLVM::StoreOp>(loc, next_sum, c0_ptr);
+            builder.setInsertionPointAfter(tloop);
+            return;
         }
 
-        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
-        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
-        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
-
-        mlir::Value n_idx = i64ToIndex(builder, loc, n);
-        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
-        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
-
-        // === 3. 主 vector 累加段 ===
-        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
-        builder.setInsertionPointToStart(vloop.getBody());
-        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
-        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+        // 标量降级（旧逻辑）
+        auto c0_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        auto c1_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        auto n_idx = i64ToIndex(builder, loc, n);
+        auto loop = builder.create<mlir::scf::ForOp>(loc, c0_idx, n_idx, c1_idx);
+        builder.setInsertionPointToStart(loop.getBody());
         
-        auto vacc = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, stack_ptr);
-        auto vin = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
-        auto vres = builder.create<mlir::arith::AddFOp>(loc, vacc, vin);
-        builder.create<mlir::LLVM::StoreOp>(loc, vres, stack_ptr);
-        builder.setInsertionPointAfter(vloop);
-
-        // === 4. 栈上 8 元素水平累加 ===
-        mlir::Value sum_scalar = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
-        for (int64_t i = 0; i < VL; ++i) {
-            auto idx_val = builder.create<mlir::arith::ConstantIntOp>(loc, i, 64);
-            auto addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, stack_ptr, mlir::ValueRange{idx_val});
-            auto val = builder.create<mlir::LLVM::LoadOp>(loc, f32, addr);
-            sum_scalar = builder.create<mlir::arith::AddFOp>(loc, sum_scalar, val);
-        }
-        builder.create<mlir::LLVM::StoreOp>(loc, sum_scalar, c0_ptr);
-
-        // === 5. 尾部标量累加段 ===
-        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
-        builder.setInsertionPointToStart(tloop.getBody());
-        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
-        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+        auto idx = loop.getInductionVar();
+        auto idx_i64 = indexToI64(builder, loc, idx);
+        auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
+        auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0_i64});
         
-        auto iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
-        auto cur_sum = builder.create<mlir::LLVM::LoadOp>(loc, f32, c0_ptr);
-        auto next_sum = builder.create<mlir::arith::AddFOp>(loc, cur_sum, iv_t);
-        builder.create<mlir::LLVM::StoreOp>(loc, next_sum, c0_ptr);
-        builder.setInsertionPointAfter(tloop);
+        auto iv = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
+        auto ov = builder.create<mlir::LLVM::LoadOp>(loc, f32, out_ptr);
+        auto sum = builder.create<mlir::arith::AddFOp>(loc, ov, iv);
+        builder.create<mlir::LLVM::StoreOp>(loc, sum, out_ptr);
         
+        builder.setInsertionPointAfter(loop);
         return;
     }
 
-    // 标量降级（旧逻辑）
-    auto c0_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
-    auto c1_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
-    auto n_idx = i64ToIndex(builder, loc, n);
-    auto loop = builder.create<mlir::scf::ForOp>(loc, c0_idx, n_idx, c1_idx);
-    builder.setInsertionPointToStart(loop.getBody());
-    
-    auto idx = loop.getInductionVar();
-    auto idx_i64 = indexToI64(builder, loc, idx);
-    auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
-    auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{c0_i64});
-    
-    auto iv = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
-    auto ov = builder.create<mlir::LLVM::LoadOp>(loc, f32, out_ptr);
-    auto sum = builder.create<mlir::arith::AddFOp>(loc, ov, iv);
-    builder.create<mlir::LLVM::StoreOp>(loc, sum, out_ptr);
-    
-    builder.setInsertionPointAfter(loop);
+    // 2D Axis-wise Reduction (axis == 0 或 axis == 1)
+    size_t M = in_desc.shape[0];
+    size_t N = in_desc.shape[1];
+
+    auto M_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, M);
+    auto N_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, N);
+    auto c0 = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    auto c1 = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+    auto zero_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
+
+    if (axis == 0) {
+        // out[j] = sum(in[i * N + j]) for i in 0..M, j in 0..N
+        auto loop_init = builder.create<mlir::scf::ForOp>(loc, c0, N_idx, c1);
+        builder.setInsertionPointToStart(loop_init.getBody());
+        mlir::Value init_j = indexToI64(builder, loc, loop_init.getInductionVar());
+        auto out_init_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{init_j});
+        builder.create<mlir::LLVM::StoreOp>(loc, zero_f, out_init_ptr);
+        builder.setInsertionPointAfter(loop_init);
+
+        auto loop_i = builder.create<mlir::scf::ForOp>(loc, c0, M_idx, c1);
+        builder.setInsertionPointToStart(loop_i.getBody());
+        mlir::Value i_i64 = indexToI64(builder, loc, loop_i.getInductionVar());
+
+        auto loop_j = builder.create<mlir::scf::ForOp>(loc, c0, N_idx, c1);
+        builder.setInsertionPointToStart(loop_j.getBody());
+        mlir::Value j_i64 = indexToI64(builder, loc, loop_j.getInductionVar());
+
+        auto mm_N = builder.create<mlir::arith::ConstantIntOp>(loc, N, 64);
+        mlir::Value in_idx = builder.create<mlir::arith::MulIOp>(loc, i_i64, mm_N);
+        in_idx = builder.create<mlir::arith::AddIOp>(loc, in_idx, j_i64);
+
+        auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{in_idx});
+        auto in_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
+
+        auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{j_i64});
+        auto out_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, out_ptr);
+
+        auto next_val = builder.create<mlir::arith::AddFOp>(loc, out_val, in_val);
+        builder.create<mlir::LLVM::StoreOp>(loc, next_val, out_ptr);
+
+        builder.setInsertionPointAfter(loop_j);
+        builder.setInsertionPointAfter(loop_i);
+    } 
+    else if (axis == 1) {
+        // out[i] = sum(in[i * N + j]) for i in 0..M, j in 0..N
+        auto loop_init = builder.create<mlir::scf::ForOp>(loc, c0, M_idx, c1);
+        builder.setInsertionPointToStart(loop_init.getBody());
+        mlir::Value init_i = indexToI64(builder, loc, loop_init.getInductionVar());
+        auto out_init_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{init_i});
+        builder.create<mlir::LLVM::StoreOp>(loc, zero_f, out_init_ptr);
+        builder.setInsertionPointAfter(loop_init);
+
+        auto loop_i = builder.create<mlir::scf::ForOp>(loc, c0, M_idx, c1);
+        builder.setInsertionPointToStart(loop_i.getBody());
+        mlir::Value i_i64 = indexToI64(builder, loc, loop_i.getInductionVar());
+
+        auto loop_j = builder.create<mlir::scf::ForOp>(loc, c0, N_idx, c1);
+        builder.setInsertionPointToStart(loop_j.getBody());
+        mlir::Value j_i64 = indexToI64(builder, loc, loop_j.getInductionVar());
+
+        auto mm_N = builder.create<mlir::arith::ConstantIntOp>(loc, N, 64);
+        mlir::Value in_idx = builder.create<mlir::arith::MulIOp>(loc, i_i64, mm_N);
+        in_idx = builder.create<mlir::arith::AddIOp>(loc, in_idx, j_i64);
+
+        auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{in_idx});
+        auto in_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
+
+        auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{i_i64});
+        auto out_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, out_ptr);
+
+        auto next_val = builder.create<mlir::arith::AddFOp>(loc, out_val, in_val);
+        builder.create<mlir::LLVM::StoreOp>(loc, next_val, out_ptr);
+
+        builder.setInsertionPointAfter(loop_j);
+        builder.setInsertionPointAfter(loop_i);
+    }
 }
 
 // [Fix 2026-08-13] TransposeNode MLIR支持 - MatMul backward梯度转置
 static void buildTranspose(mlir::OpBuilder& builder, mlir::Location loc,
                            mlir::Value in, mlir::Value out, mlir::Value n,
-                           int dim0, int dim1) {
-    // 简化版转置: 元素级拷贝 (完整实现需计算转置索引)
+                           const TensorDesc& in_desc, int dim0, int dim1) {
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
     (void)dim0; (void)dim1;
 
-    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
-    const bool can_vectorize = !no_vectorize;
-    
-    if (can_vectorize) {
-        constexpr int64_t VL = 8;
-        auto vec_ty = mlir::VectorType::get({VL}, f32);
-
-        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
-        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
-        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
-
-        mlir::Value n_idx = i64ToIndex(builder, loc, n);
-        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
-        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
-
-        // === 主 vector 循环段 ===
-        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
-        builder.setInsertionPointToStart(vloop.getBody());
-        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
-        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
-        mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
-
-        mlir::Value iv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+    if (in_desc.shape.size() != 2) {
+        // Fallback to simple elementwise copy for non-2D shapes (1D or scalar)
+        auto c0_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        auto c1_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        auto n_idx = i64ToIndex(builder, loc, n);
+        auto loop = builder.create<mlir::scf::ForOp>(loc, c0_idx, n_idx, c1_idx);
+        builder.setInsertionPointToStart(loop.getBody());
+        auto idx = loop.getInductionVar();
+        auto idx_i64 = indexToI64(builder, loc, idx);
+        auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
+        auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
+        auto iv = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
         builder.create<mlir::LLVM::StoreOp>(loc, iv, out_ptr);
-        builder.setInsertionPointAfter(vloop);
-
-        // === 尾部标量循环段 ===
-        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
-        builder.setInsertionPointToStart(tloop.getBody());
-        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
-        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
-        mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
-
-        mlir::Value iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
-        builder.create<mlir::LLVM::StoreOp>(loc, iv_t, out_ptr_t);
-        builder.setInsertionPointAfter(tloop);
+        builder.setInsertionPointAfter(loop);
         return;
     }
 
-    // 标量降级（旧逻辑）
+    size_t M = in_desc.shape[0];
+    size_t N = in_desc.shape[1];
+
+    auto M_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, M);
+    auto N_idx = builder.create<mlir::arith::ConstantIndexOp>(loc, N);
     auto c0 = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
     auto c1 = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
-    auto n_idx = i64ToIndex(builder, loc, n);
-    auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n_idx, c1);
-    builder.setInsertionPointToStart(loop.getBody());
-    
-    auto idx = loop.getInductionVar();
-    auto idx_i64 = indexToI64(builder, loc, idx);
-    auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx_i64});
-    auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
-    
+
+    auto loop_i = builder.create<mlir::scf::ForOp>(loc, c0, M_idx, c1);
+    builder.setInsertionPointToStart(loop_i.getBody());
+    mlir::Value i_i64 = indexToI64(builder, loc, loop_i.getInductionVar());
+
+    auto loop_j = builder.create<mlir::scf::ForOp>(loc, c0, N_idx, c1);
+    builder.setInsertionPointToStart(loop_j.getBody());
+    mlir::Value j_i64 = indexToI64(builder, loc, loop_j.getInductionVar());
+
+    // in_idx = i * N + j
+    auto mm_N = builder.create<mlir::arith::ConstantIntOp>(loc, N, 64);
+    mlir::Value in_idx = builder.create<mlir::arith::MulIOp>(loc, i_i64, mm_N);
+    in_idx = builder.create<mlir::arith::AddIOp>(loc, in_idx, j_i64);
+
+    // out_idx = j * M + i
+    auto mm_M = builder.create<mlir::arith::ConstantIntOp>(loc, M, 64);
+    mlir::Value out_idx = builder.create<mlir::arith::MulIOp>(loc, j_i64, mm_M);
+    out_idx = builder.create<mlir::arith::AddIOp>(loc, out_idx, i_i64);
+
+    auto in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{in_idx});
     auto val = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
+
+    auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{out_idx});
     builder.create<mlir::LLVM::StoreOp>(loc, val, out_ptr);
-    builder.setInsertionPointAfter(loop);
+
+    builder.setInsertionPointAfter(loop_j);
+    builder.setInsertionPointAfter(loop_i);
 }
 
 // [Fix 2026-08-13] GtNode MLIR支持 - 大于比较（用于ReLU等激活函数的backward mask）
@@ -1816,22 +1885,37 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
     }
 
     // 步骤 3: 分配缓冲区索引，记录每个缓冲区的 numel
+    // 支持多输出（反向融合图）：输出节点写入 output 平面 buffer 的对应段（output_index * elem_n）
     std::unordered_map<size_t, size_t> node_to_buffer;
+    std::unordered_map<size_t, size_t> output_index; // 输出节点 id → 平面 buffer 段索引（按 graph.outputs() 顺序）
     std::vector<size_t> buffer_numels; // buffer index → numel
     size_t num_intermediates = 0;
+    auto assign_output_mlir = [&](size_t node_id) {
+        if (output_index.count(node_id)) return; // 去重
+        const size_t seg = output_index.size();
+        output_index[node_id] = seg;
+        node_to_buffer[node_id] = SIZE_MAX;
+    };
     for (size_t i = 0; i < compute_nodes.size(); ++i) {
         size_t node_id = compute_nodes[i]->id;
         bool is_output = false;
         for (size_t out_id : outputs) {
             if (node_id == out_id) { is_output = true; break; }
         }
-        if (i == compute_nodes.size() - 1) is_output = true;
-        if (!is_output) {
+        if (is_output) {
+            assign_output_mlir(node_id);
+        } else {
             node_to_buffer[node_id] = num_intermediates++;
             buffer_numels.push_back(compute_nodes[i]->out_desc.numel);
-        } else {
-            node_to_buffer[node_id] = SIZE_MAX;
         }
+    }
+    // 安全网：确保最后一个计算节点总是输出
+    assign_output_mlir(compute_nodes.back()->id);
+
+    // 确定 elem_n（最大输出元素数，作为多输出平面偏移的步长）
+    size_t elem_n = 0;
+    for (const auto* node : compute_nodes) {
+        elem_n = std::max(elem_n, node->out_desc.numel);
     }
 
     // 步骤 3a: Buffer 原地复用分析
@@ -1927,7 +2011,13 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
         }
         auto buf_it = node_to_buffer.find(in_node_id);
         if (buf_it != node_to_buffer.end()) {
-            if (buf_it->second == SIZE_MAX) return out_ptr;
+            if (buf_it->second == SIZE_MAX) {
+                auto oi = output_index.find(in_node_id);
+                size_t seg = (oi != output_index.end()) ? oi->second : 0;
+                if (seg == 0) return out_ptr;
+                mlir::Value offset_val = builder.create<mlir::arith::ConstantIntOp>(loc, (int64_t)(seg * elem_n), 64);
+                return builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out_ptr, mlir::ValueRange{offset_val});
+            }
             size_t pool_idx = logical_to_pool[buf_it->second];
             if (pool_idx < tmp_buffers.size()) return tmp_buffers[pool_idx];
             return out_ptr; // fallback
@@ -1938,11 +2028,18 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
     // 步骤 6: 生成每个计算节点的 MLIR 代码
     for (size_t ci = 0; ci < compute_nodes.size(); ++ci) {
         const Node* node = compute_nodes[ci];
-        bool is_last = (ci == compute_nodes.size() - 1);
-        // 确定输出 buffer：优先使用原地复用的 buffer
+        // 确定输出 buffer：输出节点 → 写入 output 平面 buffer 对应段（output_index * elem_n）；
+        //   否则写中间 tmp buffer（优先原地复用）。
         mlir::Value out_buf;
-        if (is_last) {
-            out_buf = out_ptr;
+        auto oci = output_index.find(node->id);
+        if (oci != output_index.end()) {
+            size_t seg = oci->second;
+            if (seg == 0) {
+                out_buf = out_ptr;
+            } else {
+                mlir::Value offset_val = builder.create<mlir::arith::ConstantIntOp>(loc, (int64_t)(seg * elem_n), 64);
+                out_buf = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out_ptr, mlir::ValueRange{offset_val});
+            }
         } else {
             auto reuse_it = node_buffer_reuse.find(node->id);
             if (reuse_it != node_buffer_reuse.end()) {
@@ -2199,10 +2296,10 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             buildLog(builder, loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<SumReduceNode>(op)) {
             const auto& sr = std::get<SumReduceNode>(op);
-            buildSumReduce(builder, loc, in_ptrs[0], out_buf, node_n, sr.axis);
+            buildSumReduce(builder, loc, in_ptrs[0], out_buf, node_n, sr.in_desc, sr.axis);
         } else if (std::holds_alternative<TransposeNode>(op)) {
             const auto& tr = std::get<TransposeNode>(op);
-            buildTranspose(builder, loc, in_ptrs[0], out_buf, node_n, tr.dim0, tr.dim1);
+            buildTranspose(builder, loc, in_ptrs[0], out_buf, node_n, tr.in_desc, tr.dim0, tr.dim1);
         } else if (std::holds_alternative<GtNode>(op)) {
             buildGt(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n);
         } else {
@@ -2346,6 +2443,14 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
             buildExp(builder, loc, a, out, n);
         else if (std::holds_alternative<LogNode>(op))
             buildLog(builder, loc, a, out, n);
+        else if (std::holds_alternative<SumReduceNode>(op)) {
+            const auto& sr = std::get<SumReduceNode>(op);
+            buildSumReduce(builder, loc, a, out, n, sr.in_desc, sr.axis);
+        }
+        else if (std::holds_alternative<TransposeNode>(op)) {
+            const auto& tr = std::get<TransposeNode>(op);
+            buildTranspose(builder, loc, a, out, n, tr.in_desc, tr.dim0, tr.dim1);
+        }
         else
             throw std::runtime_error("MLIRKernelGen: unsupported op " + std::to_string(op.index()));
 
