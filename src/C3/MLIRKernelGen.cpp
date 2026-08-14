@@ -1225,6 +1225,211 @@ static void buildFused(mlir::OpBuilder& builder, mlir::Location loc,
 
 // ======================= 多节点融合 Kernel 构建 =======================
 
+static bool isFusedChainVectorizable(const std::vector<NodeVariant>& ops,
+                                     const std::vector<std::vector<size_t>>& op_inputs,
+                                     const std::unordered_map<size_t, int64_t>& arg_numels,
+                                     size_t n) {
+    if (std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr) return false;
+    for (const auto& inputs : op_inputs) {
+        for (size_t in_id : inputs) {
+            auto it = arg_numels.find(in_id);
+            if (it != arg_numels.end() && it->second > 0 && it->second < (int64_t)n) {
+                return false;
+            }
+        }
+    }
+    for (const auto& op : ops) {
+        bool op_ok = std::visit([](auto&& arg) -> bool {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, AddNode> ||
+                          std::is_same_v<T, SubNode> ||
+                          std::is_same_v<T, MulNode> ||
+                          std::is_same_v<T, NegNode> ||
+                          std::is_same_v<T, ReLUNode> ||
+                          std::is_same_v<T, GtNode>) {
+                return true;
+            }
+            return false;
+        }, op);
+        if (!op_ok) return false;
+    }
+    return true;
+}
+
+static void buildFusedMultiNodeVectorized(mlir::OpBuilder& builder, mlir::Location loc,
+                                          mlir::Value out, mlir::Value n,
+                                          const std::vector<NodeVariant>& ops,
+                                          const std::vector<std::vector<size_t>>& op_inputs,
+                                          const std::vector<size_t>& arg_node_ids,
+                                          const std::unordered_map<size_t, mlir::Value>& arg_ptrs,
+                                          const std::unordered_map<size_t, int64_t>& arg_numels = {}) {
+    constexpr int64_t VL = 8;
+    auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+    auto f32 = builder.getF32Type();
+    auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+    std::set<size_t> referenced_nodes;
+    for (size_t op_idx = 0; op_idx < ops.size(); ++op_idx) {
+        const auto& inputs_for_op = op_inputs[op_idx];
+        for (size_t in_id : inputs_for_op) {
+            if (op_idx > 0 && in_id == op_inputs[op_idx][0]) continue;
+            referenced_nodes.insert(in_id);
+        }
+    }
+
+    std::unordered_map<size_t, mlir::Value> preloaded_ptrs;
+    for (size_t node_id : referenced_nodes) {
+        auto it = arg_ptrs.find(node_id);
+        if (it != arg_ptrs.end()) {
+            preloaded_ptrs[node_id] = it->second;
+        }
+    }
+
+    mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+    mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+    mlir::Value n_idx = i64ToIndex(builder, loc, n);
+    mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+    mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+    mlir::Value zero_vec = builder.create<mlir::arith::ConstantOp>(
+        loc, mlir::DenseElementsAttr::get(
+            vec_ty, llvm::ArrayRef<float>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}));
+    mlir::Value one_vec = builder.create<mlir::arith::ConstantOp>(
+        loc, mlir::DenseElementsAttr::get(
+            vec_ty, llvm::ArrayRef<float>{1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}));
+
+    auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+    builder.setInsertionPointToStart(vloop.getBody());
+    mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+
+    auto loadExternalVector = [&](size_t node_id) -> mlir::Value {
+        mlir::Value ptr = preloaded_ptrs.at(node_id);
+        mlir::Value addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, ptr, mlir::ValueRange{base});
+        return builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, addr);
+    };
+
+    mlir::Value prev_val_v;
+
+    for (size_t op_idx = 0; op_idx < ops.size(); ++op_idx) {
+        const NodeVariant& op = ops[op_idx];
+        const auto& inputs_for_op = op_inputs[op_idx];
+        bool is_last = (op_idx == ops.size() - 1);
+
+        std::vector<size_t> ext_inputs;
+        for (size_t in_id : inputs_for_op) {
+            if (op_idx > 0 && in_id == inputs_for_op[0]) continue;
+            ext_inputs.push_back(in_id);
+        }
+
+        mlir::Value result_v;
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            mlir::Value lhs, rhs;
+
+            if constexpr (std::is_same_v<T, NegNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                result_v = builder.create<mlir::arith::NegFOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, ReLUNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                result_v = builder.create<mlir::arith::MaxNumFOp>(loc, lhs, zero_vec);
+            } else if constexpr (std::is_same_v<T, AddNode>) {
+                if (op_idx > 0) { lhs = prev_val_v; rhs = loadExternalVector(ext_inputs[0]); }
+                else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
+                result_v = builder.create<mlir::arith::AddFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, SubNode>) {
+                if (op_idx > 0) { lhs = prev_val_v; rhs = loadExternalVector(ext_inputs[0]); }
+                else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
+                result_v = builder.create<mlir::arith::SubFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, MulNode>) {
+                if (op_idx > 0) { lhs = prev_val_v; rhs = loadExternalVector(ext_inputs[0]); }
+                else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
+                result_v = builder.create<mlir::arith::MulFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, GtNode>) {
+                if (op_idx > 0) { lhs = prev_val_v; rhs = loadExternalVector(ext_inputs[0]); }
+                else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
+                mlir::Value cmp = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs, rhs);
+                result_v = builder.create<mlir::arith::SelectOp>(loc, cmp, one_vec, zero_vec);
+            }
+        }, op);
+
+        if (is_last) {
+            mlir::Value out_addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+            builder.create<mlir::LLVM::StoreOp>(loc, result_v, out_addr);
+        } else {
+            prev_val_v = result_v;
+        }
+    }
+    builder.setInsertionPointAfter(vloop);
+
+    auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+    builder.setInsertionPointToStart(tloop.getBody());
+    mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+
+    auto loadExternalScalar = [&](size_t node_id) -> mlir::Value {
+        mlir::Value ptr = preloaded_ptrs.at(node_id);
+        mlir::Value addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, ptr, mlir::ValueRange{idx});
+        return builder.create<mlir::LLVM::LoadOp>(loc, f32, addr);
+    };
+
+    mlir::Value prev_val_s;
+
+    for (size_t op_idx = 0; op_idx < ops.size(); ++op_idx) {
+        const NodeVariant& op = ops[op_idx];
+        const auto& inputs_for_op = op_inputs[op_idx];
+        bool is_last = (op_idx == ops.size() - 1);
+
+        std::vector<size_t> ext_inputs;
+        for (size_t in_id : inputs_for_op) {
+            if (op_idx > 0 && in_id == inputs_for_op[0]) continue;
+            ext_inputs.push_back(in_id);
+        }
+
+        mlir::Value result_s;
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            mlir::Value lhs, rhs;
+
+            if constexpr (std::is_same_v<T, NegNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                result_s = builder.create<mlir::arith::NegFOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, ReLUNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                mlir::Value zero = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+                result_s = builder.create<mlir::arith::MaxNumFOp>(loc, lhs, zero);
+            } else if constexpr (std::is_same_v<T, AddNode>) {
+                if (op_idx > 0) { lhs = prev_val_s; rhs = loadExternalScalar(ext_inputs[0]); }
+                else { lhs = loadExternalScalar(ext_inputs[0]); rhs = loadExternalScalar(ext_inputs[1]); }
+                result_s = builder.create<mlir::arith::AddFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, SubNode>) {
+                if (op_idx > 0) { lhs = prev_val_s; rhs = loadExternalScalar(ext_inputs[0]); }
+                else { lhs = loadExternalScalar(ext_inputs[0]); rhs = loadExternalScalar(ext_inputs[1]); }
+                result_s = builder.create<mlir::arith::SubFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, MulNode>) {
+                if (op_idx > 0) { lhs = prev_val_s; rhs = loadExternalScalar(ext_inputs[0]); }
+                else { lhs = loadExternalScalar(ext_inputs[0]); rhs = loadExternalScalar(ext_inputs[1]); }
+                result_s = builder.create<mlir::arith::MulFOp>(loc, lhs, rhs);
+            } else if constexpr (std::is_same_v<T, GtNode>) {
+                if (op_idx > 0) { lhs = prev_val_s; rhs = loadExternalScalar(ext_inputs[0]); }
+                else { lhs = loadExternalScalar(ext_inputs[0]); rhs = loadExternalScalar(ext_inputs[1]); }
+                mlir::Value cmp = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs, rhs);
+                mlir::Value zero_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+                mlir::Value one_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
+                result_s = builder.create<mlir::arith::SelectOp>(loc, cmp, zero_f, one_f);
+            }
+        }, op);
+
+        if (is_last) {
+            mlir::Value out_addr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+            builder.create<mlir::LLVM::StoreOp>(loc, result_s, out_addr);
+        } else {
+            prev_val_s = result_s;
+        }
+    }
+    builder.setInsertionPointAfter(tloop);
+}
+
 /// 在多节点 MLIR kernel 中生成融合节点的循环代码
 /// @details 每个融合节点包含一个 element-wise 操作链，在单次循环中按顺序执行。
 ///          输入指针已由调用方解析（可能是外部输入或中间缓冲区），直接使用。
@@ -1593,9 +1798,14 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                     }
                 }
             }
-            // 生成融合循环（传入 arg_numels 以支持广播）
-            buildFusedMultiNode(builder, loc, out_buf, fn_node_n, fnode.ops, fnode.op_inputs,
-                                fnode.arg_node_ids, fused_arg_ptrs, fused_arg_numels);
+            // 判断是否可以使用多核向量化
+            if (isFusedChainVectorizable(fnode.ops, fnode.op_inputs, fused_arg_numels, (size_t)node_numel)) {
+                buildFusedMultiNodeVectorized(builder, loc, out_buf, fn_node_n, fnode.ops, fnode.op_inputs,
+                                              fnode.arg_node_ids, fused_arg_ptrs, fused_arg_numels);
+            } else {
+                buildFusedMultiNode(builder, loc, out_buf, fn_node_n, fnode.ops, fnode.op_inputs,
+                                    fnode.arg_node_ids, fused_arg_ptrs, fused_arg_numels);
+            }
             continue;
         }
 
