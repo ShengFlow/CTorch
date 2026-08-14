@@ -62,6 +62,29 @@ if(CT_ENABLE_MLIR)
     find_package(LLVM REQUIRED CONFIG)
     find_package(MLIR REQUIRED CONFIG)
     message(STATUS "MLIR backend enabled (LLVM ${LLVM_PACKAGE_VERSION})")
+
+    # 包含 MLIR / LLVM CMake 宏模块
+    list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+    list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+    include(TableGen)
+    include(AddLLVM)
+    include(AddMLIR)
+
+    # C3 Dialect TableGen 自动生成配置 (Stage 2.2/2.3)
+    set(C3_TD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/include/C3/C3Ops.td")
+    set(LLVM_TARGET_DEFINITIONS ${C3_TD_SRC})
+
+    # 包含 MLIR / LLVM 的 include 路径以便找到 OpBase.td
+    list(APPEND MLIR_TABLEGEN_FLAGS "-I${MLIR_INCLUDE_DIRS}")
+    list(APPEND MLIR_TABLEGEN_FLAGS "-I${LLVM_INCLUDE_DIRS}")
+
+    mlir_tablegen(C3Ops.h.inc -gen-op-decls "-I${MLIR_INCLUDE_DIRS}")
+    mlir_tablegen(C3Ops.cpp.inc -gen-op-defs "-I${MLIR_INCLUDE_DIRS}")
+    mlir_tablegen(C3Dialect.h.inc -gen-dialect-decls -dialect=c3 "-I${MLIR_INCLUDE_DIRS}")
+    mlir_tablegen(C3Dialect.cpp.inc -gen-dialect-defs -dialect=c3 "-I${MLIR_INCLUDE_DIRS}")
+
+    add_public_tablegen_target(CTorchC3Gen)
+    include_directories(${CMAKE_CURRENT_BINARY_DIR})
 endif()
 
 option(FETCH_GOOGLETEST "Fetch googletest from remote" OFF)
@@ -118,6 +141,7 @@ if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
     list(APPEND CT-Core src/C3/JITCache.cpp)
     list(APPEND CT-Core src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
+    list(APPEND CT-Core src/C3/C3Dialect.cpp)
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
@@ -429,6 +453,7 @@ if(CT_ENABLE_MLIR)
         MLIRBuiltinToLLVMIRTranslation
         MLIRExecutionEngine
     )
+    add_dependencies(CTorch CTorchC3Gen)
 endif()
 
 # 海光 DCU 链接 (v0.5 DCU 接入, 2026-08-10)
