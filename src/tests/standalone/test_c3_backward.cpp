@@ -269,6 +269,7 @@ int main() {
 
     // Test 6: Div backward（多输出）
     {
+        sched.resetRegionFusion();
         std::cout << "\n[Test 6] Div backward (multi-output)" << std::endl;
         const size_t N = 4;
         Tensor ra(ShapeTag{}, {N}, DType::kFloat, DeviceType::kCPU);
@@ -305,6 +306,7 @@ int main() {
 
     // Test 7: MatMul backward（多输出，训练关键路径）
     {
+        sched.resetRegionFusion();
         std::cout << "\n[Test 7] MatMul backward (multi-output)" << std::endl;
         const size_t M = 4, K = 3, N = 5;
         Tensor rx(ShapeTag{}, {M, K}, DType::kFloat, DeviceType::kCPU);
@@ -349,6 +351,7 @@ int main() {
     // 预期：前几轮触发融合异步编译；等待编译后，后续轮次 fusion_hit_count 上升。
     // 数值上：融合输出结果应当与 eager 一致。
     {
+        sched.resetRegionFusion();
         std::cout << "\n[Test 8] Backward Fusion: ReLU → Sigmoid chain" << std::endl;
         auto stats_fusion_start = capture.getStats();
 
@@ -422,6 +425,7 @@ int main() {
     // 复现 MNIST 反向融合 SIGBUS：两个 ReLU 直接相邻（无 MatMul 间隔）时，
     // 融合 kernel 的多输出平面 buffer 是否越界。
     {
+        sched.resetRegionFusion();
         std::cout << "\n[Test 9] Backward Fusion: ReLU → ReLU chain" << std::endl;
 
         const size_t M = 32, K = 64;
@@ -452,6 +456,28 @@ int main() {
             }
             max_diff = std::max(max_diff, d);
             std::cout << "  [iter " << iter << "] max_diff=" << d << std::endl;
+            if (d > 0) {
+                // 找出第一个差异大的位置
+                size_t bad_idx = 0;
+                for (size_t i = 0; i < gx.numel(); ++i) {
+                    if (std::fabs(g[i] - e[i]) > 0.5) {
+                        bad_idx = i;
+                        break;
+                    }
+                }
+                std::cout << "    [DEBUG-T9-BAD] idx=" << bad_idx
+                          << " got=" << g[bad_idx]
+                          << " ref=" << e[bad_idx]
+                          << " x=" << xp[bad_idx]
+                          << std::endl;
+                std::cout << "    [DEBUG-T9] first8 got: ";
+                for (size_t i = 0; i < 8; ++i) std::cout << g[i] << " ";
+                std::cout << "\n    [DEBUG-T9] first8 ref: ";
+                for (size_t i = 0; i < 8; ++i) std::cout << e[i] << " ";
+                std::cout << "\n    [DEBUG-T9] first8 x:   ";
+                for (size_t i = 0; i < 8; ++i) std::cout << xp[i] << " ";
+                std::cout << std::endl;
+            }
 
             if (iter == 3) {
                 std::cout << "  Iter 3 → 等待异步融合编译 (3.5s)..." << std::endl;
@@ -467,6 +493,7 @@ int main() {
     // 隔着 MatMul，recordBackwardNode 跳过 MatMul 后二者在序列里假相邻，
     // 形状不一致但仍可能被错误拼进融合链。
     {
+        sched.resetRegionFusion();
         std::cout << "\n[Test 10] Backward Fusion: ReLU(16) → MatMul → ReLU(32)" << std::endl;
         const size_t B = 8, D = 64, H1 = 32, H2 = 16;
 

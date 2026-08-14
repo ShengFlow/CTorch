@@ -703,4 +703,25 @@ std::vector<size_t> CtorchScheduler::computeOutputShape(
     }
     return out;
 }
+
+#ifndef CT_DISABLE_C3
+#include "C3/C3BackwardCapture.h"
+void CtorchScheduler::resetRegionFusion() {
+    {
+        std::lock_guard<std::mutex> lk(region_trace_mutex_);
+        region_trace_.clear();
+    }
+    prewalk_state_ = PrewalkState::kIdle;
+    prewalk_cache_count_ = 0;
+    prewalk_cache_head_ = 0;
+    matched_region_ = nullptr;
+    prewalk_pos_ = 0;
+    cached_region_ = nullptr;
+    cached_hash_ = 0;
+    // 清理所有已注册单算子及融合 JIT 内核，确保测试间“环境隔离”
+    ct::c3::C3KernelRegistry::getInstance().uninstallAll();
+    // 清除反向融合捕获器的所有中间状态，避免跨测试用例残留干扰
+    ct::c3::C3BackwardCapture::getInstance().clear();
+}
+#endif // CT_DISABLE_C3
 #endif // CT_DISABLE_C3

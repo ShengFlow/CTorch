@@ -351,19 +351,7 @@ public:
 
     #ifndef CT_DISABLE_C3
     /// 重置区域融合状态（包含 trace 和预走状态，用于测试场景）
-    void resetRegionFusion() {
-        {
-            std::lock_guard<std::mutex> lk(region_trace_mutex_);
-            region_trace_.clear();
-        }
-        prewalk_state_ = PrewalkState::kIdle;
-        prewalk_cache_count_ = 0;
-        prewalk_cache_head_ = 0;
-        matched_region_ = nullptr;
-        prewalk_pos_ = 0;
-        cached_region_ = nullptr;
-        cached_hash_ = 0;
-    }
+    void resetRegionFusion();
 #endif
 
     template <op OpType>

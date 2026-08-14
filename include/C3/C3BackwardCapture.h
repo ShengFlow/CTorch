@@ -72,6 +72,12 @@ public:
     static C3BackwardCapture& getInstance();
 
     /**
+     * @brief 清除反向融合捕获器中的所有临时状态与缓存。
+     * @details 消除测试用例间的状态和残留节点的交叉污染，确保完整的环境隔离。
+     */
+    void clear();
+
+    /**
      * @brief 尝试执行编译后的 backward kernel
      * @param node 当前 autograd 节点
      * @param grad 下游梯度张量

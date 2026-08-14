@@ -1187,8 +1187,8 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                         // i=0 时 prev_output_id = fused_graph grad_in（最下游端 grad 输入）
                         remap_input[src_input_id] = prev_output_id;
                     } else {
-                        // 其余 inputs（forward 输入 x/y 等）：按 node_type+idx 复用或新增 fused_graph 输入
-                        std::string key = node_type + "_in_" + std::to_string(j);
+                        // 其余 inputs（forward 输入 x/y 等）：按 i_node_type+idx 复用或新增 fused_graph 输入
+                        std::string key = std::to_string(i) + "_" + node_type + "_in_" + std::to_string(j);
                         auto it = forward_inputs.find(key);
                         if (it == forward_inputs.end()) {
                             const Node& in_node = sub_graph.node(src_input_id);
@@ -1201,12 +1201,11 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                     }
                 }
 
-                // 合并 sub_graph 到 fused_graph
-                fused_graph.mergeGraph(sub_graph, remap_input);
+                // 合并 sub_graph 到 fused_graph，获取正确的节点 ID 映射关系
+                auto old_to_new = fused_graph.mergeGraph(sub_graph, remap_input);
 
-                size_t offset = fused_graph.nodeCount() - sub_graph.nodeCount();
                 if (sub_graph.outputCount() > 0) {
-                    prev_output_id = offset + sub_graph.outputs()[0];
+                    prev_output_id = old_to_new.at(sub_graph.outputs()[0]);
                     grad_desc = sub_graph.node(sub_graph.outputs()[0]).out_desc;
                     per_node_output_ids.push_back(prev_output_id);
                 }
@@ -1245,9 +1244,11 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
             opts_mlir.backend = C3Backend::MLIR;
             opts_mlir.opt_level = 3;
             opts_mlir.enable_cache = true;
+            opts_mlir.enable_fusion = false; // 禁用后向图内的二次融合，防止多输出拓扑序及输入索引映射被打乱
             opts_hw.backend = C3Backend::Handwritten;
             opts_hw.opt_level = 3;
             opts_hw.enable_cache = true;
+            opts_hw.enable_fusion = false;
 
             std::shared_ptr<CompiledKernel> kernel = nullptr;
             bool mlir_tried = false;
@@ -1294,7 +1295,6 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                     kernel = nullptr;
                 }
             }
-            #ifdef CT_DEBUG
             if (kernel) {
                 // 注册时的形状与 makeFusedBackwardKey 生成时保持一致：
                 // - reg_grad_shape：最下游 grad 形状（tryExecuteBackward 传入的 grad.shape 必须匹配）
@@ -1316,6 +1316,7 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                 std::lock_guard<std::mutex> lock(stats_mutex_);
                 fusion_compile_count_++;
 
+                #ifdef CT_DEBUG
                 // ===== DEBUG: 实际注册的 key，和 execute 端 make 的 full_key 对比定位 miss
                 std::string shape_g; for (auto s : reg_grad_shape) shape_g += std::to_string(s)+",";
                 std::string shape_i; for (auto s : reg_input_shape) shape_i += std::to_string(s)+",";
@@ -1323,10 +1324,12 @@ void C3BackwardCapture::compileFusedBackwardAsync(const BackwardSequence& seq) {
                           << " seq_types=" << makeSequenceKey(seq.node_types)
                           << " reg_grad=[" << shape_g << "] reg_input=[" << shape_i << "]" << std::endl;
                 ms_since(("KERNEL INSTALLED! compile_count=" + std::to_string(fusion_compile_count_)).c_str());
+                #endif
             } else {
+                #ifdef CT_DEBUG
                 ms_since("COMPILE FAILED (both backends)");
+                #endif
             }
-            #endif
         } catch (const std::exception& e) {
             // 走 CtorchError::log 统一格式（release 也可见）
             CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kGENERAL,
@@ -1699,6 +1702,22 @@ int C3BackwardCapture::computeReduceAxis(
     }
 
     return -1; // 全 reduce
+}
+
+void C3BackwardCapture::clear() {
+    std::lock_guard<std::mutex> lock1(fusion_mutex_);
+    std::unique_lock<std::shared_mutex> lock2(intercepted_mutex_);
+    std::lock_guard<std::mutex> lock3(pending_mutex_);
+    std::lock_guard<std::mutex> lock4(miss_marker_mutex_);
+
+    recent_sequence_.clear();
+    recent_grad_shapes_.clear();
+    recent_input_shapes_.clear();
+    recent_forward_inputs_.clear();
+    pending_intercepted_.clear();
+    miss_marker_nodes_.clear();
+    sequence_counts_.clear();
+    pending_compiles_.clear();
 }
 
 } // namespace c3

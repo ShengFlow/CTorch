@@ -616,7 +616,7 @@ static std::string generateFusedMatmulBiasKernel(bool has_relu,
 /// 为多节点图生成 kernel 源码
 /// @details 收集所有计算节点，按拓扑顺序生成代码，中间节点输出到临时缓冲区，
 ///          最后一个节点输出到 output。支持 MatMul + 逐元素操作的混合图。
-static std::string generateMultiNodeKernel(const Graph& graph) {
+static std::string generateMultiNodeKernel(const Graph& graph, size_t& out_scratch_size) {
     const auto& nodes = graph.nodes();
     const auto& inputs = graph.inputs();
     const auto& outputs = graph.outputs();
@@ -1159,6 +1159,7 @@ static std::string generateMultiNodeKernel(const Graph& graph) {
         ss << "    delete[] tmp" << i << ";\n";
     }
 
+    out_scratch_size = 0;
     ss << "}\n";
     return ss.str();
 }
@@ -1229,10 +1230,12 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
 
     // 多节点图：使用新的多节点 kernel 生成
     if (num_compute > 1) {
-        std::string src = generateMultiNodeKernel(graph);
+        size_t scratch_size = 0;
+        std::string src = generateMultiNodeKernel(graph, scratch_size);
         GeneratedKernel result;
         result.is_multi_node = true;
         result.num_inputs = graph.inputCount();
+        result.scratch_size = scratch_size;
 
         // 提取维度信息
         for (const auto& node : nodes) {
@@ -1251,7 +1254,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
 
         #ifdef CT_DEBUG
         {
-            static std::ofstream dbgf("/tmp/c3_kernel_dump_" + cache_key.substr(0, 8) + ".c",
+            std::ofstream dbgf("/tmp/c3_kernel_dump_" + cache_key.substr(0, 8) + ".c",
                                       std::ios::out | std::ios::trunc);
             dbgf << "// M=" << result.M << " K=" << result.K << " N=" << result.N
                  << " num_inputs=" << result.num_inputs << " elem_n=" << result.elem_n << "\n";

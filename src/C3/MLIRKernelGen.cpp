@@ -228,9 +228,81 @@ static void buildElementwiseBinary(mlir::OpBuilder& builder, mlir::Location loc,
 static void buildDiv(mlir::OpBuilder& builder, mlir::Location loc,
                      mlir::Value a, mlir::Value b, mlir::Value out,
                      mlir::Value n, int64_t known_numel = 0) {
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize && !(known_numel > 0 && known_numel <= 16);
+    
+    if (can_vectorize) {
+        constexpr int64_t VL = 8;
+        auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
+        auto f32 = builder.getF32Type();
+        auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+        mlir::Value n_idx = i64ToIndex(builder, loc, n);
+        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+        mlir::Value zero_vec = builder.create<mlir::arith::ConstantOp>(
+            loc, mlir::DenseElementsAttr::get(
+                vec_ty, llvm::ArrayRef<float>{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}));
+        float nan_f = std::nanf("");
+        mlir::Value nan_vec = builder.create<mlir::arith::ConstantOp>(
+            loc, mlir::DenseElementsAttr::get(
+                vec_ty, llvm::ArrayRef<float>{nan_f, nan_f, nan_f, nan_f, nan_f, nan_f, nan_f, nan_f}));
+
+        // === 主 vector 循环段 ===
+        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+        builder.setInsertionPointToStart(vloop.getBody());
+        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+        mlir::Value a_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, a, mlir::ValueRange{base});
+        mlir::Value b_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, b, mlir::ValueRange{base});
+        mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+
+        mlir::Value av = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, a_ptr);
+        mlir::Value bv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, b_ptr);
+
+        // 除零检查 (Vector select)
+        mlir::Value is_zero = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OEQ, bv, zero_vec);
+        mlir::Value div_res = builder.create<mlir::arith::DivFOp>(loc, av, bv);
+        mlir::Value rv = builder.create<mlir::arith::SelectOp>(loc, is_zero, nan_vec, div_res);
+        builder.create<mlir::LLVM::StoreOp>(loc, rv, out_ptr);
+        builder.setInsertionPointAfter(vloop);
+
+        // === 尾部标量循环段 ===
+        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+        builder.setInsertionPointToStart(tloop.getBody());
+        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+        mlir::Value a_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, a, mlir::ValueRange{idx});
+        mlir::Value b_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, b, mlir::ValueRange{idx});
+        mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+
+        mlir::Value av_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, a_ptr_t);
+        mlir::Value bv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, b_ptr_t);
+        mlir::Value zero_t = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
+        mlir::Value is_zero_t = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OEQ, bv_t, zero_t);
+
+        auto if_op = builder.create<mlir::scf::IfOp>(loc, f32, is_zero_t, true);
+        builder.setInsertionPointToStart(&if_op.getThenRegion().front());
+        mlir::Value nan_val = mlir::arith::ConstantFloatOp::create(
+            builder, loc, f32, llvm::APFloat::getNaN(llvm::APFloat::IEEEsingle()));
+        builder.create<mlir::scf::YieldOp>(loc, nan_val);
+
+        builder.setInsertionPointToStart(&if_op.getElseRegion().front());
+        mlir::Value div_result = builder.create<mlir::arith::DivFOp>(loc, av_t, bv_t);
+        builder.create<mlir::scf::YieldOp>(loc, div_result);
+
+        builder.setInsertionPointAfter(if_op);
+        builder.create<mlir::LLVM::StoreOp>(loc, if_op.getResult(0), out_ptr_t);
+        builder.setInsertionPointAfter(tloop);
+        return;
+    }
+
+    // 标量降级（旧逻辑）
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
-
     buildLoop(builder, loc, n, known_numel,
         [&](mlir::OpBuilder& bld, mlir::Location loc, mlir::Value idx_i64) {
             mlir::Value a_ptr = bld.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, a, mlir::ValueRange{idx_i64});
@@ -240,7 +312,6 @@ static void buildDiv(mlir::OpBuilder& builder, mlir::Location loc,
             mlir::Value av = bld.create<mlir::LLVM::LoadOp>(loc, f32, a_ptr);
             mlir::Value bv = bld.create<mlir::LLVM::LoadOp>(loc, f32, b_ptr);
 
-            // 除零检查：若 bv == 0.0f，存储 NaN；否则正常除法
             mlir::Value zero = mlir::arith::ConstantFloatOp::create(bld, loc, f32, llvm::APFloat(0.0f));
             mlir::Value is_zero = bld.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OEQ, bv, zero);
 
@@ -1098,12 +1169,51 @@ static void buildTranspose(mlir::OpBuilder& builder, mlir::Location loc,
     // 简化版转置: 元素级拷贝 (完整实现需计算转置索引)
     auto ptr_type = mlir::LLVM::LLVMPointerType::get(builder.getContext());
     auto f32 = builder.getF32Type();
+    (void)dim0; (void)dim1;
+
+    static const bool no_vectorize = std::getenv("C3_MLIR_NO_VECTORIZE") != nullptr;
+    const bool can_vectorize = !no_vectorize;
     
+    if (can_vectorize) {
+        constexpr int64_t VL = 8;
+        auto vec_ty = mlir::VectorType::get({VL}, f32);
+
+        mlir::Value c0_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+        mlir::Value c1_i = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
+        mlir::Value VL_i = builder.create<mlir::arith::ConstantIndexOp>(loc, VL);
+
+        mlir::Value n_idx = i64ToIndex(builder, loc, n);
+        mlir::Value rem = builder.create<mlir::arith::RemUIOp>(loc, n_idx, VL_i);
+        mlir::Value n_vec = builder.create<mlir::arith::SubIOp>(loc, n_idx, rem);
+
+        // === 主 vector 循环段 ===
+        auto vloop = builder.create<mlir::scf::ForOp>(loc, c0_i, n_vec, VL_i);
+        builder.setInsertionPointToStart(vloop.getBody());
+        mlir::Value base = indexToI64(builder, loc, vloop.getInductionVar());
+        mlir::Value in_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{base});
+        mlir::Value out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{base});
+
+        mlir::Value iv = builder.create<mlir::LLVM::LoadOp>(loc, vec_ty, in_ptr);
+        builder.create<mlir::LLVM::StoreOp>(loc, iv, out_ptr);
+        builder.setInsertionPointAfter(vloop);
+
+        // === 尾部标量循环段 ===
+        auto tloop = builder.create<mlir::scf::ForOp>(loc, n_vec, n_idx, c1_i);
+        builder.setInsertionPointToStart(tloop.getBody());
+        mlir::Value idx = indexToI64(builder, loc, tloop.getInductionVar());
+        mlir::Value in_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, in, mlir::ValueRange{idx});
+        mlir::Value out_ptr_t = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx});
+
+        mlir::Value iv_t = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr_t);
+        builder.create<mlir::LLVM::StoreOp>(loc, iv_t, out_ptr_t);
+        builder.setInsertionPointAfter(tloop);
+        return;
+    }
+
+    // 标量降级（旧逻辑）
     auto c0 = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
     auto c1 = builder.create<mlir::arith::ConstantIndexOp>(loc, 1);
     auto n_idx = i64ToIndex(builder, loc, n);
-    
-    // 循环: for i in 0..n-1: out[i] = in[i]
     auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n_idx, c1);
     builder.setInsertionPointToStart(loop.getBody());
     
@@ -1114,7 +1224,6 @@ static void buildTranspose(mlir::OpBuilder& builder, mlir::Location loc,
     
     auto val = builder.create<mlir::LLVM::LoadOp>(loc, f32, in_ptr);
     builder.create<mlir::LLVM::StoreOp>(loc, val, out_ptr);
-    
     builder.setInsertionPointAfter(loop);
 }
 
@@ -1131,19 +1240,22 @@ static void buildGt(mlir::OpBuilder& builder, mlir::Location loc,
     auto n_idx = i64ToIndex(builder, loc, n);
     auto zero_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(0.0f));
     auto one_f = builder.create<mlir::arith::ConstantFloatOp>(loc, f32, llvm::APFloat(1.0f));
+
+    // [HPC 优化] rhs 是大小为 1 的标量常量（如 0.0f），在循环外仅加载一次，避免循环内重复加载和越界访问
+    auto c0_i64 = indexToI64(builder, loc, c0);
+    auto rhs_ptr_base = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, rhs, mlir::ValueRange{c0_i64});
+    auto rhs_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, rhs_ptr_base);
     
-    // 循环: for i in 0..n-1: out[i] = (lhs[i] > rhs[i]) ? 1.0f : 0.0f
+    // 循环: for i in 0..n-1: out[i] = (lhs[i] > rhs) ? 1.0f : 0.0f
     auto loop = builder.create<mlir::scf::ForOp>(loc, c0, n_idx, c1);
     builder.setInsertionPointToStart(loop.getBody());
     
     auto idx = loop.getInductionVar();
     auto idx_i64 = indexToI64(builder, loc, idx);
     auto lhs_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, lhs, mlir::ValueRange{idx_i64});
-    auto rhs_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, rhs, mlir::ValueRange{idx_i64});
     auto out_ptr = builder.create<mlir::LLVM::GEPOp>(loc, ptr_type, f32, out, mlir::ValueRange{idx_i64});
     
     auto lhs_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, lhs_ptr);
-    auto rhs_val = builder.create<mlir::LLVM::LoadOp>(loc, f32, rhs_ptr);
     
     // 比较: lhs > rhs
     auto cmp = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs_val, rhs_val);
