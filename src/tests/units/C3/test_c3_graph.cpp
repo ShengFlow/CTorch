@@ -1128,6 +1128,24 @@ TEST(C3HotReplace, StatsAccuracy) {
 
 #ifdef CT_ENABLE_MLIR
 
+/// 物化 2D 转置为连续张量作为 eager 参考。
+/// 框架的 transpose() 返回懒视图（只换 shape/strides），而 sum() 假定连续布局，
+/// 直接对视图做 sum 会得到错误结果，因此先按逻辑索引物化为连续张量。
+static Tensor materializeTranspose(const Tensor& x) {
+    const auto& s = x.shape();
+    if (s.size() != 2) return x.clone();
+    size_t M = s[0], N = s[1];
+    const float* src = x.data_read<float>();
+    Tensor out(ShapeTag{}, {N, M});
+    float* dst = out.data_write<float>();
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            dst[j * M + i] = src[i * N + j];
+        }
+    }
+    return out;
+}
+
 /// 辅助：用 MLIR 后端编译单算子图
 static std::shared_ptr<ct::c3::CompiledKernel> compileMLIR(
     ct::c3::Graph& g, DeviceType dev = DeviceType::kCPU)
@@ -1286,6 +1304,292 @@ TEST(MLIRBackend, MatMulGraphExecute) {
     ASSERT_EQ(results.size(), 1u);
 
     Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// [JIT2.0 多节点端到端] Transpose → SumReduce(axis=0)
+// 输入 [2x3] → 转置 [3x2] → 沿 axis=0 归约 → [2]
+// 覆盖: buildMultiNodeMLIR + TransposeOp/SumReduceOp 创建与 Lowering
+TEST(MLIRBackend, TransposeSumReduceAxis0MultiNode) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto in_desc = TensorDesc::fromShape({2, 3});
+    size_t in = g.addInput(in_desc);
+
+    auto transpose_desc = TensorDesc::fromShape({3, 2});
+    size_t transpose = g.addNode(TransposeNode{in_desc, 0, 1}, {in}, transpose_desc);
+
+    auto sum_desc = TensorDesc::fromShape({2});
+    size_t sum = g.addNode(SumReduceNode{transpose_desc, 0}, {transpose}, sum_desc);
+    g.markOutput(sum);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}); // [[1,2,3],[4,5,6]]
+
+    auto results = kernel->execute({A});
+    ASSERT_EQ(results.size(), 1u);
+
+    // Eager: transpose → [[1,4],[2,5],[3,6]] → sum(axis=0) → [1+2+3, 4+5+6] = [6,15]
+    Tensor eager = materializeTranspose(A).sum(0);
+    std::cerr << "[DBG axis0] mlir shape="; for (auto s : results[0].shape()) std::cerr << s << ",";
+    std::cerr << " vals="; for (size_t i=0;i<results[0].numel();++i) std::cerr << results[0].data_read<float>()[i] << ",";
+    std::cerr << " | eager shape="; for (auto s : eager.shape()) std::cerr << s << ",";
+    std::cerr << " vals="; for (size_t i=0;i<eager.numel();++i) std::cerr << eager.data_read<float>()[i] << ",";
+    std::cerr << "\n";
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// [JIT2.0 多节点端到端] Transpose → SumReduce(axis=1)
+// 输入 [2x3] → 转置 [3x2] → 沿 axis=1 归约 → [3]
+TEST(MLIRBackend, TransposeSumReduceAxis1MultiNode) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto in_desc = TensorDesc::fromShape({2, 3});
+    size_t in = g.addInput(in_desc);
+
+    auto transpose_desc = TensorDesc::fromShape({3, 2});
+    size_t transpose = g.addNode(TransposeNode{in_desc, 0, 1}, {in}, transpose_desc);
+
+    auto sum_desc = TensorDesc::fromShape({3});
+    size_t sum = g.addNode(SumReduceNode{transpose_desc, 1}, {transpose}, sum_desc);
+    g.markOutput(sum);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f}); // [[1,2,3],[4,5,6]]
+
+    auto results = kernel->execute({A});
+    ASSERT_EQ(results.size(), 1u);
+
+    // Eager: transpose → [[1,4],[2,5],[3,6]] → sum(axis=1) → [1+4, 2+5, 3+6] = [5,7,9]
+    Tensor eager = materializeTranspose(A).sum(1);
+    std::cerr << "[DBG axis1] mlir shape="; for (auto s : results[0].shape()) std::cerr << s << ",";
+    std::cerr << " vals="; for (size_t i=0;i<results[0].numel();++i) std::cerr << results[0].data_read<float>()[i] << ",";
+    std::cerr << " | eager shape="; for (auto s : eager.shape()) std::cerr << s << ",";
+    std::cerr << " vals="; for (size_t i=0;i<eager.numel();++i) std::cerr << eager.data_read<float>()[i] << ",";
+    std::cerr << "\n";
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// ======================= JIT2.0 三 op 收口：MatMulOp 端到端 =======================
+// 覆盖 c3.matmul op 在单/多节点路径的创建，以及 MatMulOpLowering 的三种策略选择
+// （small_inline / tiled / cblas）、transpose folding 与 epilogue 融合。
+
+// 用确定性伪随机填充张量（避免硬编码大矩阵数据）
+static void fillDeterministic(Tensor& t, unsigned seed) {
+    float* p = t.data_write<float>();
+    for (size_t i = 0; i < t.numel(); ++i) {
+        unsigned v = (unsigned)((i + 1) * (seed + 1));
+        p[i] = (float)((v * 2654435761u) % 1000u - 500u) * 0.01f;
+    }
+}
+
+// 单节点 small_inline：total_ops = 2*3*4 = 24 < 256
+TEST(MLIRBackend, MatMulSmallInline) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 4});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    auto out_desc = TensorDesc::fromShape({2, 4});
+    g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 4});
+    fillDeterministic(A, 1);
+    fillDeterministic(B, 2);
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// 单节点 tiled：total_ops = 32*3*32 = 3072 ∈ [256, 4096)，且 M,N >= 默认 tile(32)
+TEST(MLIRBackend, MatMulTiledMedium) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({32, 3});
+    auto b_desc = TensorDesc::fromShape({3, 32});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    auto out_desc = TensorDesc::fromShape({32, 32});
+    g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {32, 3});
+    Tensor B(ShapeTag{}, {3, 32});
+    fillDeterministic(A, 3);
+    fillDeterministic(B, 4);
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// 单节点 cblas：total_ops = 16*16*16 = 4096 >= kTiledMatMulThreshold
+TEST(MLIRBackend, MatMulCblasLarge) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({16, 16});
+    auto b_desc = TensorDesc::fromShape({16, 16});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    auto out_desc = TensorDesc::fromShape({16, 16});
+    g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    g.markOutput(g.nodeCount() - 1);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {16, 16});
+    Tensor B(ShapeTag{}, {16, 16});
+    fillDeterministic(A, 5);
+    fillDeterministic(B, 6);
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(A, B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager, 1e-4f, 1e-5f));
+}
+
+// 多节点：MatMul → ReLU（无 epilogue 融合，验证多节点路径 MatMul op 独立创建）
+TEST(MLIRBackend, MatMulMultiNodeNoFusion) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 2});
+    auto out_desc = TensorDesc::fromShape({2, 2});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    size_t mm = g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    size_t relu = g.addNode(ReLUNode{out_desc}, {mm}, out_desc);
+    g.markOutput(relu);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 2});
+    fillTensor(A, {1.0f, -2.0f, 3.0f, -4.0f, 5.0f, -6.0f});
+    fillTensor(B, {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f});
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(A, B).relu();
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+// 多节点 transpose folding（transA=112）：Transpose(A) @ B
+// A{16,32} → Transpose → {32,16}；B{16,8}；total_ops=4096 → cblas（transA 生效）
+TEST(MLIRBackend, MatMulTransposeFoldAMultiNode) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({16, 32});
+    auto b_desc = TensorDesc::fromShape({16, 8});
+    auto aT_desc = TensorDesc::fromShape({32, 16});
+    auto out_desc = TensorDesc::fromShape({32, 8});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    size_t aT = g.addNode(TransposeNode{a_desc, 0, 1}, {a}, aT_desc);
+    size_t mm = g.addNode(MatMulNode{aT_desc, b_desc}, {aT, b}, out_desc);
+    g.markOutput(mm);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {16, 32});
+    Tensor B(ShapeTag{}, {16, 8});
+    fillDeterministic(A, 7);
+    fillDeterministic(B, 8);
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(materializeTranspose(A), B);
+    EXPECT_TRUE(tensorsAllClose(results[0], eager, 1e-4f, 1e-5f));
+}
+
+// 多节点 transpose folding（transB=112）：A @ Transpose(B)
+// A{8,16}；B{32,16} → Transpose → {16,32}；total_ops=4096 → cblas（transB 生效）
+TEST(MLIRBackend, MatMulTransposeFoldBMultiNode) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({8, 16});
+    auto b_desc = TensorDesc::fromShape({32, 16});
+    auto bT_desc = TensorDesc::fromShape({16, 32});
+    auto out_desc = TensorDesc::fromShape({8, 32});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    size_t bT = g.addNode(TransposeNode{b_desc, 0, 1}, {b}, bT_desc);
+    size_t mm = g.addNode(MatMulNode{a_desc, bT_desc}, {a, bT}, out_desc);
+    g.markOutput(mm);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {8, 16});
+    Tensor B(ShapeTag{}, {32, 16});
+    fillDeterministic(A, 9);
+    fillDeterministic(B, 10);
+
+    auto results = kernel->execute({A, B});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = matMul(A, materializeTranspose(B));
+    EXPECT_TRUE(tensorsAllClose(results[0], eager, 1e-4f, 1e-5f));
+}
+
+// 多节点 epilogue 融合：MatMul → Add(bias) → ReLU 合成一个 c3.matmul op（bias + act）
+TEST(MLIRBackend, MatMulEpilogueBiasReLUMultiNode) {
+    using namespace ct::c3;
+
+    Graph g;
+    auto a_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3, 2});
+    auto out_desc = TensorDesc::fromShape({2, 2});
+    auto bias_desc = TensorDesc::fromShape({2, 2});
+    size_t a = g.addInput(a_desc);
+    size_t b = g.addInput(b_desc);
+    size_t bias = g.addInput(bias_desc);
+    size_t mm = g.addNode(MatMulNode{a_desc, b_desc}, {a, b}, out_desc);
+    size_t add = g.addNode(AddNode{out_desc, bias_desc}, {mm, bias}, out_desc);
+    size_t relu = g.addNode(ReLUNode{out_desc}, {add}, out_desc);
+    g.markOutput(relu);
+
+    auto kernel = compileMLIR(g);
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor A(ShapeTag{}, {2, 3});
+    Tensor B(ShapeTag{}, {3, 2});
+    Tensor Bias(ShapeTag{}, {2, 2});
+    fillTensor(A, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(B, {1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f});
+    fillTensor(Bias, {-2.0f, 5.0f, 3.0f, -1.0f});
+
+    auto results = kernel->execute({A, B, Bias});
+    ASSERT_EQ(results.size(), 1u);
+    Tensor eager = (matMul(A, B) + Bias).relu();
     EXPECT_TRUE(tensorsAllClose(results[0], eager));
 }
 

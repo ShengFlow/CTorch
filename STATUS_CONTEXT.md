@@ -1,8 +1,8 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-14 - JIT 2.0 时代)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-14 深夜 - 自定义 C3 Dialect 攻坚期)
 
 ## 📌 项目定位与持久记忆
 
-本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。项目当前已圆满攻克 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）**，成功进入 **C3 JIT 2.0（TableGen 结构化 Dialect 时代）**。完整集成了所有最新的分支状态、编译管线、性能指标及代码提交。
+本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。项目已圆满攻克 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）**，成功进入 **C3 JIT 2.0（TableGen 结构化 Dialect 时代）**。当前正全力攻坚 **自定义 C3 Dialect** 路线：以 ODS/TableGen 定义专属 `c3` 方言算子（matmul / transpose / sum_reduce），打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。完整集成了所有最新的分支状态、编译管线、性能指标及代码提交。
 
 ---
 
@@ -33,6 +33,8 @@
 ---
 
 ## 🟢 二、C3 MLIR 后端「最大化发挥」与 JIT 2.0 阶段突破
+
+> ⚠️ **方案更新（2026-08-14 深夜用户决策）**：原「四大线方案」（A 显式向量化 / B 并行化 / C 内存优化 / D 声明式迁移）**已废弃**。当前唯一主线 = **自定义 C3 Dialect**（TableGen ODS 定义专属算子 + 专属 lowering）。下述 A~D 四线作为历史方向保留仅供回顾，不再作为执行计划。
 
 项目制定了 C3 MLIR 后端优化的四大线方案，并在 2026-08-14 实现了**由 JIT 1.0（扁平直译）向 JIT 2.0（TableGen 结构化 Dialect）的完美进化**：
 
@@ -75,6 +77,67 @@
 
 ---
 
+## 🔥 四、2026-08-14 深夜攻坚：自定义 C3 Dialect 全力冲刺
+
+> 从本节点开始，**唯一主线 = 自定义 C3 Dialect**。目标：以 ODS/TableGen 定义专属 `c3` 方言算子，打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。
+
+### 4.1 Dialect 骨架（阶段 2.2 成果，已稳定）
+- `include/C3/C3Ops.td`：定义 `c3.matmul` / `c3.transpose` / `c3.sum_reduce` 三算子（`AnyType` 兼容平面指针 C-ABI）。
+- `include/C3/C3Combine.td`：DRR 优化规则（DoubleTransposeOptPattern）。
+- `include/C3/C3Dialect.h` + `src/C3/C3Dialect.cpp`：方言注册 + 三算子 builder + parseType/printType。
+- CMake TableGen 管线：编译期自动产出 `C3Ops.h/cpp.inc`、`C3Dialect.h/cpp.inc`、`C3Combine.cpp.inc`。
+
+### 4.2 Lowering 集成（三 op 收口完成 ✅）
+- ✅ `TransposeOpLowering` / `SumReduceOpLowering` / `MatMulOpLowering` 三算子全部进入统一 lowering pipeline，单/多节点图路径均创建对应 c3 算子。
+- ✅ **MatMulOp 纳入 dialect（三 op 收口）**：MatMulOp 改为 **out-as-operand 风格 + `MemoryEffects<[MemWrite]>`**（与 Transpose/SumReduce 统一，三 op 语义对齐）。新增 `MatMulOpLowering`（`src/C3/MLIRKernelGen.cpp`），**策略选择从图生成处下沉到 lowering 阶段**：
+  - `total_ops < 256` → 小矩阵内联循环（无 tiling）
+  - `total_ops ∈ [256, kTiledMatMulThreshold)` 且 M/N ≥ tile → 中矩阵 2D tiled scf.for（Cache-friendly）
+  - 其余 → 委托 cblas_sgemm（BLAS 最优实现），epilogue 在 sgemm 后单独执行
+  - 与手写路径 `buildTiledMatMulWithEpilogue` / `buildMatMul` 复用同一套代码生成逻辑，数值语义与手写一致。
+  - 新增可选 epilogue 融合（`$bias` 加法 + 激活 `act`：None/ReLU/Sigmoid/Tanh）与 transpose folding（`transA`/`transB`：111=NoTrans, 112=Trans）。
+- ✅ `runC3Combine`（DRR 高层图优化）+ `runC3Lowering`（高层算子→LLVM 循环）已接入 `applyLoweringPipeline`。
+
+### 4.3 关键 Bug 修复（本次攻坚核心产出）
+- **修复 DCE 大 Bug**：Transpose/SumReduce 采用「无 result、`$out` 作为 operand 传入」的 buffer 语义，却标记 `[Pure]`（无副作用）→ 被 MLIR 优化器当死代码删除，kernel 输出全 0。**修复：traits 改为 `MemoryEffects<[MemWrite]>`**（`C3Ops.td`）。
+- **修复 `C3Combine.td` 参数错误**：DoubleTransposeOptPattern 参数数 5→6，对齐 op 定义（input/out 双 operand + M/N/dim0/dim1 四 attr）；注明该规则在当前 buffer 语义下暂不触发，待转 SSA result 语义后生效。
+- **补充链接修复**（沿用历史）：TableGen 未生成自定义 builder → `C3Dialect.cpp` 补齐 SumReduceOp/TransposeOp/MatMulOp builder。
+
+### 4.4 端到端测试（新增，全绿）
+- **Transpose/SumReduce 多节点（2 个）**：`MLIRBackend.TransposeSumReduceAxis0/1MultiNode`
+  - `materializeTranspose` 辅助函数（框架 `sum()` 对懒转置视图结果错误，先物化连续张量再求 eager 参考）。
+  - axis0：mlir `[6,15]` == eager；axis1：mlir `[5,7,9]` == eager，数值完全一致 ✅
+- **MatMulOp 端到端（7 个，覆盖三种策略 + 多节点场景）**：
+  - `MLIRBackend.MatMulSmallInline`：total_ops=24 < 256，小矩阵内联 ✅
+  - `MLIRBackend.MatMulTiledMedium`：total_ops=3072，中矩阵 2D tiling ✅
+  - `MLIRBackend.MatMulCblasLarge`：total_ops=4096，委托 cblas_sgemm ✅
+  - `MLIRBackend.MatMulMultiNodeNoFusion`：MatMul→ReLU 多节点独立执行 ✅
+  - `MLIRBackend.MatMulTransposeFoldAMultiNode`：Transpose(A)→MatMul，transA 折叠 ✅
+  - `MLIRBackend.MatMulTransposeFoldBMultiNode`：MatMul→Transpose(B)，transB 折叠 ✅
+  - `MLIRBackend.MatMulEpilogueBiasReLUMultiNode`：MatMul→Add(bias)→ReLU 合成 epilogue 融合 ✅
+
+### 4.5 回归验证结论
+- 完整测试套件：**排除预存崩溃后 109 项全 PASSED**（110 项 - 1 预存崩溃），本次改动零回归。
+- **发现并确认一个「预存崩溃」（非本次引入）**：`Benchmark.MLIRFusedVsNonFused` 在完整套件中（Handwritten benchmark 前置时）SIGSEGV，崩溃点为 JIT 无符号机器码、多线程同时越界。
+  - 定位过程：单独跑该测试 PASS；`C3_MLIR_NO_VECTORIZE=1` 仍崩（与显式向量化无关）；**A/B 验证（`git stash` 还原本次全部改动后基线同样崩溃）确认非本次引入**。
+  - 判定：测试顺序相关的全局状态污染（Handwritten 编译/执行残留污染 MLIR 后续执行），**待后续单独排查**（候选方向：JIT kernel 缓存 / buffer 池复用逻辑在多次 compile 间的状态破坏）。
+
+### 4.6 当前进度（三 op 收口 3/3 完成 ✅）
+| 环节 | Transpose | SumReduce | MatMul |
+|---|---|---|---|
+| ODS 定义 | ✅ | ✅ | ✅ |
+| builder | ✅ | ✅ | ✅ |
+| lowering | ✅ | ✅ | ✅ |
+| 图接入 | ✅ | ✅ | ✅ |
+| 端到端测试 | ✅ | ✅ | ✅ |
+
+### 4.7 后续方向
+1. ✅ ~~完成 MatMulOp Lowering~~ → 三 op 收口完成，dialect 完整闭环达成。
+2. 逐元素算子（Add/Mul/ReLU/Sigmoid 等，形态统一）后续用 `linalg.generic` 声明式统一覆盖（一个机制替代 if-else 分发），不逐类建 op。
+3. 第二阶段（长期）：声明式 linalg + 统一 transform 管线（tiling → vectorize → fuse → bufferize）。
+4. 待办：单独排查 4.5 的预存崩溃。
+
+---
+
 ## 📊 关键指标历史追踪
 
 | 指标 | 历史值 | 优化后当前值 | 说明 |
@@ -83,3 +146,6 @@
 | backward 命中 | 55.5% | 🟢 **100% 验证通过 (overall_max_diff=2.98e-08)** | 支持 SumReduce (Axis 0/1/all) / Transpose (Tiled 2D) |
 | 区域融合命中 | 0% | 🟢 **100% 激活 (12/12 Passed)** | 隔离环境下多核并行自动融合 |
 | MNIST 5epoch时间 | 8573ms | ⚡ **7548.7ms** | 优化后的端到端极速训练（提速 12.0%） |
+| 自定义 C3 Dialect 三 op 收口 | 0/3 | 🟢 **3/3**（Transpose / SumReduce / MatMul 全链路 ✅） | ODS+builder+lowering+图接入+端到端测试全闭环 |
+| 多节点端到端测试 | — | 🟢 **9/9 通过**（Transpose→SumReduce axis0/1 ×2 + MatMul 三种策略/转置折叠/epilogue ×7） | mlir 输出 == eager 参考，数值完全一致 |
+| 完整测试套件回归 | — | 🟢 **109/109 通过**（排除 1 个预存崩溃） | 预存崩溃 `MLIRFusedVsNonFused` 非本次引入，待排查 |

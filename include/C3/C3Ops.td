@@ -40,23 +40,49 @@ class C3_Op<string mnemonic, list<Trait> traits = []> :
 // MatMulOp
 //===----------------------------------------------------------------------===//
 
-def C3_MatMulOp : C3_Op<"matmul", [Pure]> {
+def C3_MatMulOp : C3_Op<"matmul", [MemoryEffects<[MemWrite]>]> {
   let summary = "High-performance Matrix Multiplication";
   let description = [{
     计算输入矩阵 A [M x K] 和 B [K x N] 的乘积，输出矩阵 C [M x N]。
-    在 Lowering 阶段会被降低为 linalg.matmul 或优化的 Tiled scf.for，以便触发 Cache-friendly 2D Tiling。
+    采用 out-as-operand 语义：结果写入预分配 buffer（$out），无 SSA result。
+    
+    在 Lowering 阶段按 total_ops 选择策略：
+      - total_ops < 256        → 小矩阵内联循环（无 tiling）
+      - < kTiledMatMulThreshold → 中矩阵 2D tiled scf.for（Cache-friendly）
+      - 否则                    → 委托 cblas_sgemm（BLAS 最优实现）
+    
+    可选 epilogue 融合：$bias 加法 + 激活函数（act: 0=None, 1=ReLU, 2=Sigmoid, 3=Tanh）。
+    可选 transpose folding：transA/transB 携带上游 Transpose 折叠信息（111=NoTrans, 112=Trans）。
+    M/K/N 为 0 时表示维度在运行时确定（走 cblas 分支）。
     
     示例：
-      %out = c3.matmul %A, %B {M = 32, K = 64, N = 16} : !llvm.ptr, !llvm.ptr -> !llvm.ptr
+      c3.matmul %A, %B, %C, %bias {M = 32, K = 64, N = 16, transA = 111, transB = 111, act = 1} : !llvm.ptr, !llvm.ptr, !llvm.ptr
   }];
 
-  let arguments = (ins AnyType:$lhs, AnyType:$rhs, I64Attr:$M, I64Attr:$K, I64Attr:$N);
-  let results = (outs AnyType:$out);
+  let arguments = (ins
+    AnyType:$lhs,
+    AnyType:$rhs,
+    AnyType:$out,
+    Optional<AnyType>:$bias,
+    I64Attr:$M,
+    I64Attr:$K,
+    I64Attr:$N,
+    I32Attr:$transA,
+    I32Attr:$transB,
+    I32Attr:$act,
+    I64Attr:$tileM,
+    I64Attr:$tileN,
+    I64Attr:$biasNumel
+  );
+  let results = (outs);
 
-  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($out)";
+  let assemblyFormat = "$lhs `,` $rhs `,` $out (`,` $bias^)? attr-dict `:` type($lhs) `,` type($rhs) `,` type($out) `,` type($bias)";
 
   let builders = [
-    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "int64_t":$M, "int64_t":$K, "int64_t":$N)>
+    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "Value":$out, "Value":$bias,
+                  "int64_t":$M, "int64_t":$K, "int64_t":$N,
+                  "int":$transA, "int":$transB, "int":$act,
+                  "int64_t":$tileM, "int64_t":$tileN, "int64_t":$biasNumel)>
   ];
 }
 
@@ -64,19 +90,19 @@ def C3_MatMulOp : C3_Op<"matmul", [Pure]> {
 // TransposeOp
 //===----------------------------------------------------------------------===//
 
-def C3_TransposeOp : C3_Op<"transpose", [Pure]> {
+def C3_TransposeOp : C3_Op<"transpose", [MemoryEffects<[MemWrite]>]> {
   let summary = "Structural 2D matrix transpose";
   let description = [{
     对输入 2D 矩阵进行转置，将 [M x N] 转置为 [N x M]。
   }];
 
-  let arguments = (ins AnyType:$input, I64Attr:$M, I64Attr:$N, I32Attr:$dim0, I32Attr:$dim1);
-  let results = (outs AnyType:$out);
+  let arguments = (ins AnyType:$input, AnyType:$out, I64Attr:$M, I64Attr:$N, I32Attr:$dim0, I32Attr:$dim1);
+  let results = (outs);
 
-  let assemblyFormat = "$input `dims` `[` $M `,` $N `]` `[` $dim0 `,` $dim1 `]` attr-dict `:` type($input) `->` type($out)";
+  let assemblyFormat = "$input `,` $out `dims` `[` $M `,` $N `]` `[` $dim0 `,` $dim1 `]` attr-dict `:` type($input) `,` type($out)";
 
   let builders = [
-    OpBuilder<(ins "Value":$input, "int64_t":$M, "int64_t":$N, "int":$dim0, "int":$dim1)>
+    OpBuilder<(ins "Value":$input, "Value":$out, "int64_t":$M, "int64_t":$N, "int":$dim0, "int":$dim1)>
   ];
 }
 
@@ -84,20 +110,20 @@ def C3_TransposeOp : C3_Op<"transpose", [Pure]> {
 // SumReduceOp
 //===----------------------------------------------------------------------===//
 
-def C3_SumReduceOp : C3_Op<"sum_reduce", [Pure]> {
+def C3_SumReduceOp : C3_Op<"sum_reduce", [MemoryEffects<[MemWrite]>]> {
   let summary = "Axis-wise summation reduction";
   let description = [{
     沿着指定的 axis（如 0 或 1），对输入 2D [M x N] 张量进行归约求和。
     支持全量 reduce 到标量（axis=-1）。
   }];
 
-  let arguments = (ins AnyType:$input, I64Attr:$M, I64Attr:$N, I32Attr:$axis);
-  let results = (outs AnyType:$out);
+  let arguments = (ins AnyType:$input, AnyType:$out, I64Attr:$M, I64Attr:$N, I32Attr:$axis);
+  let results = (outs);
 
-  let assemblyFormat = "$input `dims` `[` $M `,` $N `]` `axis` $axis attr-dict `:` type($input) `->` type($out)";
+  let assemblyFormat = "$input `,` $out `dims` `[` $M `,` $N `]` `axis` $axis attr-dict `:` type($input) `,` type($out)";
 
   let builders = [
-    OpBuilder<(ins "Value":$input, "int64_t":$M, "int64_t":$N, "int":$axis)>
+    OpBuilder<(ins "Value":$input, "Value":$out, "int64_t":$M, "int64_t":$N, "int":$axis)>
   ];
 }
 

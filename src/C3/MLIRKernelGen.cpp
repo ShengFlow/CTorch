@@ -14,6 +14,11 @@
  */
 
 #include "MLIRKernelGen.h"
+#include "C3/C3Dialect.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+// 导入 TableGen 生成的 C3Combine 模式重写实现
+#include "C3Combine.cpp.inc"
 
 #include <algorithm>
 #include <cstdint>
@@ -2217,57 +2222,19 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                 }
             }
 
-            // === 选择最佳 MatMul 策略 ===
-            int64_t total_ops = matM * matK * matN;
+            // === 创建 c3.matmul op（JIT 2.0 三 op 收口 2026-08-15）===
+            // 策略选择（small_inline / tiled / cblas）下沉到 MatMulOpLowering，
+            // 这里只负责打包 M/K/N + transpose folding + epilogue 融合信息。
             // M1 1.2 (2026-08-09): 读 AutoTuner 调优结果替换写死的 kDefaultTileM/N
             // 调优未跑 (tuned=false) 时 thread_local cache 持有 {0,0,0}, 落到默认 32/32
             auto& tile = currentTileCache();
             int64_t tile_m = (tile.tile_m > 0) ? tile.tile_m : kDefaultTileM;
             int64_t tile_n = (tile.tile_n > 0) ? tile.tile_n : kDefaultTileN;
-            // 仅在 M 和 N 都足够大时才使用 tiling（避免 N=1 时 tiling 空转）
-            bool use_tiling = (total_ops >= kSmallMatMulThreshold &&
-                               total_ops < kTiledMatMulThreshold &&
-                               matM >= tile_m && matN >= tile_n);
-#ifdef CT_DEBUG
-            fprintf(stderr, "[DBG-5D-MLP] MatMul total_ops=%lld kSmall=%lld use_tiling=%d branch=%s\n",
-                    (long long)total_ops, (long long)kSmallMatMulThreshold, (int)use_tiling,
-                    total_ops < kSmallMatMulThreshold ? "small_inline"
-                    : (use_tiling ? "tiled_inline" : "cblas"));
-#endif
-            if (total_ops < kSmallMatMulThreshold) {
-                // 小矩阵：使用无 tiling 的内联循环（带 epilogue 融合）
-                buildTiledMatMulWithEpilogue(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf,
-                                             mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
-                                             /*tile_m=*/0, /*tile_n=*/0,
-                                             fused_bias_numel, (size_t)matM, (size_t)matN);
-            } else if (use_tiling) {
-                // 中矩阵：使用 2D tiling 的融合版本（改善缓存利用率）
-                // tile 来自 AutoTuner 调优 (M1 1.2 接通)
-                buildTiledMatMulWithEpilogue(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf,
-                                             mm_M, mm_K, mm_N, fused_bias_ptr, fused_act,
-                                             tile_m, tile_n,
-                                             fused_bias_numel, (size_t)matM, (size_t)matN);
-            } else {
-                // 大矩阵：委托 cblas_sgemm（BLAS 对大型矩阵有最优实现）
-                // epilogue（bias + activation）在 sgemm 之后单独执行
-                buildMatMul(builder, loc, matmul_a_ptr, matmul_b_ptr, out_buf, mm_M, mm_K, mm_N, transA, transB);
-                if (fused_bias_ptr || fused_act != MatMulActivation::None) {
-                    int64_t out_numel = matM * matN;
-                    // 【P0 修复 DEBT-NEW-4 2026-08-08】传 mm_N 给 buildFusedEpilogue，
-                    // 让 bias 索引用 idx_i64 % N（之前用 idx_i64 直接索引 1D bias → 越界）
-                    if (out_numel > 0 && out_numel <= 16) {
-                        buildFusedEpilogue(builder, loc, out_buf, out_buf,
-                                           builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act, out_numel, mm_N,
-                                           fused_bias_numel, (size_t)matM, (size_t)matN);
-                    } else {
-                        buildFusedEpilogue(builder, loc, out_buf, out_buf,
-                                           builder.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64),
-                                           fused_bias_ptr, fused_act, /*known_numel=*/0, mm_N,
-                                           fused_bias_numel, (size_t)matM, (size_t)matN);
-                    }
-                }
-            }
+            builder.create<mlir::c3::MatMulOp>(loc, matmul_a_ptr, matmul_b_ptr, out_buf,
+                                               fused_bias_ptr,
+                                               matM, matK, matN,
+                                               transA, transB, (int)fused_act,
+                                               tile_m, tile_n, (int64_t)fused_bias_numel);
 
             // 跳过被融合的后续节点
             ci += fused_skip;
@@ -2296,10 +2263,14 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             buildLog(builder, loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<SumReduceNode>(op)) {
             const auto& sr = std::get<SumReduceNode>(op);
-            buildSumReduce(builder, loc, in_ptrs[0], out_buf, node_n, sr.in_desc, sr.axis);
+            int64_t M = sr.in_desc.shape.size() > 0 ? sr.in_desc.shape[0] : 1;
+            int64_t N = sr.in_desc.shape.size() > 1 ? sr.in_desc.shape[1] : 1;
+            builder.create<mlir::c3::SumReduceOp>(loc, in_ptrs[0], out_buf, M, N, sr.axis);
         } else if (std::holds_alternative<TransposeNode>(op)) {
             const auto& tr = std::get<TransposeNode>(op);
-            buildTranspose(builder, loc, in_ptrs[0], out_buf, node_n, tr.in_desc, tr.dim0, tr.dim1);
+            int64_t M = tr.in_desc.shape.size() > 0 ? tr.in_desc.shape[0] : 1;
+            int64_t N = tr.in_desc.shape.size() > 1 ? tr.in_desc.shape[1] : 1;
+            builder.create<mlir::c3::TransposeOp>(loc, in_ptrs[0], out_buf, M, N, tr.dim0, tr.dim1);
         } else if (std::holds_alternative<GtNode>(op)) {
             buildGt(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n);
         } else {
@@ -2429,8 +2400,18 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
         }
         else if (std::holds_alternative<DivNode>(op))
             buildDiv(builder, loc, a, b, out, n);
-        else if (std::holds_alternative<MatMulNode>(op))
-            buildMatMul(builder, loc, a, b, out, M, K, N);
+        else if (std::holds_alternative<MatMulNode>(op)) {
+            // JIT 2.0 三 op 收口：单节点 MatMul 也走 c3.matmul op，
+            // 维度从 MatMulNode 的 desc 取编译期常量，策略选择由 MatMulOpLowering 完成。
+            const auto& mm = std::get<MatMulNode>(op);
+            int64_t matM = mm.lhs_desc.shape.size() > 0 ? (int64_t)mm.lhs_desc.shape[0] : 0;
+            int64_t matK = mm.lhs_desc.shape.size() > 1 ? (int64_t)mm.lhs_desc.shape[1] : 0;
+            int64_t matN = mm.rhs_desc.shape.size() > 1 ? (int64_t)mm.rhs_desc.shape[1] : 0;
+            builder.create<mlir::c3::MatMulOp>(loc, a, b, out, nullptr,
+                                               matM, matK, matN,
+                                               111, 111, (int)MatMulActivation::None,
+                                               /*tileM=*/0, /*tileN=*/0, /*biasNumel=*/0);
+        }
         else if (std::holds_alternative<NegNode>(op))
             buildNegate(builder, loc, a, out, n);
         else if (std::holds_alternative<ReLUNode>(op))
@@ -2445,11 +2426,15 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
             buildLog(builder, loc, a, out, n);
         else if (std::holds_alternative<SumReduceNode>(op)) {
             const auto& sr = std::get<SumReduceNode>(op);
-            buildSumReduce(builder, loc, a, out, n, sr.in_desc, sr.axis);
+            int64_t M = sr.in_desc.shape.size() > 0 ? sr.in_desc.shape[0] : 1;
+            int64_t N = sr.in_desc.shape.size() > 1 ? sr.in_desc.shape[1] : 1;
+            builder.create<mlir::c3::SumReduceOp>(loc, a, out, M, N, sr.axis);
         }
         else if (std::holds_alternative<TransposeNode>(op)) {
             const auto& tr = std::get<TransposeNode>(op);
-            buildTranspose(builder, loc, a, out, n, tr.in_desc, tr.dim0, tr.dim1);
+            int64_t M = tr.in_desc.shape.size() > 0 ? tr.in_desc.shape[0] : 1;
+            int64_t N = tr.in_desc.shape.size() > 1 ? tr.in_desc.shape[1] : 1;
+            builder.create<mlir::c3::TransposeOp>(loc, a, out, M, N, tr.dim0, tr.dim1);
         }
         else
             throw std::runtime_error("MLIRKernelGen: unsupported op " + std::to_string(op.index()));
@@ -2464,6 +2449,154 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
     }
 
     return module;
+}
+
+// 1. C3ToLLVM Lowering Pattern for c3::TransposeOp
+struct TransposeOpLowering : public mlir::OpRewritePattern<mlir::c3::TransposeOp> {
+    using OpRewritePattern<mlir::c3::TransposeOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::TransposeOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        auto loc = op.getLoc();
+        mlir::Value in = op.getInput();
+        mlir::Value out = op.getOut();
+        
+        int64_t M = op.getM();
+        int64_t N = op.getN();
+        int32_t dim0 = op.getDim0();
+        int32_t dim1 = op.getDim1();
+        
+        TensorDesc in_desc;
+        in_desc.shape = {static_cast<size_t>(M), static_cast<size_t>(N)};
+        in_desc.numel = M * N;
+        
+        auto n_val = rewriter.create<mlir::arith::ConstantIntOp>(loc, M * N, 64);
+        
+        buildTranspose(rewriter, loc, in, out, n_val, in_desc, dim0, dim1);
+        
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+// 2. C3ToLLVM Lowering Pattern for c3::SumReduceOp
+struct SumReduceOpLowering : public mlir::OpRewritePattern<mlir::c3::SumReduceOp> {
+    using OpRewritePattern<mlir::c3::SumReduceOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::SumReduceOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        auto loc = op.getLoc();
+        mlir::Value in = op.getInput();
+        mlir::Value out = op.getOut();
+        
+        int64_t M = op.getM();
+        int64_t N = op.getN();
+        int32_t axis = op.getAxis();
+        
+        TensorDesc in_desc;
+        in_desc.shape = {static_cast<size_t>(M), static_cast<size_t>(N)};
+        in_desc.numel = M * N;
+        
+        auto n_val = rewriter.create<mlir::arith::ConstantIntOp>(loc, M * N, 64);
+        
+        buildSumReduce(rewriter, loc, in, out, n_val, in_desc, axis);
+        
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+// 3. C3ToLLVM Lowering Pattern for c3::MatMulOp
+// JIT 2.0 三 op 收口（2026-08-15）：策略选择（small_inline / tiled / cblas）从
+// 多节点图生成处下沉到 lowering，与 buildTiledMatMulWithEpilogue/buildMatMul 复用同一套
+// 代码生成逻辑，保证数值语义与手写路径一致。
+struct MatMulOpLowering : public mlir::OpRewritePattern<mlir::c3::MatMulOp> {
+    using OpRewritePattern<mlir::c3::MatMulOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::MatMulOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        auto loc = op.getLoc();
+        mlir::Value lhs = op.getLhs();
+        mlir::Value rhs = op.getRhs();
+        mlir::Value out = op.getOut();
+        mlir::Value bias = op.getBias();
+
+        int64_t matM = op.getM();
+        int64_t matK = op.getK();
+        int64_t matN = op.getN();
+        int32_t transA = op.getTransA();
+        int32_t transB = op.getTransB();
+        int32_t act_i = op.getAct();
+        int64_t tile_m = op.getTileM();
+        int64_t tile_n = op.getTileN();
+        int64_t bias_numel = op.getBiasNumel();
+
+        MatMulActivation act = static_cast<MatMulActivation>(act_i);
+        bool has_bias = bias && bias_numel > 0;
+        mlir::Value bias_ptr = has_bias ? bias : nullptr;
+
+        auto M = rewriter.create<mlir::arith::ConstantIntOp>(loc, matM, 64);
+        auto K = rewriter.create<mlir::arith::ConstantIntOp>(loc, matK, 64);
+        auto N = rewriter.create<mlir::arith::ConstantIntOp>(loc, matN, 64);
+
+        // 维度在运行时确定（M/K/N 为 0，且无编译期常量可用）：直接委托 cblas_sgemm
+        if (matM == 0 || matK == 0 || matN == 0) {
+            buildMatMul(rewriter, loc, lhs, rhs, out, M, K, N, transA, transB);
+            rewriter.eraseOp(op);
+            return mlir::success();
+        }
+
+        // === 策略选择（与多节点图生成逻辑一致）===
+        int64_t total_ops = matM * matK * matN;
+        int64_t tm = (tile_m > 0) ? tile_m : kDefaultTileM;
+        int64_t tn = (tile_n > 0) ? tile_n : kDefaultTileN;
+        bool use_tiling = (total_ops >= kSmallMatMulThreshold &&
+                           total_ops < kTiledMatMulThreshold &&
+                           matM >= tm && matN >= tn);
+
+        if (total_ops < kSmallMatMulThreshold) {
+            // 小矩阵：无 tiling 内联循环（带 epilogue 融合）
+            buildTiledMatMulWithEpilogue(rewriter, loc, lhs, rhs, out, M, K, N,
+                                         bias_ptr, act, /*tile_m=*/0, /*tile_n=*/0,
+                                         (size_t)bias_numel, (size_t)matM, (size_t)matN);
+        } else if (use_tiling) {
+            // 中矩阵：2D tiling 融合版本（改善缓存利用率）
+            buildTiledMatMulWithEpilogue(rewriter, loc, lhs, rhs, out, M, K, N,
+                                         bias_ptr, act, tm, tn,
+                                         (size_t)bias_numel, (size_t)matM, (size_t)matN);
+        } else {
+            // 大矩阵：委托 cblas_sgemm，epilogue 在 sgemm 之后单独执行
+            buildMatMul(rewriter, loc, lhs, rhs, out, M, K, N, transA, transB);
+            if (has_bias || act != MatMulActivation::None) {
+                int64_t out_numel = matM * matN;
+                auto n_val = rewriter.create<mlir::arith::ConstantIntOp>(loc, out_numel, 64);
+                auto N_for_bias = rewriter.create<mlir::arith::ConstantIntOp>(loc, matN, 64);
+                buildFusedEpilogue(rewriter, loc, out, out, n_val, bias_ptr, act,
+                                   /*known_numel=*/out_numel > 0 && out_numel <= 16 ? out_numel : 0,
+                                   N_for_bias,
+                                   (size_t)bias_numel, (size_t)matM, (size_t)matN);
+            }
+        }
+
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+static void runC3Combine(mlir::ModuleOp module) {
+    mlir::RewritePatternSet patterns(module.getContext());
+    populateWithGenerated(patterns);
+    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(module, std::move(patterns)))) {
+        throw std::runtime_error("MLIRKernelGen: C3Combine pattern rewrite optimization failed");
+    }
+}
+
+static void runC3Lowering(mlir::ModuleOp module) {
+    mlir::RewritePatternSet patterns(module.getContext());
+    patterns.add<TransposeOpLowering, SumReduceOpLowering, MatMulOpLowering>(module.getContext());
+    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(module, std::move(patterns)))) {
+        throw std::runtime_error("MLIRKernelGen: C3ToLLVM lowering pass failed");
+    }
 }
 
 // ======================= Lowering Pipeline =======================
@@ -2482,6 +2615,8 @@ static void runPass(mlir::ModuleOp module, std::unique_ptr<mlir::Pass> pass, con
 void applyLoweringPipeline(mlir::ModuleOp module) {
     runPass(module, mlir::createStripDebugInfoPass(), "StripDebugInfo");
     runPass(module, mlir::createCanonicalizerPass(), "Canonicalizer");
+    runC3Combine(module);  // 1. 运行 JIT 2.0 高层图优化 (DRR)
+    runC3Lowering(module); // 2. 运行 JIT 2.0 高层算子到 LLVM 标量/向量循环的 Lowering Pass
     runPass(module, mlir::createCSEPass(), "CSE");
     runPass(module, mlir::createSymbolDCEPass(), "SymbolDCE");
     runPass(module, mlir::createLoopInvariantCodeMotionPass(), "LICM");
@@ -2523,6 +2658,7 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
     reg.insert<mlir::func::FuncDialect>();
     reg.insert<mlir::memref::MemRefDialect>();
     reg.insert<mlir::LLVM::LLVMDialect>();
+    reg.insert<mlir::c3::C3Dialect>();
 
     auto context = std::make_shared<mlir::MLIRContext>(reg);
     context->loadDialect<mlir::arith::ArithDialect>();
@@ -2531,9 +2667,17 @@ GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
     context->loadDialect<mlir::func::FuncDialect>();
     context->loadDialect<mlir::memref::MemRefDialect>();
     context->loadDialect<mlir::LLVM::LLVMDialect>();
+    context->loadDialect<mlir::c3::C3Dialect>();
 
     auto module = buildMLIRModule(*context, graph);
     applyLoweringPipeline(*module);
+
+    // [TEMP-DBG] 环境变量 C3_MLIR_DUMP=1 时打印 lowering 后的 module
+    if (std::getenv("C3_MLIR_DUMP")) {
+        llvm::errs() << "==== C3 lowered module ====\n";
+        module->dump();
+        llvm::errs() << "==== end ====\n";
+    }
 
     // 在 lowering pipeline 后注册翻译接口，ExecutionEngine 需要它们来翻译 LLVM IR
     mlir::registerBuiltinDialectTranslation(*context);
