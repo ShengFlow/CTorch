@@ -117,9 +117,7 @@
 
 ### 4.5 回归验证结论
 - 完整测试套件：**排除预存崩溃后 109 项全 PASSED**（110 项 - 1 预存崩溃），本次改动零回归。
-- **发现并确认一个「预存崩溃」（非本次引入）**：`Benchmark.MLIRFusedVsNonFused` 在完整套件中（Handwritten benchmark 前置时）SIGSEGV，崩溃点为 JIT 无符号机器码、多线程同时越界。
-  - 定位过程：单独跑该测试 PASS；`C3_MLIR_NO_VECTORIZE=1` 仍崩（与显式向量化无关）；**A/B 验证（`git stash` 还原本次全部改动后基线同样崩溃）确认非本次引入**。
-  - 判定：测试顺序相关的全局状态污染（Handwritten 编译/执行残留污染 MLIR 后续执行），**待后续单独排查**（候选方向：JIT kernel 缓存 / buffer 池复用逻辑在多次 compile 间的状态破坏）。
+- ~~**发现并确认一个「预存崩溃」（非本次引入）**：`Benchmark.MLIRFusedVsNonFused` 在完整套件中（Handwritten benchmark 前置时）SIGSEGV，崩溃点为 JIT 无符号机器码、多线程同时越界。~~ → **已于 2026-08-15 定位并修复（见 4.8）**
 
 ### 4.6 当前进度（三 op 收口 3/3 完成 ✅）
 | 环节 | Transpose | SumReduce | MatMul |
@@ -134,7 +132,18 @@
 1. ✅ ~~完成 MatMulOp Lowering~~ → 三 op 收口完成，dialect 完整闭环达成。
 2. 逐元素算子（Add/Mul/ReLU/Sigmoid 等，形态统一）后续用 `linalg.generic` 声明式统一覆盖（一个机制替代 if-else 分发），不逐类建 op。
 3. 第二阶段（长期）：声明式 linalg + 统一 transform 管线（tiling → vectorize → fuse → bufferize）。
-4. 待办：单独排查 4.5 的预存崩溃。
+4. ✅ ~~待办：单独排查 4.5 的预存崩溃~~ → 已于 2026-08-15 修复（见 4.8）。
+
+### 4.8 2026-08-15 收尾：预存崩溃定位与修复（git: f92bc90）
+- **预存崩溃根因定位**：`Benchmark.MLIRFusedVsNonFused` / `Benchmark.FusedVsNonFused` 在多线程并行切片执行时越界。
+  - 根因：多节点 kernel 的逐元素循环上界硬编码为**编译期全尺寸 `node_numel`**（1048576），而 `MultiNodeCompiledKernel` 按运行时切片 `n`（slice_n=131072）并行分块，每个线程的输入指针已 `+start` 偏移——但循环仍写满全尺寸 → 越过分配的 `flat` 平面 buffer 边界。
+  - **MLIR 侧修复**（`MLIRKernelGen.cpp`）：FusedNode 与普通 element-wise 两处循环上界由常量 `node_numel` 改为 `min(node_numel, n_val)`（`arith::MinSIOp`，n_val 为运行时 arg2）。串行时 n==elem_n 行为不变；并行切片时收紧到 slice_n。
+  - **Handwritten 侧修复**（`HandwrittenKernelGen.cpp`）：12 处逐元素循环上界改为 `std::min((size_t)node_n, n)`；AOT 后端版本号 `handwritten-v4 → handwritten-v5` 使旧越界缓存 kernel 失效。
+  - **验证**：build_asan 下 `Benchmark.FusedVsNonFused` + `Benchmark.MLIRFusedVsNonFused` 均 PASSED，ASAN 无任何内存错误。
+- **顺手修复 ProxyTensor UAF**（`include/C3/Tracer.h`）：`scalarOp` 与标量左操作数 `operator-/operator/` 持有 Graph 内部 `vector<Node>` 的 `const TensorDesc&`，随后 `recordOp` → `addNode` 触发 vector 扩容使引用悬垂（ASAN heap-use-after-free）。改为按值拷贝 desc。Tracer 组测试全绿。
+- **新增遗留（ASAN 暴露，非本次改动引入，待单独排查）**：
+  - `PGOCompiledKernel::triggerCompilationChain` async lambda 捕获裸 `this` → 测试生命周期结束 PGO kernel 析构后后台线程仍访问（heap-use-after-free，`PGOProfiling.HotnessScore`）。候选修复：async 任务自持有 shared_ptr 保活，或 PGOManager::shutdown join 全部 future。
+  - `C3HotPathManager::tryFuseRecentDispatches` 对 dispatch deque 遍历时 heap-buffer-overflow（`Benchmark.MLP_Huge_C3_vs_Eager`）。候选方向：deque 遍历期间迭代器/索引与并发 push_back 竞态或越界索引。
 
 ---
 
@@ -149,3 +158,4 @@
 | 自定义 C3 Dialect 三 op 收口 | 0/3 | 🟢 **3/3**（Transpose / SumReduce / MatMul 全链路 ✅） | ODS+builder+lowering+图接入+端到端测试全闭环 |
 | 多节点端到端测试 | — | 🟢 **9/9 通过**（Transpose→SumReduce axis0/1 ×2 + MatMul 三种策略/转置折叠/epilogue ×7） | mlir 输出 == eager 参考，数值完全一致 |
 | 完整测试套件回归 | — | 🟢 **109/109 通过**（排除 1 个预存崩溃） | 预存崩溃 `MLIRFusedVsNonFused` 非本次引入，待排查 |
+| 预存崩溃 `MLIRFusedVsNonFused` | ⚠️ 未定位 | ✅ **已修复**（git f92bc90，ASAN 验证双 Benchmark 全绿） | 根因：多节点 kernel 逐元素循环上界未 clamp 到运行时切片 n |
