@@ -43,15 +43,24 @@ const char* elementwiseOpName(ElementwiseOp op);
 /// 输入个数（一元=1，二元=2）
 size_t elementwiseOpNumInputs(ElementwiseOp op);
 
+/// 二元第二输入的广播模数 rhs_mod 语义（一元算子忽略）：
+///   0  同尺寸（无广播，linalg indexing map `d0 -> d0`）
+///   1  标量广播（rhs size=1，linalg indexing map `d0 -> 0`）
+///   k>1  周期广播（rhs 为 1D vector size=k，linalg indexing map `d0 -> (d0 mod k)`）
+/// 其余多维/不支持广播回退手写路径。
+enum RhsBroadcastMode : int {
+    RhsNoBroadcast = 0,   ///< 同尺寸
+    RhsScalarBroadcast = 1, ///< 标量（size=1）
+};
+
 /// 编译并持有单个 linalg.generic 逐元素 kernel（memref 签名 + invokePacked ABI）
 /// 线程安全：编译完成后 execute 可并发调用（JIT 函数无共享状态）。
 class LinalgElementwiseKernel {
 public:
     /// 编译 kernel（每次构造即完成一次 JIT 编译）；失败抛 std::runtime_error
-    /// @param rhs_broadcast 二元算子专用：第二输入按标量（size=1）广播，
-    ///        对应 linalg indexing map `d0 -> 0` 投影。一元算子忽略此参数。
+    /// @param rhs_mod 二元算子第二输入广播模数（见 RhsBroadcastMode），一元忽略。
     explicit LinalgElementwiseKernel(ElementwiseOp op, int opt_level = 3,
-                                     bool rhs_broadcast = false);
+                                     int rhs_mod = RhsNoBroadcast);
     ~LinalgElementwiseKernel();
     LinalgElementwiseKernel(const LinalgElementwiseKernel&) = delete;
     LinalgElementwiseKernel& operator=(const LinalgElementwiseKernel&) = delete;
@@ -60,11 +69,11 @@ public:
 
     ElementwiseOp op() const { return op_; }
     size_t numInputs() const { return num_inputs_; }
-    /// 二元算子且标量广播（rhs size=1）时为 true
-    bool rhsBroadcast() const { return rhs_broadcast_; }
+    /// 二元第二输入广播模数（0=同尺寸，1=标量，k>1=周期广播）
+    int rhsMod() const { return rhs_mod_; }
 
     /// 执行 kernel：in_ptrs 按输入顺序（只读），out_ptr 输出，n 元素个数。
-    /// 标量广播时 in_ptrs[1] 只需指向 1 个元素。
+    /// 标量广播时 in_ptrs[1] 只需指向 1 个元素；周期广播时 in_ptrs[1] 至少 k 个元素。
     /// 注意：输入输出 buffer 均按 1D 连续访问，元素类型 float32。
     void execute(const float* const* in_ptrs, float* out_ptr, size_t n) const;
 
@@ -73,14 +82,14 @@ private:
     std::unique_ptr<Impl> impl_;
     ElementwiseOp op_;
     size_t num_inputs_;
-    bool rhs_broadcast_ = false;
+    int rhs_mod_ = RhsNoBroadcast;
 };
 
-/// 共享 kernel 缓存工厂：同一 (op, opt_level, rhs_broadcast) 只 JIT 编译一次，之后复用。
+/// 共享 kernel 缓存工厂：同一 (op, opt_level, rhs_mod) 只 JIT 编译一次，之后复用。
 /// 线程安全：构造互斥 + execute 并发安全。编译失败抛 std::runtime_error。
 /// 逃生开关：`C3_LINALG_CACHE=0` 关闭缓存（每次全新编译，便于对比）。
 std::shared_ptr<LinalgElementwiseKernel> getCachedLinalgKernel(
-    ElementwiseOp op, int opt_level = 3, bool rhs_broadcast = false);
+    ElementwiseOp op, int opt_level = 3, int rhs_mod = RhsNoBroadcast);
 
 /// 便捷函数：编译并执行一次（测试 / 小规模场景用）。
 /// inputs 按算子输入顺序传数据；输出自动分配并返回。
