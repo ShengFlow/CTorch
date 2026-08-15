@@ -8,7 +8,6 @@
  */
 
 #include "HandwrittenKernelGen.h"
-#include "../../include/C3/AOTCache.h"
 #include "../../include/C3/Graph.h"
 
 #include <cstdio>
@@ -316,42 +315,15 @@ extern "C" void c3_kernel(const float* a, const float* b, float* out,
  * @brief 从源码字符串编译为 .so 并加载函数指针
  * @param src C++ 源码字符串
  * @param func_name 要加载的函数名
- * @param cache_key AOT cache key（空 = 禁用 AOT）
  * @return 函数指针和 dlopen 句柄的 pair
  * @throw std::runtime_error 编译或加载失败时抛出
- * @details 流程：
- *          1. 若 cache_key 非空，查询 AOT cache
- *          2. 命中 → dlopen 缓存的 .so → return（避免 clang++ 编译，节省 ~10-50ms）
- *          3. 未命中 → mkdtemp 写源码 → clang++ → 编译后 store 到 AOT → dlopen → return
+ * @details 流程：mkdtemp 写源码 → clang++ 编译 .so → dlopen → dlsym。
+ *          [removed 2026-08-15] AOT 磁盘缓存已删除（见 STATUS_CONTEXT 4.12），
+ *          手写 kernel 每次进程内首次使用重新 clang++ 编译。
  */
 static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
-                                                      const std::string& func_name,
-                                                      const std::string& cache_key = "") {
-    auto& aot = AOTCache::getInstance();
-
-    // 步骤 1: 查询 AOT cache
-    if (!cache_key.empty() && aot.isEnabled()) {
-        std::string cached_so = aot.lookup(cache_key);
-        if (!cached_so.empty()) {
-            void* handle = dlopen(cached_so.c_str(), RTLD_NOW | RTLD_LOCAL);
-            if (handle) {
-                dlerror();
-                auto* func_ptr = reinterpret_cast<C3KernelFunc>(dlsym(handle, func_name.c_str()));
-                const char* dlsym_error = dlerror();
-                if (func_ptr && !dlsym_error) {
-                    return {func_ptr, handle};
-                }
-                // dlsym 失败：fallback 到重新编译
-                if (handle) dlclose(handle);
-                aot.recordLoadFailure();
-            } else {
-                aot.recordLoadFailure();
-            }
-            // dlopen 失败：fallback 到重新编译
-        }
-    }
-
-    // 步骤 2: 编译（无 AOT 缓存可用）
+                                                      const std::string& func_name) {
+    // 步骤 1: 编译（每次进程内首次使用重新编译）
     // 生成临时文件名
     char tmpdir_template[] = "/tmp/ctorch_c3_XXXXXX";
     std::string tmpdir = mkdtemp(tmpdir_template);
@@ -395,12 +367,7 @@ static std::pair<C3KernelFunc, void*> compileAndLoad(const std::string& src,
             "HandwrittenKernelGen: compilation failed:\n" + compile_output);
     }
 
-    // 步骤 3: 写入 AOT cache（不阻塞 dlopen 流程，失败时静默降级）
-    if (!cache_key.empty() && aot.isEnabled()) {
-        (void)aot.store(cache_key, so_path); // 失败时已记录到 stats.disk_errors
-    }
-
-    // 步骤 4: 加载 .so
+    // 步骤 2: 加载 .so
     void* handle = dlopen(so_path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         throw std::runtime_error(
@@ -1180,15 +1147,6 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
         throw std::runtime_error("HandwrittenKernelGen: graph has too few nodes");
     }
 
-    // 派生 AOT cache key：从 graph 拓扑 + 编译配置生成确定性 hash
-    // 注意：key 派生在 src 生成之前，但 graph.toString() 是稳定的，
-    //       不同 graph 自然产生不同 key，相同 graph 必产生相同 key
-    std::string cache_key = AOTCache::makeKey(
-        graph.toString(),
-        "cpu",  // Handwritten backend 当前仅支持 CPU
-        3,      // clang++ -O3（与 compileAndLoad 中的命令对齐）
-        AOTCache::currentBackendVersion());
-
     size_t num_compute = countComputeNodes(graph);
 
     // DEBT-NEW-7 性能优化:AMX region kernel 专用路径
@@ -1209,7 +1167,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
 
         // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, lambda 不能 capture
         //   structured binding. 用 named 变量替代 auto [a, b] = ...
-        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto _compile_result = compileAndLoad(src, "c3_kernel");
         auto func_ptr = _compile_result.first;
         auto dl_handle = _compile_result.second;
         result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
@@ -1254,7 +1212,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
 
         #ifdef CT_DEBUG
         {
-            std::ofstream dbgf("/tmp/c3_kernel_dump_" + cache_key.substr(0, 8) + ".c",
+            std::ofstream dbgf("/tmp/c3_kernel_dump.c",
                                       std::ios::out | std::ios::trunc);
             dbgf << "// M=" << result.M << " K=" << result.K << " N=" << result.N
                  << " num_inputs=" << result.num_inputs << " elem_n=" << result.elem_n << "\n";
@@ -1271,7 +1229,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
             dbgf.close();
         }
         // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
-        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto _compile_result = compileAndLoad(src, "c3_kernel");
         auto func_ptr = _compile_result.first;
         auto dl_handle = _compile_result.second;
         result.multi_func = reinterpret_cast<MultiNodeKernelFunc>(func_ptr);
@@ -1306,7 +1264,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
 
         // 编译融合 kernel（使用 FusedKernelFunc 签名）
         // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
-        auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+        auto _compile_result = compileAndLoad(src, "c3_kernel");
         auto func_ptr = _compile_result.first;
         auto dl_handle = _compile_result.second;
         result.fused_func = reinterpret_cast<FusedKernelFunc>(func_ptr);
@@ -1401,7 +1359,7 @@ GeneratedKernel generateFromGraph(const Graph& graph) {
     }
 
     // [Fix] v0.5.2 Linux build: DTK clang 17 OpenMP 严格模式, named 变量替代 structured binding
-    auto _compile_result = compileAndLoad(src, "c3_kernel", cache_key);
+    auto _compile_result = compileAndLoad(src, "c3_kernel");
     auto func = _compile_result.first;
     auto dl_handle = _compile_result.second;
     result.func = func;

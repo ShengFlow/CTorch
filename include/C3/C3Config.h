@@ -14,7 +14,6 @@
  *  - 单 kernel hotpath 注入   : CT_C3_DISABLE_SINGLE_KERNEL / C3_DISABLE_SINGLE_KERNEL / singleKernelInjectionEnabled()
  *  - 区域融合 (Region Fusion) : CT_C3_DISABLE_REGION_FUSION / C3_DISABLE_REGION_FUSION / regionFusionEnabled()
  *  - 后向融合 (Backward)      : CT_C3_DISABLE_BACKWARD       / C3_DISABLE_BACKWARD       / backwardFusionEnabled()
- *  - AOT 磁盘缓存             : CT_C3_DISABLE_AOT            / C3_DISABLE_AOT            / aotCacheEnabled()
  *  - 热路径检测/编译触发       : CT_C3_DISABLE_HOTPATH        / C3_DISABLE_HOTPATH         / hotPathTrackingEnabled()
  *
  * @date 2026/8/7
@@ -70,18 +69,6 @@ inline bool backwardFusionEnabled() {
     return false;
 #else
     static const bool enabled = !detail::envFlag("C3_DISABLE_BACKWARD");
-    return enabled;
-#endif
-}
-
-// ======================= AOT 磁盘缓存 =======================
-/// 查询 AOT 磁盘缓存是否启用
-/// （编译期 CT_C3_DISABLE_AOT 宏关闭，或运行时 C3_DISABLE_AOT=1，均禁用）
-inline bool aotCacheEnabled() {
-#ifdef CT_C3_DISABLE_AOT
-    return false;
-#else
-    static const bool enabled = !detail::envFlag("C3_DISABLE_AOT");
     return enabled;
 #endif
 }

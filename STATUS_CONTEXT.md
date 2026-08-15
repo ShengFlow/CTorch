@@ -188,6 +188,15 @@
 - **主库路由**（`MLIRKernelGen.cpp`）：`tryBuildLinalgElementwise` 前置条件扩展为 `rhs.numel==1`（标量）或 `rhs.numel==lhs.numel`（同尺寸）或 `lhs.numel % rhs.numel == 0`（1D 周期）→ 传 `rhs_mod`（1 / 0 / k）。
 - **遗留**：① 多维广播（非标量、非 1D 周期，如 `[4,4] + [1,4]`）仍走手写路径；② AOT 缓存 key 未含编译 flag/平台指纹，跨平台共享同一缓存目录可能撞 key（当前单机场景安全）。
 
+### 4.12 2026-08-15 里程碑（同轮第三波）：删除真正的 AOTCache，假 AOTCache 更名 JITCache
+- **背景（用户拍板）**：原「AOT 磁盘缓存」实际是把 **JIT 编译产物（LLVM bitcode）** 持久化到磁盘、运行期仍需 LLVM JIT 编译成机器码——本质是「JIT 缓存的磁盘版」，并非 Ahead-Of-Time；而真正意义的 AOTCache（手写 kernel 的 `.so` 磁盘缓存）无生产价值（手写 backend 是 debug/对比用）。→ 删除 AOTCache，JITCache 正名。
+- **删除项**：`include/C3/AOTCache.h`、`include/C3/IAOTCache.h`、`src/C3/AOTCache.cpp`、`src/tests/standalone/test_c3_aot_cache.cpp`、`bench_aot_speedup.cpp`；`CMakeLists.txt` 移除对应源文件、头文件、2 个 test target 与 `CT_C3_DISABLE_AOT` option；`C3Config.h` 移除 `aotCacheEnabled()` 及注释。
+- **JITCache 正名**：类注释与 `resolveCacheDir` 注释澄清其「JIT 缓存磁盘版」定位（运行期仍需 LLVM JIT 编译机器码，目录仍复用 `$C3_AOT_CACHE_DIR` env——sandbox 硬约束，历史命名保留）。`makeKey` 前缀 `c3_jit_<version>_<opt>_<graph>`；SHA-256 实现自 AOTCache 移植进 JITCache.cpp 匿名命名空间（`sha256_hex`，零外部依赖）。
+- **C3Engine 清理**：删除 8 个 AOT facade（`setAOTCacheEnabled`/`isAOTCacheEnabled`/`getAOTCacheStats`/`evictAOTCache`/`setAOTCacheDir`/`getAOTCacheDir`/`setAOTCacheImpl`/`getAOTCacheImpl`）、`aotCache_()` helper 与 `aot_cache_override_` 成员。跨进程复用由 JITCache 承担。
+- **HandwrittenKernelGen 清理**：`compileAndLoad` 移除 `cache_key` 参数与 AOT 查询/存储逻辑，手写 kernel 每次进程内首次使用重新 clang++ 编译；`generateFromGraph` 移除 AOT key 派生；`#ifdef CT_DEBUG` dump 文件名改为固定 `/tmp/c3_kernel_dump.c`。
+- **编译依赖修复**：`C3BackwardCapture.cpp` 原先依赖 AOTCache.h 间接引入 C3Config.h，删除后显式 `#include "C3/C3Config.h"`。
+- **验证**：`test_linalg_elementwise` 全绿（32/32 + 12/12 标量 + 9/9 周期 + AOT/JITCache 冷热启动）；`test_c3_compile_and_inject` 4/4、`test_c3_compile_merged` 10/10、`test_c3_compile_merged_pgo` 11/11、`test_c3_mnist_step` 全过。`test_region_fusion` 的正确性断言全过，仅 debug 构建下性能软断言（加速比<1.0）有波动，与本次改动无关。
+
 ---
 
 ## 📊 关键指标历史追踪

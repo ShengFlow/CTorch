@@ -5,6 +5,30 @@
 
 ---
 
+## [v0.5.2] — 2026-08-15
+
+> **清理版本**：删除真正的 AOTCache（`.so` 磁盘缓存），假 AOTCache 更名为 JITCache，正名定位。
+
+### 删除
+
+- **AOTCache 全套删除**：`include/C3/AOTCache.h`、`include/C3/IAOTCache.h`、`src/C3/AOTCache.cpp`、`src/tests/standalone/test_c3_aot_cache.cpp`、`bench_aot_speedup.cpp` 已从仓库移除。手写 kernel 的 `.so` 磁盘缓存无生产价值（手写 backend 仅 debug/对比用）。
+- **C3Engine AOT facade**：删除 8 个方法（`setAOTCacheEnabled`/`isAOTCacheEnabled`/`getAOTCacheStats`/`evictAOTCache`/`setAOTCacheDir`/`getAOTCacheDir`/`setAOTCacheImpl`/`getAOTCacheImpl`）及 `aotCache_()` helper 与 `aot_cache_override_` 成员。
+- **C3Config AOT 开关**：移除 `CT_C3_DISABLE_AOT` CMake option、`aotCacheEnabled()` 查询函数及对应注释。
+- **HandwrittenKernelGen AOT 缓存**：`compileAndLoad` 移除 `cache_key` 参数与 AOT 查询/存储逻辑，`generateFromGraph` 移除 AOT key 派生。
+- **CMakeLists.txt**：移除 `src/C3/AOTCache.cpp`、`include/C3/AOTCache.h`、`test_c3_aot_cache` 与 `bench_aot_speedup` 两个 test target。
+
+### 变更
+
+- **JITCache 正名**：类注释澄清其「JIT 缓存磁盘版」定位（运行期仍需 LLVM JIT 编译成机器码，并非 Ahead-Of-Time）。SHA-256 实现自 AOTCache 移植进 JITCache.cpp 匿名命名空间。
+- **C3BackwardCapture.cpp**：显式 `#include "C3/C3Config.h"`（原依赖 AOTCache.h 间接引入）。
+
+### 验证
+
+- `test_linalg_elementwise` 全绿（32/32 + 12/12 标量 + 9/9 周期 + AOT/JITCache 冷热启动）
+- `test_c3_compile_and_inject` 4/4、`test_c3_compile_merged` 10/10、`test_c3_compile_merged_pgo` 11/11、`test_c3_mnist_step` 全过
+
+---
+
 ## [v0.5.1] — 2026-08-09
 
 > **P0 修复版本**：修复 DEBT-NEW-7（c3 单 kernel hot-path 破坏 MNIST 训练准确率 76-93% → 恢复 97.18%）。

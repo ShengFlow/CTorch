@@ -42,10 +42,9 @@ endif()
 option(CT_C3_DISABLE_SINGLE_KERNEL "Disable C3 single-kernel hotpath injection" OFF)
 option(CT_C3_DISABLE_REGION_FUSION "Disable C3 region fusion" OFF)
 option(CT_C3_DISABLE_BACKWARD      "Disable C3 backward fusion" OFF)
-option(CT_C3_DISABLE_AOT           "Disable C3 AOT disk cache" OFF)
 option(CT_C3_DISABLE_HOTPATH       "Disable C3 hotpath tracking/compile trigger" OFF)
 
-foreach(_C3_FEAT SINGLE_KERNEL REGION_FUSION BACKWARD AOT HOTPATH)
+foreach(_C3_FEAT SINGLE_KERNEL REGION_FUSION BACKWARD HOTPATH)
     if(CT_C3_DISABLE_${_C3_FEAT})
         add_definitions(-DCT_C3_DISABLE_${_C3_FEAT})
         message(STATUS "C3 sub-feature ${_C3_FEAT} DISABLED (compile-time)")
@@ -127,7 +126,6 @@ set(CT-Core
         src/C3/C3Engine.cpp
         src/C3/GraphMerger.cpp
         src/C3/PGOManager.cpp
-        src/C3/AOTCache.cpp
         src/C3/C3BackwardCapture.cpp
         src/C3/C3KernelRegistry.cpp
         src/C3/RollingHash.cpp
@@ -219,7 +217,6 @@ set(CT-Core-Headers
         include/C3/GraphMerger.h
         include/C3/Tracer.h
         include/C3/C3KernelRegistry.h
-        include/C3/AOTCache.h
         include/C3/C3BackwardCapture.h
 )
 
@@ -614,14 +611,6 @@ target_include_directories(test_c3_compile_timeout PRIVATE ${CMAKE_CURRENT_SOURC
 # add_executable(test_timeout_simple /tmp/test_timeout_simple.cpp)
 # target_link_libraries(test_timeout_simple PRIVATE CTorch)
 # target_include_directories(test_timeout_simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(test_c3_aot_cache src/tests/standalone/test_c3_aot_cache.cpp)
-target_link_libraries(test_c3_aot_cache PRIVATE CTorch)
-target_include_directories(test_c3_aot_cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(bench_aot_speedup src/tests/standalone/bench_aot_speedup.cpp)
-target_link_libraries(bench_aot_speedup PRIVATE CTorch)
-target_include_directories(bench_aot_speedup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(test_mlir_simd_integration src/tests/standalone/test_mlir_simd_integration.cpp)
 target_link_libraries(test_mlir_simd_integration PRIVATE CTorch)

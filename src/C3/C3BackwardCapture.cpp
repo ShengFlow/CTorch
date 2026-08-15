@@ -8,6 +8,7 @@
  */
 
 #include "C3/C3BackwardCapture.h"
+#include "C3/C3Config.h"
 #include "C3/C3Engine.h"
 #include "C3/C3KernelRegistry.h"
 #include "C3/Graph.h"

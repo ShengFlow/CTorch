@@ -1436,14 +1436,8 @@ void C3Engine::autoTune(const AutoTunerConfig& config) {
     }
 }
 
-// [Dev] v0.5.2 P1 解耦: aotCache_() helper
-// - 返当前生效的 IAOTCache 引用
-// - aot_cache_override_ 非 null → 注入实现 (mock / 跨 backend cache)
-// - null → AOTCache 单例 (默认行为, 向后兼容)
-// 设计: 每次 facade 方法调用都查一次 override 指针, 几乎零开销 (1 个 if 分支)
-IAOTCache& C3Engine::aotCache_() const {
-    return aot_cache_override_ ? *aot_cache_override_ : AOTCache::getInstance();
-}
+// [removed 2026-08-15] AOTCache 已删除（.so 磁盘缓存），aotCache_() helper 一并移除。
+// 跨进程复用改由 JITCache 承担，见 STATUS_CONTEXT 4.12。
 
 void C3Engine::shutdown() {
     // 正确的退出顺序：HotPathManager::shutdown() → PGO::shutdown() → C3Engine::shutdown()
