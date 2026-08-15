@@ -271,8 +271,9 @@ public:
                            std::string cache_key, DeviceType device,
                            bool is_matmul, size_t M, size_t K, size_t N,
                            std::vector<size_t> out_shape = {},
-                           size_t input_b_index = 1)
-        : func_(func), deleter_(std::move(deleter)),
+                           size_t input_b_index = 1,
+                           std::function<GeneratedKernel::SingleNodeExecutor> func_any = nullptr)
+        : func_(func), func_any_(std::move(func_any)), deleter_(std::move(deleter)),
           cache_key_(std::move(cache_key)), device_(device),
           is_matmul_(is_matmul), M_(M), K_(K), N_(N),
           out_shape_(std::move(out_shape)),
@@ -321,7 +322,16 @@ public:
         }
 
         size_t n = out.numel();
-        if (is_matmul_) {
+        if (func_any_) {
+            // [2026-08-15] linalg.generic 路线：执行器优先于裸函数指针。
+            // linalg kernel 内部按 numInputs 决定取 a 还是 a+b。
+            func_any_(
+                a.data_read<float>(),
+                b.data_read<float>(),
+                out.data_write<float>(),
+                n, 0, 0, 0
+            );
+        } else if (is_matmul_) {
             func_(
                 a.data_read<float>(),
                 b.data_read<float>(),
@@ -368,6 +378,7 @@ public:
 
 private:
     C3KernelFunc func_;
+    std::function<GeneratedKernel::SingleNodeExecutor> func_any_; ///< [2026-08-15] linalg 路线执行器
     std::function<void()> deleter_;
     std::string cache_key_;
     DeviceType device_;
@@ -584,7 +595,7 @@ static std::shared_ptr<CompiledKernel> doCompile(
             kernel = std::make_shared<ConcreteCompiledKernel>(
                 gen.func, gen.deleter, makeCacheKey(working_graph, options),
                 options.target_device, gen.is_matmul, gen.M, gen.K, gen.N,
-                out_shape
+                out_shape, /*input_b_index=*/1, gen.func_any
             );
         }
 

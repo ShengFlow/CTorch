@@ -25,6 +25,12 @@ struct GeneratedKernel {
     C3KernelFunc func = nullptr;
     FusedKernelFunc fused_func = nullptr; ///< 融合 kernel 函数指针（is_fused=true 时使用）
     MultiNodeKernelFunc multi_func = nullptr; ///< 多节点 kernel 函数指针（is_multi_node=true 时使用）
+    /// [2026-08-15] linalg.generic 路线：可选执行器（优先级高于 func）。
+    /// 用于单节点逐元素算子接入 LinalgElementwiseKernel——它持有自己的 JIT engine，
+    /// 无法表示成裸 C3KernelFunc，故用 std::function 捕获 shared_ptr 保证生命周期。
+    using SingleNodeExecutor = void(const float*, const float*, float*,
+                                    size_t, size_t, size_t, size_t);
+    std::function<SingleNodeExecutor> func_any = nullptr;
     void* handle = nullptr;               ///< 资源句柄（dlopen handle 或 ExecutionEngine 引用）
     std::function<void()> deleter;        ///< 析构回调：释放 handle 指向的资源
     bool is_matmul = false;

@@ -145,6 +145,31 @@
   - `PGOCompiledKernel::triggerCompilationChain` async lambda 捕获裸 `this` → 测试生命周期结束 PGO kernel 析构后后台线程仍访问（heap-use-after-free，`PGOProfiling.HotnessScore`）。候选修复：async 任务自持有 shared_ptr 保活，或 PGOManager::shutdown join 全部 future。
   - `C3HotPathManager::tryFuseRecentDispatches` 对 dispatch deque 遍历时 heap-buffer-overflow（`Benchmark.MLP_Huge_C3_vs_Eager`）。候选方向：deque 遍历期间迭代器/索引与并发 push_back 竞态或越界索引。
 
+### 4.9 2026-08-15 里程碑：`linalg.generic` 声明式逐元素 PoC 全链路打通（12/12 通过）
+- **PoC 文件**：`src/tests/standalone/exp_linalg_elementwise.cpp`（独立 target `exp_linalg_elementwise`，不依赖 CTorch 主库）
+- **验证内容**：ReLU / Add / Sigmoid 三个 linalg.generic 算子，从「flat 指针 → memref descriptor → linalg.generic(dest-style) → 标准 lowering pipeline → LLVM JIT」完整链路，输出与手写参考逐元素一致（n = 16/128/1024/1048576，共 12/12 通过）。
+- **技术要点（供主库改造参考）**：
+  1. **动态 memref 必须用 `ShapedType::kDynamic`（= INT64_MIN）创建**，不能写字面量 `-1`。否则 `IndexingMapOpInterface::verifyImpl` 会把 `-1` 当作「静态形状」，触发静态边界检查而报 `unexpected result less than 0 at expression #0 in (d0) -> (d0)`（`memref<-1xf32>` 而非 `memref<?xf32>` 即为踩坑征兆）。
+  2. **`FinalizeMemRefToLLVMConversionPass` 会把 memref<?xf32> 函数参数展开成 5 个标量**（alloc, aligned, offset, size, stride）。`ExecutionEngine::invokePacked` 的包装函数 `_mlir_c3_kernel(void**)` 逐参数 load，因此 packed 数组必须按展开后的标量逐个传指针（2 个 memref = 10 个指针，3 个 = 15 个），不能直接传 descriptor 结构体地址。
+  3. **Lowering pipeline 顺序**：`linalg-to-loops → scf-to-cf → arith-to-llvm → math-to-llvm → cf-to-llvm → func-to-llvm → memref-to-llvm → reconcile-unrealized-casts`。缺 `arith-to-llvm`/`math-to-llvm` 会报 `missing LLVMTranslationDialectInterface registration for dialect for op: arith.constant`。CMake 需链接 `MLIRArithToLLVM MLIRMathToLLVM`。
+- **结论**：linalg.generic 声明式逐元素路径已被证明可行，可作为 4.7-2「用 linalg.generic 统一覆盖逐元素算子（替代 if-else 分发）」的直接依据。下一步：将 PoC 的 lowering 管线与 JIT 调用模式移植到主库（`MLIRKernelGen` / 新 `LinalgElementwiseGen`），替换手写标量 IR 分支，再接入 tiling/vectorize/bufferize 统一 transform 管线（4.7-3）。
+
+### 4.10 2026-08-15 里程碑：`LinalgElementwiseGen` 组件落地 + 主库接入（32/32 正确性 + 性能达标）
+- **新组件**：`include/C3/LinalgElementwiseGen.h` + `src/C3/LinalgElementwiseGen.cpp`。将 PoC（4.9）抽象为可复用组件，支持 8 种逐元素算子（ReLU/Sigmoid/Tanh/Exp/Log/Add/Sub/Mul），dest-style linalg.generic + 标准 lowering + `invokePacked` ABI，编译后 `execute` 可并发调用。
+- **正确性**（`test_linalg_elementwise`，链接主库 CTorch）：8 ops × 4 sizes（16/128/1024/1048576）**32/32 通过**，与手写参考逐元素一致。
+- **性能**（`bench_linalg_vs_handwritten`，同 LLVM O3，单位 ns/elem）：
+  - ReLU：n=1M `0.108 vs 手写 0.107`（持平）；n=4M `0.146 vs 0.148`（持平）。
+  - Sigmoid：n=64K `1.855 vs 2.265`（**linalg 反超 ~18%**）；n=4M `1.855 vs 1.977`。
+  - Add：n=1M `0.221 vs 0.190`（慢 ~16%）；n=4M `0.264 vs 0.209`。
+  - 小尺寸（n=1024）linalg 每元素开销偏高（JIT 调用/memref 描述符展开开销摊薄不足），大尺寸持平或反超。结论：声明式路径在真实规模无性能回归，可替换手写分支。
+- **主库接入**（`MLIRKernelGen.cpp` / `C3Engine.cpp` / `HandwrittenKernelGen.h`）：
+  - `GeneratedKernel` 新增 `func_any`（`std::function<SingleNodeExecutor>`），`ConcreteCompiledKernel` 新增构造参数并**优先调用 `func_any_`**（高于裸 `func`）。
+  - `generateFromGraphMLIR` 开头新增 `tryBuildLinalgElementwise` 短路路由：恰好 1 个计算节点 + 算子 ∈ {8 种} + 二元无广播 + `C3_LINALG_EW != "0"` → 直接返回 `func_any` 执行器（捕获 `shared_ptr<LinalgElementwiseKernel>` 保证生命周期），跳过手写 if-else 标量 IR 构建。
+  - 逃生开关 `C3_LINALG_EW=0` 回退原手写路径；`C3_LINALG_EW_TRACE=1` 打印路由命中诊断。
+- **集成验证**（`test_c3_compile_and_inject`）：trace 确认 `Add (num_inputs=2, n=4)` 与 `ReLU (num_inputs=1, n=4)` 均走 linalg.generic 路由，结果与 eager 一致 PASS；`C3_LINALG_EW=0` 下无 linalg trace、回退手写同样 PASS；MatMul 正确不路由。
+- **回归**：`test_relu_backward` MATCH、`test_c3_mnist_step` ALL TESTS PASSED。
+- **遗留**：① linalg kernel 目前每次编译全新 JIT（未接 AOT/JITCache，单节点热循环存在重复编译开销，后续可加 per-(op,opt) 静态缓存）；② 广播场景（lhs.numel ≠ rhs.numel）仍走手写路径，需 linalg 多维/广播 kernel 支持。
+
 ---
 
 ## 📊 关键指标历史追踪

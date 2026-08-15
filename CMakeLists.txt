@@ -145,6 +145,8 @@ if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/JITCache.cpp)
     list(APPEND CT-Core src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
     list(APPEND CT-Core src/C3/C3Dialect.cpp)
+    # [2026-08-15] linalg.generic 声明式逐元素 kernel（JIT 2.0 路线 A 移植，STATUS_CONTEXT 4.9/4.7-2）
+    list(APPEND CT-Core src/C3/LinalgElementwiseGen.cpp)
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
@@ -445,8 +447,12 @@ if(CT_ENABLE_MLIR)
         MLIRFuncDialect
         MLIRMemRefDialect
         MLIRLLVMDialect
+        MLIRMathDialect
+        MLIRLinalgDialect
+        MLIRLinalgTransforms
         MLIRArithToLLVM
         MLIRArithAttrToLLVMConversion
+        MLIRMathToLLVM
         MLIRSCFToControlFlow
         MLIRControlFlowToLLVM
         MLIRMemRefToLLVM
@@ -633,6 +639,35 @@ add_executable(bench_mlir_profile src/tests/standalone/bench_mlir_profile.cpp)
 target_link_libraries(bench_mlir_profile PRIVATE CTorch)
 target_include_directories(bench_mlir_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_options(bench_mlir_profile PRIVATE -rdynamic)
+
+# [JIT 2.0 2026-08-15] linalg.generic 声明式逐元素算子 PoC（独立 target，不依赖 CTorch 主库）
+if(CT_ENABLE_MLIR)
+    add_executable(exp_linalg_elementwise src/tests/standalone/exp_linalg_elementwise.cpp)
+    target_include_directories(exp_linalg_elementwise PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(exp_linalg_elementwise SYSTEM PRIVATE ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
+    target_link_libraries(exp_linalg_elementwise PRIVATE
+        MLIRIR MLIRPass MLIRSupport MLIRTransforms
+        MLIRArithDialect MLIRSCFDialect MLIRFuncDialect MLIRMemRefDialect MLIRLLVMDialect
+        MLIRMathDialect
+        MLIRLinalgDialect
+        MLIRLinalgTransforms        # createConvertLinalgToLoopsPass
+        MLIRSCFToControlFlow MLIRControlFlowToLLVM MLIRFuncToLLVM MLIRMemRefToLLVM
+        MLIRArithToLLVM MLIRMathToLLVM
+        MLIRReconcileUnrealizedCasts
+        MLIRLLVMToLLVMIRTranslation MLIRBuiltinToLLVMIRTranslation
+        MLIRExecutionEngine
+    )
+    target_link_options(exp_linalg_elementwise PRIVATE -rdynamic)
+endif()
+
+# [JIT 2.0 2026-08-15] LinalgElementwiseGen 组件端到端正确性测试 + 性能对比（链接 CTorch 主库）
+add_executable(test_linalg_elementwise src/tests/standalone/test_linalg_elementwise.cpp)
+target_link_libraries(test_linalg_elementwise PRIVATE CTorch)
+target_include_directories(test_linalg_elementwise PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_linalg_vs_handwritten src/tests/standalone/bench_linalg_vs_handwritten.cpp)
+target_link_libraries(bench_linalg_vs_handwritten PRIVATE CTorch)
+target_include_directories(bench_linalg_vs_handwritten PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)

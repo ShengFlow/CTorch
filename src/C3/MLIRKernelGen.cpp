@@ -15,6 +15,7 @@
 
 #include "MLIRKernelGen.h"
 #include "C3/C3Dialect.h"
+#include "C3/LinalgElementwiseGen.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 // 导入 TableGen 生成的 C3Combine 模式重写实现
@@ -2304,6 +2305,95 @@ static size_t countComputeNodesMLIR(const Graph& graph) {
     return count;
 }
 
+// ======================= linalg.generic 逐元素路线（JIT 2.0 路线 A 接入） =======================
+
+/// 尝试用 linalg.generic 声明式路径编译单节点逐元素 kernel，
+/// 替换主库手写 if-else 标量 IR 分支（buildElementwiseBinary/buildReLU/buildSigmoid/...）。
+/// 命中条件：
+///   1. 恰好 1 个计算节点（非融合、非多节点）；
+///   2. 算子属于 {ReLU, Sigmoid, Tanh, Exp, Log, Add, Sub, Mul}；
+///   3. 二元算子无广播（lhs.numel == rhs.numel 且 > 0）——linalg 1D kernel 假设同尺寸；
+///   4. env C3_LINALG_EW != "0"（默认开启，逃生开关回退手写）。
+/// 命中时填充 out.func_any（执行器捕获 shared_ptr<LinalgElementwiseKernel> 保证生命周期）。
+static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) {
+    static const bool disabled = [] {
+        const char* v = std::getenv("C3_LINALG_EW");
+        return v != nullptr && std::string(v) == "0";
+    }();
+    if (disabled) return false;
+
+    if (countComputeNodesMLIR(graph) != 1) return false;
+
+    const Node* compute_node = nullptr;
+    for (const auto& node : graph.nodes()) {
+        if (isComputeNodeMLIR(node, graph.inputs())) { compute_node = &node; break; }
+    }
+    if (!compute_node || compute_node->out_desc.numel == 0) return false;
+
+    const NodeVariant& op = compute_node->op;
+    ElementwiseOp eop = ElementwiseOp::ReLU;
+    bool eligible = true;
+    if (std::holds_alternative<ReLUNode>(op)) {
+        eop = ElementwiseOp::ReLU;
+    } else if (std::holds_alternative<SigmoidNode>(op)) {
+        eop = ElementwiseOp::Sigmoid;
+    } else if (std::holds_alternative<TanhNode>(op)) {
+        eop = ElementwiseOp::Tanh;
+    } else if (std::holds_alternative<ExpNode>(op)) {
+        eop = ElementwiseOp::Exp;
+    } else if (std::holds_alternative<LogNode>(op)) {
+        eop = ElementwiseOp::Log;
+    } else if (std::holds_alternative<AddNode>(op)) {
+        const auto& n = std::get<AddNode>(op);
+        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        eop = ElementwiseOp::Add;
+    } else if (std::holds_alternative<SubNode>(op)) {
+        const auto& n = std::get<SubNode>(op);
+        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        eop = ElementwiseOp::Sub;
+    } else if (std::holds_alternative<MulNode>(op)) {
+        const auto& n = std::get<MulNode>(op);
+        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        eop = ElementwiseOp::Mul;
+    } else {
+        eligible = false;
+    }
+    if (!eligible) return false;
+
+    // 编译 linalg kernel（构造即 JIT 编译）；失败静默回退手写路径
+    std::shared_ptr<LinalgElementwiseKernel> kernel;
+    try {
+        kernel = std::make_shared<LinalgElementwiseKernel>(eop);
+    } catch (const std::exception& e) {
+        fprintf(stderr, "C3 linalg: %s compile failed (%s), fallback to handwritten\n",
+                elementwiseOpName(eop), e.what());
+        return false;
+    }
+
+    const size_t num_inputs = elementwiseOpNumInputs(eop);
+    out.func = nullptr;
+    out.func_any = [kernel, num_inputs](const float* a, const float* b, float* out_ptr,
+                                        size_t n, size_t, size_t, size_t) {
+        // 一元取 in_ptrs[0]=a；二元取 [a, b]（num_inputs 控制 execute 读取个数）
+        const float* in_ptrs[2] = {a, b};
+        kernel->execute(in_ptrs, out_ptr, n);
+    };
+    out.is_matmul = false;
+    out.num_inputs = num_inputs;
+    out.elem_n = compute_node->out_desc.numel;
+
+    // [2026-08-15] 路由命中诊断：env C3_LINALG_EW_TRACE=1 时打印，默认静默
+    static const bool trace = [] {
+        const char* v = std::getenv("C3_LINALG_EW_TRACE");
+        return v != nullptr && std::string(v) == "1";
+    }();
+    if (trace) {
+        fprintf(stderr, "C3 linalg: routed %s (num_inputs=%zu, n=%zu) via linalg.generic\n",
+                elementwiseOpName(eop), num_inputs, compute_node->out_desc.numel);
+    }
+    return true;
+}
+
 // ======================= 模块构建 =======================
 
 // [Dev] v0.5.2 DCU 接入 refactor (2026-08-10):
@@ -2648,6 +2738,17 @@ void applyLoweringPipeline(mlir::ModuleOp module) {
 // ======================= 主入口 =======================
 
 GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
+    // [2026-08-15] linalg.generic 声明式逐元素路线（JIT 2.0 路线 A 接入）：
+    // 单节点逐元素算子（无广播）直接走 LinalgElementwiseKernel（自带 ExecutionEngine，
+    // func_any 捕获 shared_ptr 保证生命周期），跳过下方手写 if-else 标量 IR 构建。
+    // 未命中（多节点/融合/MatMul/广播/逃生开关 C3_LINALG_EW=0）时回退原 MLIR 构建。
+    {
+        GeneratedKernel linalg_gen;
+        if (tryBuildLinalgElementwise(graph, linalg_gen)) {
+            return linalg_gen;
+        }
+    }
+
     static std::once_flag llvm_init_flag;
     std::call_once(llvm_init_flag, []() {
         llvm::InitializeNativeTarget();
