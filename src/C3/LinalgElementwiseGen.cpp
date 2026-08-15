@@ -13,9 +13,11 @@
  */
 
 #include "C3/LinalgElementwiseGen.h"
+#include "C3/JITCache.h"
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -30,7 +32,11 @@
 #include <mlir/IR/ImplicitLocOpBuilder.h>
 #include <mlir/IR/Location.h>
 #include <mlir/IR/MLIRContext.h>
+#include <mlir/IR/OwningOpRef.h>
+#include <mlir/IR/PatternMatch.h>
 #include <mlir/IR/Verifier.h>
+#include <mlir/Dialect/Affine/IR/AffineOps.h>  // affine.apply → arith.remsi 自定义 pattern
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Support/LogicalResult.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
@@ -44,6 +50,7 @@
 #include <mlir/Dialect/Utils/StructuredOpsUtils.h>
 #include <mlir/ExecutionEngine/ExecutionEngine.h>
 #include <mlir/ExecutionEngine/OptUtils.h>
+#include <mlir/Target/LLVMIR/Export.h>
 #include <mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h>
 #include <mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h>
 #include <mlir/Transforms/Passes.h>
@@ -54,7 +61,7 @@
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
 #include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
-#include <mlir/Conversion/Passes.h>  // 提供 createConvertFuncToLLVMPass 等工厂函数
+#include <mlir/Conversion/Passes.h>  // 提供 createConvertFuncToLLVMPass 等工厂函数 + createLowerAffinePass
 
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
@@ -253,29 +260,95 @@ mlir::OwningOpRef<mlir::ModuleOp> buildLinalgModule(mlir::MLIRContext& context,
     return module;
 }
 
+/// 把周期广播的 `affine.apply (d0/s0) -> (X mod k)` 降成 `arith.remsi %x, cst`。
+/// 为什么不用共享库的 createLowerAffinePass：该 pass 在 run 时会把自己的依赖方言
+/// （含 memref::MemRefDialect，来自共享库的 TypeID）append 进 context registry，
+/// 与本 TU 实例化的 memref 方言 TypeID 不一致 → "Trying to register different
+/// dialects for the same namespace: memref" fatal abort。linalg-to-loops 对
+/// `d0 mod k` 生成的 affine.apply 形状固定为「1 个输入 + 结果 = 单一表达式 mod 常量」，
+/// 自定义 pattern 足够且完全自包含（头文件类型一致，无 DSO TypeID 问题）。
+struct AffineApplyToArithPattern : public mlir::OpRewritePattern<mlir::affine::AffineApplyOp> {
+    using mlir::OpRewritePattern<mlir::affine::AffineApplyOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::affine::AffineApplyOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        mlir::AffineMap map = op.getAffineMap();
+        if (map.getNumInputs() != 1 || map.getNumResults() != 1)
+            return mlir::failure();
+        mlir::AffineExpr expr = map.getResult(0);
+        if (expr.getKind() != mlir::AffineExprKind::Mod)
+            return mlir::failure();
+        auto mod = mlir::cast<mlir::AffineBinaryOpExpr>(expr);
+        // LHS 必须是对应唯一输入的维度/符号（否则表达式更复杂，放弃重写）
+        mlir::AffineExpr lhs = mod.getLHS();
+        if (!mlir::isa<mlir::AffineDimExpr>(lhs) && !mlir::isa<mlir::AffineSymbolExpr>(lhs))
+            return mlir::failure();
+        auto cst = mlir::dyn_cast<mlir::AffineConstantExpr>(mod.getRHS());
+        if (!cst)
+            return mlir::failure();
+        mlir::Value rhs = rewriter.create<mlir::arith::ConstantIndexOp>(
+            op.getLoc(), cst.getValue());
+        mlir::Value rem = rewriter.create<mlir::arith::RemSIOp>(
+            op.getLoc(), op.getOperand(0), rhs);
+        rewriter.replaceOp(op, rem);
+        return mlir::success();
+    }
+};
+
 /// 标准 linalg → loops → SCF → LLVM lowering pipeline（PoC 4.9 验证顺序）
 void applyLinalgLoweringPipeline(mlir::ModuleOp module) {
-    mlir::PassManager pm(module.getContext());
-    pm.addPass(mlir::createConvertLinalgToLoopsPass());
-    pm.addPass(mlir::createSCFToControlFlowPass());
-    pm.addPass(mlir::createArithToLLVMConversionPass());
-    pm.addPass(mlir::createConvertMathToLLVMPass());
-    pm.addPass(mlir::createConvertControlFlowToLLVMPass());
-    pm.addPass(mlir::createConvertFuncToLLVMPass());
-    pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
-    pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-    pm.addPass(mlir::createCanonicalizerPass());
-    pm.addPass(mlir::createCSEPass());
-    if (mlir::failed(pm.run(module))) {
-        throw std::runtime_error("LinalgElementwiseGen: lowering pipeline failed");
+    // 阶段 1：linalg.generic → loops（周期广播的 `d0 mod k` 在此产生 affine.apply）
+    {
+        mlir::PassManager pm(module.getContext());
+        pm.addPass(mlir::createConvertLinalgToLoopsPass());
+        if (mlir::failed(pm.run(module))) {
+            throw std::runtime_error("LinalgElementwiseGen: linalg-to-loops failed");
+        }
+    }
+    // 阶段 2：手动把 affine.apply (d0/s0) -> (X mod k) 降成 arith.remsi
+    {
+        mlir::RewritePatternSet patterns(module.getContext());
+        patterns.add<AffineApplyToArithPattern>(module.getContext());
+        if (mlir::failed(mlir::applyPatternsAndFoldGreedily(module, std::move(patterns)))) {
+            throw std::runtime_error("LinalgElementwiseGen: affine.apply lowering failed");
+        }
+    }
+    // 阶段 3：scf → cf → LLVM
+    {
+        mlir::PassManager pm(module.getContext());
+        pm.addPass(mlir::createSCFToControlFlowPass());
+        pm.addPass(mlir::createArithToLLVMConversionPass());
+        pm.addPass(mlir::createConvertMathToLLVMPass());
+        pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+        pm.addPass(mlir::createConvertFuncToLLVMPass());
+        pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+        pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createCSEPass());
+        if (mlir::failed(pm.run(module))) {
+            throw std::runtime_error("LinalgElementwiseGen: lowering pipeline failed");
+        }
     }
 }
 
 /// 创建 ExecutionEngine（LLVM O3 优化 transformer + Aggressive codegen）
-std::unique_ptr<mlir::ExecutionEngine> createEngine(mlir::ModuleOp module,
-                                                    int opt_level) {
+/// @param cache_graph AOT 缓存 key 的语义串（hash 前），需能区分 (op, opt_level, rhs_mod) 与后端版本
+/// @param builder_slot 由调用方长期持有的 std::function 槽位（本函数只负责填充）。
+///        必须 long-lived：ExecutionEngine 对 llvmModuleBuilder 是延迟回调（create 返回后
+///        首次 materialize 才调用），若用本函数栈上的局部 std::function 会在 create 返回后
+///        销毁 → function_ref 悬垂 → 段错误（2026-08-15 已踩坑）。
+std::unique_ptr<mlir::ExecutionEngine> createEngine(
+    mlir::ModuleOp module, int opt_level, const std::string& cache_graph,
+    std::function<std::unique_ptr<llvm::Module>(mlir::Operation*, llvm::LLVMContext&)>&
+        builder_slot) {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
+
+    // [诊断] C3_LINALG_EW_TRACE=1 时打印 AOT 缓存 hit/miss 路径细节
+    const bool aot_trace = [] {
+        const char* v = std::getenv("C3_LINALG_EW_TRACE");
+        return v != nullptr && v[0] == '1';
+    }();
 
     auto tm = std::shared_ptr<llvm::TargetMachine>(
         llvm::EngineBuilder()
@@ -297,8 +370,66 @@ std::unique_ptr<mlir::ExecutionEngine> createEngine(mlir::ModuleOp module,
         : (opt_level == 1) ? llvm::CodeGenOptLevel::Less
         : llvm::CodeGenOptLevel::None;
 
+    // [管线① 2026-08-15] linalg AOT 磁盘持久化缓存（JITCache 2.0 read path）。
+    // 关键点（已确认的坑）：
+    //   a) ExecutionEngine 对 llvmModuleBuilder 是【延迟回调】：create 返回之后、首次
+    //      materialize（lookup/execute 触发）时才调用。因此 createEngine 栈上的局部
+    //      std::function 会在 create 返回后被销毁 → function_ref 悬垂 → 段错误。
+    //      → builder 必须由调用方持有的 long-lived 对象保存（此处经引用写入
+    //        builder_slot，由 LinalgElementwiseKernel::Impl 持有，生命周期 ≥ kernel
+    //        ≥ materialize 时机，且线程安全：每个 kernel 各有一份槽位）。
+    //   b) llvmModuleBuilder 收到的是 create 内部新建的 LLVMContext，随后 module 被
+    //      ThreadSafeModule(module, ctx) 绑定 —— 必须在 builder 里用传入的 ctx 构造
+    //      module，否则 context 不一致会出问题。
+    //   c) 值捕获 module（ModuleOp 内部只是 Operation* 包装），且该 Operation 的所有权
+    //      由调用方持有到 materialize 之后（Impl::heldModule 持有）。
+    //   - 命中：loadBitcode(create 的 ctx)  跳过 MLIR build + lowering + translate
+    //   - 未命中：translate(create 的 ctx) + store bitcode（store 的是未优化 IR，与命中
+    //     load 的形态一致，transformer 对两条路径一致应用）
+    // 逃生开关：C3_JIT_CACHE_DISABLE=1（复用 JITCache::isEnabled()）。
+    if (JITCache::isEnabled()) {
+        try {
+            std::string jit_key = JITCache::makeKey(cache_graph, opt_level);
+            std::string bc_path = JITCache::getInstance().lookup(jit_key);
+
+            if (!bc_path.empty()) {
+                builder_slot = [bc_path, aot_trace](mlir::Operation*, llvm::LLVMContext& ctx) {
+                    if (aot_trace)
+                        fprintf(stderr, "[AOT-DEBUG] builder: HIT path begin\n");
+                    auto m = JITCache::getInstance().loadBitcode(bc_path, ctx);
+                    if (aot_trace)
+                        fprintf(stderr, "[AOT-DEBUG] builder: HIT path load=%s\n",
+                                m ? "OK" : "NULL");
+                    return m;
+                };
+            } else {
+                builder_slot = [module, jit_key, aot_trace](mlir::Operation*, llvm::LLVMContext& ctx) {
+                    if (aot_trace)
+                        fprintf(stderr, "[AOT-DEBUG] builder: MISS path begin, key='%s'\n",
+                                jit_key.c_str());
+                    auto llvm_module = mlir::translateModuleToLLVMIR(module, ctx);
+                    if (aot_trace)
+                        fprintf(stderr, "[AOT-DEBUG] builder: translate -> %s\n",
+                                llvm_module ? "OK" : "NULLPTR");
+                    if (llvm_module) {
+                        auto st = JITCache::getInstance().store(jit_key, *llvm_module);
+                        if (aot_trace)
+                            fprintf(stderr, "[AOT-DEBUG] builder: store -> '%s'\n", st.c_str());
+                    }
+                    return llvm_module;
+                };
+            }
+            engineOpts.llvmModuleBuilder = builder_slot;
+        } catch (...) {
+            // 磁盘/缓存异常静默回退到默认 translate 路径
+        }
+    }
+
     auto maybeEngine = mlir::ExecutionEngine::create(module, engineOpts);
     if (!maybeEngine) {
+        llvm::errs() << "[linalg-debug] createEngine failed for cache_graph="
+                     << cache_graph << ": " << llvm::toString(maybeEngine.takeError())
+                     << "\n";
         throw std::runtime_error("LinalgElementwiseGen: failed to create ExecutionEngine");
     }
     return std::move(*maybeEngine);
@@ -311,6 +442,15 @@ std::unique_ptr<mlir::ExecutionEngine> createEngine(mlir::ModuleOp module,
 struct LinalgElementwiseKernel::Impl {
     mlir::DialectRegistry registry;
     mlir::MLIRContext context;
+
+    // 生命周期管理（关键）：ExecutionEngine 对 llvmModuleBuilder 是【延迟回调】（首次
+    // materialize 时才调用），且 builder 值捕获的 MLIR ModuleOp 必须存活到那次调用。
+    // 因此 heldModule / aotBuilder 都必须在 engine 之前声明 → 析构顺序逆序：engine
+    // 先析构（JIT 已完成，不再需要 MLIR IR），再析构 heldModule / aotBuilder。
+    mlir::OwningOpRef<mlir::ModuleOp> heldModule;  ///< 持有 MLIR module（builder 延迟 translate 用）
+    std::function<std::unique_ptr<llvm::Module>(mlir::Operation*, llvm::LLVMContext&)>
+        aotBuilder;  ///< AOT builder 槽位（由 createEngine 填充，随 kernel 存活）
+
     std::unique_ptr<mlir::ExecutionEngine> engine;
 
     Impl() : context(registry) {
@@ -336,13 +476,27 @@ LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level
     impl_->context.loadDialect<mlir::LLVM::LLVMDialect>();
     impl_->context.loadDialect<mlir::linalg::LinalgDialect>();
 
-    auto module = buildLinalgModule(impl_->context, op_, num_inputs_, rhs_mod_);
-    applyLinalgLoweringPipeline(*module);
+    // module 所有权交给 Impl::heldModule 持有：ExecutionEngine 对 builder 是延迟回调
+    // （首次 materialize 才 translate），该 Operation 必须存活到那次调用之后（引擎析构）。
+    impl_->heldModule = buildLinalgModule(impl_->context, op_, num_inputs_, rhs_mod_);
+    mlir::ModuleOp module = *impl_->heldModule;
+    applyLinalgLoweringPipeline(module);
+    // [诊断] C3_LINALG_EW_TRACE=1 时打印 lowering 后的 LLVM IR（仅周期广播等有参考价值）
+    const char* ew_trace = std::getenv("C3_LINALG_EW_TRACE");
+    if (rhs_mod_ > 1 && ew_trace != nullptr && ew_trace[0] == '1') {
+        llvm::errs() << "[linalg-debug] after lowering (rhs_mod=" << rhs_mod_
+                     << "):\n";
+        module.dump();
+    }
 
     mlir::registerBuiltinDialectTranslation(impl_->context);
     mlir::registerLLVMDialectTranslation(impl_->context);
 
-    impl_->engine = createEngine(*module, opt_level);
+    // 缓存 key 语义串：区分 (op, opt_level, rhs_mod)，保持与 JITCache 1.0 graph key 格式一致
+    std::string cache_graph = std::string("linalg_ew_") + elementwiseOpName(op_)
+                              + "_ol" + std::to_string(opt_level)
+                              + "_rm" + std::to_string(rhs_mod_);
+    impl_->engine = createEngine(module, opt_level, cache_graph, impl_->aotBuilder);
     if (!impl_->engine->lookup("c3_kernel")) {
         throw std::runtime_error("LinalgElementwiseGen: lookup c3_kernel failed");
     }

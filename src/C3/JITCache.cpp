@@ -88,11 +88,7 @@ std::string JITCache::makeKey(const std::string& graph_str, int opt_level) {
     ss << "c3_jit_" << currentJITVersion() << "_"
        << opt_level << "_"
        << graph_str;
-    std::string key = AOTCache::sha256Hex(ss.str());
-#ifdef CT_DEBUG
-    fprintf(stderr, "[JITCache] makeKey: input_len=%zu, key=%s\n", ss.str().size(), key.c_str());
-#endif
-    return key;
+    return AOTCache::sha256Hex(ss.str());
 }
 
 // ======================= Lookup =======================

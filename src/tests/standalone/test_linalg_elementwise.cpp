@@ -11,6 +11,7 @@
  */
 
 #include "C3/LinalgElementwiseGen.h"
+#include "C3/JITCache.h"
 
 #include <cmath>
 #include <cstdio>
@@ -187,5 +188,87 @@ int main() {
                 cache_miss ? "OK (different)" : "UNEXPECTED (same!)");
     int cache_passed = (cache_hit && cache_miss) ? 2 : 0;
 
-    return ((passed == total) && (bc_passed == bc_total) && (cache_passed == 2)) ? 0 : 1;
+    // ======================= 周期广播正确性验证 (管线②) =======================
+    std::printf("\n--- 周期广播 (rhs_mod=k>1, linalg indexing map d0 -> d0 mod k) ---\n");
+    const ElementwiseOp pb_ops[] = {ElementwiseOp::Add, ElementwiseOp::Sub, ElementwiseOp::Mul};
+    const char* pb_names[] = {"Add(pb)", "Sub(pb)", "Mul(pb)"};
+    const size_t pb_k = 4;                       // 周期模数
+    const size_t pb_sizes[] = {16, 64, 1024};    // n 均为 k 的倍数
+    int pb_passed = 0, pb_total = 0;
+    for (int c = 0; c < 3; ++c) {
+        for (int s = 0; s < 3; ++s) {
+            ++pb_total;
+            size_t n = pb_sizes[s];
+            std::vector<float> lhs(n);
+            std::vector<float> rhs(pb_k);
+            for (size_t i = 0; i < n; ++i)
+                lhs[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+            for (size_t i = 0; i < pb_k; ++i)
+                rhs[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+            std::vector<float> expected(n);
+            for (size_t i = 0; i < n; ++i) {
+                float b = rhs[i % pb_k];
+                switch (pb_ops[c]) {
+                case ElementwiseOp::Add: expected[i] = lhs[i] + b; break;
+                case ElementwiseOp::Sub: expected[i] = lhs[i] - b; break;
+                case ElementwiseOp::Mul: expected[i] = lhs[i] * b; break;
+                default: break;
+                }
+            }
+            // 走缓存工厂，rhs_mod=k 周期广播 kernel
+            auto kernel = getCachedLinalgKernel(pb_ops[c], 3, static_cast<int>(pb_k));
+            const float* in_ptrs[2] = {lhs.data(), rhs.data()};
+            std::vector<float> actual(n, -1.f);
+            kernel->execute(in_ptrs, actual.data(), n);
+            bool ok = verifyApproxEqual(expected.data(), actual.data(), n, 1e-5f);
+            std::printf("  [%s] n=%-6zu k=%zu => %s\n", pb_names[c], n, pb_k,
+                        ok ? "PASSED" : "FAILED");
+            if (ok) ++pb_passed;
+        }
+    }
+    std::printf("--- Periodic-broadcast RESULT: %d/%d passed ---\n", pb_passed, pb_total);
+
+    // 缓存 key 区分 rhs_mod：不同 rhs_mod 应不同实例，相同 rhs_mod 应命中
+    auto pm0 = getCachedLinalgKernel(ElementwiseOp::Add, 3, 0);
+    auto pm1 = getCachedLinalgKernel(ElementwiseOp::Add, 3, 1);
+    auto pm4 = getCachedLinalgKernel(ElementwiseOp::Add, 3, 4);
+    auto pm4b = getCachedLinalgKernel(ElementwiseOp::Add, 3, 4);
+    bool mod_key_ok = (pm0.get() != pm1.get()) && (pm1.get() != pm4.get()) &&
+                      (pm0.get() != pm4.get()) && (pm4.get() == pm4b.get());
+    std::printf("  [Cache] rhs_mod 区分 (0/1/4 不同, 4==4 命中): %s\n",
+                mod_key_ok ? "OK" : "FAIL");
+
+    // ======================= AOT 磁盘持久化缓存验证 (管线①) =======================
+    std::printf("\n--- AOT 持久化缓存 (JITCache 2.0 read path, llvmModuleBuilder 注入) ---\n");
+    bool aot_ok = true;
+    if (JITCache::isEnabled()) {
+        JITCache& jc = JITCache::getInstance();
+        jc.evict();  // 清空，保证冷启动
+        const uint64_t hits0 = jc.hits();
+        const uint64_t stores0 = jc.stores();
+        {
+            // 冷启动：完整 build + lowering + translate → store bitcode
+            LinalgElementwiseKernel cold(ElementwiseOp::ReLU, 3, 0);
+        }
+        const uint64_t stores1 = jc.stores();
+        {
+            // 热启动：磁盘命中 → loadBitcode + JIT（跳过 build/lowering/translate）
+            LinalgElementwiseKernel warm(ElementwiseOp::ReLU, 3, 0);
+        }
+        const uint64_t hits1 = jc.hits();
+        const bool store_ok = (stores1 == stores0 + 1);
+        const bool hit_ok = (hits1 == hits0 + 1);
+        aot_ok = store_ok && hit_ok;
+        std::printf("  [AOT] 冷启动 stores +%llu (%s), 热启动 hits +%llu (%s)\n",
+                    static_cast<unsigned long long>(stores1 - stores0),
+                    store_ok ? "OK" : "FAIL",
+                    static_cast<unsigned long long>(hits1 - hits0),
+                    hit_ok ? "OK" : "FAIL");
+    } else {
+        std::printf("  [AOT] C3_JIT_CACHE_DISABLE=1，跳过\n");
+    }
+
+    return ((passed == total) && (bc_passed == bc_total) && (cache_passed == 2) &&
+            (pb_passed == pb_total) && mod_key_ok && aot_ok)
+               ? 0 : 1;
 }

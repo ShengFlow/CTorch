@@ -173,6 +173,21 @@
   - **共享 kernel 缓存工厂**：`getCachedLinalgKernel(op, opt_level, rhs_broadcast)` 基于 `weak_ptr` 全局缓存，同 `(op,opt,广播)` 只 JIT 编译一次，后续复用。逃生开关 `C3_LINALG_CACHE=0` 每次全新编译。验证：同一 key 两次返回相同指针（HIT），不同 op 返回不同指针（OK）。
 - **遗留**：① 周期广播（rhs 为中间尺寸，如 `[4] + [1] → [4]` 本质 scalar 不需周期）当前无实际需求，linalg 1D 路径不足以覆盖多维广播，维持原手写路径；② AOT 持久化缓存（跨 session 加速）待接 JITCache 2.0。
 
+### 4.11 2026-08-15 里程碑（同轮第二波）：linalg AOT 磁盘持久化缓存 + 1D 周期广播（解决 4.10 遗留①②）
+- **API 演进**：`LinalgElementwiseKernel(op, opt_level, rhs_mod)` 以 `rhs_mod(int)` 取代 `rhs_broadcast(bool)`。语义：`0`=rhs 同尺寸、`1`=标量广播、`k>1`=1D 周期广播（周期 k）。缓存工厂 `getCachedLinalgKernel(op, opt_level, rhs_mod)` 沿用同 key 语义；AOT key 串 `linalg_ew_<Op>_ol<opt>_rm<mod>`。
+- **管线① AOT 磁盘持久化缓存（JITCache 2.0 read path）**：
+  - `createEngine` 在 `JITCache::isEnabled()` 时按 key `lookup`：命中 → `llvmModuleBuilder` 回调内 `loadBitcode(create 传入的 LLVMContext)` 直接 JIT（跳过 MLIR build/lowering/translate）；未命中 → `translateModuleToLLVMIR` + `store` bitcode，下次同 key 命中。store 的是未优化 IR，`makeOptimizingTransformer` 对冷/热两路一致应用。
+  - **关键坑（已确认）**：ExecutionEngine 对 `llvmModuleBuilder` 是【延迟回调】（create 返回后、首次 materialize 时才调用）→ 栈上临时 `std::function` 悬垂 → 段错误（exit=139）。解法：`Impl` 成员 `heldModule`（`OwningOpRef<ModuleOp>`）与 `aotBuilder`（`std::function`）长期持有；builder 值捕获 module（`ModuleOp` 内部即 `Operation*` 包装），引擎先析构、module 后析构（声明顺序逆序保证）。
+  - 逃生开关 `C3_JIT_CACHE_DISABLE=1` 跳过整个缓存路径（回退默认 translate）。
+- **管线② 1D vector 周期广播**：第二输入 indexing map `d0 -> d0 mod k`（rhs memref size=k，循环域仍由输出 identity map 决定）。lowering 产出 `affine.apply (d0 mod k)`，而共享库 `LowerAffinePass` 与本地实例化的 memref dialect TypeID 冲突（`LLVM ERROR: Trying to register different dialects ... memref`）→ 自实现 `AffineApplyToArithPattern` 将 `affine.apply` 重写为 `arith.remsi`。pipeline：linalg-to-loops → 自定义 pattern → scf-to-cf → arith/math/cf/func/memref-to-llvm → reconcile。LLVM IR 验证含 `llvm.srem`。
+- **验证**（`test_linalg_elementwise`）：
+  - 周期广播 Add/Sub/Mul × 3 sizes（n=16/64/1024，k=4）**9/9 通过**；`rhs_mod` key 区分正确（0/1/4 不同指针、4==4 命中）。
+  - AOT：冷启动 `stores +1`、热启动 `hits +1`，`.bc` 落盘 `/tmp/c3jitcache`。
+  - 全量：8 ops × 4 sizes **32/32** + 标量广播 **12/12** + 周期广播 **9/9** + 缓存工厂 + AOT 冷/热 = **EXIT 0**。
+  - 调试日志收敛：`[AOT-DEBUG]`/`[linalg-debug]` 全部受 `C3_LINALG_EW_TRACE=1` 控制，默认运行 stderr **0 行**。
+- **主库路由**（`MLIRKernelGen.cpp`）：`tryBuildLinalgElementwise` 前置条件扩展为 `rhs.numel==1`（标量）或 `rhs.numel==lhs.numel`（同尺寸）或 `lhs.numel % rhs.numel == 0`（1D 周期）→ 传 `rhs_mod`（1 / 0 / k）。
+- **遗留**：① 多维广播（非标量、非 1D 周期，如 `[4,4] + [1,4]`）仍走手写路径；② AOT 缓存 key 未含编译 flag/平台指纹，跨平台共享同一缓存目录可能撞 key（当前单机场景安全）。
+
 ---
 
 ## 📊 关键指标历史追踪

@@ -2312,7 +2312,8 @@ static size_t countComputeNodesMLIR(const Graph& graph) {
 /// 命中条件：
 ///   1. 恰好 1 个计算节点（非融合、非多节点）；
 ///   2. 算子属于 {ReLU, Sigmoid, Tanh, Exp, Log, Add, Sub, Mul}；
-///   3. 二元算子无广播（lhs.numel == rhs.numel 且 > 0）——linalg 1D kernel 假设同尺寸；
+///   3. 二元算子支持 同尺寸 / 标量（rhs size=1）/ 1D vector 周期广播
+///      （2D+ lhs 最后一维 == rhs[0]，linalg 1D 视角下映射为 `d0 -> d0 mod k`）；
 ///   4. env C3_LINALG_EW != "0"（默认开启，逃生开关回退手写）。
 /// 命中时填充 out.func_any（执行器捕获 shared_ptr<LinalgElementwiseKernel> 保证生命周期）。
 static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) {
@@ -2332,8 +2333,37 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
 
     const NodeVariant& op = compute_node->op;
     ElementwiseOp eop = ElementwiseOp::ReLU;
+    int rhs_mod = RhsNoBroadcast;  // 二元第二输入广播模数（0 同尺寸 / 1 标量 / k>1 周期）
     bool eligible = true;
-    bool rhs_broadcast = false;  // 二元标量广播（rhs.numel == 1）
+
+    // 计算二元第二输入广播模数（语义对齐手写路径 buildElementwiseBinary 的 rhs_broadcast_mod）：
+    //   lhs==rhs → 0（同尺寸）；rhs_numel==1 → 1（标量）；rhs 1D 且 lhs 最后一维==rhs[0] → k（周期）；
+    //   其余（含任一 shape 为空、numel==0）→ -1（不支持，回退手写）。
+    auto computeRhsMod = [&](const NodeVariant& v) -> int {
+        auto getRhsShape = [](const NodeVariant& nv) -> std::vector<size_t> {
+            if (std::holds_alternative<AddNode>(nv)) return std::get<AddNode>(nv).rhs_desc.shape;
+            if (std::holds_alternative<SubNode>(nv)) return std::get<SubNode>(nv).rhs_desc.shape;
+            if (std::holds_alternative<MulNode>(nv)) return std::get<MulNode>(nv).rhs_desc.shape;
+            return {};
+        };
+        auto getLhsShape = [](const NodeVariant& nv) -> std::vector<size_t> {
+            if (std::holds_alternative<AddNode>(nv)) return std::get<AddNode>(nv).lhs_desc.shape;
+            if (std::holds_alternative<SubNode>(nv)) return std::get<SubNode>(nv).lhs_desc.shape;
+            if (std::holds_alternative<MulNode>(nv)) return std::get<MulNode>(nv).lhs_desc.shape;
+            return {};
+        };
+        const auto lhs = getLhsShape(v);
+        const auto rhs = getRhsShape(v);
+        if (lhs.empty() || rhs.empty()) return -1;
+        if (lhs == rhs) return RhsNoBroadcast;      // 同尺寸
+        size_t rhs_numel = 1;
+        for (size_t d : rhs) rhs_numel *= d;
+        if (rhs_numel == 1) return RhsScalarBroadcast;  // 标量广播（size=1）
+        if (rhs.size() == 1 && lhs.back() == rhs[0])
+            return static_cast<int>(rhs[0]);        // 1D vector 周期广播（k>1，mod k）
+        return -1;                                  // 其余多维/不支持广播
+    };
+
     if (std::holds_alternative<ReLUNode>(op)) {
         eop = ElementwiseOp::ReLU;
     } else if (std::holds_alternative<SigmoidNode>(op)) {
@@ -2345,33 +2375,26 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
     } else if (std::holds_alternative<LogNode>(op)) {
         eop = ElementwiseOp::Log;
     } else if (std::holds_alternative<AddNode>(op)) {
-        const auto& n = std::get<AddNode>(op);
-        // 支持同尺寸 或 rhs 标量（size=1）广播；其余（周期广播）回退手写
-        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
-        if (n.rhs_desc.numel == 0) eligible = false;
-        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Add;
+        rhs_mod = computeRhsMod(op);
+        if (rhs_mod < 0) eligible = false;
     } else if (std::holds_alternative<SubNode>(op)) {
-        const auto& n = std::get<SubNode>(op);
-        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
-        if (n.rhs_desc.numel == 0) eligible = false;
-        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Sub;
+        rhs_mod = computeRhsMod(op);
+        if (rhs_mod < 0) eligible = false;
     } else if (std::holds_alternative<MulNode>(op)) {
-        const auto& n = std::get<MulNode>(op);
-        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
-        if (n.rhs_desc.numel == 0) eligible = false;
-        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Mul;
+        rhs_mod = computeRhsMod(op);
+        if (rhs_mod < 0) eligible = false;
     } else {
         eligible = false;
     }
     if (!eligible) return false;
 
-    // 编译 linalg kernel（走共享缓存，同一 (op,opt,广播) 只 JIT 一次）；失败静默回退手写
+    // 编译 linalg kernel（走共享缓存，同一 (op,opt,rhs_mod) 只 JIT 一次）；失败静默回退手写
     std::shared_ptr<LinalgElementwiseKernel> kernel;
     try {
-        kernel = getCachedLinalgKernel(eop, 3, rhs_broadcast);
+        kernel = getCachedLinalgKernel(eop, 3, rhs_mod);
     } catch (const std::exception& e) {
         fprintf(stderr, "C3 linalg: %s compile failed (%s), fallback to handwritten\n",
                 elementwiseOpName(eop), e.what());
@@ -2383,7 +2406,8 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
     out.func_any = [kernel, num_inputs](const float* a, const float* b, float* out_ptr,
                                         size_t n, size_t, size_t, size_t) {
         // 一元取 in_ptrs[0]=a；二元取 [a, b]（num_inputs 控制 execute 读取个数；
-        // 标量广播时 execute 对 b 按 size=1 处理，只读 b[0]）
+        // 标量广播时 execute 对 b 按 size=1 处理，只读 b[0]；
+        // 周期广播时 execute 对 b 按 size=k 处理，沿主维度周期复用）
         const float* in_ptrs[2] = {a, b};
         kernel->execute(in_ptrs, out_ptr, n);
     };
