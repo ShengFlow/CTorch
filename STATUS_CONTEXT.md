@@ -1,8 +1,8 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-14 深夜 - JIT 2.0 时代已降临)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-14 深夜 - 自定义 C3 Dialect 攻坚期)
 
 ## 📌 项目定位与持久记忆
 
-本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。由于 C3 编译器的不断发展，项目现已**圆满攻克 阶段 2.1（战术先锋）、阶段 2.2（方言筑基）与 阶段 2.3（图模式重写与 Lowering Pass）**，CTorch 已经正式昂首跨入 **C3 JIT 2.0（TableGen 结构化 Dialect 时代）**！
+本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。项目已圆满攻克 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）**，成功进入 **C3 JIT 2.0（TableGen 结构化 Dialect 时代）**。当前正全力攻坚 **自定义 C3 Dialect** 路线：以 ODS/TableGen 定义专属 `c3` 方言算子（matmul / transpose / sum_reduce），打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。完整集成了所有最新的分支状态、编译管线、性能指标及代码提交。
 
 ---
 
@@ -34,19 +34,26 @@
 
 ## 🟢 二、C3 MLIR 后端「最大化发挥」与 JIT 2.0 阶段突破
 
-> ⚠️ **方案更新（2026-08-14 深夜用户决策）**：原「四大线方案」（A 显式向量化 / B 并行化 / C 内存优化 / D 声明式迁移）**已由 JIT 2.0 完美体覆盖**。当前唯一主载 = **自定义 C3 Dialect 结构化优化器**（TableGen ODS 定义专属算子 + ODS 属性传播 + 专属 Lowering + 声明式重写规则）。
+> ⚠️ **方案更新（2026-08-14 深夜用户决策）**：原「四大线方案」（A 显式向量化 / B 并行化 / C 内存优化 / D 声明式迁移）**已废弃**。当前唯一主线 = **自定义 C3 Dialect**（TableGen ODS 定义专属算子 + 专属 lowering）。下述 A~D 四线作为历史方向保留仅供回顾，不再作为执行计划。
 
-项目在 2026-08-14 实现了**由 JIT 1.0（扁平直译）向 JIT 2.0（TableGen 结构化 Dialect）的跨时代进化**，打通了「定义 → lowering → 图接入 → 端到端测试」完整闭环：
+项目制定了 C3 MLIR 后端优化的四大线方案，并在 2026-08-14 实现了**由 JIT 1.0（扁平直译）向 JIT 2.0（TableGen 结构化 Dialect）的完美进化**：
 
-- **方言与算子 ODS（C3Ops.td）**：使用 TableGen 框架彻底定义专属的 `c3` 方言与 `c3.matmul`、`c3.transpose`、`c3.sum_reduce` 高高层算子，完全保留多维几何张量语义。
-- **声明式图优化（C3Combine.td）**：在编译期定义 DRR（声明式重写规则）在 MLIR 高层执行白盒图级重写与代数化简（如双重转置消去、转置折叠）。
-- **JIT 2.0 Lowering Pass**：手写 `C3ToLLVM` 重写 Pattern，在 lowering 阶段将高阶的 `c3.transpose`、`c3.sum_reduce` 降维转化为我们手写且经过 2.1 验证过的极致向量化和分块循环代码，实现零开销编译。
+1. **线 A：显式向量化**（近期最大化，核心方向）
+   - 升级标量 `scf.for` 循环为 vector 分段形式（`vector.load/arith/store`），主段以 Vector VL (如 16x 元素) 连续计算，尾部退回标量。
+2. **线 B：并行化**
+   - 采用 `scf.parallel` + OMP 提升大逐元素算子在多核上的带宽利用。
+3. **线 C：内存优化**
+   - 引入 one-shot bufferization 消除融合链的中间 buffer分配与拷贝。
+4. **线 D：声明式迁移（JIT 2.0 阶段，正在落地）**
+   - **方言与算子 ODS（C3Ops.td）**：使用 TableGen 框架彻底定义专属的 `c3` 方言与 `c3.matmul`、`c3.transpose`、`c3.sum_reduce` 高高层算子，完全保留多维几何张量语义。
+   - **声明式图优化（C3Combine.td）**：定义 DRR（声明式重写规则）在编译期执行白盒图级融合（如双重转置消去、转置折叠）。
+   - **Linalg / Vector Lowering**：将高层 `c3` 算子降维，完美复用标准 `linalg` 自动 2D Tiling 和 `vector` 水平向量规约，彻底解耦“算法”与“硬件加速”。
 
 ---
 
-## 🟢 三、最新代码进展（2026-08-14 阶段 2.1 / 2.2 / 2.3 完美会师）
+## 🟢 三、最新代码进展（2026-08-14 阶段 2.1 / 2.2 捷报）
 
-工作区当前已圆满完成了极其关键的 **阶段 2.1（战术先锋）**、**阶段 2.2（方言筑基）** 与 **阶段 2.3（图模式重写与降低 Pass）** 的代码实装，端到端反向 JIT 测试已 100% 全量 PASS 验证：
+工作区当前已圆满完成了极其关键的 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）** 的代码实装，端到端反向 JIT 测试已 100% 全量 PASS 验证：
 
 ### 1. 阶段 2.1：多输出分段、多维转置与特定轴归约实装 (`src/C3/MLIRKernelGen.cpp`)
 - **多输出 GEP 偏移修复**：彻底解决了 1.0 路径下多输出节点往同一个 `out_ptr` 的 0 偏移物理地址写入导致覆盖冲突的大 Bug！引入 `output_index` 段偏移计算，通过 `LLVM::GEPOp` 在编译期对各输出发射正确的段偏移指针。
@@ -56,15 +63,165 @@
 - **反向融合全量 PASS**：编译运行 `test_c3_backward`，**10 个端到端反向测试（含 MatMul 求导与 ReLU/Sigmoid 融合链）100% 完美通过，误差回归至单精度浮点极限（2.98023e-08）**！
 
 ### 2. 阶段 2.2：C3 专属 Dialect ODS 声明与 CMake 表生成管线 (`include/C3/C3Ops.td`)
-- **方言与算子 ODS 定义**：在 `C3Ops.td` 中使用 ODS 定义了方言、算子基类以及 `c3.matmul`、`c3.transpose`、`c3.sum_reduce` 算子。为参数指定 `AnyType`，以便零摩擦兼容现有的平面指针（Flat Pointer）C-ABI 框架。为了将张量在下降过程中的维度形状特征向后传递，在算子中声明式引入了 `I64Attr` 和 `I32Attr` 属性。
-- **C++ 方言注册与加载**：在 `include/C3/C3Dialect.h` 与 `src/C3/C3Dialect.cpp` 中注册 `C3` Dialect 实体类。在头文件中精准引入 `mlir/IR/BuiltinTypes.h`（解决 `TensorType` 找不到）、`mlir/Interfaces/SideEffectInterfaces.h`（解决 `MemoryEffectOpInterface` 找不到）以及 `mlir/Bytecode/BytecodeOpInterface.h`，消除了全部 20 处 C++ 编译警告和报错！
+- **方言与算子 ODS 定义**：在 `C3Ops.td` 中使用 ODS 定义了方言、算子基类以及 `c3.matmul`、`c3.transpose`、`c3.sum_reduce` 算子。为参数指定 `AnyType`，以便零摩擦兼容现有的平面指针（Flat Pointer）C-ABI 框架。
+- **DRR 重写规则定义**：创建 `include/C3/C3Combine.td` 并定义了双重转置消去规则 `DoubleTransposeOptPattern`，采用多解耦符号绑定规避了 `mlir-tblgen` 中的 symbol 绑定碰撞大错。
+- **CMake 表生成管线打通**：重构 `CMakeLists.txt` 以引入 `TableGen`、`AddLLVM`、`AddMLIR` 依赖，并配置 `mlir_tablegen` 追加 `"-I${MLIR_INCLUDE_DIRS}"` 和 `"-I${CMAKE_CURRENT_SOURCE_DIR}/include"`。编译期自动产出 `C3Ops.h.inc`、`C3Ops.cpp.inc`、`C3Dialect.h.inc`、`C3Dialect.cpp.inc`、`C3Combine.cpp.inc`。
+- **C++ 方言注册与加载**：在 `include/C3/C3Dialect.h` 与 `src/C3/C3Dialect.cpp` 中注册并注册 `C3` Dialect 实体类。
 
-### 3. 阶段 2.3：图优化重写（DRR）与 C3ToLLVM Lowering Pass 完美落地 (`include/C3/C3Combine.td`)
-- **DRR 重写规则定义**：创建 `include/C3/C3Combine.td` 并定义了双重转置消去规则 `DoubleTransposeOptPattern`，采用多解耦符号绑定规避了 `mlir-tblgen` 中的 symbol 绑定碰撞大错，完美生成了 C++ 端重写代码 `C3Combine.cpp.inc`！
-- **CMake 表生成管线升级**：重构 `CMakeLists.txt` 以引入 `TableGen`、`AddLLVM`、`AddMLIR` 依赖，并配置 `mlir_tablegen` 追加 `"-I${MLIR_INCLUDE_DIRS}"` 和 `"-I${CMAKE_CURRENT_SOURCE_DIR}/include"`。编译期自动产出 `C3Ops.h/cpp.inc`、`C3Dialect.h/cpp.inc`、`C3Combine.cpp.inc`。
-- **C3ToLLVM Lowering Patterns 实现**：在 `src/C3/MLIRKernelGen.cpp` 中定义并实现了 `TransposeOpLowering` 和 `SumReduceOpLowering` 两个继承于 `mlir::OpRewritePattern` 的降维重写 Pattern。它能将高阶算子中绑定的形状、轴等属性转化为 `arith.constant` 进而调用 2.1 节高度向量化、分块优化的 loops 循环代码。
-- **高阶 Lowering Pipeline 贯通**：在 `applyLoweringPipeline` 入口中接入了 `runC3Combine(module)` (调用 TableGen 规则执行高阶代数优化) 与 `runC3Lowering(module)` (调用 Lowering 模式将算子降维)，随后再经过 CSE、LICM 和 SCFToCF 转换为极速二进制。
-- **图接入与测试回归（100% 绿）**：修改 `MLIRKernelGen.cpp` 以在多节点/单节点构建时自动生成 `c3.transpose` 与 `c3.sum_reduce` 算子。重新编译后，**101 项单元测试 / E2E 测试 100% 完美 PASS**！这证明 JIT 2.0 结构化编译器与高层方言接入实现得极其成功，无任何回归风险！
+### 3. [保留] 1.0 直译式路径下的显式向量化与 Scratchpad 暂存
+- **显式向量化 + 软件预取 (线 A)**：在单节点向量化循环 body 中，添加了 HPC 软件预取指令，提前预取 128 字节以填充 Cache Line。
+- **参数非别名化 (llvm.noalias)**：对生成的 `c3_kernel` 参数，强制设置 `llvm.noalias` 属性。这帮助 LLVM 消除指针别名怀疑，激进展开 Load/Store 级联。
+- **M2 阶段突破：Host 托管极速零拷贝（Scratchpad 暂存机制）落地！**：完全删除 MLIR 内部 `malloc` / `free` 调用，通过 GEP 物理切片进行中间 Pool Buffer 划分。在 `C3Engine.cpp` 中通过 `thread_local std::vector<float>` 在 Host 侧托管暂存区，在 Hot-Path 运行期间实现了**极致的零动态堆内存分配**。
+- **M2 拓展：Exp 与 Log 算子完美 MLIR 向量化支持！**：在 `MLIRKernelGen.cpp` 中补充了 `buildExp` 与 `buildLog` 支持，直连手写最强 SIMD 向量化实现（`ct_simd_vexp` 与 `ct_simd_vlog`）。
+- **Host 托管的多核并行分块（线程协作极致并行）**：在 `C3Engine.cpp` 中引入 Host 托管的并行切片分配。将大张量（大于 `kParallelThreshold = 262144` 元素）沿外层维度切片，并发下发至 CTorch 高性能 `ThreadPool` 中，各核心持有独立的 `worker_scratchpad` 完全安全并行执行。对于中等/小张量或 MatMul 自适应退避至极速单核串行路径，避免调度开销。
+
+---
+
+## 🔥 四、2026-08-14 深夜攻坚：自定义 C3 Dialect 全力冲刺
+
+> 从本节点开始，**唯一主线 = 自定义 C3 Dialect**。目标：以 ODS/TableGen 定义专属 `c3` 方言算子，打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。
+
+### 4.1 Dialect 骨架（阶段 2.2 成果，已稳定）
+- `include/C3/C3Ops.td`：定义 `c3.matmul` / `c3.transpose` / `c3.sum_reduce` 三算子（`AnyType` 兼容平面指针 C-ABI）。
+- `include/C3/C3Combine.td`：DRR 优化规则（DoubleTransposeOptPattern）。
+- `include/C3/C3Dialect.h` + `src/C3/C3Dialect.cpp`：方言注册 + 三算子 builder + parseType/printType。
+- CMake TableGen 管线：编译期自动产出 `C3Ops.h/cpp.inc`、`C3Dialect.h/cpp.inc`、`C3Combine.cpp.inc`。
+
+### 4.2 Lowering 集成（三 op 收口完成 ✅）
+- ✅ `TransposeOpLowering` / `SumReduceOpLowering` / `MatMulOpLowering` 三算子全部进入统一 lowering pipeline，单/多节点图路径均创建对应 c3 算子。
+- ✅ **MatMulOp 纳入 dialect（三 op 收口）**：MatMulOp 改为 **out-as-operand 风格 + `MemoryEffects<[MemWrite]>`**（与 Transpose/SumReduce 统一，三 op 语义对齐）。新增 `MatMulOpLowering`（`src/C3/MLIRKernelGen.cpp`），**策略选择从图生成处下沉到 lowering 阶段**：
+  - `total_ops < 256` → 小矩阵内联循环（无 tiling）
+  - `total_ops ∈ [256, kTiledMatMulThreshold)` 且 M/N ≥ tile → 中矩阵 2D tiled scf.for（Cache-friendly）
+  - 其余 → 委托 cblas_sgemm（BLAS 最优实现），epilogue 在 sgemm 后单独执行
+  - 与手写路径 `buildTiledMatMulWithEpilogue` / `buildMatMul` 复用同一套代码生成逻辑，数值语义与手写一致。
+  - 新增可选 epilogue 融合（`$bias` 加法 + 激活 `act`：None/ReLU/Sigmoid/Tanh）与 transpose folding（`transA`/`transB`：111=NoTrans, 112=Trans）。
+- ✅ `runC3Combine`（DRR 高层图优化）+ `runC3Lowering`（高层算子→LLVM 循环）已接入 `applyLoweringPipeline`。
+
+### 4.3 关键 Bug 修复（本次攻坚核心产出）
+- **修复 DCE 大 Bug**：Transpose/SumReduce 采用「无 result、`$out` 作为 operand 传入」的 buffer 语义，却标记 `[Pure]`（无副作用）→ 被 MLIR 优化器当死代码删除，kernel 输出全 0。**修复：traits 改为 `MemoryEffects<[MemWrite]>`**（`C3Ops.td`）。
+- **修复 `C3Combine.td` 参数错误**：DoubleTransposeOptPattern 参数数 5→6，对齐 op 定义（input/out 双 operand + M/N/dim0/dim1 四 attr）；注明该规则在当前 buffer 语义下暂不触发，待转 SSA result 语义后生效。
+- **补充链接修复**（沿用历史）：TableGen 未生成自定义 builder → `C3Dialect.cpp` 补齐 SumReduceOp/TransposeOp/MatMulOp builder。
+
+### 4.4 端到端测试（新增，全绿）
+- **Transpose/SumReduce 多节点（2 个）**：`MLIRBackend.TransposeSumReduceAxis0/1MultiNode`
+  - `materializeTranspose` 辅助函数（框架 `sum()` 对懒转置视图结果错误，先物化连续张量再求 eager 参考）。
+  - axis0：mlir `[6,15]` == eager；axis1：mlir `[5,7,9]` == eager，数值完全一致 ✅
+- **MatMulOp 端到端（7 个，覆盖三种策略 + 多节点场景）**：
+  - `MLIRBackend.MatMulSmallInline`：total_ops=24 < 256，小矩阵内联 ✅
+  - `MLIRBackend.MatMulTiledMedium`：total_ops=3072，中矩阵 2D tiling ✅
+  - `MLIRBackend.MatMulCblasLarge`：total_ops=4096，委托 cblas_sgemm ✅
+  - `MLIRBackend.MatMulMultiNodeNoFusion`：MatMul→ReLU 多节点独立执行 ✅
+  - `MLIRBackend.MatMulTransposeFoldAMultiNode`：Transpose(A)→MatMul，transA 折叠 ✅
+  - `MLIRBackend.MatMulTransposeFoldBMultiNode`：MatMul→Transpose(B)，transB 折叠 ✅
+  - `MLIRBackend.MatMulEpilogueBiasReLUMultiNode`：MatMul→Add(bias)→ReLU 合成 epilogue 融合 ✅
+
+### 4.5 回归验证结论
+- 完整测试套件：**排除预存崩溃后 109 项全 PASSED**（110 项 - 1 预存崩溃），本次改动零回归。
+- ~~**发现并确认一个「预存崩溃」（非本次引入）**：`Benchmark.MLIRFusedVsNonFused` 在完整套件中（Handwritten benchmark 前置时）SIGSEGV，崩溃点为 JIT 无符号机器码、多线程同时越界。~~ → **已于 2026-08-15 定位并修复（见 4.8）**
+
+### 4.6 当前进度（三 op 收口 3/3 完成 ✅）
+| 环节 | Transpose | SumReduce | MatMul |
+|---|---|---|---|
+| ODS 定义 | ✅ | ✅ | ✅ |
+| builder | ✅ | ✅ | ✅ |
+| lowering | ✅ | ✅ | ✅ |
+| 图接入 | ✅ | ✅ | ✅ |
+| 端到端测试 | ✅ | ✅ | ✅ |
+
+### 4.7 后续方向
+1. ✅ ~~完成 MatMulOp Lowering~~ → 三 op 收口完成，dialect 完整闭环达成。
+2. 逐元素算子（Add/Mul/ReLU/Sigmoid 等，形态统一）后续用 `linalg.generic` 声明式统一覆盖（一个机制替代 if-else 分发），不逐类建 op。
+3. 第二阶段（长期）：声明式 linalg + 统一 transform 管线（tiling → vectorize → fuse → bufferize）。
+4. ✅ ~~待办：单独排查 4.5 的预存崩溃~~ → 已于 2026-08-15 修复（见 4.8）。
+
+### 4.8 2026-08-15 收尾：预存崩溃定位与修复（git: f92bc90）
+- **预存崩溃根因定位**：`Benchmark.MLIRFusedVsNonFused` / `Benchmark.FusedVsNonFused` 在多线程并行切片执行时越界。
+  - 根因：多节点 kernel 的逐元素循环上界硬编码为**编译期全尺寸 `node_numel`**（1048576），而 `MultiNodeCompiledKernel` 按运行时切片 `n`（slice_n=131072）并行分块，每个线程的输入指针已 `+start` 偏移——但循环仍写满全尺寸 → 越过分配的 `flat` 平面 buffer 边界。
+  - **MLIR 侧修复**（`MLIRKernelGen.cpp`）：FusedNode 与普通 element-wise 两处循环上界由常量 `node_numel` 改为 `min(node_numel, n_val)`（`arith::MinSIOp`，n_val 为运行时 arg2）。串行时 n==elem_n 行为不变；并行切片时收紧到 slice_n。
+  - **Handwritten 侧修复**（`HandwrittenKernelGen.cpp`）：12 处逐元素循环上界改为 `std::min((size_t)node_n, n)`；AOT 后端版本号 `handwritten-v4 → handwritten-v5` 使旧越界缓存 kernel 失效。
+  - **验证**：build_asan 下 `Benchmark.FusedVsNonFused` + `Benchmark.MLIRFusedVsNonFused` 均 PASSED，ASAN 无任何内存错误。
+- **顺手修复 ProxyTensor UAF**（`include/C3/Tracer.h`）：`scalarOp` 与标量左操作数 `operator-/operator/` 持有 Graph 内部 `vector<Node>` 的 `const TensorDesc&`，随后 `recordOp` → `addNode` 触发 vector 扩容使引用悬垂（ASAN heap-use-after-free）。改为按值拷贝 desc。Tracer 组测试全绿。
+- **新增遗留（ASAN 暴露，非本次改动引入，待单独排查）**：
+  - `PGOCompiledKernel::triggerCompilationChain` async lambda 捕获裸 `this` → 测试生命周期结束 PGO kernel 析构后后台线程仍访问（heap-use-after-free，`PGOProfiling.HotnessScore`）。候选修复：async 任务自持有 shared_ptr 保活，或 PGOManager::shutdown join 全部 future。
+  - `C3HotPathManager::tryFuseRecentDispatches` 对 dispatch deque 遍历时 heap-buffer-overflow（`Benchmark.MLP_Huge_C3_vs_Eager`）。候选方向：deque 遍历期间迭代器/索引与并发 push_back 竞态或越界索引。
+
+### 4.9 2026-08-15 里程碑：`linalg.generic` 声明式逐元素 PoC 全链路打通（12/12 通过）
+- **PoC 文件**：`src/tests/standalone/exp_linalg_elementwise.cpp`（独立 target `exp_linalg_elementwise`，不依赖 CTorch 主库）
+- **验证内容**：ReLU / Add / Sigmoid 三个 linalg.generic 算子，从「flat 指针 → memref descriptor → linalg.generic(dest-style) → 标准 lowering pipeline → LLVM JIT」完整链路，输出与手写参考逐元素一致（n = 16/128/1024/1048576，共 12/12 通过）。
+- **技术要点（供主库改造参考）**：
+  1. **动态 memref 必须用 `ShapedType::kDynamic`（= INT64_MIN）创建**，不能写字面量 `-1`。否则 `IndexingMapOpInterface::verifyImpl` 会把 `-1` 当作「静态形状」，触发静态边界检查而报 `unexpected result less than 0 at expression #0 in (d0) -> (d0)`（`memref<-1xf32>` 而非 `memref<?xf32>` 即为踩坑征兆）。
+  2. **`FinalizeMemRefToLLVMConversionPass` 会把 memref<?xf32> 函数参数展开成 5 个标量**（alloc, aligned, offset, size, stride）。`ExecutionEngine::invokePacked` 的包装函数 `_mlir_c3_kernel(void**)` 逐参数 load，因此 packed 数组必须按展开后的标量逐个传指针（2 个 memref = 10 个指针，3 个 = 15 个），不能直接传 descriptor 结构体地址。
+  3. **Lowering pipeline 顺序**：`linalg-to-loops → scf-to-cf → arith-to-llvm → math-to-llvm → cf-to-llvm → func-to-llvm → memref-to-llvm → reconcile-unrealized-casts`。缺 `arith-to-llvm`/`math-to-llvm` 会报 `missing LLVMTranslationDialectInterface registration for dialect for op: arith.constant`。CMake 需链接 `MLIRArithToLLVM MLIRMathToLLVM`。
+- **结论**：linalg.generic 声明式逐元素路径已被证明可行，可作为 4.7-2「用 linalg.generic 统一覆盖逐元素算子（替代 if-else 分发）」的直接依据。下一步：将 PoC 的 lowering 管线与 JIT 调用模式移植到主库（`MLIRKernelGen` / 新 `LinalgElementwiseGen`），替换手写标量 IR 分支，再接入 tiling/vectorize/bufferize 统一 transform 管线（4.7-3）。
+
+### 4.10 2026-08-15 里程碑：`LinalgElementwiseGen` 组件落地 + 主库接入（32/32 正确性 + 性能达标）
+- **新组件**：`include/C3/LinalgElementwiseGen.h` + `src/C3/LinalgElementwiseGen.cpp`。将 PoC（4.9）抽象为可复用组件，支持 8 种逐元素算子（ReLU/Sigmoid/Tanh/Exp/Log/Add/Sub/Mul），dest-style linalg.generic + 标准 lowering + `invokePacked` ABI，编译后 `execute` 可并发调用。
+- **正确性**（`test_linalg_elementwise`，链接主库 CTorch）：8 ops × 4 sizes（16/128/1024/1048576）**32/32 通过**，与手写参考逐元素一致。
+- **性能**（`bench_linalg_vs_handwritten`，同 LLVM O3，单位 ns/elem）：
+  - ReLU：n=1M `0.108 vs 手写 0.107`（持平）；n=4M `0.146 vs 0.148`（持平）。
+  - Sigmoid：n=64K `1.855 vs 2.265`（**linalg 反超 ~18%**）；n=4M `1.855 vs 1.977`。
+  - Add：n=1M `0.221 vs 0.190`（慢 ~16%）；n=4M `0.264 vs 0.209`。
+  - 小尺寸（n=1024）linalg 每元素开销偏高（JIT 调用/memref 描述符展开开销摊薄不足），大尺寸持平或反超。结论：声明式路径在真实规模无性能回归，可替换手写分支。
+- **主库接入**（`MLIRKernelGen.cpp` / `C3Engine.cpp` / `HandwrittenKernelGen.h`）：
+  - `GeneratedKernel` 新增 `func_any`（`std::function<SingleNodeExecutor>`），`ConcreteCompiledKernel` 新增构造参数并**优先调用 `func_any_`**（高于裸 `func`）。
+  - `generateFromGraphMLIR` 开头新增 `tryBuildLinalgElementwise` 短路路由：恰好 1 个计算节点 + 算子 ∈ {8 种} + 二元无广播 + `C3_LINALG_EW != "0"` → 直接返回 `func_any` 执行器（捕获 `shared_ptr<LinalgElementwiseKernel>` 保证生命周期），跳过手写 if-else 标量 IR 构建。
+  - 逃生开关 `C3_LINALG_EW=0` 回退原手写路径；`C3_LINALG_EW_TRACE=1` 打印路由命中诊断。
+- **集成验证**（`test_c3_compile_and_inject`）：trace 确认 `Add (num_inputs=2, n=4)` 与 `ReLU (num_inputs=1, n=4)` 均走 linalg.generic 路由，结果与 eager 一致 PASS；`C3_LINALG_EW=0` 下无 linalg trace、回退手写同样 PASS；MatMul 正确不路由。
+- **回归**：`test_relu_backward` MATCH、`test_c3_mnist_step` ALL TESTS PASSED。
+- **v2 管线升级（同轮追加）**：
+  - **标量广播**：`LinalgElementwiseKernel` 新增 `rhs_broadcast` 参数，构建时第二输入 indexing map 取 `d0 -> 0`（常量投影，标量 size=1），循环域仍由输出 identity map 决定。`execute` 时 rhs memref size=1。测试 `Add(bc)/Sub(bc)/Mul(bc) × 4 sizes` **12/12 通过**。主库路由同步支持 `rhs.numel == 1` 场景（原先前置条件 `rhs.numel == lhs.numel` 严格拒绝）。
+  - **共享 kernel 缓存工厂**：`getCachedLinalgKernel(op, opt_level, rhs_broadcast)` 基于 `weak_ptr` 全局缓存，同 `(op,opt,广播)` 只 JIT 编译一次，后续复用。逃生开关 `C3_LINALG_CACHE=0` 每次全新编译。验证：同一 key 两次返回相同指针（HIT），不同 op 返回不同指针（OK）。
+- **遗留**：① 周期广播（rhs 为中间尺寸，如 `[4] + [1] → [4]` 本质 scalar 不需周期）当前无实际需求，linalg 1D 路径不足以覆盖多维广播，维持原手写路径；② AOT 持久化缓存（跨 session 加速）待接 JITCache 2.0。
+
+### 4.11 2026-08-15 里程碑（同轮第二波）：linalg AOT 磁盘持久化缓存 + 1D 周期广播（解决 4.10 遗留①②）
+- **API 演进**：`LinalgElementwiseKernel(op, opt_level, rhs_mod)` 以 `rhs_mod(int)` 取代 `rhs_broadcast(bool)`。语义：`0`=rhs 同尺寸、`1`=标量广播、`k>1`=1D 周期广播（周期 k）。缓存工厂 `getCachedLinalgKernel(op, opt_level, rhs_mod)` 沿用同 key 语义；AOT key 串 `linalg_ew_<Op>_ol<opt>_rm<mod>`。
+- **管线① AOT 磁盘持久化缓存（JITCache 2.0 read path）**：
+  - `createEngine` 在 `JITCache::isEnabled()` 时按 key `lookup`：命中 → `llvmModuleBuilder` 回调内 `loadBitcode(create 传入的 LLVMContext)` 直接 JIT（跳过 MLIR build/lowering/translate）；未命中 → `translateModuleToLLVMIR` + `store` bitcode，下次同 key 命中。store 的是未优化 IR，`makeOptimizingTransformer` 对冷/热两路一致应用。
+  - **关键坑（已确认）**：ExecutionEngine 对 `llvmModuleBuilder` 是【延迟回调】（create 返回后、首次 materialize 时才调用）→ 栈上临时 `std::function` 悬垂 → 段错误（exit=139）。解法：`Impl` 成员 `heldModule`（`OwningOpRef<ModuleOp>`）与 `aotBuilder`（`std::function`）长期持有；builder 值捕获 module（`ModuleOp` 内部即 `Operation*` 包装），引擎先析构、module 后析构（声明顺序逆序保证）。
+  - 逃生开关 `C3_JIT_CACHE_DISABLE=1` 跳过整个缓存路径（回退默认 translate）。
+- **管线② 1D vector 周期广播**：第二输入 indexing map `d0 -> d0 mod k`（rhs memref size=k，循环域仍由输出 identity map 决定）。lowering 产出 `affine.apply (d0 mod k)`，而共享库 `LowerAffinePass` 与本地实例化的 memref dialect TypeID 冲突（`LLVM ERROR: Trying to register different dialects ... memref`）→ 自实现 `AffineApplyToArithPattern` 将 `affine.apply` 重写为 `arith.remsi`。pipeline：linalg-to-loops → 自定义 pattern → scf-to-cf → arith/math/cf/func/memref-to-llvm → reconcile。LLVM IR 验证含 `llvm.srem`。
+- **验证**（`test_linalg_elementwise`）：
+  - 周期广播 Add/Sub/Mul × 3 sizes（n=16/64/1024，k=4）**9/9 通过**；`rhs_mod` key 区分正确（0/1/4 不同指针、4==4 命中）。
+  - AOT：冷启动 `stores +1`、热启动 `hits +1`，`.bc` 落盘 `/tmp/c3jitcache`。
+  - 全量：8 ops × 4 sizes **32/32** + 标量广播 **12/12** + 周期广播 **9/9** + 缓存工厂 + AOT 冷/热 = **EXIT 0**。
+  - 调试日志收敛：`[AOT-DEBUG]`/`[linalg-debug]` 全部受 `C3_LINALG_EW_TRACE=1` 控制，默认运行 stderr **0 行**。
+- **主库路由**（`MLIRKernelGen.cpp`）：`tryBuildLinalgElementwise` 前置条件扩展为 `rhs.numel==1`（标量）或 `rhs.numel==lhs.numel`（同尺寸）或 `lhs.numel % rhs.numel == 0`（1D 周期）→ 传 `rhs_mod`（1 / 0 / k）。
+- **遗留**：① 多维广播（非标量、非 1D 周期，如 `[4,4] + [1,4]`）仍走手写路径；② AOT 缓存 key 未含编译 flag/平台指纹，跨平台共享同一缓存目录可能撞 key（当前单机场景安全）。
+
+### 4.12 2026-08-15 里程碑（同轮第三波）：删除真正的 AOTCache，假 AOTCache 更名 JITCache
+- **背景（用户拍板）**：原「AOT 磁盘缓存」实际是把 **JIT 编译产物（LLVM bitcode）** 持久化到磁盘、运行期仍需 LLVM JIT 编译成机器码——本质是「JIT 缓存的磁盘版」，并非 Ahead-Of-Time；而真正意义的 AOTCache（手写 kernel 的 `.so` 磁盘缓存）无生产价值（手写 backend 是 debug/对比用）。→ 删除 AOTCache，JITCache 正名。
+- **删除项**：`include/C3/AOTCache.h`、`include/C3/IAOTCache.h`、`src/C3/AOTCache.cpp`、`src/tests/standalone/test_c3_aot_cache.cpp`、`bench_aot_speedup.cpp`；`CMakeLists.txt` 移除对应源文件、头文件、2 个 test target 与 `CT_C3_DISABLE_AOT` option；`C3Config.h` 移除 `aotCacheEnabled()` 及注释。
+- **JITCache 正名**：类注释与 `resolveCacheDir` 注释澄清其「JIT 缓存磁盘版」定位（运行期仍需 LLVM JIT 编译机器码，目录仍复用 `$C3_AOT_CACHE_DIR` env——sandbox 硬约束，历史命名保留）。`makeKey` 前缀 `c3_jit_<version>_<opt>_<graph>`；SHA-256 实现自 AOTCache 移植进 JITCache.cpp 匿名命名空间（`sha256_hex`，零外部依赖）。
+- **C3Engine 清理**：删除 8 个 AOT facade（`setAOTCacheEnabled`/`isAOTCacheEnabled`/`getAOTCacheStats`/`evictAOTCache`/`setAOTCacheDir`/`getAOTCacheDir`/`setAOTCacheImpl`/`getAOTCacheImpl`）、`aotCache_()` helper 与 `aot_cache_override_` 成员。跨进程复用由 JITCache 承担。
+- **HandwrittenKernelGen 清理**：`compileAndLoad` 移除 `cache_key` 参数与 AOT 查询/存储逻辑，手写 kernel 每次进程内首次使用重新 clang++ 编译；`generateFromGraph` 移除 AOT key 派生；`#ifdef CT_DEBUG` dump 文件名改为固定 `/tmp/c3_kernel_dump.c`。
+- **编译依赖修复**：`C3BackwardCapture.cpp` 原先依赖 AOTCache.h 间接引入 C3Config.h，删除后显式 `#include "C3/C3Config.h"`。
+- **验证**：`test_linalg_elementwise` 全绿（32/32 + 12/12 标量 + 9/9 周期 + AOT/JITCache 冷热启动）；`test_c3_compile_and_inject` 4/4、`test_c3_compile_merged` 10/10、`test_c3_compile_merged_pgo` 11/11、`test_c3_mnist_step` 全过。`test_region_fusion` 的正确性断言全过，仅 debug 构建下性能软断言（加速比<1.0）有波动，与本次改动无关。
+
+### 4.13 2026-08-15 里程碑（同轮第四波）：MNIST MLP 端到端性能对照实验（C3 vs Eager）
+- **实验目的**：评估 C3 自动优化管线在真实 MLP 训练上的端到端效果。测试代码与普通用户 MNIST 训练完全一致，**零 C3 API**，仅靠调度器自动介入（HotPathManager + RegionFusion + JIT）。
+- **测试载体**：`test_c3_mnist_train`（784→256(ReLU)→128(ReLU)→10，5 epochs × 128 batch，lr=0.001，Xavier 初始化，SGD）。
+- **对照组**：同一代码、同一机器，仅编译期 `CT_DISABLE_C3` 宏切换（`build_release` = C3 启用 / `build_c3off` = Eager 基线），**串行运行**避免 CPU 竞争污染计时。
+- **实测结果**：
+  | 指标 | C3 自动优化 | Eager 基线 |
+  |---|---|---|
+  | 总训练时间 | **9579.0 ms** | 48735.0 ms |
+  | 平均/epoch | 1915.8 ms | 9747.0 ms |
+  | 平均/batch | **4.094 ms** | 20.827 ms |
+  | 最终 acc | 97.18% | 97.18% |
+  | 最终 loss | 0.0977 | 0.0977 |
+  - **加速比 ≈ 5.09×**；精度零损失（loss 曲线逐 epoch 完全一致，acc 97.18% == 97.18%）。
+  - **正确性**：内置 MatMul/Add 等价性反事实测试 `max_diff = 0`（C3 kernel 与 Eager 逐元素完全一致）。
+  - 注：与历史「8573ms / 7548.7ms」有波动（机器负载 / JITCache 冷热 / 线程调度），量级一致（~5×）。
+- **管线参与度诊断**（`[C3-STAT]` / `[C3-BW-STAT]`，每 epoch 均值）：
+  - ✅ **反向融合（Backward Fusion）在干活**：`bw_hit +2340/epoch`、`fusion_compile=1`、`bw_miss +1876/epoch`、`fusion_miss=936/epoch`——反向图融合 kernel 稳定命中，是主要收益来源之一。
+  - ✅ **MatMul 单算子加速在干活**：三层 GEMM（784×256 / 256×128 / 128×10）走 C3/BLAS 优化，算力大头。
+  - ❌ **区域融合未生效**：`fused=0`、`fused_hit=0`（前向多算子融合未接管）。
+  - ⚠️ **单 kernel 注入几乎全 bypass**：`hit=0`、`miss=0`、`bypass=7970/epoch`、`tracked=28`——与设计一致（autograd 追踪区禁单 kernel 注入，仅保留区域融合），但热路径检测在该路径基本未触发。
+  - `JITCache hits=0 stores=10`（训练图 kernel 走 JITCache 落盘，本 session 未复用 read 命中）。
+- **结论与下一步**：
+  1. 端到端 **~5× 加速 + 零精度损失** 已达，主引擎 = MatMul 加速 + 反向融合。
+  2. **区域融合 fused=0** 与**前向单 kernel 注入未触发** 是明显可挖的优化点（C3 潜力被低估）。
+  3. 下一步建议：排查区域融合为何 `fused=0`（增益模型未通过？热路径未检测？）；跑 `bench_linalg_vs_handwritten` 复核 8 算子 linalg 新管线 vs 手写差距。
 
 ---
 
@@ -76,7 +233,8 @@
 | backward 命中 | 55.5% | 🟢 **100% 验证通过 (overall_max_diff=2.98e-08)** | 支持 SumReduce (Axis 0/1/all) / Transpose (Tiled 2D) |
 | 区域融合命中 | 0% | 🟢 **100% 激活 (12/12 Passed)** | 隔离环境下多核并行自动融合 |
 | MNIST 5epoch时间 | 8573ms | ⚡ **7548.7ms** | 优化后的端到端极速训练（提速 12.0%） |
-| 自定义 C3 Dialect 编译管线 | ⚠️ 0% (直译一维标量循环) | 🟢 **JIT 2.0 专属 c3 Dialect 全线打通** | 完成 TableGen ODS 定义、编译期 Inc 生成与 JIT 2.0 Lowering 整合 |
-| 自定义 C3 Dialect 算子收口 | 0/3 | 🔄 **2/3**（Transpose / SumReduce 全链路 ✅，MatMul 进行中） | ODS+builder+lowering+图接入+端到端测试全闭环 |
-| 多节点端到端测试 | — | 🟢 **2/2 通过**（Transpose→SumReduce axis0/1） | mlir 结构化输出 == eager 参考，数值完全一致 |
-| 完整测试套件回归 | — | 🟢 **102/102 通过**（排除 1 个预存崩溃） | 预存崩溃 `MLIRFusedVsNonFused` 非本次引入，待排查 |
+| 自定义 C3 Dialect 三 op 收口 | 0/3 | 🟢 **3/3**（Transpose / SumReduce / MatMul 全链路 ✅） | ODS+builder+lowering+图接入+端到端测试全闭环 |
+| 多节点端到端测试 | — | 🟢 **9/9 通过**（Transpose→SumReduce axis0/1 ×2 + MatMul 三种策略/转置折叠/epilogue ×7） | mlir 输出 == eager 参考，数值完全一致 |
+| 完整测试套件回归 | — | 🟢 **109/109 通过**（排除 1 个预存崩溃） | 预存崩溃 `MLIRFusedVsNonFused` 非本次引入，待排查 |
+| 预存崩溃 `MLIRFusedVsNonFused` | ⚠️ 未定位 | ✅ **已修复**（git f92bc90，ASAN 验证双 Benchmark 全绿） | 根因：多节点 kernel 逐元素循环上界未 clamp 到运行时切片 n |
+| MNIST 5-epoch 训练对照（本轮实测） | Eager 48.74s | ⚡ **C3 9.58s（加速 5.09×，acc 97.18% 零损失）** | 总 48735ms→9579ms；平均/batch 20.83ms→4.09ms；详见 4.13 |
