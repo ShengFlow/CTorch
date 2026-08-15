@@ -168,7 +168,10 @@
   - 逃生开关 `C3_LINALG_EW=0` 回退原手写路径；`C3_LINALG_EW_TRACE=1` 打印路由命中诊断。
 - **集成验证**（`test_c3_compile_and_inject`）：trace 确认 `Add (num_inputs=2, n=4)` 与 `ReLU (num_inputs=1, n=4)` 均走 linalg.generic 路由，结果与 eager 一致 PASS；`C3_LINALG_EW=0` 下无 linalg trace、回退手写同样 PASS；MatMul 正确不路由。
 - **回归**：`test_relu_backward` MATCH、`test_c3_mnist_step` ALL TESTS PASSED。
-- **遗留**：① linalg kernel 目前每次编译全新 JIT（未接 AOT/JITCache，单节点热循环存在重复编译开销，后续可加 per-(op,opt) 静态缓存）；② 广播场景（lhs.numel ≠ rhs.numel）仍走手写路径，需 linalg 多维/广播 kernel 支持。
+- **v2 管线升级（同轮追加）**：
+  - **标量广播**：`LinalgElementwiseKernel` 新增 `rhs_broadcast` 参数，构建时第二输入 indexing map 取 `d0 -> 0`（常量投影，标量 size=1），循环域仍由输出 identity map 决定。`execute` 时 rhs memref size=1。测试 `Add(bc)/Sub(bc)/Mul(bc) × 4 sizes` **12/12 通过**。主库路由同步支持 `rhs.numel == 1` 场景（原先前置条件 `rhs.numel == lhs.numel` 严格拒绝）。
+  - **共享 kernel 缓存工厂**：`getCachedLinalgKernel(op, opt_level, rhs_broadcast)` 基于 `weak_ptr` 全局缓存，同 `(op,opt,广播)` 只 JIT 编译一次，后续复用。逃生开关 `C3_LINALG_CACHE=0` 每次全新编译。验证：同一 key 两次返回相同指针（HIT），不同 op 返回不同指针（OK）。
+- **遗留**：① 周期广播（rhs 为中间尺寸，如 `[4] + [1] → [4]` 本质 scalar 不需周期）当前无实际需求，linalg 1D 路径不足以覆盖多维广播，维持原手写路径；② AOT 持久化缓存（跨 session 加速）待接 JITCache 2.0。
 
 ---
 

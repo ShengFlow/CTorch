@@ -16,8 +16,10 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 #include <mlir/IR/AffineExpr.h>
 #include <mlir/IR/AffineMap.h>
@@ -124,9 +126,11 @@ namespace {
 /// 在 func 的 entry block 里构建 linalg.generic 逐元素算子（dest-style）。
 /// 一元签名: void kernel(memref<?xf32> in, memref<?xf32> out)
 /// 二元签名: void kernel(memref<?xf32> a, memref<?xf32> b, memref<?xf32> out)
+/// rhs_broadcast=true 时 b 的 indexing map 取 `d0 -> 0`（标量投影，b size=1），
+/// 循环域由输出 identity map 决定（仍迭代 n 次），实现声明式标量广播。
 void buildLinalgElementwiseFunc(mlir::OpBuilder& builder, mlir::Location loc,
                                 mlir::MLIRContext& context, ElementwiseOp op,
-                                size_t num_inputs) {
+                                size_t num_inputs, bool rhs_broadcast) {
     auto f32Type = builder.getF32Type();
     auto memrefType = mlir::MemRefType::get({mlir::ShapedType::kDynamic}, f32Type);
 
@@ -149,7 +153,16 @@ void buildLinalgElementwiseFunc(mlir::OpBuilder& builder, mlir::Location loc,
     // Identity 索引映射（逐元素，1D）
     mlir::AffineExpr d0 = builder.getAffineDimExpr(0);
     auto identityMap = mlir::AffineMap::get(1, 0, {d0}, &context);
-    std::vector<mlir::AffineMap> indexingMaps(num_inputs + 1, identityMap);
+    // 标量广播：b 投影到常量 0（`d0 -> 0`），不参与循环域尺寸计算
+    auto zeroMap = mlir::AffineMap::get(1, 0,
+                                        {mlir::getAffineConstantExpr(0, &context)}, &context);
+    std::vector<mlir::AffineMap> indexingMaps;
+    indexingMaps.reserve(num_inputs + 1);
+    for (size_t i = 0; i < num_inputs; ++i) {
+        // 二元标量广播：第二个输入用投影 map
+        indexingMaps.push_back(rhs_broadcast && i == 1 ? zeroMap : identityMap);
+    }
+    indexingMaps.push_back(identityMap); // 输出始终 identity
     std::vector<mlir::utils::IteratorType> iteratorTypes{
         mlir::utils::IteratorType::parallel};
 
@@ -211,12 +224,13 @@ void buildLinalgElementwiseFunc(mlir::OpBuilder& builder, mlir::Location loc,
 /// 构建 MLIR module：一个 c3_kernel func 内嵌 linalg.generic
 mlir::OwningOpRef<mlir::ModuleOp> buildLinalgModule(mlir::MLIRContext& context,
                                                     ElementwiseOp op,
-                                                    size_t num_inputs) {
+                                                    size_t num_inputs,
+                                                    bool rhs_broadcast) {
     auto loc = mlir::UnknownLoc::get(&context);
     mlir::OpBuilder builder(&context);
     auto module = mlir::ModuleOp::create(loc);
     builder.setInsertionPointToEnd(module.getBody());
-    buildLinalgElementwiseFunc(builder, loc, context, op, num_inputs);
+    buildLinalgElementwiseFunc(builder, loc, context, op, num_inputs, rhs_broadcast);
     if (mlir::failed(mlir::verify(module))) {
         module->emitError();
         module->dump();
@@ -297,8 +311,10 @@ struct LinalgElementwiseKernel::Impl {
     }
 };
 
-LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level)
-    : impl_(std::make_unique<Impl>()), op_(op), num_inputs_(elementwiseOpNumInputs(op)) {
+LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level,
+                                                 bool rhs_broadcast)
+    : impl_(std::make_unique<Impl>()), op_(op), num_inputs_(elementwiseOpNumInputs(op)),
+      rhs_broadcast_(rhs_broadcast) {
     impl_->context.loadDialect<mlir::arith::ArithDialect>();
     impl_->context.loadDialect<mlir::math::MathDialect>();
     impl_->context.loadDialect<mlir::scf::SCFDialect>();
@@ -307,7 +323,7 @@ LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level
     impl_->context.loadDialect<mlir::LLVM::LLVMDialect>();
     impl_->context.loadDialect<mlir::linalg::LinalgDialect>();
 
-    auto module = buildLinalgModule(impl_->context, op_, num_inputs_);
+    auto module = buildLinalgModule(impl_->context, op_, num_inputs_, rhs_broadcast_);
     applyLinalgLoweringPipeline(*module);
 
     mlir::registerBuiltinDialectTranslation(impl_->context);
@@ -325,6 +341,7 @@ LinalgElementwiseKernel& LinalgElementwiseKernel::operator=(LinalgElementwiseKer
 
 void LinalgElementwiseKernel::execute(const float* const* in_ptrs, float* out_ptr,
                                       size_t n) const {
+    // 标量广播时 rhs（in_ptrs[1]）的 memref size=1，out 仍为 n
     const size_t num_memrefs = num_inputs_ + 1;
 
     // 注意：descriptor 对象必须活到 invokePacked 返回之后（args 里存的是成员地址），
@@ -333,8 +350,9 @@ void LinalgElementwiseKernel::execute(const float* const* in_ptrs, float* out_pt
     void* args[15];
     int arg_idx = 0;
     for (size_t i = 0; i < num_inputs_; ++i) {
+        size_t elem_count = (i == 1 && rhs_broadcast_) ? 1 : n;
         descs[i] = MemRefDesc{const_cast<float*>(in_ptrs[i]), const_cast<float*>(in_ptrs[i]),
-                              0, {static_cast<int64_t>(n)}, {1}};
+                              0, {static_cast<int64_t>(elem_count)}, {1}};
         appendMemRefDescArgs(descs[i], args, arg_idx);
     }
     descs[num_inputs_] = MemRefDesc{out_ptr, out_ptr, 0, {static_cast<int64_t>(n)}, {1}};
@@ -346,6 +364,41 @@ void LinalgElementwiseKernel::execute(const float* const* in_ptrs, float* out_pt
         throw std::runtime_error("LinalgElementwiseGen: invokePacked failed: "
                                  + llvm::toString(std::move(err)));
     }
+}
+
+// ======================= 共享 kernel 缓存工厂 =======================
+
+std::shared_ptr<LinalgElementwiseKernel> getCachedLinalgKernel(
+    ElementwiseOp op, int opt_level, bool rhs_broadcast) {
+    static const bool cache_disabled = [] {
+        const char* v = std::getenv("C3_LINALG_CACHE");
+        return v != nullptr && std::string(v) == "0";
+    }();
+    if (cache_disabled) {
+        return std::make_shared<LinalgElementwiseKernel>(op, opt_level, rhs_broadcast);
+    }
+
+    // 缓存 key: "opName_optLevel_flag" → shared_ptr
+    static std::mutex cache_mutex;
+    static std::unordered_map<std::string, std::weak_ptr<LinalgElementwiseKernel>> cache;
+
+    std::string key = std::string(elementwiseOpName(op))
+                      + "_" + std::to_string(opt_level)
+                      + "_" + (rhs_broadcast ? "1" : "0");
+
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        if (auto sp = it->second.lock()) {
+            return sp; // 缓存命中，复用
+        }
+        // weak_ptr 已过期，清理后重建
+        cache.erase(it);
+    }
+
+    auto kernel = std::make_shared<LinalgElementwiseKernel>(op, opt_level, rhs_broadcast);
+    cache[key] = kernel;
+    return kernel;
 }
 
 std::vector<float> runLinalgElementwise(ElementwiseOp op,

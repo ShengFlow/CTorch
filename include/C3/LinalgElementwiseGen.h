@@ -48,7 +48,10 @@ size_t elementwiseOpNumInputs(ElementwiseOp op);
 class LinalgElementwiseKernel {
 public:
     /// 编译 kernel（每次构造即完成一次 JIT 编译）；失败抛 std::runtime_error
-    explicit LinalgElementwiseKernel(ElementwiseOp op, int opt_level = 3);
+    /// @param rhs_broadcast 二元算子专用：第二输入按标量（size=1）广播，
+    ///        对应 linalg indexing map `d0 -> 0` 投影。一元算子忽略此参数。
+    explicit LinalgElementwiseKernel(ElementwiseOp op, int opt_level = 3,
+                                     bool rhs_broadcast = false);
     ~LinalgElementwiseKernel();
     LinalgElementwiseKernel(const LinalgElementwiseKernel&) = delete;
     LinalgElementwiseKernel& operator=(const LinalgElementwiseKernel&) = delete;
@@ -57,8 +60,11 @@ public:
 
     ElementwiseOp op() const { return op_; }
     size_t numInputs() const { return num_inputs_; }
+    /// 二元算子且标量广播（rhs size=1）时为 true
+    bool rhsBroadcast() const { return rhs_broadcast_; }
 
     /// 执行 kernel：in_ptrs 按输入顺序（只读），out_ptr 输出，n 元素个数。
+    /// 标量广播时 in_ptrs[1] 只需指向 1 个元素。
     /// 注意：输入输出 buffer 均按 1D 连续访问，元素类型 float32。
     void execute(const float* const* in_ptrs, float* out_ptr, size_t n) const;
 
@@ -67,7 +73,14 @@ private:
     std::unique_ptr<Impl> impl_;
     ElementwiseOp op_;
     size_t num_inputs_;
+    bool rhs_broadcast_ = false;
 };
+
+/// 共享 kernel 缓存工厂：同一 (op, opt_level, rhs_broadcast) 只 JIT 编译一次，之后复用。
+/// 线程安全：构造互斥 + execute 并发安全。编译失败抛 std::runtime_error。
+/// 逃生开关：`C3_LINALG_CACHE=0` 关闭缓存（每次全新编译，便于对比）。
+std::shared_ptr<LinalgElementwiseKernel> getCachedLinalgKernel(
+    ElementwiseOp op, int opt_level = 3, bool rhs_broadcast = false);
 
 /// 便捷函数：编译并执行一次（测试 / 小规模场景用）。
 /// inputs 按算子输入顺序传数据；输出自动分配并返回。

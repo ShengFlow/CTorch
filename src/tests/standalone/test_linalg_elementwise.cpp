@@ -133,5 +133,59 @@ int main() {
     std::printf("==================================================\n");
     std::printf("  RESULT: %d/%d passed\n", passed, total);
     std::printf("==================================================\n");
-    return (passed == total) ? 0 : 1;
+
+    // ======================= 标量广播正确性验证 (新管线) =======================
+    std::printf("\n--- 标量广播 (rhs_broadcast, linalg indexing map d0->0) ---\n");
+    int bc_passed = 0, bc_total = 0;
+    const ElementwiseOp bc_ops[] = {ElementwiseOp::Add, ElementwiseOp::Sub, ElementwiseOp::Mul};
+    const char* bc_names[] = {"Add(bc)", "Sub(bc)", "Mul(bc)"};
+    const size_t bc_sizes[] = {16, 128, 1024, 1048576};
+    for (int c = 0; c < 3; ++c) {
+        for (int s = 0; s < 4; ++s) {
+            ++bc_total;
+            size_t n = bc_sizes[s];
+            // lhs 随机 n 个元素，rhs 仅 1 个标量
+            std::vector<float> lhs(n);
+            float rhs_val = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+            for (size_t i = 0; i < n; ++i) {
+                lhs[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+            }
+            std::vector<float> expected(n);
+            for (size_t i = 0; i < n; ++i) {
+                switch (bc_ops[c]) {
+                case ElementwiseOp::Add: expected[i] = lhs[i] + rhs_val; break;
+                case ElementwiseOp::Sub: expected[i] = lhs[i] - rhs_val; break;
+                case ElementwiseOp::Mul: expected[i] = lhs[i] * rhs_val; break;
+                default: break;
+                }
+            }
+
+            // 走缓存工厂，验证标量广播 kernel
+            auto kernel = getCachedLinalgKernel(bc_ops[c], 3, true);
+            const float* in_ptrs[2] = {lhs.data(), &rhs_val};
+            std::vector<float> actual(n, -1.f);
+            kernel->execute(in_ptrs, actual.data(), n);
+
+            bool ok = verifyApproxEqual(expected.data(), actual.data(), n, 1e-5f);
+            std::printf("  [%s] n=%-9zu => %s\n", bc_names[c], n, ok ? "PASSED" : "FAILED");
+            if (ok) ++bc_passed;
+        }
+    }
+    std::printf("--- Broadcast RESULT: %d/%d passed ---\n", bc_passed, bc_total);
+
+    // ======================= 缓存工厂验证 =======================
+    std::printf("\n--- 缓存工厂 (getCachedLinalgKernel, C3_LINALG_CACHE=0 逃生) ---\n");
+    auto k1 = getCachedLinalgKernel(ElementwiseOp::ReLU);
+    auto k2 = getCachedLinalgKernel(ElementwiseOp::ReLU);
+    bool cache_hit = (k1.get() == k2.get());
+    std::printf("  [Cache] 同一 (ReLU,3,0) 两次 getCachedLinalgKernel: %s\n",
+                cache_hit ? "HIT (shared)" : "miss (different)");
+    // 不同 op 应不同指针
+    auto k3 = getCachedLinalgKernel(ElementwiseOp::Sigmoid);
+    bool cache_miss = (k1.get() != k3.get());
+    std::printf("  [Cache] ReLU vs Sigmoid 不同指针: %s\n",
+                cache_miss ? "OK (different)" : "UNEXPECTED (same!)");
+    int cache_passed = (cache_hit && cache_miss) ? 2 : 0;
+
+    return ((passed == total) && (bc_passed == bc_total) && (cache_passed == 2)) ? 0 : 1;
 }

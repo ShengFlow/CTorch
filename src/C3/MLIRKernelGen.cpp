@@ -2333,6 +2333,7 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
     const NodeVariant& op = compute_node->op;
     ElementwiseOp eop = ElementwiseOp::ReLU;
     bool eligible = true;
+    bool rhs_broadcast = false;  // 二元标量广播（rhs.numel == 1）
     if (std::holds_alternative<ReLUNode>(op)) {
         eop = ElementwiseOp::ReLU;
     } else if (std::holds_alternative<SigmoidNode>(op)) {
@@ -2345,25 +2346,32 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
         eop = ElementwiseOp::Log;
     } else if (std::holds_alternative<AddNode>(op)) {
         const auto& n = std::get<AddNode>(op);
-        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        // 支持同尺寸 或 rhs 标量（size=1）广播；其余（周期广播）回退手写
+        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
+        if (n.rhs_desc.numel == 0) eligible = false;
+        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Add;
     } else if (std::holds_alternative<SubNode>(op)) {
         const auto& n = std::get<SubNode>(op);
-        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
+        if (n.rhs_desc.numel == 0) eligible = false;
+        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Sub;
     } else if (std::holds_alternative<MulNode>(op)) {
         const auto& n = std::get<MulNode>(op);
-        if (n.rhs_desc.numel != n.lhs_desc.numel || n.rhs_desc.numel == 0) eligible = false;
+        if (n.rhs_desc.numel != n.lhs_desc.numel && n.rhs_desc.numel != 1) eligible = false;
+        if (n.rhs_desc.numel == 0) eligible = false;
+        rhs_broadcast = (n.rhs_desc.numel == 1);
         eop = ElementwiseOp::Mul;
     } else {
         eligible = false;
     }
     if (!eligible) return false;
 
-    // 编译 linalg kernel（构造即 JIT 编译）；失败静默回退手写路径
+    // 编译 linalg kernel（走共享缓存，同一 (op,opt,广播) 只 JIT 一次）；失败静默回退手写
     std::shared_ptr<LinalgElementwiseKernel> kernel;
     try {
-        kernel = std::make_shared<LinalgElementwiseKernel>(eop);
+        kernel = getCachedLinalgKernel(eop, 3, rhs_broadcast);
     } catch (const std::exception& e) {
         fprintf(stderr, "C3 linalg: %s compile failed (%s), fallback to handwritten\n",
                 elementwiseOpName(eop), e.what());
@@ -2374,7 +2382,8 @@ static bool tryBuildLinalgElementwise(const Graph& graph, GeneratedKernel& out) 
     out.func = nullptr;
     out.func_any = [kernel, num_inputs](const float* a, const float* b, float* out_ptr,
                                         size_t n, size_t, size_t, size_t) {
-        // 一元取 in_ptrs[0]=a；二元取 [a, b]（num_inputs 控制 execute 读取个数）
+        // 一元取 in_ptrs[0]=a；二元取 [a, b]（num_inputs 控制 execute 读取个数；
+        // 标量广播时 execute 对 b 按 size=1 处理，只读 b[0]）
         const float* in_ptrs[2] = {a, b};
         kernel->execute(in_ptrs, out_ptr, n);
     };
