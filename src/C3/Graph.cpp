@@ -38,12 +38,8 @@ CanonicalizeRules CanonicalizeRules::defaults() {
     // 规则 1: Add(x, 0) → x
     rules.addRule("Add(x,0)->x", [](const Node& node) -> std::optional<NodeVariant> {
         if (!std::holds_alternative<AddNode>(node.op)) return std::nullopt;
-        // 检查是否有输入是值为 0 的 ConstNode
-        for (size_t in_id : node.inputs) {
-            // 此检查在 canonicalize 遍历时进行，因为需要访问其他节点
-            // 规则本身只检查节点自身
-        }
-        return std::nullopt; // 实际匹配在 canonicalize 中处理
+        // 实际匹配在 canonicalize 中自底向上遍历处理
+        return std::nullopt;
     });
 
     // 规则 2: Mul(x, 1) → x
@@ -79,6 +75,36 @@ CanonicalizeRules CanonicalizeRules::defaults() {
     // 规则 7: Add(x, x) → Mul(x, 2)
     rules.addRule("Add(x,x)->Mul(x,2)", [](const Node& node) -> std::optional<NodeVariant> {
         if (!std::holds_alternative<AddNode>(node.op)) return std::nullopt;
+        return std::nullopt;
+    });
+
+    // 规则 8: Sub(x, 0) → x
+    rules.addRule("Sub(x,0)->x", [](const Node& node) -> std::optional<NodeVariant> {
+        if (!std::holds_alternative<SubNode>(node.op)) return std::nullopt;
+        return std::nullopt;
+    });
+
+    // 规则 9: Div(x, 1) → x
+    rules.addRule("Div(x,1)->x", [](const Node& node) -> std::optional<NodeVariant> {
+        if (!std::holds_alternative<DivNode>(node.op)) return std::nullopt;
+        return std::nullopt;
+    });
+
+    // 规则 10: Sub(0, x) → Neg(x)
+    rules.addRule("Sub(0,x)->Neg(x)", [](const Node& node) -> std::optional<NodeVariant> {
+        if (!std::holds_alternative<SubNode>(node.op)) return std::nullopt;
+        return std::nullopt;
+    });
+
+    // 规则 11: Mul(x, -1) → Neg(x)
+    rules.addRule("Mul(x,-1)->Neg(x)", [](const Node& node) -> std::optional<NodeVariant> {
+        if (!std::holds_alternative<MulNode>(node.op)) return std::nullopt;
+        return std::nullopt;
+    });
+
+    // 规则 12: Div(x, const(y)) -> Mul(x, 1/y)
+    rules.addRule("Div(x,const(y))->Mul(x,1/y)", [](const Node& node) -> std::optional<NodeVariant> {
+        if (!std::holds_alternative<DivNode>(node.op)) return std::nullopt;
         return std::nullopt;
     });
 
@@ -286,21 +312,38 @@ Graph Graph::canonicalize(const CanonicalizeRules& rules) const {
                 }
             }
 
-            // 规则 7: Add(x, x) → Mul(x, 2)：将 Add(x, x) 替换为 Mul(x, 2)
-            // 注意：Mul(x, 2) 后续可能被常量折叠进一步优化
+            // 规则 7: Add(x, x) → Mul(x, 2)
             if (rules.rule_names[r] == "Add(x,x)->Mul(x,2)" &&
                 std::holds_alternative<AddNode>(node.op) &&
                 node.inputs.size() == 2) {
                 if (node_map[node.inputs[0]] == node_map[node.inputs[1]]) {
-                    // 标记为代数折叠，在重建阶段创建 Mul(x, 2)
-                    // 此时 node_map 保持不变，但重建时会特殊处理
-                    // 实际上我们只需要在 node_map 中保留原节点，
-                    // 然后在重建阶段将其替换为 Mul(x, 2)
-                    node_map[node_id] = node_id;  // 保持自身
-                    // 标记为"需要替换为 Mul(x, 2)"，但 fold_map 不能直接处理
-                    // 我们使用一个特殊标记：在重建时检查到这个规则
-                    // 简单方案：直接不做规则 7 的重建替换，而是标记此节点
-                    // 将在重建阶段特殊处理
+                    node_map[node_id] = node_id;  // 保持自身，重建时特殊处理
+                }
+            }
+
+            // 规则 8: Sub(x, 0) → x
+            if (rules.rule_names[r] == "Sub(x,0)->x" &&
+                std::holds_alternative<SubNode>(node.op) &&
+                node.inputs.size() == 2) {
+                size_t in1 = node_map[node.inputs[1]];
+                const Node& in_node = nodes_[in1];
+                if (std::holds_alternative<ConstNode>(in_node.op) &&
+                    std::get<ConstNode>(in_node.op).value == 0.0 && !is_graph_input(in1)) {
+                    node_map[node_id] = node_map[node.inputs[0]];
+                    break;
+                }
+            }
+
+            // 规则 9: Div(x, 1) → x
+            if (rules.rule_names[r] == "Div(x,1)->x" &&
+                std::holds_alternative<DivNode>(node.op) &&
+                node.inputs.size() == 2) {
+                size_t in1 = node_map[node.inputs[1]];
+                const Node& in_node = nodes_[in1];
+                if (std::holds_alternative<ConstNode>(in_node.op) &&
+                    std::get<ConstNode>(in_node.op).value == 1.0 && !is_graph_input(in1)) {
+                    node_map[node_id] = node_map[node.inputs[0]];
+                    break;
                 }
             }
         }
@@ -456,15 +499,76 @@ Graph Graph::canonicalize(const CanonicalizeRules& rules) const {
             continue;
         }
 
-        // 映射输入
-        std::vector<size_t> new_inputs;
-        for (size_t in_id : node.inputs) {
-            size_t mapped = node_map[in_id];
-            assert(new_id_map[mapped] != SIZE_MAX);
-            new_inputs.push_back(new_id_map[mapped]);
+        // 检查是否需要进行代数重建重写
+        bool rewritten = false;
+        
+        // 1. Add(x, x) -> Mul(x, 2)
+        if (std::holds_alternative<AddNode>(node.op) && node.inputs.size() == 2) {
+            size_t mapped0 = node_map[node.inputs[0]];
+            size_t mapped1 = node_map[node.inputs[1]];
+            if (mapped0 == mapped1) {
+                size_t const_2_id = result.addConstant(2.0, TensorDesc::fromShape({1}, node.out_desc.dtype));
+                size_t mapped_new_in = new_id_map[mapped0];
+                new_id_map[node_id] = result.addNode(MulNode{}, {mapped_new_in, const_2_id}, node.out_desc);
+                rewritten = true;
+            }
+        }
+        // 2. Sub(0, x) -> Neg(x)
+        if (!rewritten && std::holds_alternative<SubNode>(node.op) && node.inputs.size() == 2) {
+            size_t mapped0 = node_map[node.inputs[0]];
+            size_t mapped1 = node_map[node.inputs[1]];
+            const Node& in_node0 = nodes_[mapped0];
+            if (std::holds_alternative<ConstNode>(in_node0.op) && 
+                std::get<ConstNode>(in_node0.op).value == 0.0 && !is_graph_input(mapped0)) {
+                size_t mapped_new_in = new_id_map[mapped1];
+                new_id_map[node_id] = result.addNode(NegNode{}, {mapped_new_in}, node.out_desc);
+                rewritten = true;
+            }
+        }
+        // 3. Mul(x, -1) -> Neg(x)
+        if (!rewritten && std::holds_alternative<MulNode>(node.op) && node.inputs.size() == 2) {
+            size_t mapped0 = node_map[node.inputs[0]];
+            size_t mapped1 = node_map[node.inputs[1]];
+            const Node& in_node0 = nodes_[mapped0];
+            const Node& in_node1 = nodes_[mapped1];
+            if (std::holds_alternative<ConstNode>(in_node0.op) && 
+                std::get<ConstNode>(in_node0.op).value == -1.0 && !is_graph_input(mapped0)) {
+                size_t mapped_new_in = new_id_map[mapped1];
+                new_id_map[node_id] = result.addNode(NegNode{}, {mapped_new_in}, node.out_desc);
+                rewritten = true;
+            } else if (std::holds_alternative<ConstNode>(in_node1.op) && 
+                       std::get<ConstNode>(in_node1.op).value == -1.0 && !is_graph_input(mapped1)) {
+                size_t mapped_new_in = new_id_map[mapped0];
+                new_id_map[node_id] = result.addNode(NegNode{}, {mapped_new_in}, node.out_desc);
+                rewritten = true;
+            }
         }
 
-        new_id_map[node_id] = result.addNode(node.op, new_inputs, node.out_desc);
+        // 4. Div(x, const_y) -> Mul(x, 1/y)
+        if (!rewritten && std::holds_alternative<DivNode>(node.op) && node.inputs.size() == 2) {
+            size_t mapped0 = node_map[node.inputs[0]];
+            size_t mapped1 = node_map[node.inputs[1]];
+            const Node& in_node1 = nodes_[mapped1];
+            if (std::holds_alternative<ConstNode>(in_node1.op) && !is_graph_input(mapped1)) {
+                double val = std::get<ConstNode>(in_node1.op).value;
+                if (val != 0.0) {
+                    size_t const_recip_id = result.addConstant(1.0 / val, TensorDesc::fromShape({1}, node.out_desc.dtype));
+                    size_t mapped_new_in = new_id_map[mapped0];
+                    new_id_map[node_id] = result.addNode(MulNode{}, {mapped_new_in, const_recip_id}, node.out_desc);
+                    rewritten = true;
+                }
+            }
+        }
+
+        if (!rewritten) {
+            std::vector<size_t> new_inputs;
+            for (size_t in_id : node.inputs) {
+                size_t mapped = node_map[in_id];
+                assert(new_id_map[mapped] != SIZE_MAX);
+                new_inputs.push_back(new_id_map[mapped]);
+            }
+            new_id_map[node_id] = result.addNode(node.op, new_inputs, node.out_desc);
+        }
     }
 
     // 标记输出
@@ -607,6 +711,8 @@ Graph Graph::fuse() const {
                 const Node& node = nodes_[cid];
                 fused_node.ops.push_back(node.op);
                 fused_node.op_inputs.push_back(node.inputs);
+                // 记录每个 op 输出的原始节点 ID（用于 DAG 内部引用 / kernel 生成映射）
+                fused_node.op_node_ids.push_back(cid);
                 for (size_t in_id : node.inputs) {
                     if (chain_set.find(in_id) == chain_set.end()) {
                         external_inputs.push_back(in_id);

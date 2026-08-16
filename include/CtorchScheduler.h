@@ -449,9 +449,11 @@ public:
                                     !ct::detail::c3OpDisabled(static_cast<int>(OpType));
         const bool in_autograd = ct::detail::inAutogradScope(a.requires_grad(), b.requires_grad());
         if (c3_attemptable && in_autograd) {
-            ct::c3::C3KernelRegistry::getInstance().recordBypass();
+            if (std::getenv("C3_AUTOGRAD_SINGLE") == nullptr) {
+                ct::c3::C3KernelRegistry::getInstance().recordBypass();
+            }
         }
-        if (c3_attemptable && !in_autograd) {
+        if (c3_attemptable && (!in_autograd || std::getenv("C3_AUTOGRAD_SINGLE") != nullptr)) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecute(OpType, a, b);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG
@@ -496,15 +498,11 @@ public:
         // 跟 install 时的 key 不一致 → 永远 miss 静默回退 eager (单 kernel 永远不命中)
         // 修法: 直接传 a.shape(), b.shape() 分开, 让 C3HotPathManager 内部
         // 用跟 tryExecute 一致的 hash 算法 (a, b 分开 hash 组合)
-        // [优化② 2026-08-11] autograd scope 调用点短路 recordCall:
-        //   recordCall 内部虽有 in_autograd 短路(跳过编译触发), 但仍会做 shape
-        //   vector 拼接 + rb_mutex_ 锁 + RingBuffer 写. 而 RingBuffer 只在
-        //   !in_autograd 的 should_compile 分支被 tryFuseRecentDispatches 消费,
-        //   autograd scope 写了也没人读 → 调用点直接短路, 省掉整段.
-        if (target_dev != DeviceType::kMPS && !in_autograd) {
+        // [修复 2026-08-15] 允许在 autograd 期间记录调用，以便触发前向区域融合编译！
+        if (target_dev != DeviceType::kMPS) {
             ct::c3::C3HotPathManager::instance().recordCall(
                 OpType, target_dev, a.shape(), b.shape(),
-                /*in_autograd=*/false);
+                in_autograd);
         }
 #endif
 
@@ -636,9 +634,11 @@ public:
                                       !ct::detail::c3OpDisabled(static_cast<int>(OpType));
         const bool in_autograd_u = ct::detail::inAutogradScope(a.requires_grad(), false);
         if (c3_attemptable_u && in_autograd_u) {
-            ct::c3::C3KernelRegistry::getInstance().recordBypass();
+            if (std::getenv("C3_AUTOGRAD_SINGLE") == nullptr) {
+                ct::c3::C3KernelRegistry::getInstance().recordBypass();
+            }
         }
-        if (c3_attemptable_u && !in_autograd_u) {
+        if (c3_attemptable_u && (!in_autograd_u || std::getenv("C3_AUTOGRAD_SINGLE") != nullptr)) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecuteUnary(OpType, a);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG
@@ -669,12 +669,10 @@ public:
         // [DEPRECATED] trace-based 融合已被区域融合替代，此处跳过
 
 #ifndef CT_DISABLE_C3
-        // 记录热路径
-        // [优化② 2026-08-11] 同 binary: autograd scope 调用点短路, 省 shape vector
-        // 拼接 + rb_mutex_ 锁 + RingBuffer 写 (RingBuffer 仅 !in_autograd 时被消费)
-        if (target_dev != DeviceType::kMPS && !in_autograd_u) {
+        // 记录热路径：修复允许在 autograd 期间记录，以便进行前向区域融合
+        if (target_dev != DeviceType::kMPS) {
             ct::c3::C3HotPathManager::instance().recordCall(OpType, target_dev, a.shape(), {},
-                /*in_autograd=*/false);
+                in_autograd_u);
         }
 #endif
 

@@ -296,10 +296,11 @@ BinaryKernelFunc CtorchScheduler::selectBestBinary(
         BinaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
-        // AMX kernel 不可用，直接 fallback 到 CPU BASIC（跳过 SIMD）
-        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
-                         "selectBestBinary: no AMX kernel for op=" + std::to_string(static_cast<int>(op_type))
-                         + ", fallback to CPU BASIC (skip SIMD for AMX device)");
+        // AMX kernel 不可用，优先 fallback 到 CPU SIMD（SIMD 支持 N-D 广播且速度更快）
+        BinaryKernelFunc func_simd = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+            .load(std::memory_order_acquire);
+        if (func_simd != nullptr) return func_simd;
+        // 否则 fallback 到 CPU BASIC
         return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 
@@ -339,10 +340,11 @@ UnaryKernelFunc CtorchScheduler::selectBestUnary(
         UnaryKernelFunc func = table[op_idx][static_cast<size_t>(DeviceType::kAMX)]
             .load(std::memory_order_acquire);
         if (func != nullptr) return func;
-        // AMX kernel 不可用，直接 fallback 到 CPU BASIC（跳过 SIMD）
-        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
-                         "selectBestUnary: no AMX kernel for op=" + std::to_string(static_cast<int>(op_type))
-                         + ", fallback to CPU BASIC (skip SIMD for AMX device)");
+        // AMX kernel 不可用，优先 fallback 到 CPU SIMD（速度更快）
+        UnaryKernelFunc func_simd = table[op_idx][static_cast<size_t>(DeviceType::kSIMD)]
+            .load(std::memory_order_acquire);
+        if (func_simd != nullptr) return func_simd;
+        // 否则 fallback 到 CPU BASIC
         return table[op_idx][static_cast<size_t>(DeviceType::kCPU)].load(std::memory_order_acquire);
     }
 

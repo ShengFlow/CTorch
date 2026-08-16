@@ -225,6 +225,8 @@ public:
         //   region fusion 检测需要历史 trace).
         //   实测 53848 dispatch/epoch × mutex_ 锁 + entries_[key] hash ≈ ~200ms/epoch 浪费.
         if (in_autograd) {
+            HotPathConfig cfg = getConfig();
+            tryFuseRecentDispatches(dev, cfg);
             return;
         }
 
@@ -565,7 +567,13 @@ private:
                 if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
                     size_t M = last3_0.shape[0];
                     size_t N = last3_0.shape[3];
-                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                    bool shape_ok = false;
+                    if (last3_1.shape.size() >= 2) {
+                        shape_ok = (last3_1.shape[0] == M && last3_1.shape[1] == N);
+                    } else if (last3_1.shape.size() == 1) {
+                        shape_ok = (last3_1.shape[0] == M * N);
+                    }
+                    if (shape_ok) {
                         submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+Sigmoid");
                         return true;
                     }
@@ -578,7 +586,13 @@ private:
                 if (last3_0.shape.size() >= 4 && last3_1.shape.size() >= 1) {
                     size_t M = last3_0.shape[0];
                     size_t N = last3_0.shape[3];
-                    if (last3_1.shape[0] == M && last3_1.shape[1] == N) {
+                    bool shape_ok = false;
+                    if (last3_1.shape.size() >= 2) {
+                        shape_ok = (last3_1.shape[0] == M && last3_1.shape[1] == N);
+                    } else if (last3_1.shape.size() == 1) {
+                        shape_ok = (last3_1.shape[0] == M * N);
+                    }
+                    if (shape_ok) {
                         submitFusedCompileAsync({last3_0, last3_1}, dev, cfg, "MatMul+ReLU");
                         return true;
                     }
@@ -790,11 +804,12 @@ private:
             fused_key ^= hashShapeKey(r.shape, r.op_type, dev);
         }
 
-        // 检查是否已经在编译
+        // 检查是否已经在编译，并原子地标记为 compiling 以防并发重复触发
         {
             std::lock_guard<std::mutex> lk(mutex_);
             auto it = entries_.find(fused_key);
             if (it != entries_.end() && it->second.compiling) return;
+            entries_[fused_key].compiling = true;
         }
 
         pending_compiles_.fetch_add(1, std::memory_order_relaxed);

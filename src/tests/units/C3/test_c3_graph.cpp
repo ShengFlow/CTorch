@@ -276,8 +276,7 @@ TEST(Canonicalize, NegNegFolds) {
 TEST(Canonicalize, AddWithSameInput) {
     using namespace ct::c3;
 
-    // Add(x, x) — 当前规则 7 未完全实现替换为 Mul(x, 2)
-    // 因此 Add(x, x) 应保持为 Add 节点不被折叠
+    // Add(x, x) — 规则 7 已完全实现替换为 Mul(x, 2)
     Graph g;
     auto x_desc = TensorDesc::fromShape({3, 4});
     size_t x = g.addInput(x_desc);
@@ -288,10 +287,10 @@ TEST(Canonicalize, AddWithSameInput) {
 
     Graph simplified = g.canonicalize();
 
-    // Add(x, x) 不应被折叠为常量（输入不是常量）
+    // Add(x, x) 被成功替换为 Mul(x, 2.0)
     EXPECT_EQ(simplified.outputCount(), 1u);
     const auto& out_node = simplified.node(simplified.outputs()[0]);
-    EXPECT_TRUE(std::holds_alternative<AddNode>(out_node.op));
+    EXPECT_TRUE(std::holds_alternative<MulNode>(out_node.op));
 }
 
 TEST(Canonicalize, AlgebraicRulesCompose) {
@@ -317,6 +316,69 @@ TEST(Canonicalize, AlgebraicRulesCompose) {
     const auto& out_node = simplified.node(simplified.outputs()[0]);
     EXPECT_TRUE(std::holds_alternative<ConstNode>(out_node.op));
     EXPECT_EQ(std::get<ConstNode>(out_node.op).value, 0.0);
+}
+
+TEST(Canonicalize, SubWithZeroRightInput) {
+    using namespace ct::c3;
+    // Sub(x, 0) -> x
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(x_desc);
+    size_t zero = g.addConstant(0.0, TensorDesc::fromShape({1}));
+    size_t sub = g.addNode(SubNode{x_desc, TensorDesc::fromShape({1})}, {x, zero}, x_desc);
+    g.markOutput(sub);
+
+    Graph simplified = g.canonicalize();
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    // 应该直接折叠回原来的输入 x (新图中输入节点会重新创建在 0 处)
+    EXPECT_EQ(simplified.outputs()[0], 0u);
+}
+
+TEST(Canonicalize, DivWithOneRightInput) {
+    using namespace ct::c3;
+    // Div(x, 1) -> x
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(x_desc);
+    size_t one = g.addConstant(1.0, TensorDesc::fromShape({1}));
+    size_t div = g.addNode(DivNode{x_desc, TensorDesc::fromShape({1})}, {x, one}, x_desc);
+    g.markOutput(div);
+
+    Graph simplified = g.canonicalize();
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    EXPECT_EQ(simplified.outputs()[0], 0u);
+}
+
+TEST(Canonicalize, SubWithZeroLeftInput) {
+    using namespace ct::c3;
+    // Sub(0, x) -> Neg(x)
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(x_desc);
+    size_t zero = g.addConstant(0.0, TensorDesc::fromShape({1}));
+    size_t sub = g.addNode(SubNode{TensorDesc::fromShape({1}), x_desc}, {zero, x}, x_desc);
+    g.markOutput(sub);
+
+    Graph simplified = g.canonicalize();
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<NegNode>(out_node.op));
+}
+
+TEST(Canonicalize, MulWithNegativeOne) {
+    using namespace ct::c3;
+    // Mul(x, -1) -> Neg(x)
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({4});
+    size_t x = g.addInput(x_desc);
+    size_t neg_one = g.addConstant(-1.0, TensorDesc::fromShape({1}));
+    size_t mul = g.addNode(MulNode{x_desc, TensorDesc::fromShape({1})}, {x, neg_one}, x_desc);
+    g.markOutput(mul);
+
+    Graph simplified = g.canonicalize();
+    EXPECT_EQ(simplified.outputCount(), 1u);
+    const auto& out_node = simplified.node(simplified.outputs()[0]);
+    EXPECT_TRUE(std::holds_alternative<NegNode>(out_node.op));
 }
 
 // ======================= 算子融合测试 =======================
@@ -519,6 +581,49 @@ TEST(JITCompile, MulGraphExecute) {
     ASSERT_EQ(results.size(), 1u);
 
     Tensor eager = a * b;
+    if (!tensorsAllClose(results[0], eager)) {
+        std::cout << "results[0] values: ";
+        for (size_t i = 0; i < 9; ++i) std::cout << results[0].data_read<float>()[i] << " ";
+        std::cout << "\neager values: ";
+        for (size_t i = 0; i < 9; ++i) std::cout << eager.data_read<float>()[i] << " ";
+        std::cout << "\n";
+    }
+    EXPECT_TRUE(tensorsAllClose(results[0], eager));
+}
+
+TEST(JITCompile, BroadcastAddGraphExecute) {
+    using namespace ct::c3;
+
+    // 广播图：out = x + bias，x=[2,3]，bias=[3]（一维周期广播）
+    // 验证 OneShot 路由（isPureElementwiseGraph=true）对广播图的处理
+    Graph g;
+    auto x_desc = TensorDesc::fromShape({2, 3});
+    auto b_desc = TensorDesc::fromShape({3});
+    size_t x = g.addInput(x_desc);
+    size_t bias = g.addInput(b_desc);
+    size_t z = g.addNode(AddNode{x_desc, b_desc}, {x, bias}, x_desc);
+    g.markOutput(z);
+
+    auto& engine = C3Engine::getInstance();
+    auto kernel = engine.compile(g, {});
+    ASSERT_NE(kernel, nullptr);
+
+    Tensor a(ShapeTag{}, {2, 3});
+    Tensor b(ShapeTag{}, {3});
+    fillTensor(a, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    fillTensor(b, {10.0f, 20.0f, 30.0f});
+
+    auto results = kernel->execute({a, b});
+    ASSERT_EQ(results.size(), 1u);
+
+    Tensor eager = a + b;
+    if (!tensorsAllClose(results[0], eager)) {
+        std::cout << "results[0] values: ";
+        for (size_t i = 0; i < 6; ++i) std::cout << results[0].data_read<float>()[i] << " ";
+        std::cout << "\neager values: ";
+        for (size_t i = 0; i < 6; ++i) std::cout << eager.data_read<float>()[i] << " ";
+        std::cout << "\n";
+    }
     EXPECT_TRUE(tensorsAllClose(results[0], eager));
 }
 

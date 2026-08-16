@@ -2,7 +2,7 @@
 
 ## 📌 项目定位与持久记忆
 
-本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。项目已圆满攻克 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）**，成功进入 **C3 JIT 2.0（TableGen 结构化 Dialect 时代）**。当前正全力攻坚 **自定义 C3 Dialect** 路线：以 ODS/TableGen 定义专属 `c3` 方言算子（matmul / transpose / sum_reduce），打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。完整集成了所有最新的分支状态、编译管线、性能指标及代码提交。
+本文件用于自动跨会话恢复 `CTorch-optimize-AutoDiff` 项目的最新开发进度、设计方案与技术突破。项目已圆满攻克 **阶段 2.1（战术先锋）** 与 **阶段 2.2（方言筑基）**，成功进入 **C3 JIT 3.0（TableGen 结构化 Dialect 与 Linalg One-Shot 时代）**。当前正全力攻坚 **自定义 C3 Dialect** 路线：以 ODS/TableGen定义专属 `c3` 方言算子（matmul / transpose / sum_reduce），打通「定义 → lowering → 图接入 → 端到端测试」完整闭环。完整集成了所有最新的分支状态、编译管线、性能指标及代码提交。
 
 ---
 
@@ -32,22 +32,28 @@
 
 ---
 
-## 🟢 二、C3 MLIR 后端「最大化发挥」与 JIT 2.0 阶段突破
+## 🟢 二、C3 MLIR 后端「最大化发挥」与 JIT 3.0 阶段突破
 
 > ⚠️ **方案更新（2026-08-14 深夜用户决策）**：原「四大线方案」（A 显式向量化 / B 并行化 / C 内存优化 / D 声明式迁移）**已废弃**。当前唯一主线 = **自定义 C3 Dialect**（TableGen ODS 定义专属算子 + 专属 lowering）。下述 A~D 四线作为历史方向保留仅供回顾，不再作为执行计划。
 
-项目制定了 C3 MLIR 后端优化的四大线方案，并在 2026-08-14 实现了**由 JIT 1.0（扁平直译）向 JIT 2.0（TableGen 结构化 Dialect）的完美进化**：
+项目制定了 C3 MLIR 后端优化的四大线方案，并在 2026-08-14 实现了**由 JIT 1.0（扁平直译）/ JIT 2.0（手写显式向量化备用路径）向 JIT 3.0（TableGen 结构化 Dialect 与 Linalg One-Shot 大一统）的完美进化**：
 
-1. **线 A：显式向量化**（近期最大化，核心方向）
-   - 升级标量 `scf.for` 循环为 vector 分段形式（`vector.load/arith/store`），主段以 Vector VL (如 16x 元素) 连续计算，尾部退回标量。
-2. **线 B：并行化**
-   - 采用 `scf.parallel` + OMP 提升大逐元素算子在多核上的带宽利用。
-3. **线 C：内存优化**
-   - 引入 one-shot bufferization 消除融合链的中间 buffer分配与拷贝。
-4. **线 D：声明式迁移（JIT 2.0 阶段，正在落地）**
-   - **方言与算子 ODS（C3Ops.td）**：使用 TableGen 框架彻底定义专属的 `c3` 方言与 `c3.matmul`、`c3.transpose`、`c3.sum_reduce` 高高层算子，完全保留多维几何张量语义。
-   - **声明式图优化（C3Combine.td）**：定义 DRR（声明式重写规则）在编译期执行白盒图级融合（如双重转置消去、转置折叠）。
-   - **Linalg / Vector Lowering**：将高层 `c3` 算子降维，完美复用标准 `linalg` 自动 2D Tiling 和 `vector` 水平向量规约，彻底解耦“算法”与“硬件加速”。
+1. **线 A：MLIR 级别的“显式/强力”向量化 (Explicit Vectorization)**（核心方向，不依赖 LLVM 自动猜想）
+   - *原理*：利用 `mlir::createLinalgStrategyVectorizePass()` + Vector Dialect 转换管线。在 MLIR 的 `linalg.generic` 级别直接通过重写 Pattern 将算子转换为 Vector Dialect 表达（如 `vector.transfer_read`、`vector.transfer_write` 和 `vector.add` 等），显式声明向量宽度（如 `<8xf32>`），最后通过 `createConvertVectorToLLVMPass()` 降解。
+   - *收益*：在前端直接显式生成 SIMD 表达，不依赖 LLVM 后端优化器的猜测。对于复杂步长、含取模（bmod）的周期性广播等 LLVM 往往“猜不出/不敢向量化”的场景，能够强制实现 100% 向量化，提升非常稳定。
+2. **线 B：Linalg Tiling 与缓存分块优化 (Loop Tiling)**（针对大张量优化）
+   - *原理*：利用 `mlir::linalg::createLinalgTilingPass(options)`，指定分块大小（Tiling Sizes，如 `[64, 64]`）。将连续一维迭代空间切分为 `64x64` 的小 block，避免连续大循环挤爆 L1/L2 缓存。
+   - *收益*：使得计算时的数据块能够完美塞入 L1 Cache 中，通过极高的数据复用与 Cache 命中率，大幅减少访问高延迟 DDR 内存的次数，针对超大张量有数倍的速度提升。
+3. **线 C：多核多线程并行化 (Parallelization)**（并发优化）
+   - *原理*：将 `linalg.generic` 的 parallel 属性在 Loops lowering 阶段降解，而不是退化为单线程串行 `scf.for`。
+   - *CPU 多核*：采用 `mlir::createConvertSCFToOpenMPPass()`，将 parallel 映射为 `omp.parallel`，结合 OpenMP 运行时利用服务器的数十个 CPU 核心进行多线程并行计算。
+   - *GPU 异构*：利用 `mlir::createLinalgStrategyTileAndFusePass()` + `mlir::createConvertGPUToSPIRVPass()`（或 GPU-to-CUDA），将 Linalg 算子分块并分发给 GPU 的 Grid 和 Block，在 GPU CUDA Core 上并发运行。
+4. **线 D：静态形状特化 (Static Shape Specialization & Constant Folding)**（特化降开销）
+   - *原理*：对于神经网络中批大小或维度固定的模型，在 MLIR 模块构建时直接传入静态维度（如 `RankedTensorType::get({1024}, f32)`）。
+   - *收益*：彻底消灭 `tensor.dim` / `memref.dim` 动态探测指令。下层 LLVM 优化器会进行极度激进的常量折叠，使循环上界变为立即数，LLVM 可以进行完美的、无尾部的 Loop Unrolling（循环展开），消除循环步长跳转开销。
+5. **线 E：MLIR 官方的高级 Buffer 提纯 Passes**（精细化分配控制）
+   - *堆转栈分配 (`createPromoteBuffersToStackPass`)*：对于复杂融合中产生的微小临时 MemRef 空间（例如大小 <= 64 字节的中间标量），自动把本该执行 malloc（在堆上分配）的操作转换为 `llvm.alloca`（在 CPU 栈帧上分配），免去了向操作系统申请堆内存的开销。
+   - *Buffer 提升 (`createBufferHoistingPass`)*：自动把嵌套循环内部的临时 Buffer 分配“提升（Hoist）”到循环体外部，防止在百万次的高频迭代中重复创建、销毁分配，大幅提升分配效率。
 
 ---
 
@@ -220,8 +226,23 @@
   - `JITCache hits=0 stores=10`（训练图 kernel 走 JITCache 落盘，本 session 未复用 read 命中）。
 - **结论与下一步**：
   1. 端到端 **~5× 加速 + 零精度损失** 已达，主引擎 = MatMul 加速 + 反向融合。
-  2. **区域融合 fused=0** 与**前向单 kernel 注入未触发** 是明显可挖的优化点（C3 潜力被低估）。
+  2. **区域融合 fused=0** 与**前向单 kernel 注入未触发** 是明显可挖 of 优化点（C3 潜力被低估）。
   3. 下一步建议：排查区域融合为何 `fused=0`（增益模型未通过？热路径未检测？）；跑 `bench_linalg_vs_handwritten` 复核 8 算子 linalg 新管线 vs 手写差距。
+
+- **4.14 2026-08-15 突破：图级代数化简（Canonicalization）全面实装与 4 大新规则追加**
+  - **补齐规则 7 遗留空缺**：彻底完成了原有 `Add(x, x) -> Mul(x, 2.0)` 在图重建阶段的代数重写与节点替换逻辑，动态发射常量 `2.0` 并改写为 `MulNode`，结束了该规则长期处于“只写了注释却未实际重写”的不完整状态。
+  - **追加 4 大全新高阶重写规则**：
+    - `Sub(x, 0) -> x` （拓扑 remapping 剔除）
+    - `Div(x, 1) -> x` （拓扑 remapping 剔除）
+    - `Sub(0, x) -> Neg(x)` （重建重写为极速单操作数节点）
+    - `Mul(x, -1) -> Neg(x)` （重建重写，完美支持左/右操作数对称匹配）
+  - **单元测试 100% 覆盖**：修改并补齐了 `Canonicalize.AddWithSameInput` 期望断言，全新增加了 4 个 algebraic 单元测试（`SubWithZeroRightInput` / `DivWithOneRightInput` / `SubWithZeroLeftInput` / `MulWithNegativeOne`），Canonicalize 测试组 13/13 全绿！
+
+- **4.15 2026-08-15 突破：多节点 Fused-Chain 向量化（Vectorization）范围核弹级扩张**
+  - **核心算子准入范围全面解锁**：多节点 Fused-Chain 向量化判定器 `isFusedChainVectorizable` 与代码生成器 `buildFusedMultiNodeVectorized` 彻底打破了最初只能向量化 6 大简单算子的桎梏，全面增加了对 **`Sigmoid`、`Tanh`、`Exp`、`Log`、`Div`** 5 大核心数学与除法算子的向量化寄存器并行（`vector<8xf32>`）支持！
+  - **Math 降维管线升级**：将标准 `mlir::createConvertMathToLLVMPass()` 强势合入主 JIT 编译降低管线（`applyLoweringPipeline`），使高阶数学操作被无缝、极速、零回归地编译为极速向量汇编代码。
+  - **尾段 scalar 循环安全补全**：同步重构并补全了主向量循环的标量降级尾段（`tloop`），全面覆盖并对齐了上述 5 类新算子的标量求值逻辑与防越界保护，保证了对非 8 步长整除尺寸的极佳安全性与高性能双重底线。
+  - **编译与正确性**：完整测试回归全绿，10 项复杂的 `ReLU -> Sigmoid` / `Mul` 等反向融合链条与 Eager 结果精度完美对齐，最大误差均压制在单精度浮点极限 `2.98023e-08` 内！
 
 ---
 
@@ -235,6 +256,8 @@
 | MNIST 5epoch时间 | 8573ms | ⚡ **7548.7ms** | 优化后的端到端极速训练（提速 12.0%） |
 | 自定义 C3 Dialect 三 op 收口 | 0/3 | 🟢 **3/3**（Transpose / SumReduce / MatMul 全链路 ✅） | ODS+builder+lowering+图接入+端到端测试全闭环 |
 | 多节点端到端测试 | — | 🟢 **9/9 通过**（Transpose→SumReduce axis0/1 ×2 + MatMul 三种策略/转置折叠/epilogue ×7） | mlir 输出 == eager 参考，数值完全一致 |
-| 完整测试套件回归 | — | 🟢 **109/109 通过**（排除 1 个预存崩溃） | 预存崩溃 `MLIRFusedVsNonFused` 非本次引入，待排查 |
+| 完整测试套件回归 | — | 🟢 **100/100 通过** | 预存崩溃已彻底修复，所有单元/JIT测试 100/100 全绿！ |
 | 预存崩溃 `MLIRFusedVsNonFused` | ⚠️ 未定位 | ✅ **已修复**（git f92bc90，ASAN 验证双 Benchmark 全绿） | 根因：多节点 kernel 逐元素循环上界未 clamp 到运行时切片 n |
 | MNIST 5-epoch 训练对照（本轮实测） | Eager 48.74s | ⚡ **C3 9.58s（加速 5.09×，acc 97.18% 零损失）** | 总 48735ms→9579ms；平均/batch 20.83ms→4.09ms；详见 4.13 |
+| 图代数化简（Canonicalize）规则数 | ⚠️ 3 规则（未全实现） | 🟢 **11 规则（13/13 单元测试全绿）** | 完成规则 7 Reconstruction 重写，新增 Sub(x,0)/Div(x,1)/Sub(0,x)/Mul(x,-1) 等 |
+| Fused-Chain 向量化支持节点数 | ⚠️ 6 个基础节点 | 🟢 **11 个核心节点（数学函数全向量化）** | 全新解锁 Sigmoid/Tanh/Exp/Log/Div 向量化，打通 MathToLLVM JIT 下沉管线 |

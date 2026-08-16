@@ -297,6 +297,17 @@ struct AffineApplyToArithPattern : public mlir::OpRewritePattern<mlir::affine::A
 
 /// 标准 linalg → loops → SCF → LLVM lowering pipeline（PoC 4.9 验证顺序）
 void applyLinalgLoweringPipeline(mlir::ModuleOp module) {
+    // 阶段 0.5：Linalg 级别特化与内联优化
+    {
+        mlir::PassManager pm(module.getContext());
+        pm.addPass(mlir::createLinalgInlineScalarOperandsPass());
+        pm.addPass(mlir::createLinalgSpecializeGenericOpsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createCSEPass());
+        if (mlir::failed(pm.run(module))) {
+            throw std::runtime_error("LinalgElementwiseGen: Linalg optimization failed");
+        }
+    }
     // 阶段 1：linalg.generic → loops（周期广播的 `d0 mod k` 在此产生 affine.apply）
     {
         mlir::PassManager pm(module.getContext());

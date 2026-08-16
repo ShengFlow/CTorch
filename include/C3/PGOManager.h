@@ -81,7 +81,7 @@ struct CompilationTask {
  *
  * 优先级：Ofast > O2 > Eager，编译完成后下一调用自动使用更高优化级别。
  */
-class PGOCompiledKernel : public CompiledKernel {
+class PGOCompiledKernel : public CompiledKernel, public std::enable_shared_from_this<PGOCompiledKernel> {
     // =================== Test-only access (ADR-006 deopt PoC) ===================
     // 仅 PoC 测试用：允许测试代码直接注入 mock kernel 模拟运行时崩溃。
     // 正式版本应保留此 API 以便 fuzz / chaos 测试。

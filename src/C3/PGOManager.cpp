@@ -214,16 +214,17 @@ bool PGOCompiledKernel::installIntoRegistry(op op_type, const KernelShapeInfo& s
 
 void PGOCompiledKernel::triggerCompilationChain() {
     auto& pgo = PGOManager::getInstance();
+    auto self = shared_from_this();
     if (!pgo.canAcceptCompilation()) {
         // 编译队列背压触发：将任务推入优先级队列，按热度评分排序
         double heat = computeHeatScore();
         std::string desc = "PGO: " + cache_key_;
 
         // 创建编译任务 lambda
-        auto compile_task = [this, &pgo]() {
+        auto compile_task = [self, &pgo]() {
             pgo.notifyCompilationStarted();
-            compileO2();
-            compileOfast();
+            self->compileO2();
+            self->compileOfast();
             pgo.notifyCompilationCompleted();
         };
 
@@ -250,23 +251,23 @@ void PGOCompiledKernel::triggerCompilationChain() {
     // 启动异步编译链（O2 → Ofast）
     if (PGOManager::getInstance().config().async_compilation) {
         // 集中 future 管理，避免 std::thread::detach() 引发 UAF
-        // （线程在 main 退出后仍会 lock 已析构的 PGOManager mutex）
-        std::future<void> fut = std::async(std::launch::async, [this]() {
+        // （线程在 main 退出后仍会 lock 已析构 the PGOManager mutex）
+        std::future<void> fut = std::async(std::launch::async, [self]() {
             try {
                 CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN,
-                    "PGO: starting async compile chain for " + cache_key_);
-                compileO2();
-                compileOfast();
+                    "PGO: starting async compile chain for " + self->cache_key_);
+                self->compileO2();
+                self->compileOfast();
             } catch (const std::exception& e) {
                 // 防止后台线程异常导致 std::terminate；同时避免 lock 已析构 mutex
                 CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
                     ErrorType::KERNEL_LAUNCH,
-                    std::string("PGO: async compile chain exception for ") + cache_key_ +
+                    std::string("PGO: async compile chain exception for ") + self->cache_key_ +
                     ": " + e.what());
             } catch (...) {
                 CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kGENERAL,
                     ErrorType::KERNEL_LAUNCH,
-                    "PGO: async compile chain unknown exception for " + cache_key_);
+                    "PGO: async compile chain unknown exception for " + self->cache_key_);
             }
             try {
                 PGOManager::getInstance().notifyCompilationCompleted();

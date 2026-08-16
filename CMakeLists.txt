@@ -145,6 +145,8 @@ if(CT_ENABLE_MLIR)
     list(APPEND CT-Core src/C3/C3Dialect.cpp)
     # [2026-08-15] linalg.generic 声明式逐元素 kernel（JIT 2.0 路线 A 移植，STATUS_CONTEXT 4.9/4.7-2）
     list(APPEND CT-Core src/C3/LinalgElementwiseGen.cpp)
+    list(APPEND CT-Core src/C3/LinalgFusedGen.cpp)
+    list(APPEND CT-Core src/C3/LinalgOneShotGen.cpp)
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
@@ -615,6 +617,10 @@ target_include_directories(test_c3_compile_timeout PRIVATE ${CMAKE_CURRENT_SOURC
 add_executable(test_mlir_simd_integration src/tests/standalone/test_mlir_simd_integration.cpp)
 target_link_libraries(test_mlir_simd_integration PRIVATE CTorch)
 target_include_directories(test_mlir_simd_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_one_shot_bufferization src/tests/standalone/test_one_shot_bufferization.cpp)
+target_link_libraries(test_one_shot_bufferization PRIVATE CTorch)
+target_include_directories(test_one_shot_bufferization PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # -rdynamic 导出主程序符号到动态符号表，MLIR JIT 通过 dlsym 查找
 # 自定义 SIMD 函数（ct_simd_vsigmoid 等）需要被 JIT 可见
 target_link_options(test_mlir_simd_integration PRIVATE -rdynamic)

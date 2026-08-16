@@ -127,4 +127,128 @@ def C3_SumReduceOp : C3_Op<"sum_reduce", [MemoryEffects<[MemWrite]>]> {
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// Elementwise Operations Base Classes
+//===----------------------------------------------------------------------===//
+
+class C3_BinaryElementwiseOp<string mnemonic> :
+    C3_Op<mnemonic, [MemoryEffects<[MemWrite]>]> {
+  let arguments = (ins
+    AnyType:$lhs,
+    AnyType:$rhs,
+    AnyType:$out,
+    AnyType:$numel,
+    I64Attr:$bmod
+  );
+  let results = (outs);
+  let assemblyFormat = "$lhs `,` $rhs `,` $out `,` $numel attr-dict `:` type($lhs) `,` type($rhs) `,` type($out) `,` type($numel)";
+}
+
+class C3_UnaryElementwiseOp<string mnemonic> :
+    C3_Op<mnemonic, [MemoryEffects<[MemWrite]>]> {
+  let arguments = (ins
+    AnyType:$input,
+    AnyType:$out,
+    AnyType:$numel
+  );
+  let results = (outs);
+  let assemblyFormat = "$input `,` $out `,` $numel attr-dict `:` type($input) `,` type($out) `,` type($numel)";
+}
+
+//===----------------------------------------------------------------------===//
+// Tensor-based Elementwise Operations (Stage 3, Task 1/2)
+//===----------------------------------------------------------------------===//
+
+class C3_BinaryTensorOp<string mnemonic> :
+    C3_Op<mnemonic, [Pure]> {
+  let arguments = (ins
+    F32Tensor:$lhs,
+    F32Tensor:$rhs,
+    F32Tensor:$dest,
+    I64Attr:$bmod
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$lhs `,` $rhs `,` $dest attr-dict `:` type($lhs) `,` type($rhs) `,` type($dest) `->` type($out)";
+}
+
+class C3_UnaryTensorOp<string mnemonic> :
+    C3_Op<mnemonic, [Pure]> {
+  let arguments = (ins
+    F32Tensor:$input,
+    F32Tensor:$dest
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$input `,` $dest attr-dict `:` type($input) `,` type($dest) `->` type($out)";
+}
+
+def C3_AddTensorOp : C3_BinaryTensorOp<"add_tensor">;
+def C3_SubTensorOp : C3_BinaryTensorOp<"sub_tensor">;
+def C3_MulTensorOp : C3_BinaryTensorOp<"mul_tensor">;
+def C3_DivTensorOp : C3_BinaryTensorOp<"div_tensor">;
+def C3_GtTensorOp  : C3_BinaryTensorOp<"gt_tensor">;
+
+def C3_NegTensorOp : C3_UnaryTensorOp<"neg_tensor">;
+def C3_ReLUTensorOp : C3_UnaryTensorOp<"relu_tensor">;
+def C3_SigmoidTensorOp : C3_UnaryTensorOp<"sigmoid_tensor">;
+def C3_TanhTensorOp : C3_UnaryTensorOp<"tanh_tensor">;
+def C3_ExpTensorOp : C3_UnaryTensorOp<"exp_tensor">;
+def C3_LogTensorOp : C3_UnaryTensorOp<"log_tensor">;
+
+def C3_ConstTensorOp : C3_Op<"const_tensor", [Pure]> {
+  let arguments = (ins
+    F32Attr:$value,
+    F32Tensor:$dest
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$value `,` $dest attr-dict `:` type($dest) `->` type($out)";
+}
+
+//===----------------------------------------------------------------------===//
+// Binary Elementwise Operations
+//===----------------------------------------------------------------------===//
+
+def C3_AddOp : C3_BinaryElementwiseOp<"add"> {
+  let summary = "Elementwise addition operation";
+}
+
+def C3_SubOp : C3_BinaryElementwiseOp<"sub"> {
+  let summary = "Elementwise subtraction operation";
+}
+
+def C3_MulOp : C3_BinaryElementwiseOp<"mul"> {
+  let summary = "Elementwise multiplication operation";
+}
+
+def C3_DivOp : C3_BinaryElementwiseOp<"div"> {
+  let summary = "Elementwise division operation";
+}
+
+//===----------------------------------------------------------------------===//
+// Unary Elementwise Operations
+//===----------------------------------------------------------------------===//
+
+def C3_NegOp : C3_UnaryElementwiseOp<"neg"> {
+  let summary = "Elementwise negation operation";
+}
+
+def C3_ReLUOp : C3_UnaryElementwiseOp<"relu"> {
+  let summary = "Elementwise ReLU activation operation";
+}
+
+def C3_SigmoidOp : C3_UnaryElementwiseOp<"sigmoid"> {
+  let summary = "Elementwise Sigmoid activation operation";
+}
+
+def C3_TanhOp : C3_UnaryElementwiseOp<"tanh"> {
+  let summary = "Elementwise Tanh activation operation";
+}
+
+def C3_ExpOp : C3_UnaryElementwiseOp<"exp"> {
+  let summary = "Elementwise exponential operation";
+}
+
+def C3_LogOp : C3_UnaryElementwiseOp<"log"> {
+  let summary = "Elementwise natural logarithm operation";
+}
+
 #endif // C3_OPS

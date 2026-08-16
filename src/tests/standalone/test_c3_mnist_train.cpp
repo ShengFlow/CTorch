@@ -311,6 +311,16 @@ int main() {
 #endif
     CtorchScheduler::getInstance();
 
+#ifndef CT_DISABLE_C3
+    // 强制开启 C3HotPathManager 调试日志并降低触发阈值，使区域融合在训练早期就能触发并命中
+    {
+        ct::c3::HotPathConfig hp_cfg;
+        hp_cfg.verbose = true;
+        hp_cfg.hot_threshold = 2; // 降到 2，早期触发
+        ct::c3::C3HotPathManager::instance().configure(hp_cfg);
+    }
+#endif
+
     // 先做等价性测试
     testMatMulEquivalence();
     testAddEquivalence();

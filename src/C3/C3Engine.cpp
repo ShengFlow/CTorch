@@ -18,6 +18,8 @@
 
 #ifdef CT_ENABLE_MLIR
 #include "MLIRKernelGen.h"
+#include "C3/LinalgFusedGen.h"
+#include "C3/LinalgOneShotGen.h"
 #endif
 
 #include <chrono>
@@ -255,6 +257,162 @@ private:
     std::vector<std::vector<size_t>> out_shapes_;
     size_t scratch_size_ = 0;
 };
+
+#ifdef CT_ENABLE_MLIR
+/**
+ * @class LinalgFusedCompiledKernel
+ * @brief 用 linalg.generic 编译的多节点逐元素融合 kernel 运行期包装
+ */
+class LinalgFusedCompiledKernel : public CompiledKernel {
+public:
+    LinalgFusedCompiledKernel(std::shared_ptr<LinalgFusedKernel> kernel,
+                              std::vector<std::vector<size_t>> out_shapes,
+                              std::string cache_key)
+        : kernel_(std::move(kernel)), out_shapes_(std::move(out_shapes)),
+          cache_key_(std::move(cache_key)) {
+        num_inputs_ = kernel_->numInputs();
+        num_outputs_ = kernel_->numOutputs();
+    }
+
+    ~LinalgFusedCompiledKernel() override = default;
+
+    std::vector<Tensor> execute(const std::vector<Tensor>& inputs) override {
+        if (inputs.size() < num_inputs_) {
+            throw std::runtime_error(
+                "LinalgFusedCompiledKernel::execute: need " + std::to_string(num_inputs_) +
+                " inputs, got " + std::to_string(inputs.size()));
+        }
+
+        // 1. 收集输入数据指针
+        std::vector<const float*> in_ptrs;
+        in_ptrs.reserve(num_inputs_);
+        for (size_t i = 0; i < num_inputs_; ++i) {
+            in_ptrs.push_back(inputs[i].data_read<float>());
+        }
+
+        // 2. 分配输出 Tensors，并收集输出指针
+        std::vector<Tensor> outputs;
+        std::vector<float*> out_ptrs;
+        outputs.reserve(num_outputs_);
+        out_ptrs.reserve(num_outputs_);
+
+        size_t n = 0;
+        if (!out_shapes_.empty()) {
+            n = 1;
+            for (auto s : out_shapes_[0]) n *= s;
+        }
+
+        for (const auto& shape : out_shapes_) {
+            Tensor out(ShapeTag{}, shape);
+            out_ptrs.push_back(out.data_write<float>());
+            outputs.push_back(std::move(out));
+        }
+
+        // 3. 调用 linalg 声明式 kernel 执行
+        kernel_->execute(in_ptrs.data(), out_ptrs.data(), n);
+
+        return outputs;
+    }
+
+    [[nodiscard]] const std::string& cacheKey() const override { return cache_key_; }
+    [[nodiscard]] DeviceType targetDevice() const override { return DeviceType::kCPU; }
+    [[nodiscard]] size_t workspaceBytes() const override { return 0; }
+    [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (out_shapes_.empty()) return std::nullopt;
+        return out_shapes_[0];
+    }
+    bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
+        std::shared_ptr<CompiledKernel> self =
+            std::shared_ptr<CompiledKernel>(this, [](CompiledKernel*) {});
+        C3KernelRegistry::getInstance().install(op_type, targetDevice(), self, shapes);
+        return true;
+    }
+
+private:
+    std::shared_ptr<LinalgFusedKernel> kernel_;
+    std::vector<std::vector<size_t>> out_shapes_;
+    std::string cache_key_;
+    size_t num_inputs_ = 0;
+    size_t num_outputs_ = 0;
+};
+
+/**
+ * @class LinalgOneShotCompiledKernel
+ * @brief 用 JIT 3.0 (One-Shot Bufferization + Linalg Fusion) 编译的多节点逐元素融合 kernel 运行期包装
+ */
+class LinalgOneShotCompiledKernel : public CompiledKernel {
+public:
+    LinalgOneShotCompiledKernel(std::shared_ptr<LinalgOneShotKernel> kernel,
+                               std::vector<std::vector<size_t>> out_shapes,
+                               std::string cache_key)
+        : kernel_(std::move(kernel)), out_shapes_(std::move(out_shapes)),
+          cache_key_(std::move(cache_key)) {
+        num_inputs_ = kernel_->numInputs();
+        num_outputs_ = kernel_->numOutputs();
+    }
+
+    ~LinalgOneShotCompiledKernel() override = default;
+
+    std::vector<Tensor> execute(const std::vector<Tensor>& inputs) override {
+        if (inputs.size() < num_inputs_) {
+            throw std::runtime_error(
+                "LinalgOneShotCompiledKernel::execute: need " + std::to_string(num_inputs_) +
+                " inputs, got " + std::to_string(inputs.size()));
+        }
+
+        // 1. 收集输入数据指针
+        std::vector<const float*> in_ptrs;
+        in_ptrs.reserve(num_inputs_);
+        for (size_t i = 0; i < num_inputs_; ++i) {
+            in_ptrs.push_back(inputs[i].data_read<float>());
+        }
+
+        // 2. 分配输出 Tensors，并收集输出指针
+        std::vector<Tensor> outputs;
+        std::vector<float*> out_ptrs;
+        outputs.reserve(num_outputs_);
+        out_ptrs.reserve(num_outputs_);
+
+        size_t n = 0;
+        if (!out_shapes_.empty()) {
+            n = 1;
+            for (auto s : out_shapes_[0]) n *= s;
+        }
+
+        for (const auto& shape : out_shapes_) {
+            Tensor out(ShapeTag{}, shape);
+            out_ptrs.push_back(out.data_write<float>());
+            outputs.push_back(std::move(out));
+        }
+
+        // 3. 调用 linalg 声明式 kernel 执行
+        kernel_->execute(in_ptrs.data(), out_ptrs.data(), n);
+
+        return outputs;
+    }
+
+    [[nodiscard]] const std::string& cacheKey() const override { return cache_key_; }
+    [[nodiscard]] DeviceType targetDevice() const override { return DeviceType::kCPU; }
+    [[nodiscard]] size_t workspaceBytes() const override { return 0; }
+    [[nodiscard]] std::optional<std::vector<size_t>> outShape() const override {
+        if (out_shapes_.empty()) return std::nullopt;
+        return out_shapes_[0];
+    }
+    bool installIntoRegistry(op op_type, const KernelShapeInfo& shapes) override {
+        std::shared_ptr<CompiledKernel> self =
+            std::shared_ptr<CompiledKernel>(this, [](CompiledKernel*) {});
+        C3KernelRegistry::getInstance().install(op_type, targetDevice(), self, shapes);
+        return true;
+    }
+
+private:
+    std::shared_ptr<LinalgOneShotKernel> kernel_;
+    std::vector<std::vector<size_t>> out_shapes_;
+    std::string cache_key_;
+    size_t num_inputs_ = 0;
+    size_t num_outputs_ = 0;
+};
+#endif
 
 /**
  * @class ConcreteCompiledKernel
@@ -549,6 +707,49 @@ static std::shared_ptr<CompiledKernel> doCompile(
             at_cfg.verbose = true;
             C3Engine::getInstance().autoTune(at_cfg);
         }
+
+#ifdef CT_ENABLE_MLIR
+        // [2026-08-15] linalg.generic 多核并行/多输出大一统路线
+        if (options.backend == C3Backend::MLIR && isPureElementwiseGraph(working_graph)) {
+            std::vector<std::vector<size_t>> out_shapes;
+            for (size_t out_id : working_graph.outputs()) {
+                out_shapes.push_back(working_graph.node(out_id).out_desc.shape);
+            }
+            if (out_shapes.empty()) {
+                // 如果图没有显式标记 outputs，默认取最后一个计算节点
+                size_t last_compute = SIZE_MAX;
+                for (const auto& node : working_graph.nodes()) {
+                    if (std::find(working_graph.inputs().begin(), working_graph.inputs().end(), node.id) == working_graph.inputs().end() && !node.inputs.empty()) {
+                        last_compute = node.id;
+                    }
+                }
+                if (last_compute != SIZE_MAX) {
+                    out_shapes.push_back(working_graph.node(last_compute).out_desc.shape);
+                } else {
+                    out_shapes.push_back({1});
+                }
+            }
+
+            std::string cache_key = makeCacheKey(working_graph, options);
+            static const bool use_oneshot = [] {
+                // JIT 3.0 (One-Shot Bufferization + Linalg Fusion) 极致优化管线默认全面开启！
+                // 仅在显式设置 C3_LINALG_ONESHOT=0 时才回退至旧版
+                const char* v = std::getenv("C3_LINALG_ONESHOT");
+                return v == nullptr || std::string(v) != "0";
+            }();
+            if (use_oneshot) {
+                auto linalg_kernel = getCachedLinalgOneShotKernel(working_graph, cache_key, options.opt_level);
+                if (linalg_kernel) {
+                    return std::make_shared<LinalgOneShotCompiledKernel>(linalg_kernel, out_shapes, cache_key);
+                }
+            } else {
+                auto linalg_kernel = getCachedLinalgFusedKernel(working_graph, cache_key, options.opt_level);
+                if (linalg_kernel) {
+                    return std::make_shared<LinalgFusedCompiledKernel>(linalg_kernel, out_shapes, cache_key);
+                }
+            }
+        }
+#endif
 
         GeneratedKernel gen;
 #ifdef CT_ENABLE_MLIR

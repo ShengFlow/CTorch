@@ -58,6 +58,7 @@ extern "C" {
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/Passes.h>
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
+#include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
 #include <mlir/Conversion/LLVMCommon/TypeConverter.h>
 #include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
 #include <mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h>
@@ -1499,7 +1500,12 @@ static bool isFusedChainVectorizable(const std::vector<NodeVariant>& ops,
                           std::is_same_v<T, MulNode> ||
                           std::is_same_v<T, NegNode> ||
                           std::is_same_v<T, ReLUNode> ||
-                          std::is_same_v<T, GtNode>) {
+                          std::is_same_v<T, GtNode> ||
+                          std::is_same_v<T, SigmoidNode> ||
+                          std::is_same_v<T, TanhNode> ||
+                          std::is_same_v<T, ExpNode> ||
+                          std::is_same_v<T, LogNode> ||
+                          std::is_same_v<T, DivNode>) {
                 return true;
             }
             return false;
@@ -1604,6 +1610,25 @@ static void buildFusedMultiNodeVectorized(mlir::OpBuilder& builder, mlir::Locati
                 else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
                 mlir::Value cmp = builder.create<mlir::arith::CmpFOp>(loc, mlir::arith::CmpFPredicate::OGT, lhs, rhs);
                 result_v = builder.create<mlir::arith::SelectOp>(loc, cmp, one_vec, zero_vec);
+            } else if constexpr (std::is_same_v<T, SigmoidNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                mlir::Value neg_x = builder.create<mlir::arith::NegFOp>(loc, lhs);
+                mlir::Value exp_x = builder.create<mlir::math::ExpOp>(loc, neg_x);
+                mlir::Value denom = builder.create<mlir::arith::AddFOp>(loc, one_vec, exp_x);
+                result_v = builder.create<mlir::arith::DivFOp>(loc, one_vec, denom);
+            } else if constexpr (std::is_same_v<T, TanhNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                result_v = builder.create<mlir::math::TanhOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, ExpNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                result_v = builder.create<mlir::math::ExpOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, LogNode>) {
+                lhs = (op_idx > 0) ? prev_val_v : loadExternalVector(ext_inputs[0]);
+                result_v = builder.create<mlir::math::LogOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, DivNode>) {
+                if (op_idx > 0) { lhs = prev_val_v; rhs = loadExternalVector(ext_inputs[0]); }
+                else { lhs = loadExternalVector(ext_inputs[0]); rhs = loadExternalVector(ext_inputs[1]); }
+                result_v = builder.create<mlir::arith::DivFOp>(loc, lhs, rhs);
             }
         }, op);
 
@@ -1670,6 +1695,26 @@ static void buildFusedMultiNodeVectorized(mlir::OpBuilder& builder, mlir::Locati
                 mlir::Value zero_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(0.0f));
                 mlir::Value one_f = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
                 result_s = builder.create<mlir::arith::SelectOp>(loc, cmp, zero_f, one_f);
+            } else if constexpr (std::is_same_v<T, SigmoidNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                mlir::Value neg_x = builder.create<mlir::arith::NegFOp>(loc, lhs);
+                mlir::Value exp_x = builder.create<mlir::math::ExpOp>(loc, neg_x);
+                mlir::Value one = mlir::arith::ConstantFloatOp::create(builder, loc, f32, llvm::APFloat(1.0f));
+                mlir::Value denom = builder.create<mlir::arith::AddFOp>(loc, one, exp_x);
+                result_s = builder.create<mlir::arith::DivFOp>(loc, one, denom);
+            } else if constexpr (std::is_same_v<T, TanhNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                result_s = builder.create<mlir::math::TanhOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, ExpNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                result_s = builder.create<mlir::math::ExpOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, LogNode>) {
+                lhs = (op_idx > 0) ? prev_val_s : loadExternalScalar(ext_inputs[0]);
+                result_s = builder.create<mlir::math::LogOp>(loc, lhs);
+            } else if constexpr (std::is_same_v<T, DivNode>) {
+                if (op_idx > 0) { lhs = prev_val_s; rhs = loadExternalScalar(ext_inputs[0]); }
+                else { lhs = loadExternalScalar(ext_inputs[0]); rhs = loadExternalScalar(ext_inputs[1]); }
+                result_s = builder.create<mlir::arith::DivFOp>(loc, lhs, rhs);
             }
         }, op);
 
@@ -2229,7 +2274,7 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
                 }
             }
 
-            // === 创建 c3.matmul op（JIT 2.0 三 op 收口 2026-08-15）===
+            // === 创建 c3.matmul op（JIT 3.0 三 op 收口 2026-08-15）===
             // 策略选择（small_inline / tiled / cblas）下沉到 MatMulOpLowering，
             // 这里只负责打包 M/K/N + transpose folding + epilogue 融合信息。
             // M1 1.2 (2026-08-09): 读 AutoTuner 调优结果替换写死的 kDefaultTileM/N
@@ -2247,27 +2292,27 @@ static mlir::OwningOpRef<mlir::ModuleOp> buildMultiNodeMLIR(
             ci += fused_skip;
         } else if (std::holds_alternative<AddNode>(op)) {
             int64_t bmod = getBroadcastMod(op);
-            buildElementwiseBinary<mlir::arith::AddFOp>(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
+            builder.create<mlir::c3::AddOp>(loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
         } else if (std::holds_alternative<SubNode>(op)) {
             int64_t bmod = getBroadcastMod(op);
-            buildElementwiseBinary<mlir::arith::SubFOp>(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
+            builder.create<mlir::c3::SubOp>(loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
         } else if (std::holds_alternative<MulNode>(op)) {
             int64_t bmod = getBroadcastMod(op);
-            buildElementwiseBinary<mlir::arith::MulFOp>(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
+            builder.create<mlir::c3::MulOp>(loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, bmod);
         } else if (std::holds_alternative<DivNode>(op)) {
-            buildDiv(builder, loc, in_ptrs[0], in_ptrs[1], out_buf, node_n);
+            builder.create<mlir::c3::DivOp>(loc, in_ptrs[0], in_ptrs[1], out_buf, node_n, 0LL);
         } else if (std::holds_alternative<NegNode>(op)) {
-            buildNegate(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::NegOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<ReLUNode>(op)) {
-            buildReLU(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::ReLUOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<SigmoidNode>(op)) {
-            buildSigmoid(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::SigmoidOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<TanhNode>(op)) {
-            buildTanh(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::TanhOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<ExpNode>(op)) {
-            buildExp(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::ExpOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<LogNode>(op)) {
-            buildLog(builder, loc, in_ptrs[0], out_buf, node_n);
+            builder.create<mlir::c3::LogOp>(loc, in_ptrs[0], out_buf, node_n);
         } else if (std::holds_alternative<SumReduceNode>(op)) {
             const auto& sr = std::get<SumReduceNode>(op);
             int64_t M = sr.in_desc.shape.size() > 0 ? sr.in_desc.shape[0] : 1;
@@ -2305,7 +2350,7 @@ static size_t countComputeNodesMLIR(const Graph& graph) {
     return count;
 }
 
-// ======================= linalg.generic 逐元素路线（JIT 2.0 路线 A 接入） =======================
+// ======================= linalg.generic 逐元素路线（JIT 3.0 声明式大一统 接入） =======================
 
 /// 尝试用 linalg.generic 声明式路径编译单节点逐元素 kernel，
 /// 替换主库手写 if-else 标量 IR 分支（buildElementwiseBinary/buildReLU/buildSigmoid/...）。
@@ -2509,7 +2554,7 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
             if (add.rhs_desc.numel < add.lhs_desc.numel && add.rhs_desc.numel > 0) {
                 broadcast_mod = (int64_t)add.rhs_desc.numel;
             }
-            buildElementwiseBinary<mlir::arith::AddFOp>(builder, loc, a, b, out, n, broadcast_mod);
+            builder.create<mlir::c3::AddOp>(loc, a, b, out, n, broadcast_mod);
         }
         else if (std::holds_alternative<SubNode>(op)) {
             const auto& sub = std::get<SubNode>(op);
@@ -2517,7 +2562,7 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
             if (sub.rhs_desc.numel < sub.lhs_desc.numel && sub.rhs_desc.numel > 0) {
                 broadcast_mod = (int64_t)sub.rhs_desc.numel;
             }
-            buildElementwiseBinary<mlir::arith::SubFOp>(builder, loc, a, b, out, n, broadcast_mod);
+            builder.create<mlir::c3::SubOp>(loc, a, b, out, n, broadcast_mod);
         }
         else if (std::holds_alternative<MulNode>(op)) {
             const auto& mul = std::get<MulNode>(op);
@@ -2525,12 +2570,13 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
             if (mul.rhs_desc.numel < mul.lhs_desc.numel && mul.rhs_desc.numel > 0) {
                 broadcast_mod = (int64_t)mul.rhs_desc.numel;
             }
-            buildElementwiseBinary<mlir::arith::MulFOp>(builder, loc, a, b, out, n, broadcast_mod);
+            builder.create<mlir::c3::MulOp>(loc, a, b, out, n, broadcast_mod);
         }
-        else if (std::holds_alternative<DivNode>(op))
-            buildDiv(builder, loc, a, b, out, n);
+        else if (std::holds_alternative<DivNode>(op)) {
+            builder.create<mlir::c3::DivOp>(loc, a, b, out, n, 0LL);
+        }
         else if (std::holds_alternative<MatMulNode>(op)) {
-            // JIT 2.0 三 op 收口：单节点 MatMul 也走 c3.matmul op，
+            // JIT 3.0 三 op 收口：单节点 MatMul 也走 c3.matmul op，
             // 维度从 MatMulNode 的 desc 取编译期常量，策略选择由 MatMulOpLowering 完成。
             const auto& mm = std::get<MatMulNode>(op);
             int64_t matM = mm.lhs_desc.shape.size() > 0 ? (int64_t)mm.lhs_desc.shape[0] : 0;
@@ -2541,18 +2587,24 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(
                                                111, 111, (int)MatMulActivation::None,
                                                /*tileM=*/0, /*tileN=*/0, /*biasNumel=*/0);
         }
-        else if (std::holds_alternative<NegNode>(op))
-            buildNegate(builder, loc, a, out, n);
-        else if (std::holds_alternative<ReLUNode>(op))
-            buildReLU(builder, loc, a, out, n);
-        else if (std::holds_alternative<SigmoidNode>(op))
-            buildSigmoid(builder, loc, a, out, n);
-        else if (std::holds_alternative<TanhNode>(op))
-            buildTanh(builder, loc, a, out, n);
-        else if (std::holds_alternative<ExpNode>(op))
-            buildExp(builder, loc, a, out, n);
-        else if (std::holds_alternative<LogNode>(op))
-            buildLog(builder, loc, a, out, n);
+        else if (std::holds_alternative<NegNode>(op)) {
+            builder.create<mlir::c3::NegOp>(loc, a, out, n);
+        }
+        else if (std::holds_alternative<ReLUNode>(op)) {
+            builder.create<mlir::c3::ReLUOp>(loc, a, out, n);
+        }
+        else if (std::holds_alternative<SigmoidNode>(op)) {
+            builder.create<mlir::c3::SigmoidOp>(loc, a, out, n);
+        }
+        else if (std::holds_alternative<TanhNode>(op)) {
+            builder.create<mlir::c3::TanhOp>(loc, a, out, n);
+        }
+        else if (std::holds_alternative<ExpNode>(op)) {
+            builder.create<mlir::c3::ExpOp>(loc, a, out, n);
+        }
+        else if (std::holds_alternative<LogNode>(op)) {
+            builder.create<mlir::c3::LogOp>(loc, a, out, n);
+        }
         else if (std::holds_alternative<SumReduceNode>(op)) {
             const auto& sr = std::get<SumReduceNode>(op);
             int64_t M = sr.in_desc.shape.size() > 0 ? sr.in_desc.shape[0] : 1;
@@ -2608,6 +2660,120 @@ struct TransposeOpLowering : public mlir::OpRewritePattern<mlir::c3::TransposeOp
     }
 };
 
+// 1a. C3ToLLVM Lowering Patterns for Elementwise Operations
+struct AddOpLowering : public mlir::OpRewritePattern<mlir::c3::AddOp> {
+    using OpRewritePattern<mlir::c3::AddOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::AddOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildElementwiseBinary<mlir::arith::AddFOp>(
+            rewriter, op.getLoc(), op.getLhs(), op.getRhs(), op.getOut(), op.getNumel(), op.getBmod());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct SubOpLowering : public mlir::OpRewritePattern<mlir::c3::SubOp> {
+    using OpRewritePattern<mlir::c3::SubOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::SubOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildElementwiseBinary<mlir::arith::SubFOp>(
+            rewriter, op.getLoc(), op.getLhs(), op.getRhs(), op.getOut(), op.getNumel(), op.getBmod());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct MulOpLowering : public mlir::OpRewritePattern<mlir::c3::MulOp> {
+    using OpRewritePattern<mlir::c3::MulOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::MulOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildElementwiseBinary<mlir::arith::MulFOp>(
+            rewriter, op.getLoc(), op.getLhs(), op.getRhs(), op.getOut(), op.getNumel(), op.getBmod());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct DivOpLowering : public mlir::OpRewritePattern<mlir::c3::DivOp> {
+    using OpRewritePattern<mlir::c3::DivOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::DivOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildDiv(rewriter, op.getLoc(), op.getLhs(), op.getRhs(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct NegOpLowering : public mlir::OpRewritePattern<mlir::c3::NegOp> {
+    using OpRewritePattern<mlir::c3::NegOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::NegOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildNegate(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct ReLUOpLowering : public mlir::OpRewritePattern<mlir::c3::ReLUOp> {
+    using OpRewritePattern<mlir::c3::ReLUOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::ReLUOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildReLU(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct SigmoidOpLowering : public mlir::OpRewritePattern<mlir::c3::SigmoidOp> {
+    using OpRewritePattern<mlir::c3::SigmoidOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::SigmoidOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildSigmoid(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct TanhOpLowering : public mlir::OpRewritePattern<mlir::c3::TanhOp> {
+    using OpRewritePattern<mlir::c3::TanhOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::TanhOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildTanh(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct ExpOpLowering : public mlir::OpRewritePattern<mlir::c3::ExpOp> {
+    using OpRewritePattern<mlir::c3::ExpOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::ExpOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildExp(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
+struct LogOpLowering : public mlir::OpRewritePattern<mlir::c3::LogOp> {
+    using OpRewritePattern<mlir::c3::LogOp>::OpRewritePattern;
+
+    mlir::LogicalResult matchAndRewrite(mlir::c3::LogOp op,
+                                        mlir::PatternRewriter& rewriter) const override {
+        buildLog(rewriter, op.getLoc(), op.getInput(), op.getOut(), op.getNumel());
+        rewriter.eraseOp(op);
+        return mlir::success();
+    }
+};
+
 // 2. C3ToLLVM Lowering Pattern for c3::SumReduceOp
 struct SumReduceOpLowering : public mlir::OpRewritePattern<mlir::c3::SumReduceOp> {
     using OpRewritePattern<mlir::c3::SumReduceOp>::OpRewritePattern;
@@ -2636,7 +2802,7 @@ struct SumReduceOpLowering : public mlir::OpRewritePattern<mlir::c3::SumReduceOp
 };
 
 // 3. C3ToLLVM Lowering Pattern for c3::MatMulOp
-// JIT 2.0 三 op 收口（2026-08-15）：策略选择（small_inline / tiled / cblas）从
+// JIT 3.0 三 op 收口（2026-08-15）：策略选择（small_inline / tiled / cblas）从
 // 多节点图生成处下沉到 lowering，与 buildTiledMatMulWithEpilogue/buildMatMul 复用同一套
 // 代码生成逻辑，保证数值语义与手写路径一致。
 struct MatMulOpLowering : public mlir::OpRewritePattern<mlir::c3::MatMulOp> {
@@ -2722,7 +2888,10 @@ static void runC3Combine(mlir::ModuleOp module) {
 
 static void runC3Lowering(mlir::ModuleOp module) {
     mlir::RewritePatternSet patterns(module.getContext());
-    patterns.add<TransposeOpLowering, SumReduceOpLowering, MatMulOpLowering>(module.getContext());
+    patterns.add<TransposeOpLowering, SumReduceOpLowering, MatMulOpLowering,
+                 AddOpLowering, SubOpLowering, MulOpLowering, DivOpLowering,
+                 NegOpLowering, ReLUOpLowering, SigmoidOpLowering, TanhOpLowering,
+                 ExpOpLowering, LogOpLowering>(module.getContext());
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(module, std::move(patterns)))) {
         throw std::runtime_error("MLIRKernelGen: C3ToLLVM lowering pass failed");
     }
@@ -2744,8 +2913,8 @@ static void runPass(mlir::ModuleOp module, std::unique_ptr<mlir::Pass> pass, con
 void applyLoweringPipeline(mlir::ModuleOp module) {
     runPass(module, mlir::createStripDebugInfoPass(), "StripDebugInfo");
     runPass(module, mlir::createCanonicalizerPass(), "Canonicalizer");
-    runC3Combine(module);  // 1. 运行 JIT 2.0 高层图优化 (DRR)
-    runC3Lowering(module); // 2. 运行 JIT 2.0 高层算子到 LLVM 标量/向量循环的 Lowering Pass
+    runC3Combine(module);  // 1. 运行 JIT 3.0 高层图优化 (DRR)
+    runC3Lowering(module); // 2. 运行 JIT 3.0 高层算子到 LLVM 标量/向量循环的 Lowering Pass
     runPass(module, mlir::createCSEPass(), "CSE");
     runPass(module, mlir::createSymbolDCEPass(), "SymbolDCE");
     runPass(module, mlir::createLoopInvariantCodeMotionPass(), "LICM");
@@ -2755,6 +2924,7 @@ void applyLoweringPipeline(mlir::ModuleOp module) {
     runPass(module, mlir::createParallelLoopFusionPass(), "ParallelLoopFusion");
     runPass(module, mlir::createSCFToControlFlowPass(), "SCFToCF");
 
+    runPass(module, mlir::createConvertMathToLLVMPass(), "MathToLLVM");
     runPass(module, mlir::createArithToLLVMConversionPass(), "ArithToLLVM");
 
     runPass(module, mlir::createConvertControlFlowToLLVMPass(), "CFToLLVM");
@@ -2771,7 +2941,7 @@ void applyLoweringPipeline(mlir::ModuleOp module) {
 // ======================= 主入口 =======================
 
 GeneratedKernel generateFromGraphMLIR(const Graph& graph, int opt_level) {
-    // [2026-08-15] linalg.generic 声明式逐元素路线（JIT 2.0 路线 A 接入）：
+    // [2026-08-15] linalg.generic 声明式逐元素路线（JIT 3.0 声明式大一统 接入）：
     // 单节点逐元素算子（无广播）直接走 LinalgElementwiseKernel（自带 ExecutionEngine，
     // func_any 捕获 shared_ptr 保证生命周期），跳过下方手写 if-else 标量 IR 构建。
     // 未命中（多节点/融合/MatMul/广播/逃生开关 C3_LINALG_EW=0）时回退原 MLIR 构建。
