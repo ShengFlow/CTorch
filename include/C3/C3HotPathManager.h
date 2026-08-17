@@ -1,5 +1,6 @@
 /**
  * @file C3HotPathManager.h
+ * @generation SHARED 跨代热路径检测与编译触发
  * @brief 热路径自动 C3 编译管理器
  * @details 在调度器 dispatch 路径中自动检测热路径，
  *          触发后台 C3 编译，编译完成后自动安装到 C3KernelRegistry。
@@ -927,7 +928,7 @@ private:
         }
     }
 
-    /// 异步提交 C3 编译任务
+    /// 异步提交 C3 编译任务 (并发双管线 Tier 1/2)
     void submitCompileAsync(op op_type, DeviceType dev,
                             const std::vector<size_t>& shape,
                             const std::vector<size_t>& lhs_shape,
@@ -959,33 +960,33 @@ private:
             return;
         }
 
-        CompileOptions opts;
-        opts.opt_level = 1; // 首次编译用 O1 快速产出
-        // 【P0 修复 DEBT-NEW-5 2026-08-08】CompileOptions::backend 默认 MLIR，
-        // 但 MLIR 编译的 MatMul kernel (buildTiledMatMulWithEpilogue / buildMatMul + buildFusedEpilogue)
-        // 跟 cblas_sgemm 数值不等价（weight 范围大时 sum 累加顺序差异放大 4x）
-        // 实测：MNIST epoch 0 一致，epoch 1 batch 0 分歧（loss 0.7218 vs 0.2120, grad 差 4x）
-        // 修复：MatMul 强制走 Handwritten backend（即 cblas_sgemm wrapper，数值精确）
-        if (op_type == op::MatMul) {
-            opts.backend = C3Backend::Handwritten;
-        }
-
         // 保存原始 timeout 并设置临时 timeout
         auto& engine = C3Engine::getInstance();
         uint32_t original_timeout = engine.getCompileTimeoutMs();
         engine.setCompileTimeoutMs(cfg.compile_timeout_ms);
 
-        // 提交异步编译
-        auto compile_future = engine.compileAsync(g, opts);
+        // ======================= 1. 提交 Tier 1 JIT (快速优化管线) =======================
+        CompileOptions opts_fast;
+        opts_fast.opt_level = 2; // O2 JIT, 极速编译响应
+        if (op_type == op::MatMul) {
+            opts_fast.backend = C3Backend::Handwritten;
+        }
+        auto compile_future_fast = engine.compileAsync(g, opts_fast);
+
+        // ======================= 2. 提交 Tier 2 JIT (极限优化管线) =======================
+        CompileOptions opts_extreme;
+        opts_extreme.opt_level = 4; // Ofast JIT, Passes 全开 (如 Loop Unroll-and-Jam, 寄存器最大复用)
+        if (op_type == op::MatMul) {
+            opts_extreme.backend = C3Backend::Handwritten;
+        }
+        auto compile_future_extreme = engine.compileAsync(g, opts_extreme);
 
         // 恢复 timeout
         engine.setCompileTimeoutMs(original_timeout);
 
-        // 使用 std::async 启动后台等待+安装任务，future 纳入 pending_futures_ 管理
-        // 这样 shutdown() 可以等待所有任务完成，避免进程退出时 UAF
-        auto future = std::async(std::launch::async, [this, compile_future = std::move(compile_future), op_type, shape, lhs_shape, rhs_shape, key]() mutable {
+        // 后台辅助 lambda，处理单个编译 future 的解析和注册
+        auto run_install_task = [this, op_type, shape, lhs_shape, rhs_shape](CompileFuture compile_future, std::string pipeline_name) {
             auto kernel = compile_future.get();
-
             if (kernel) {
                 // 安装到 C3KernelRegistry
                 KernelShapeInfo info;
@@ -1003,18 +1004,28 @@ private:
                     info.rhs_shape = rhs_shape;
                     info.out_shape = lhs_shape;
                 }
-                kernel->installIntoRegistry(op_type, info);
+                C3KernelRegistry::getInstance().install(op_type, DeviceType::kCPU, kernel, info);
 
                 if (getConfig().verbose) {
                     CtorchError::log(ErrorLevel::INFO, ErrorPlatform::kGENERAL,
                         ErrorType::UNKNOWN,
-                        "C3HotPathManager: 编译完成并安装: op=" +
+                        "C3HotPathManager: [" + pipeline_name + "] 编译完成并注册: op=" +
                         std::to_string(static_cast<int>(op_type)) +
+                        " opt_level=" + std::to_string(kernel->optLevel()) +
                         " shape=[" + shapeToString(shape) + "]");
                 }
             }
+        };
 
-            // 更新状态
+        // 启动两个并发等待线程
+        auto future_fast = std::async(std::launch::async, [run_install_task, compile_future_fast = std::move(compile_future_fast)]() mutable {
+            run_install_task(std::move(compile_future_fast), "Tier 1 JIT (Fast)");
+        });
+
+        auto future_extreme = std::async(std::launch::async, [this, run_install_task, compile_future_extreme = std::move(compile_future_extreme), key]() mutable {
+            run_install_task(std::move(compile_future_extreme), "Tier 2 JIT (Extreme)");
+            
+            // 极限管线作为生命周期的收尾，负责释放全局 pending 计数和设置 compiling 状态
             pending_compiles_.fetch_sub(1, std::memory_order_relaxed);
             {
                 std::lock_guard<std::mutex> lk(mutex_);
@@ -1026,10 +1037,11 @@ private:
             }
         });
 
-        // 将 future 加入统一管理列表
+        // 将并发 future 纳入全局生命周期管理，防止进程退出 UAF
         {
             std::lock_guard<std::mutex> lk(futures_mutex_);
-            pending_futures_.push_back(std::move(future));
+            pending_futures_.push_back(std::move(future_fast));
+            pending_futures_.push_back(std::move(future_extreme));
         }
     }
 

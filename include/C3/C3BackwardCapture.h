@@ -1,5 +1,6 @@
 /**
  * @file C3BackwardCapture.h
+ * @generation SHARED 跨代共有（JIT-2.0/2.x/3.0 共用后端捕获）
  * @brief 反向图 JIT 捕获与编译引擎
  * @details 在 autograd 的 backward 执行路径中插入 C3 编译/执行尝试。
  *          核心流程：forward 时同步记录 C3 Graph 节点 → backward 时查 C3KernelRegistry
@@ -76,6 +77,13 @@ public:
      * @details 消除测试用例间的状态和残留节点的交叉污染，确保完整的环境隔离。
      */
     void clear();
+
+    /**
+     * @brief [优化 2026-08-16] 清理单次 backward 调用范围内的临时状态。
+     * @details 在每次反向传播结束时调用，清空未被消费的截获梯度与 miss marker 节点，
+     *          防止因为内存地址复用导致 Stale Tensor / UAF 崩溃或错误的梯度匹配。
+     */
+    void clearCallScopedState();
 
     /**
      * @brief 尝试执行编译后的 backward kernel

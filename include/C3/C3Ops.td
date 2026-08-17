@@ -251,4 +251,70 @@ def C3_LogOp : C3_UnaryElementwiseOp<"log"> {
   let summary = "Elementwise natural logarithm operation";
 }
 
+//===----------------------------------------------------------------------===//
+// MatMul / Transpose / SumReduce Tensor Operations (JIT 4.0 Unified Pipeline)
+//===----------------------------------------------------------------------===//
+
+def C3_MatMulTensorOp : C3_Op<"matmul_tensor", [Pure]> {
+  let summary = "High-performance Tensor Matrix Multiplication";
+  let arguments = (ins
+    F32Tensor:$lhs,
+    F32Tensor:$rhs,
+    F32Tensor:$dest,
+    I64Attr:$M,
+    I64Attr:$K,
+    I64Attr:$N,
+    I32Attr:$transA,
+    I32Attr:$transB,
+    I32Attr:$act,
+    I64Attr:$tileM,
+    I64Attr:$tileN,
+    I64Attr:$biasNumel
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$lhs `,` $rhs `,` $dest attr-dict `:` type($lhs) `,` type($rhs) `,` type($dest) `->` type($out)";
+  
+  let builders = [
+    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "Value":$dest,
+                  "int64_t":$M, "int64_t":$K, "int64_t":$N,
+                  "int":$transA, "int":$transB, "int":$act,
+                  "int64_t":$tileM, "int64_t":$tileN, "int64_t":$biasNumel)>
+  ];
+}
+
+def C3_TransposeTensorOp : C3_Op<"transpose_tensor", [Pure]> {
+  let summary = "High-performance Tensor Transpose";
+  let arguments = (ins
+    F32Tensor:$input,
+    F32Tensor:$dest,
+    I64Attr:$M,
+    I64Attr:$N,
+    I32Attr:$dim0,
+    I32Attr:$dim1
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$input `,` $dest attr-dict `:` type($input) `,` type($dest) `->` type($out)";
+  
+  let builders = [
+    OpBuilder<(ins "Value":$input, "Value":$dest, "int64_t":$M, "int64_t":$N, "int":$dim0, "int":$dim1)>
+  ];
+}
+
+def C3_SumReduceTensorOp : C3_Op<"sum_reduce_tensor", [Pure]> {
+  let summary = "High-performance Tensor Sum Reduction";
+  let arguments = (ins
+    F32Tensor:$input,
+    F32Tensor:$dest,
+    I64Attr:$M,
+    I64Attr:$N,
+    I32Attr:$axis
+  );
+  let results = (outs F32Tensor:$out);
+  let assemblyFormat = "$input `,` $dest attr-dict `:` type($input) `,` type($dest) `->` type($out)";
+  
+  let builders = [
+    OpBuilder<(ins "Value":$input, "Value":$dest, "int64_t":$M, "int64_t":$N, "int":$axis)>
+  ];
+}
+
 #endif // C3_OPS

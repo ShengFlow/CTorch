@@ -71,6 +71,55 @@ void MatMulOp::build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsS
   odsState.getOrAddProperties<MatMulOp::Properties>().biasNumel = odsBuilder.getIntegerAttr(i64, biasNumel);
 }
 
+void MatMulTensorOp::build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState,
+                           ::mlir::Value lhs, ::mlir::Value rhs, ::mlir::Value dest,
+                           int64_t M, int64_t K, int64_t N,
+                           int transA, int transB, int act,
+                           int64_t tileM, int64_t tileN, int64_t biasNumel) {
+  odsState.addOperands(lhs);
+  odsState.addOperands(rhs);
+  odsState.addOperands(dest);
+  odsState.addTypes(dest.getType());
+  auto i64 = odsBuilder.getI64Type();
+  auto i32 = odsBuilder.getI32Type();
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().M = odsBuilder.getIntegerAttr(i64, M);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().K = odsBuilder.getIntegerAttr(i64, K);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().N = odsBuilder.getIntegerAttr(i64, N);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().transA = odsBuilder.getIntegerAttr(i32, transA);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().transB = odsBuilder.getIntegerAttr(i32, transB);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().act = odsBuilder.getIntegerAttr(i32, act);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().tileM = odsBuilder.getIntegerAttr(i64, tileM);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().tileN = odsBuilder.getIntegerAttr(i64, tileN);
+  odsState.getOrAddProperties<MatMulTensorOp::Properties>().biasNumel = odsBuilder.getIntegerAttr(i64, biasNumel);
+}
+
+void TransposeTensorOp::build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState,
+                              ::mlir::Value input, ::mlir::Value dest,
+                              int64_t M, int64_t N, int dim0, int dim1) {
+  odsState.addOperands(input);
+  odsState.addOperands(dest);
+  odsState.addTypes(dest.getType());
+  auto i64 = odsBuilder.getI64Type();
+  auto i32 = odsBuilder.getI32Type();
+  odsState.getOrAddProperties<TransposeTensorOp::Properties>().M = odsBuilder.getIntegerAttr(i64, M);
+  odsState.getOrAddProperties<TransposeTensorOp::Properties>().N = odsBuilder.getIntegerAttr(i64, N);
+  odsState.getOrAddProperties<TransposeTensorOp::Properties>().dim0 = odsBuilder.getIntegerAttr(i32, dim0);
+  odsState.getOrAddProperties<TransposeTensorOp::Properties>().dim1 = odsBuilder.getIntegerAttr(i32, dim1);
+}
+
+void SumReduceTensorOp::build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState,
+                              ::mlir::Value input, ::mlir::Value dest,
+                              int64_t M, int64_t N, int axis) {
+  odsState.addOperands(input);
+  odsState.addOperands(dest);
+  odsState.addTypes(dest.getType());
+  auto i64 = odsBuilder.getI64Type();
+  auto i32 = odsBuilder.getI32Type();
+  odsState.getOrAddProperties<SumReduceTensorOp::Properties>().M = odsBuilder.getIntegerAttr(i64, M);
+  odsState.getOrAddProperties<SumReduceTensorOp::Properties>().N = odsBuilder.getIntegerAttr(i64, N);
+  odsState.getOrAddProperties<SumReduceTensorOp::Properties>().axis = odsBuilder.getIntegerAttr(i32, axis);
+}
+
 // ==================== C3 方言类型解析/打印 ====================
 // 声明了 useDefaultTypePrinterParser，但 C3 方言当前没有任何自定义类型
 // （算子直接使用 LLVM 指针/标量类型），因此 TableGen 只生成声明不生成定义，

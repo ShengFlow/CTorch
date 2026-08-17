@@ -1,5 +1,6 @@
 /**
  * @file LinalgFusedGen.cpp
+ * @generation JIT-2.0 声明式区域融合后端（Linalg 纯逐元素融合实现）
  * @brief linalg.generic 多节点/多输出声明式融合编译器实现
  * @date 2026/08/15
  */
@@ -52,6 +53,19 @@ namespace c3 {
 
 // ======================= 纯逐元素图判定 =======================
 
+static bool isBroadcastableTo(const std::vector<size_t>& src, const std::vector<size_t>& dest) {
+    if (src.size() > dest.size()) return false;
+    size_t src_offset = dest.size() - src.size();
+    for (size_t i = 0; i < src.size(); ++i) {
+        size_t s_dim = src[i];
+        size_t d_dim = dest[i + src_offset];
+        if (s_dim != d_dim && s_dim != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool isPureElementwiseGraph(const Graph& graph) {
     static const bool disabled = [] {
         const char* v = std::getenv("C3_LINALG_FUSED");
@@ -87,17 +101,14 @@ bool isPureElementwiseGraph(const Graph& graph) {
         if (!ok) return false;
     }
 
-    // 2. [2026-08-16] 广播/形状一致性检查：
-    //    OneShot(Fused) linalg 管线统一用 base_numel 生成静态 tensor 形状（tensor<numel>），
-    //    且二元算子 bmod 硬编码 0（identity 索引映射），因此仅支持"全图元素等长"的纯逐元素图。
-    //    广播图（输入/输出 numel 不一致，如 [2,3]+[3]）会让 linalg.generic 推断出
-    //    shape mismatch 导致编译失败，必须回退旧 MLIR 手写管线（该管线通过 bmod 支持广播）。
-    size_t ref_numel = SIZE_MAX;
+    // 2. [2026-08-16] 多维高级广播 Linalg 化支持
+    //    支持各节点形状安全广播到图的最终输出形状。
+    const auto& graph_outputs = graph.outputs();
+    if (graph_outputs.empty()) return false;
+    const auto& out_shape = graph.node(graph_outputs[0]).out_desc.shape;
+
     for (const auto& node : nodes) {
-        size_t numel = node.out_desc.numel;
-        if (ref_numel == SIZE_MAX) {
-            ref_numel = numel;
-        } else if (numel != ref_numel) {
+        if (!isBroadcastableTo(node.out_desc.shape, out_shape)) {
             return false;
         }
     }
@@ -402,6 +413,9 @@ void applyLinalgLoweringPipeline(mlir::ModuleOp module) {
     // 阶段 2：scf → cf → LLVM
     {
         mlir::PassManager pm(module.getContext());
+        pm.addPass(mlir::createControlFlowSinkPass());
+        pm.addPass(mlir::createRemoveDeadValuesPass());
+        pm.addPass(mlir::createLoopInvariantCodeMotionPass());
         pm.addPass(mlir::createSCFToControlFlowPass());
         pm.addPass(mlir::createArithToLLVMConversionPass());
         pm.addPass(mlir::createConvertMathToLLVMPass());
@@ -499,19 +513,16 @@ struct LinalgFusedKernel::Impl {
         registry.insert<mlir::memref::MemRefDialect>();
         registry.insert<mlir::LLVM::LLVMDialect>();
         registry.insert<mlir::linalg::LinalgDialect>();
+        mlir::registerBuiltinDialectTranslation(registry);
+        mlir::registerLLVMDialectTranslation(registry);
+        context.appendDialectRegistry(registry);
+        context.loadAllAvailableDialects();
     }
 };
 
 LinalgFusedKernel::LinalgFusedKernel(const Graph& graph, int opt_level)
     : impl_(std::make_unique<Impl>()), num_inputs_(graph.inputs().size()),
       num_outputs_(graph.outputs().size()) {
-    impl_->context.loadDialect<mlir::arith::ArithDialect>();
-    impl_->context.loadDialect<mlir::math::MathDialect>();
-    impl_->context.loadDialect<mlir::scf::SCFDialect>();
-    impl_->context.loadDialect<mlir::func::FuncDialect>();
-    impl_->context.loadDialect<mlir::memref::MemRefDialect>();
-    impl_->context.loadDialect<mlir::LLVM::LLVMDialect>();
-    impl_->context.loadDialect<mlir::linalg::LinalgDialect>();
 
     impl_->heldModule = buildLinalgFusedModule(impl_->context, graph, num_inputs_, num_outputs_);
     mlir::ModuleOp module = *impl_->heldModule;
@@ -522,9 +533,6 @@ LinalgFusedKernel::LinalgFusedKernel(const Graph& graph, int opt_level)
         module.dump();
         llvm::errs() << "==== end ====\n";
     }
-
-    mlir::registerBuiltinDialectTranslation(impl_->context);
-    mlir::registerLLVMDialectTranslation(impl_->context);
 
     // 缓存 Key 串，混入 graph.toString() 保证唯一性，防止不同操作图由于节点数/输入输出数相同而撞 key
     std::string cache_graph = std::string("linalg_fused_") + graph.toString()

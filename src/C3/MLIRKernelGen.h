@@ -1,5 +1,8 @@
 /**
  * @file MLIRKernelGen.h
+ * @generation JIT-2.x MLIR 标量单算子 IR 后端
+ * @note generateFromGraphMLIR 开头内嵌 3.0 路由 tryBuildLinalgElementwise
+ *       （命中单节点逐元素则改走 LinalgElementwiseGen），待下轮物理分家时迁出。
  * @brief C3 JIT MLIR kernel 生成器（Phase 1: MLIR/LLVM 后端）
  * @details 将 Graph 编译为 MLIR module，通过标准 lowering pipeline 降至 LLVM IR，
  *          再经 ExecutionEngine JIT 编译为原生函数指针。替代 HandwrittenKernelGen。
@@ -17,7 +20,8 @@
 #ifndef CTORCH_C3_MLIR_KERNEL_GEN_H
 #define CTORCH_C3_MLIR_KERNEL_GEN_H
 
-#include "HandwrittenKernelGen.h"  // 复用 GeneratedKernel 定义
+#include "C3/GeneratedKernel.h"  // 复用 GeneratedKernel 定义 (SHARED)
+#include <mutex>
 
 namespace mlir {
     class MLIRContext;
@@ -27,6 +31,8 @@ namespace mlir {
 
 namespace ct {
 namespace c3 {
+
+extern std::mutex c3_global_mlir_mutex;
 
 /**
  * @brief 从 Graph 生成 MLIR 编译的 kernel（Phase 1 LLVM 后端）
@@ -54,7 +60,7 @@ mlir::OwningOpRef<mlir::ModuleOp> buildMLIRModule(mlir::MLIRContext& context, co
  *          CFToLLVM → FuncToLLVM → MemRefToLLVM → ReconcileUnrealizedCasts
  *          跑完 module 在 LLVM dialect, 可直接喂 mlir::translateModuleToLLVMIR
  */
-void applyLoweringPipeline(mlir::ModuleOp module);
+void applyLoweringPipeline(mlir::ModuleOp module, int opt_level = 3);
 
 } // namespace c3
 } // namespace ct

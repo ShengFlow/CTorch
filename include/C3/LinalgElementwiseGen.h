@@ -1,5 +1,6 @@
 /**
  * @file LinalgElementwiseGen.h
+ * @generation JIT-2.0 声明式单算子后端（Linalg 逐元素路线）
  * @brief 用 linalg.generic 声明式生成逐元素 kernel（JIT 2.0 路线 A 移植）
  *
  * 背景：主库 `MLIRKernelGen.cpp` 的逐元素算子（Add/Mul/ReLU/Sigmoid/...）当前是

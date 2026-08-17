@@ -285,5 +285,11 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         root.reset();
     }
 
+#ifndef CT_DISABLE_C3
+    // [优化 2026-08-16] 每次反向传播结束时，清空未消费的反向融合结果与 miss 标记。
+    // 防止随着训练批次（Batch）演进，节点地址重用时误匹配到 Stale Tensor 或悬垂指针导致 SIGSEGV/UAF 崩溃。
+    ct::c3::C3BackwardCapture::getInstance().clearCallScopedState();
+#endif
+
     AutoGrad::EnableGrad = original_enable_grad;
 }

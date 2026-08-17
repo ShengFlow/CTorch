@@ -1,25 +1,30 @@
 /**
- * @file HandwrittenKernelGen.h
- * @brief C3 JIT 手写 kernel 生成器内部接口
- * @details 供 C3Engine.cpp 调用，不对外暴露。
- * @date 2026/7/31
+ * @file GeneratedKernel.h
+ * @generation SHARED 跨代共享基础设施（编译产物统一接口）
+ * @brief JIT 2.0 / 2.x / 3.0 三代后端共用的编译产物结构体。
+ * @details 本结构体曾定义在 src/C3/HandwrittenKernelGen.h（JIT-2.0 头文件）内，
+ *          因三代共用而迁出至此，避免"共享类型住在旧版头文件"的归属混乱。
+ *          - JIT-2.0  填 func / fused_func / multi_func（裸函数指针）
+ *          - JIT-2.x  填 func（MLIR 标量单算子编译产物）
+ *          - JIT-3.0  填 func_any（LinalgElementwiseKernel 执行器，捕获 shared_ptr）
+ *
+ * @date 2026/8/16
  */
 
-#ifndef CTORCH_C3_HANDWRITTEN_KERNEL_GEN_H
-#define CTORCH_C3_HANDWRITTEN_KERNEL_GEN_H
+#ifndef CTORCH_C3_GENERATED_KERNEL_H
+#define CTORCH_C3_GENERATED_KERNEL_H
 
+#include <cstddef>
 #include <functional>
-#include "../../include/C3/Graph.h"
+#include <vector>
 #include "../../include/C3/C3KernelRegistry.h"
 
 namespace ct {
 namespace c3 {
 
-// C3KernelFunc 类型定义在 C3KernelRegistry.h 中，此处复用
-
 /**
  * @struct GeneratedKernel
- * @brief 编译产物的统一接口，HandwrittenKernelGen 和 MLIRKernelGen 共用。
+ * @brief 编译产物的统一接口，HandwrittenKernelGen、MLIRKernelGen、Linalg*Gen 三代共用。
  */
 struct GeneratedKernel {
     C3KernelFunc func = nullptr;
@@ -45,10 +50,7 @@ struct GeneratedKernel {
     std::vector<size_t> fused_out_shape;
 };
 
-/// 从 Graph 生成 JIT kernel
-GeneratedKernel generateFromGraph(const Graph& graph);
-
 } // namespace c3
 } // namespace ct
 
-#endif
+#endif // CTORCH_C3_GENERATED_KERNEL_H

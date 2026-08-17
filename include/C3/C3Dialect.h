@@ -1,3 +1,7 @@
+/**
+ * @generation JIT-3.0 C3 Dialect 方言定义（C3Ops.td 自动生成）
+ * @brief C3 MLIR Dialect 声明
+ */
 #ifndef CTORCH_C3_C3_DIALECT_H
 #define CTORCH_C3_C3_DIALECT_H
 

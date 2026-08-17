@@ -121,8 +121,23 @@ set(CT-Core
         # [Fix] v0.5.2 Linux build: Metal/MPS .mm 文件 macOS 专属, 下面 if(APPLE) 块条件添加
         # (DTK clang 17 不支持 Objective-C runtime, 编 .mm 会失败)
         src/DeviceAllocator/AllocatorManager.cpp
+)
+
+# ==================================================================
+# [C3Core 独立库 2026-08-17] C3 JIT 编译器作为逻辑独立的 OBJECT 库。
+#
+# 为什么用 OBJECT 库而非 STATIC/SHARED：
+#   C3 与 CTorch 宿主存在双向依赖 —— C3 依赖 Tensor/Ctools/Node（宿主侧），
+#   而 CtorchScheduler.cpp / ComputeCore.cpp 又反向调用 C3（C3BackwardCapture、
+#   C3KernelRegistry、C3HotPathManager）。STATIC 库会产生链接环，SHARED 库会
+#   破坏 JIT/dlsym 符号可见性。OBJECT 库在编译单元层面完全独立（include dirs、
+#   compile defs、MLIR 依赖全部挂在 C3Core 上），链接阶段再与 CTorch 合并，
+#   实现"构建独立 + 零行为差异"。未来物理拆 repo 时，只需把 C3Core 换成
+#   add_subdirectory 引入的外部静态库即可。
+#
+# ---- 无条件 C3 核心源文件 ----
+set(CT-C3-Core
         src/C3/Graph.cpp
-        src/C3/HandwrittenKernelGen.cpp
         src/C3/C3Engine.cpp
         src/C3/GraphMerger.cpp
         src/C3/PGOManager.cpp
@@ -137,21 +152,24 @@ set(CT-Core
 # 注: 完整 if 块 (含 ${CT-MPS-OPs} 引用) 必须在 set(CT-MPS-OPs) 之后
 #     L106 这里只 list APPEND MetalDevice.mm + MPSAllocator.mm (单独 set)
 
-# MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译
+# MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译（归入 C3Core 库）
+set(CT-C3-MLIR-Core
+        src/C3/MLIRKernelGen.cpp
+        src/C3/JITCache.cpp
+        src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
 if(CT_ENABLE_MLIR)
-    list(APPEND CT-Core src/C3/MLIRKernelGen.cpp)
-    list(APPEND CT-Core src/C3/JITCache.cpp)
-    list(APPEND CT-Core src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
-    list(APPEND CT-Core src/C3/C3Dialect.cpp)
+    list(APPEND CT-C3-MLIR-Core src/C3/C3Dialect.cpp)
+    list(APPEND CT-C3-MLIR-Core src/C3/C3DialectLowering.cpp)
     # [2026-08-15] linalg.generic 声明式逐元素 kernel（JIT 2.0 路线 A 移植，STATUS_CONTEXT 4.9/4.7-2）
-    list(APPEND CT-Core src/C3/LinalgElementwiseGen.cpp)
-    list(APPEND CT-Core src/C3/LinalgFusedGen.cpp)
-    list(APPEND CT-Core src/C3/LinalgOneShotGen.cpp)
+    list(APPEND CT-C3-MLIR-Core src/C3/LinalgElementwiseGen.cpp)
+    list(APPEND CT-C3-MLIR-Core src/C3/LinalgFusedGen.cpp)
+    list(APPEND CT-C3-MLIR-Core src/C3/LinalgOneShotGen.cpp)
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
 # 仅在 DCU 节点 build (需要 DTK 24.04+ + libgcvm.so + hipBLAS)
 # macOS 上 WITH_DCU 默认 OFF (build 不会失败)
+set(CT-C3-DCU-Core)
 option(CT_ENABLE_DCU "Enable Hygon DCU (gfx906) backend for C3" OFF)
 if(CT_ENABLE_DCU)
     # 1. ROCM 路径 (DTK 24.04+)
@@ -191,12 +209,39 @@ if(CT_ENABLE_DCU)
 
     find_package(hip REQUIRED)
 
-    # 4. DCU 编译宏 + 源文件
+    # 4. DCU 编译宏 + 源文件（归入 C3Core 库）
     add_definitions(-DCT_ENABLE_DCU=1 -DWITH_DCU=1)
-    list(APPEND CT-Core src/C3/GCVMBridge.cpp)
-    list(APPEND CT-Core src/C3/DCUCompiledKernel.cpp)
+    list(APPEND CT-C3-DCU-Core src/C3/GCVMBridge.cpp)
+    list(APPEND CT-C3-DCU-Core src/C3/DCUCompiledKernel.cpp)
 
     message(STATUS "DCU backend enabled: GCVM at ${GCVM_LIBRARY}, hipBLAS at ${HIPBLAS_LIBRARY}")
+endif()
+
+# ==================================================================
+# [C3Core 独立库 2026-08-17] C3 JIT 编译器作为逻辑独立的 OBJECT 库。
+# 编译单元独立（include dirs、compile defs 挂在 C3Core 上），链接阶段
+# 通过 $<TARGET_OBJECTS:C3Core> 与 CTorch 合并，实现"构建独立 + 零行为差异"。
+# 未来物理拆 repo 时只需把 C3Core 换成 add_subdirectory 引入的外部静态库。
+add_library(C3Core OBJECT
+    ${CT-C3-Core}
+    ${CT-C3-MLIR-Core}
+    ${CT-C3-DCU-Core}
+)
+
+target_include_directories(C3Core
+    PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+if(CT_ENABLE_MLIR)
+    target_include_directories(C3Core SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+    target_compile_definitions(C3Core PUBLIC CT_ENABLE_MLIR=1)
+endif()
+
+if(CT_ENABLE_DCU)
+    target_include_directories(C3Core SYSTEM PUBLIC ${GCVM_INCLUDE_DIR})
+    target_compile_definitions(C3Core PUBLIC CT_ENABLE_DCU=1 WITH_DCU=1)
 endif()
 
 set(CT-Core-Headers
@@ -424,6 +469,16 @@ set_target_properties(CTorch PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION ${CT_ENABLE_LTO}
 )
 
+# [C3Core 2026-08-17] 把 C3Core OBJECT 库的对象并入 CTorch 的链接面。
+# 注意：target_link_libraries(CTorch PUBLIC C3Core) 对「OBJECT 库链接 OBJECT 库」
+# 不会把 C3Core 对象传递到下游（CMake 已知限制：OBJECT 对象不经过中间 OBJECT 库传递）。
+# 正确姿势是用 PUBLIC target_sources + $<TARGET_OBJECTS:...>：它进入 CTorch 的
+# INTERFACE_SOURCES，消费 CTorch 的可执行文件会自动把 C3Core 的 object 拉进链接。
+target_sources(CTorch PUBLIC $<TARGET_OBJECTS:C3Core>)
+
+# C3Core 的接口需求（include dirs / compile defs）也要随 CTorch 一起传播
+target_link_libraries(CTorch PUBLIC C3Core)
+
 # 包含头文件目录
 target_include_directories(CTorch
         PUBLIC
@@ -462,6 +517,7 @@ if(CT_ENABLE_MLIR)
         MLIRExecutionEngine
     )
     add_dependencies(CTorch CTorchC3Gen)
+    add_dependencies(C3Core CTorchC3Gen)
 endif()
 
 # 海光 DCU 链接 (v0.5 DCU 接入, 2026-08-10)

@@ -20,6 +20,7 @@
 #include "C3/C3BackwardCapture.h"
 #include "C3/C3KernelRegistry.h"
 #include "C3/C3Engine.h"
+#include "C3/C3Cleanup.h"
 
 using namespace ct;
 using namespace ct::c3;
@@ -551,9 +552,7 @@ int main() {
     }
 
     // 安全退出
-    engine.shutdown();
-    engine.clearCache();
-    C3KernelRegistry::getInstance().uninstallAll();
+    ct::c3::shutdownAll();
 
     // 验证
     // 说明：MatMul 单 kernel 的 JIT 精度为 1e-4 量级（与 eager AMX 路径相比），

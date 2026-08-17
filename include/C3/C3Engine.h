@@ -1,5 +1,6 @@
 /**
  * @file C3Engine.h
+ * @generation SHARED 跨代编译引擎接口（doCompile 内串起 JIT-2.0/2.x/3.0）
  * @brief CTorch JIT 编译引擎公共接口
  * @details 提供将计算图（Graph）编译为后端 kernel 的能力，并管理编译产物缓存。
  *          当前为公共接口层，具体 Graph 定义与 kernel 实现位于 src/JIT 模块。
@@ -37,11 +38,14 @@ struct EngineState;
 /**
  * @enum C3Backend
  * @brief JIT 编译后端选择
+ * @note [已弃用] Handwritten 模式（JIT 1.0 clang++ 编译落盘后端）已彻底废弃删除。
+ *       目前默认且强制采用 MLIR 统一后端（支持 JIT 2.0/3.0），
+ *       即便显式指定为 Handwritten，在编译期或运行期亦会安全重定向到 MLIR。
  */
 enum class C3Backend {
-    /** @brief 手写 C++ kernel → clang++ 编译 .so */
+    /** @brief [已废弃] JIT 1.0 手写 C++ kernel 后端 (不推荐使用，内部强制重定向到 MLIR) */
     Handwritten = 0,
-    /** @brief MLIR → LLVM IR → ExecutionEngine JIT */
+    /** @brief JIT 2.x/3.0 统一 MLIR 后端（图算子 -> C3 Dialect -> Linalg/SCF -> LLVM JIT） */
     MLIR = 1,
 };
 
@@ -51,12 +55,8 @@ enum class C3Backend {
  * @details 控制编译目标设备、后端选择、优化级别、算子融合策略与缓存行为。
  */
 struct CompileOptions {
-    /** @brief JIT 编译后端，默认 Handwritten */
-    #ifdef CT_ENABLE_MLIR
-    C3Backend backend = C3Backend::MLIR;   ///< 默认 MLIR 后端
-#else
-    C3Backend backend = C3Backend::Handwritten; ///< 无 MLIR 时回退 Handwritten（仅测试）
-#endif
+    /** @brief JIT 编译后端，默认采用 3.0 MLIR 后端 */
+    C3Backend backend = C3Backend::MLIR;
     /** @brief 目标设备，默认 CPU */
     DeviceType target_device = DeviceType::kCPU;
     /** @brief 优化级别：0=关闭优化，1=基础优化，2=O2，3=O3/Ofast（默认，MLIR 后端生产优化级别） */
@@ -195,6 +195,14 @@ public:
         (void)op_type; (void)shapes;
         return false;
     }
+
+    /**
+     * @brief 返回该 kernel 的编译优化级别 (0=O0, 1=O1, 2=O2, 3=O3, 4=Ofast)
+     */
+    [[nodiscard]] virtual int optLevel() const { return opt_level_; }
+
+protected:
+    int opt_level_ = 3;
 };
 
 /**

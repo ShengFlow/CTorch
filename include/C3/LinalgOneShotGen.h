@@ -1,5 +1,6 @@
 /**
  * @file LinalgOneShotGen.h
+ * @generation JIT-3.0 One-Shot 统一融合后端设计
  * @brief C3 JIT 3.0: 统一 C3-to-Linalg Lowering + Linalg Fusion + One-Shot Bufferization 极致优化管线
  * @date 2026/08/15
  */

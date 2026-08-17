@@ -1715,5 +1715,18 @@ void C3BackwardCapture::clear() {
     pending_compiles_.clear();
 }
 
+void C3BackwardCapture::clearCallScopedState() {
+    std::lock_guard<std::mutex> lock1(fusion_mutex_);
+    std::unique_lock<std::shared_mutex> lock2(intercepted_mutex_);
+    std::lock_guard<std::mutex> lock4(miss_marker_mutex_);
+
+    recent_sequence_.clear();
+    recent_grad_shapes_.clear();
+    recent_input_shapes_.clear();
+    recent_forward_inputs_.clear();
+    pending_intercepted_.clear();
+    miss_marker_nodes_.clear();
+}
+
 } // namespace c3
 } // namespace ct

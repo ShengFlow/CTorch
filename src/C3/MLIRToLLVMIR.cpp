@@ -60,6 +60,10 @@ namespace c3 {
 
 #ifdef CT_ENABLE_MLIR
 
+#include <mutex>
+
+extern std::mutex c3_global_mlir_mutex;
+
 namespace {
 
 // MLIR 翻译接口需要 registerBuiltinDialectTranslation + registerLLVMDialectTranslation
@@ -67,6 +71,7 @@ namespace {
 // MLIR 的 register 函数是幂等的, 多调无副作用, 不用 once_flag
 // (教训: 之前用 static once_flag 导致第二个 MLIRContext 没注册, 报 missing registration)
 inline void ensureLLVMTranslationRegistered(mlir::MLIRContext& ctx) {
+    std::lock_guard<std::mutex> lock(c3_global_mlir_mutex);
     mlir::registerBuiltinDialectTranslation(ctx);
     mlir::registerLLVMDialectTranslation(ctx);
 }

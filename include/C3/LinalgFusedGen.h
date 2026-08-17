@@ -1,5 +1,6 @@
 /**
  * @file LinalgFusedGen.h
+ * @generation JIT-2.0 声明式区域融合后端（Linalg 纯逐元素融合设计）
  * @brief 用 linalg.generic 声明式生成任意多节点/多输出逐元素融合 kernel（JIT 2.0 路线 A 大一统）
  *
  * 背景：多节点前向和反向融合链包含大量的逐元素算子。目前是通过 `buildFusedMultiNode` 手写 LLVM 标量/向量循环。

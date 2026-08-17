@@ -1,5 +1,6 @@
 /**
  * @file LinalgElementwiseGen.cpp
+ * @generation JIT-2.0 声明式单算子后端（Linalg 逐元素实现）
  * @brief linalg.generic 声明式逐元素 kernel 生成器（移植自 exp_linalg_elementwise PoC）
  *
  * 技术要点（见 STATUS_CONTEXT 4.9）：
@@ -14,6 +15,7 @@
 
 #include "C3/LinalgElementwiseGen.h"
 #include "C3/JITCache.h"
+#include "MLIRKernelGen.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -472,6 +474,10 @@ struct LinalgElementwiseKernel::Impl {
         registry.insert<mlir::memref::MemRefDialect>();
         registry.insert<mlir::LLVM::LLVMDialect>();
         registry.insert<mlir::linalg::LinalgDialect>();
+        mlir::registerBuiltinDialectTranslation(registry);
+        mlir::registerLLVMDialectTranslation(registry);
+        context.appendDialectRegistry(registry);
+        context.loadAllAvailableDialects();
     }
 };
 
@@ -479,13 +485,6 @@ LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level
                                                  int rhs_mod)
     : impl_(std::make_unique<Impl>()), op_(op), num_inputs_(elementwiseOpNumInputs(op)),
       rhs_mod_(rhs_mod) {
-    impl_->context.loadDialect<mlir::arith::ArithDialect>();
-    impl_->context.loadDialect<mlir::math::MathDialect>();
-    impl_->context.loadDialect<mlir::scf::SCFDialect>();
-    impl_->context.loadDialect<mlir::func::FuncDialect>();
-    impl_->context.loadDialect<mlir::memref::MemRefDialect>();
-    impl_->context.loadDialect<mlir::LLVM::LLVMDialect>();
-    impl_->context.loadDialect<mlir::linalg::LinalgDialect>();
 
     // module 所有权交给 Impl::heldModule 持有：ExecutionEngine 对 builder 是延迟回调
     // （首次 materialize 才 translate），该 Operation 必须存活到那次调用之后（引擎析构）。
@@ -499,9 +498,6 @@ LinalgElementwiseKernel::LinalgElementwiseKernel(ElementwiseOp op, int opt_level
                      << "):\n";
         module.dump();
     }
-
-    mlir::registerBuiltinDialectTranslation(impl_->context);
-    mlir::registerLLVMDialectTranslation(impl_->context);
 
     // 缓存 key 语义串：区分 (op, opt_level, rhs_mod)，保持与 JITCache 1.0 graph key 格式一致
     std::string cache_graph = std::string("linalg_ew_") + elementwiseOpName(op_)

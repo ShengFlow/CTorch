@@ -1,5 +1,6 @@
 /**
  * @file C3Cleanup.h
+ * @generation SHARED 跨代退出清理
  * @brief C3 退出清理公共 helper
  * @details 统一 C3 端到端测试/程序的退出清理序列，确保所有 CompiledKernel / LLVM
  *          module 在静态析构前释放，避免退出时 recursive_mutex / removeModule 崩溃。

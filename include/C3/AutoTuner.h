@@ -1,5 +1,6 @@
 /**
  * @file AutoTuner.h
+ * @generation JIT-2.0 手写后端调优工具
  * @brief C3 kernel auto-tuner using QEA, GA, and GridSearch optimizers
  * @details Defines the tuning search space for MatMul tile parameters and
  *          provides comparison utilities for evaluating different optimization

@@ -341,5 +341,68 @@ C3KernelRegistry::findFusedKernelForFirstOp(
     return std::nullopt;
 }
 
+void C3KernelRegistry::install(op op_type, DeviceType dev,
+                               std::shared_ptr<CompiledKernel> kernel,
+                               const KernelShapeInfo& shapes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto key = makeKey(op_type, dev, shapes);
+    auto it = entries_.find(key);
+    if (it != entries_.end() && it->second.active && it->second.kernel) {
+        if (kernel->optLevel() <= it->second.kernel->optLevel()) {
+            // 如果已有的同形状 kernel 的编译优化等级更高，则跳过本次安装（即低优化度内核不能覆盖已存在的高优化度内核）
+            return;
+        }
+    }
+    C3Entry e;
+    e.kernel = std::move(kernel);
+    e.shapes = shapes;
+    e.active = true;
+    entries_[key] = std::move(e);
+    install_count_.fetch_add(1, std::memory_order_release);
+#ifdef CT_DEBUG
+    fprintf(stderr, "[DBG] INSTALL op=%d dev=%d key3=%zu lhs=[%s] rhs=[%s]\n",
+            (int)op_type, (int)dev, key.third,
+            shapeDebug(shapes.lhs_shape).c_str(), shapeDebug(shapes.rhs_shape).c_str());
+#endif
+}
+
+void C3KernelRegistry::installFused(std::shared_ptr<CompiledKernel> kernel,
+                                    op op_type, const KernelShapeInfo& shapes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::string key = makeFusedKey(op_type, shapes);
+    auto it = fused_entries_.find(key);
+    if (it != fused_entries_.end() && it->second.active && it->second.kernel) {
+        if (kernel->optLevel() <= it->second.kernel->optLevel()) {
+            return;
+        }
+    }
+    fused_entries_[key] = {std::move(kernel), shapes, true};
+    install_count_.fetch_add(1, std::memory_order_release);
+}
+
+void C3KernelRegistry::installBackward(const std::string& backward_key,
+                                       std::shared_ptr<CompiledKernel> kernel,
+                                       const std::vector<size_t>& grad_shape,
+                                       const std::vector<size_t>& out_shape,
+                                       const std::vector<size_t>& fwd_input_map,
+                                       size_t num_inputs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = backward_entries_.find(backward_key);
+    if (it != backward_entries_.end() && it->second.active && it->second.kernel) {
+        if (kernel->optLevel() <= it->second.kernel->optLevel()) {
+            return;
+        }
+    }
+    BackwardEntry e;
+    e.kernel = std::move(kernel);
+    e.grad_shape = grad_shape;
+    e.out_shape = out_shape;
+    e.fwd_input_map = fwd_input_map;
+    e.num_inputs = num_inputs;
+    e.active = true;
+    backward_entries_[backward_key] = std::move(e);
+    install_count_.fetch_add(1, std::memory_order_release);
+}
+
 } // namespace c3
 } // namespace ct

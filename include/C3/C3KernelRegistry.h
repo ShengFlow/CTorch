@@ -1,5 +1,6 @@
 /**
  * @file C3KernelRegistry.h
+ * @generation SHARED 跨代内核注册表（三代共用 kernel 注册/查找）
  * @brief C3 JIT 内核注册表 — 线程安全的热替换与回退机制
  * @details 存储 C3 编译后的 kernel 函数指针 + 形状签名。
  *          调度器在 dispatch 时优先查询此注册表，命中则使用 C3 kernel；
@@ -127,22 +128,7 @@ public:
      */
     void install(op op_type, DeviceType dev,
                  std::shared_ptr<CompiledKernel> kernel,
-                 const KernelShapeInfo& shapes) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto key = makeKey(op_type, dev, shapes);
-        C3Entry e;
-        e.kernel = std::move(kernel);
-        e.shapes = shapes;
-        e.active = true;
-        entries_[key] = std::move(e);
-        install_count_.fetch_add(1, std::memory_order_release);
-        // [Dev] v0.5.2+ (2026-08-09): 热路径 fprintf 包 CT_DEBUG
-#ifdef CT_DEBUG
-        fprintf(stderr, "[DBG] INSTALL op=%d dev=%d key3=%zu lhs=[%s] rhs=[%s]\n",
-                (int)op_type, (int)dev, key.third,
-                shapeDebug(shapes.lhs_shape).c_str(), shapeDebug(shapes.rhs_shape).c_str());
-#endif
-    }
+                 const KernelShapeInfo& shapes);
 
     /**
      * @brief 旧 install API (deprecated, 仅保留兼容)
@@ -327,12 +313,7 @@ public:
      * @param shapes 形状签名（含 fused_pattern）
      */
     void installFused(std::shared_ptr<CompiledKernel> kernel,
-                      op op_type, const KernelShapeInfo& shapes) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::string key = makeFusedKey(op_type, shapes);
-        fused_entries_[key] = {std::move(kernel), shapes, true};
-        install_count_.fetch_add(1, std::memory_order_release);
-    }
+                      op op_type, const KernelShapeInfo& shapes);
 
     /**
      * @brief 尝试执行融合 kernel（声明，实现在 .cpp 中）
@@ -357,18 +338,7 @@ public:
                          const std::vector<size_t>& grad_shape,
                          const std::vector<size_t>& out_shape,
                          const std::vector<size_t>& fwd_input_map,
-                         size_t num_inputs = 1) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        BackwardEntry e;
-        e.kernel = std::move(kernel);
-        e.grad_shape = grad_shape;
-        e.out_shape = out_shape;
-        e.fwd_input_map = fwd_input_map;
-        e.num_inputs = num_inputs;
-        e.active = true;
-        backward_entries_[backward_key] = std::move(e);
-        install_count_.fetch_add(1, std::memory_order_release);
-    }
+                         size_t num_inputs = 1);
 
     /**
      * @brief 尝试执行 backward kernel

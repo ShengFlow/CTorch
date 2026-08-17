@@ -1,5 +1,6 @@
 /**
  * @file C3Config.h
+ * @generation SHARED 跨代开关配置（所有 C3_* env var 集中于此）
  * @brief C3 子功能统一开关体系
  * @details 集中管理 C3 各子功能的开启/关闭，替代散落的 getenv 与硬编码宏。
  *          每个子功能支持两级控制：
