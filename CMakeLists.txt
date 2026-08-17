@@ -70,20 +70,22 @@ if(CT_ENABLE_MLIR)
     include(AddMLIR)
 
     # C3 Dialect TableGen 自动生成配置 (Stage 2.2/2.3)
-    set(C3_TD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/include/C3/C3Ops.td")
+    # [2026-08-17] C3 已拆分为独立 submodule（挂在 c3/），.td 位于 c3/include/C3/
+    set(C3_TD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/c3/include")
+    set(C3_TD_SRC "${C3_TD_DIR}/C3/C3Ops.td")
     set(LLVM_TARGET_DEFINITIONS ${C3_TD_SRC})
 
     # 包含 MLIR / LLVM 的 include 路径以便找到 OpBase.td
     list(APPEND MLIR_TABLEGEN_FLAGS "-I${MLIR_INCLUDE_DIRS}")
     list(APPEND MLIR_TABLEGEN_FLAGS "-I${LLVM_INCLUDE_DIRS}")
 
-    mlir_tablegen(C3Ops.h.inc -gen-op-decls "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
-    mlir_tablegen(C3Ops.cpp.inc -gen-op-defs "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
-    mlir_tablegen(C3Dialect.h.inc -gen-dialect-decls -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
-    mlir_tablegen(C3Dialect.cpp.inc -gen-dialect-defs -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+    mlir_tablegen(C3Ops.h.inc -gen-op-decls "-I${MLIR_INCLUDE_DIRS}" "-I${C3_TD_DIR}")
+    mlir_tablegen(C3Ops.cpp.inc -gen-op-defs "-I${MLIR_INCLUDE_DIRS}" "-I${C3_TD_DIR}")
+    mlir_tablegen(C3Dialect.h.inc -gen-dialect-decls -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${C3_TD_DIR}")
+    mlir_tablegen(C3Dialect.cpp.inc -gen-dialect-defs -dialect=c3 "-I${MLIR_INCLUDE_DIRS}" "-I${C3_TD_DIR}")
 
-    set(LLVM_TARGET_DEFINITIONS "${CMAKE_CURRENT_SOURCE_DIR}/include/C3/C3Combine.td")
-    mlir_tablegen(C3Combine.cpp.inc -gen-rewriters "-I${MLIR_INCLUDE_DIRS}" "-I${CMAKE_CURRENT_SOURCE_DIR}/include")
+    set(LLVM_TARGET_DEFINITIONS "${C3_TD_DIR}/C3/C3Combine.td")
+    mlir_tablegen(C3Combine.cpp.inc -gen-rewriters "-I${MLIR_INCLUDE_DIRS}" "-I${C3_TD_DIR}")
 
     add_public_tablegen_target(CTorchC3Gen)
     include_directories(${CMAKE_CURRENT_BINARY_DIR})
@@ -136,15 +138,16 @@ set(CT-Core
 #   add_subdirectory 引入的外部静态库即可。
 #
 # ---- 无条件 C3 核心源文件 ----
+# [2026-08-17] C3 已拆分为独立 submodule（挂在 c3/），源文件位于 c3/src/C3/
 set(CT-C3-Core
-        src/C3/Graph.cpp
-        src/C3/C3Engine.cpp
-        src/C3/GraphMerger.cpp
-        src/C3/PGOManager.cpp
-        src/C3/C3BackwardCapture.cpp
-        src/C3/C3KernelRegistry.cpp
-        src/C3/RollingHash.cpp
-        src/C3/RegionFusionRegistry.cpp
+        c3/src/C3/Graph.cpp
+        c3/src/C3/C3Engine.cpp
+        c3/src/C3/GraphMerger.cpp
+        c3/src/C3/PGOManager.cpp
+        c3/src/C3/C3BackwardCapture.cpp
+        c3/src/C3/C3KernelRegistry.cpp
+        c3/src/C3/RollingHash.cpp
+        c3/src/C3/RegionFusionRegistry.cpp
 )
 
 # [Fix] v0.5.2 Linux build: Metal/MPS .mm 文件 macOS 专属, 下面 if APPLE 块条件添加
@@ -154,16 +157,16 @@ set(CT-C3-Core
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译（归入 C3Core 库）
 set(CT-C3-MLIR-Core
-        src/C3/MLIRKernelGen.cpp
-        src/C3/JITCache.cpp
-        src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
+        c3/src/C3/MLIRKernelGen.cpp
+        c3/src/C3/JITCache.cpp
+        c3/src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
 if(CT_ENABLE_MLIR)
-    list(APPEND CT-C3-MLIR-Core src/C3/C3Dialect.cpp)
-    list(APPEND CT-C3-MLIR-Core src/C3/C3DialectLowering.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/C3Dialect.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/C3DialectLowering.cpp)
     # [2026-08-15] linalg.generic 声明式逐元素 kernel（JIT 2.0 路线 A 移植，STATUS_CONTEXT 4.9/4.7-2）
-    list(APPEND CT-C3-MLIR-Core src/C3/LinalgElementwiseGen.cpp)
-    list(APPEND CT-C3-MLIR-Core src/C3/LinalgFusedGen.cpp)
-    list(APPEND CT-C3-MLIR-Core src/C3/LinalgOneShotGen.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/LinalgElementwiseGen.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/LinalgFusedGen.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/LinalgOneShotGen.cpp)
 endif()
 
 # ---- 海光 DCU 后端 (v0.5 DCU 接入, 2026-08-10) ----
@@ -211,8 +214,8 @@ if(CT_ENABLE_DCU)
 
     # 4. DCU 编译宏 + 源文件（归入 C3Core 库）
     add_definitions(-DCT_ENABLE_DCU=1 -DWITH_DCU=1)
-    list(APPEND CT-C3-DCU-Core src/C3/GCVMBridge.cpp)
-    list(APPEND CT-C3-DCU-Core src/C3/DCUCompiledKernel.cpp)
+    list(APPEND CT-C3-DCU-Core c3/src/C3/GCVMBridge.cpp)
+    list(APPEND CT-C3-DCU-Core c3/src/C3/DCUCompiledKernel.cpp)
 
     message(STATUS "DCU backend enabled: GCVM at ${GCVM_LIBRARY}, hipBLAS at ${HIPBLAS_LIBRARY}")
 endif()
@@ -232,6 +235,8 @@ target_include_directories(C3Core
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/c3/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/c3/src
 )
 
 if(CT_ENABLE_MLIR)
@@ -258,13 +263,6 @@ set(CT-Core-Headers
         include/DeviceAllocator.h
         include/MetalDevice.h
         include/ctQALS/ctQALS.h
-        include/C3/C3Engine.h
-        include/C3/C3Config.h
-        include/C3/Graph.h
-        include/C3/GraphMerger.h
-        include/C3/Tracer.h
-        include/C3/C3KernelRegistry.h
-        include/C3/C3BackwardCapture.h
 )
 
 set(CT-Nodes-Headers
@@ -484,6 +482,9 @@ target_include_directories(CTorch
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        # [2026-08-17] C3 submodule 内头文件（宿主源码用 #include "C3/..." 引用）
+        ${CMAKE_CURRENT_SOURCE_DIR}/c3/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/c3/src
 )
 
 # MLIR/LLVM 头文件与链接

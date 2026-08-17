@@ -17,7 +17,7 @@
 #include "../../include/Arena.h"
 #include "../../include/AutoGrad.h"
 #ifndef CT_DISABLE_C3
-#include "../../include/C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 接通 C3 backward fusion
+#include "C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 接通 C3 backward fusion
 #endif
 #ifdef __OBJC__
 #include "../../src/kernels/kernels.h"
