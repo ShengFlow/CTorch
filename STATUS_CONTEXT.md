@@ -1,4 +1,19 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-16 跑测回归 - 区域融合觉醒)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-17 PyTorch Eager 对照 + C3 性能回归定位)
+
+## 🔴 紧急：C3 性能回归根因（2026-08-17 定位）
+
+**现象**（同一台 M3 Pro，CMake 配置除 CT_DISABLE_C3 外全同：Release + LTO + MLIR）：
+- PyTorch Eager（对照，1 epoch）：409ms / **0.874ms/batch**，acc 12.91%（初始化随机种子不同所致，非速度问题）
+- CTorch Eager（build_c3off）：**28.658ms/batch**（13.4s/epoch）→ 比 PyTorch 慢 32.8×（单线程 AMX/cblas）
+- CTorch C3（build_release）：**75.226ms/batch**（35.2s/epoch）→ 比自家 Eager 还慢 2.6× ❌
+- C3 + `CT_DISABLE_RF=1`（禁区域融合）：22.2s/epoch（↓13s）→ 区域融合贡献 ~13s 慢量
+
+**根因**：JIT 3.0 把 MatMul 纳入融合（`c3.matmul` op，MLIRKernelGen.cpp:1195/1504），但 `MatMulOpLowering`（C3DialectLowering.cpp:467）生成的 MatMul 是**标量四重嵌套 scf.for 循环**（逐元素 load/mul/add），注释宣称的 small_inline / tiled / **cblas** 三策略里 **cblas 未实现**。生成的标量循环即便经 LLVM 自动向量化（makeOptimizingTransformer，MLIRKernelGen.cpp:1634，此前修复过 ~3.6x 慢），也远拼不过 Eager 的 `cblas_sgemm`（AMX 协处理器，MatMul_AMX_kernel.cpp:93）。前向区域融合（fused_hit≈934）与反向融合（bw_hit≈2332）里的 MatMul 全部走慢路径 → 净效果 C3 < Eager。
+- 历史健康 C3 1.6s/epoch 时期 MatMul **不在**融合内（见 project_memory："把 MatMul 纳入反向融合"是未做大工程），故当时快。
+
+**修复方向**（供下轮执行）：① 在 `MatMulOpLowering` 真正实现 cblas 策略（大 matmul 直呼 `cblas_sgemm`，仅小 matmul 走 inline/tiled）；② 或暂将 MatMul 移出融合（保元素级融合 + Eager cblas MatMul）。预期修复后 C3 应回到 <Eager 并接近历史 5.9× 加速。
+
+---
 
 ## 📌 项目定位与持久记忆
 

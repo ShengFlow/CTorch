@@ -17,6 +17,8 @@ extern "C" void* MTLCreateSystemDefaultDevice(void);
 #include <cpuid.h>
 #endif
 
+thread_local bool g_in_recomputation = false;
+
 bool CtorchScheduler::isDeviceAvailable(DeviceType dev_type) {
     // [Dev] v0.5.2+ (2026-08-09): static cache 让 system call (cpuid / MTLCreateSystemDefaultDevice)
     // 只在第一次调用时执行,后续 O(1) 查表。原版每次 dispatch 都调系统调用 0.5-1us,
@@ -468,26 +470,21 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 }
 
 // ============================================================================
-// 【Stub 2026-08-08】Region Fusion 预走接口 tryRegionDispatch()
+// Region Fusion 预走接口 tryRegionDispatch()
 // ============================================================================
-// 当前状态：fix/c3-p0-on-wip 分支把 tryRegionDispatch 的 3 个调用点加到了 CtorchScheduler.h
-// (L301, L358, L490, L503 区域) 但 .cpp 实现还没写。这是 link 错误根因。
-// DEBT-NEW-7 region fusion:向后匹配(以当前 dispatch 的 op 结尾的 region)
-// 总是缓存最近 K 个 dispatch 的 external inputs(按 buildFusedGraph 约定),
-// 当 extended trace 末尾形成已知 region 模式时,从缓存里取出所有外部 input invoke kernel。
+// Prewalk 状态机（三态）：
+//   kIdle → 检查当前 op 是否是某 region 的首个 op → 设 kPrewalking + 返回 placeholder
+//   kPrewalking → 中间 op: 验证 op_seq 匹配 + 缓存 external inputs + 返回 placeholder
+//                → 末尾 op: 执行融合 kernel, 恢复 kIdle, 返回真实结果
+//                → 不匹配: 设 kFallback, 返回 nullopt (dispatch 走 eager)
+//   kFallback → 重置 kIdle, 返回 nullopt
 //
-// 当前实现假设:
-//   - region 的 op_seq[0] 是 region 入口 op,所有 inputs 是外部
-//   - 后续 op 的 inputs[0] 是 chain (来自前一个 op 的输出),其余是外部
-//   - 缓存容量 K=8(够 MatMul+Add+ReLU+MatMul+Add+ReLU 这种长链)
-// 简化:不预测未来,只匹配"过去+当前=完整 region"。Eager 会执行 past ops,
-// kernel 会重新计算(浪费了 past op 的 eager work,但保证正确性)。
+// 同时保留原有的"末尾 op 匹配"路径作为 kIdle 时的 fallback（向后兼容）。
 #ifndef CT_DISABLE_C3
 std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     op op_type, const Tensor* inputs, size_t num_inputs, DeviceType /*dev*/) {
 #ifdef CT_PROFILE_PERF
     auto _t0 = std::chrono::steady_clock::now();
-    // RAII-like defer:把 dispatch 耗时统计放这里,确保所有 return 路径都统计到
     struct PerfGuard {
         std::chrono::steady_clock::time_point t0;
         PerfGuard(std::chrono::steady_clock::time_point t) : t0(t) {}
@@ -498,21 +495,213 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         }
     } _guard(_t0);
 #endif
-    // [Dev 2026-08-09 tryRegionDispatch 无候选短路] 第一道: 0 region 时 O(1) 返回
-    // 53848 dispatch/epoch 大量 trace 拷贝 + hash + 7 次循环是无谓开销
-    // 训练开始时 region 还没注册, 或 evict 后清空, 此分支直接返回
     auto& registry = ct::c3::RegionFusionRegistry::getInstance();
     if (registry.installedCountNoLock() == 0) {
         return std::nullopt;
     }
 
-    // [Dev 2026-08-11 候选短路提前] 第二道: 当前 op 不可能作为任何已注册 region
-    // 的末尾 op 时 O(1) 返回. 注意: 这是"末尾"过滤 (当前 dispatch 触发的 op),
-    // 不是"任意位置"过滤 (region 可以任意 op 结尾, 但匹配窗口只到当前 op,
-    // 所以末尾匹配即可)。
-    // 放在 trace 快照之前: mayMatchAsLastOp 只依赖 op_type + 已注册 region,
-    // 与 trace 无关。提前过滤可省掉下面 region_trace_mutex_ 锁 + vector 拷贝
-    // (训练期大多数 op 都不是任一 region 末尾, 此分支命中率高)。
+    // ================================================================
+    // Prewalk 状态机
+    // ================================================================
+
+    // --- kPrewalking: 正在预走 region ---
+    if (prewalk_state_ == PrewalkState::kPrewalking && matched_region_) {
+        const auto& seq = matched_region_->op_seq;
+        size_t next_pos = prewalk_pos_ + 1;
+
+        // 检查 op 类型是否匹配 region 的下一个 op
+        if (next_pos < seq.size() && seq[next_pos] == op_type) {
+            prewalk_pos_ = next_pos;
+
+            // 缓存 external inputs (非 chain 输入)
+            // MatMul: 2 个 external (a, b)
+            // 二元非 MatMul: 1 个 external (inputs[1], inputs[0] 是 chain)
+            // 一元: 0 个 external
+            if (op_type == op::MatMul) {
+                for (size_t k = 0; k < num_inputs; ++k)
+                    prewalk_external_inputs_.push_back(inputs[k]);
+            } else if (num_inputs > 1) {
+                prewalk_external_inputs_.push_back(inputs[1]);
+            }
+
+            // 如果是最后一个 op → 执行融合 kernel
+            if (prewalk_pos_ == seq.size() - 1) {
+                // 收集当前 op 的 external inputs
+                if (op_type == op::MatMul) {
+                    // 已经在上面加了
+                } else if (num_inputs > 1) {
+                    // 已经在上面加了
+                }
+
+                std::vector<size_t> out_shape = computeOutputShape(op_type, inputs, num_inputs);
+                if (out_shape.empty()) {
+                    prewalk_state_ = PrewalkState::kIdle;
+                    matched_region_ = nullptr;
+                    prewalk_external_inputs_.clear();
+                    return std::nullopt;
+                }
+
+                // 预读取 external inputs 验证 data pointer
+                for (const auto& t : prewalk_external_inputs_) {
+                    if (!t.data_read<float>()) {
+                        prewalk_state_ = PrewalkState::kIdle;
+                        matched_region_ = nullptr;
+                        prewalk_external_inputs_.clear();
+                        return std::nullopt;
+                    }
+                }
+
+                try {
+                    ct::c3::KernelShapeInfo shapes;
+                    if (!prewalk_external_inputs_.empty())
+                        shapes.lhs_shape = prewalk_external_inputs_.front().shape();
+                    if (prewalk_external_inputs_.size() > 1)
+                        shapes.rhs_shape = prewalk_external_inputs_[1].shape();
+                    shapes.out_shape = out_shape;
+                    shapes.fused_pattern = "prewalk-fusion";
+
+                    Tensor kernel_result = ct::c3::C3KernelRegistry::getInstance()
+                        .executeFusedWithInputs(matched_region_->kernel,
+                                                prewalk_external_inputs_, shapes);
+                    // 恢复状态
+                    prewalk_state_ = PrewalkState::kIdle;
+                    matched_region_ = nullptr;
+                    prewalk_external_inputs_.clear();
+
+                    if (kernel_result.storage().empty()) {
+                        return std::nullopt;
+                    }
+                    return kernel_result;
+                } catch (...) {
+                    prewalk_state_ = PrewalkState::kIdle;
+                    matched_region_ = nullptr;
+                    prewalk_external_inputs_.clear();
+                    return std::nullopt;
+                }
+            }
+
+            // 中间 op: 返回 placeholder
+            std::vector<size_t> ph_shape = computeOutputShape(op_type, inputs, num_inputs);
+            if (ph_shape.empty()) {
+                prewalk_state_ = PrewalkState::kFallback;
+                return std::nullopt;
+            }
+            Tensor placeholder(PlaceholderTag{}, ph_shape, DType::kFloat, inputs[0].device());
+            std::vector<Tensor> captured_inputs;
+            for (size_t i = 0; i < num_inputs; ++i) {
+                captured_inputs.push_back(inputs[i]);
+            }
+            auto mat_fn = [op_type, captured_inputs]() -> Tensor {
+                struct RecomputeGuard {
+                    RecomputeGuard() { g_in_recomputation = true; }
+                    ~RecomputeGuard() { g_in_recomputation = false; }
+                } guard;
+
+                if (op_type == op::MatMul) {
+                    return captured_inputs[0].matmul(captured_inputs[1]);
+                } else if (op_type == op::Add) {
+                    return captured_inputs[0] + captured_inputs[1];
+                } else if (op_type == op::ReLU) {
+                    return captured_inputs[0].relu();
+                } else if (op_type == op::Sigmoid) {
+                    return captured_inputs[0].sigmoid();
+                } else if (op_type == op::Tanh) {
+                    return captured_inputs[0].tanh();
+                }
+                return Tensor();
+            };
+            placeholder.setLazyMaterializer(std::make_shared<LazyMaterializer>(mat_fn));
+            return placeholder;
+        } else {
+            // op 不匹配 region 序列 → 回退
+            prewalk_state_ = PrewalkState::kFallback;
+            matched_region_ = nullptr;
+            prewalk_external_inputs_.clear();
+            return std::nullopt;
+        }
+    }
+
+    // --- kFallback: 回退到 eager ---
+    if (prewalk_state_ == PrewalkState::kFallback) {
+        prewalk_state_ = PrewalkState::kIdle;
+        matched_region_ = nullptr;
+        prewalk_external_inputs_.clear();
+        // 继续走下面的"末尾 op 匹配"路径
+    }
+
+    // --- kIdle: 检查是否是 region 首个 op → 启动 prewalk ---
+    // 直接开启 prewalk（训练+推理均生效）
+    if (prewalk_state_ == PrewalkState::kIdle) {
+        if (registry.mayMatchAsFirstOp(op_type)) {
+            // 构建 first_input_shapes
+            std::vector<std::vector<size_t>> first_input_shapes;
+            if (op_type == op::MatMul && num_inputs >= 2) {
+                first_input_shapes = {inputs[0].shape(), inputs[1].shape()};
+            } else if (num_inputs > 0) {
+                first_input_shapes = {inputs[0].shape()};
+            }
+
+            auto* region = registry.findRegionByFirstOp(op_type, first_input_shapes);
+            if (region && region->active && region->cost.worthwhile) {
+                // 启动 prewalk!
+                matched_region_ = region;
+                prewalk_pos_ = 0;
+                prewalk_state_ = PrewalkState::kPrewalking;
+                prewalk_external_inputs_.clear();
+
+                // 缓存首个 op 的 external inputs
+                if (op_type == op::MatMul) {
+                    for (size_t k = 0; k < num_inputs; ++k)
+                        prewalk_external_inputs_.push_back(inputs[k]);
+                } else if (num_inputs > 1) {
+                    prewalk_external_inputs_.push_back(inputs[1]);
+                }
+
+                // 如果 region 只有 1 个 op（不可能，min=2），直接执行
+                // 正常情况：返回 placeholder，等后续 op 到达后执行
+                std::vector<size_t> ph_shape = computeOutputShape(op_type, inputs, num_inputs);
+                if (ph_shape.empty()) {
+                    prewalk_state_ = PrewalkState::kFallback;
+                    matched_region_ = nullptr;
+                    prewalk_external_inputs_.clear();
+                    return std::nullopt;
+                }
+                Tensor placeholder(PlaceholderTag{}, ph_shape, DType::kFloat, inputs[0].device());
+                std::vector<Tensor> captured_inputs;
+                for (size_t i = 0; i < num_inputs; ++i) {
+                    captured_inputs.push_back(inputs[i]);
+                }
+                auto mat_fn = [op_type, captured_inputs]() -> Tensor {
+                    struct RecomputeGuard {
+                        RecomputeGuard() { g_in_recomputation = true; }
+                        ~RecomputeGuard() { g_in_recomputation = false; }
+                    } guard;
+
+                    if (op_type == op::MatMul) {
+                        return captured_inputs[0].matmul(captured_inputs[1]);
+                    } else if (op_type == op::Add) {
+                        return captured_inputs[0] + captured_inputs[1];
+                    } else if (op_type == op::ReLU) {
+                        return captured_inputs[0].relu();
+                    } else if (op_type == op::Sigmoid) {
+                        return captured_inputs[0].sigmoid();
+                    } else if (op_type == op::Tanh) {
+                        return captured_inputs[0].tanh();
+                    }
+                    return Tensor();
+                };
+                placeholder.setLazyMaterializer(std::make_shared<LazyMaterializer>(mat_fn));
+                return placeholder;
+            }
+        }
+    }
+
+    // ================================================================
+    // 原有路径：末尾 op 匹配（向后兼容）
+    // 当 prewalk 没启动或 region 首个 op 不匹配时，走此路径
+    // ================================================================
+
+    // 第二道: 当前 op 不可能作为任何已注册 region 的末尾 op 时 O(1) 返回
     if (!registry.mayMatchAsLastOp(op_type)) {
         return std::nullopt;
     }
@@ -529,7 +718,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     extended.push_back(op_type);
     auto extended_prefix = ct::c3::RollingHash::computePrefixHashes(extended);
     if (extended_prefix.size() < 2) {
-        return std::nullopt;  // 至少需要 2 个 op 才有 region 意义
+        return std::nullopt;
     }
 
     size_t current_pos = extended.size() - 1;
@@ -543,7 +732,6 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
             }
         }
     } else if (prewalk_cache_count_ > 0) {
-        // 从新到旧 (逻辑下标递减) 找最近一个 MatMul 的输入 shape
         for (size_t li = prewalk_cache_count_; li-- > 0;) {
             const auto& e = prewalkAt(li);
             if (e.op_type == op::MatMul && !e.original_inputs.empty()) {
@@ -555,7 +743,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         }
     }
 
-    // 手动实现向后匹配:从最长可能长度到最短,寻找 sub_hash = entry.hash 的 region
+    // 向后匹配:从最长可能长度到最短
     ct::c3::RegionEntry* match = nullptr;
     for (size_t len = std::min<size_t>(current_pos + 1, 8); len >= 2 && !match; --len) {
         size_t start = current_pos + 1 - len;
@@ -571,29 +759,17 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         return std::nullopt;
     }
 
-    // M1 1.3 (2026-08-09): FusionCostModel 接到 tryRegionDispatch
-    // 调度前 ROI 评估: 二次验证 match->cost.worthwhile, sanity check + 可观察性
-    // 理论上 installWithCost 已 gating (entry.active = worth_it), 此分支理论上不触发,
-    // 但某些路径走 install() 绕过 cost gating, 这里是最后一道防线
-    // (O(0) 读字段 + 1 atomic, 不会拖慢 hot path)
-#ifdef CT_PROFILE_PERF
-    if (!match->cost.worthwhile) {
-        ct::c3::C3KernelRegistry::getInstance().recordPerfRegionCostRejected();
-    }
-#endif
     if (!match->cost.worthwhile) {
         return std::nullopt;
     }
 
-    // 匹配成功!需要从 prewalk_cache_ 里取最近 (match.len - 1) 个 dispatch 的 external inputs
+    // 从 prewalk_cache_ 取 external inputs
     size_t needed = match->len - 1;
     if (prewalk_cache_count_ < needed) {
         return std::nullopt;
     }
 
-    // DEBT-NEW-7 重要:rolling hash 只按 op_seq 算,不同 shape 的同 op_seq 序列
-    // 会产生相同 hash(registry 多次 install 会互相覆盖)。所以 match 之后必须
-    // 验证 shape,否则会用错 shape 的 kernel 计算。
+    // shape 校验
     if (!match->first_input_shapes.empty() && needed > 0) {
         const auto& first_cached = prewalkAt(prewalk_cache_count_ - needed).original_inputs;
         if (!first_cached.empty()) {
@@ -616,8 +792,6 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         for (size_t k = 0; k < num_inputs; ++k) external_inputs.push_back(inputs[k]);
     } else if (num_inputs > 1) {
         external_inputs.push_back(inputs[1]);
-    } else {
-        // 一元 op:input 是 chain,不取
     }
 
     std::vector<size_t> out_shape = computeOutputShape(op_type, inputs, num_inputs);
@@ -625,12 +799,10 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         return std::nullopt;
     }
 
-    // 预读取 external inputs 验证 data pointer
     for (const auto& t : external_inputs) {
         if (!t.data_read<float>()) return std::nullopt;
     }
 
-    // invoke kernel(通过 C3KernelRegistry::executeFusedWithInputs,内含 fused_hit 计数)
     try {
         ct::c3::KernelShapeInfo shapes;
         if (!external_inputs.empty()) shapes.lhs_shape = external_inputs.front().shape();
@@ -647,7 +819,6 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     } catch (...) {
         return std::nullopt;
     }
-    // (timing 由 _guard RAII 在函数退出时统计,见函数入口 PerfGuard)
 }
 
 std::vector<size_t> CtorchScheduler::computeOutputShape(
@@ -718,6 +889,7 @@ void CtorchScheduler::resetRegionFusion() {
     prewalk_cache_head_ = 0;
     matched_region_ = nullptr;
     prewalk_pos_ = 0;
+    prewalk_external_inputs_.clear();
     cached_region_ = nullptr;
     cached_hash_ = 0;
     // 清理所有已注册单算子及融合 JIT 内核，确保测试间“环境隔离”

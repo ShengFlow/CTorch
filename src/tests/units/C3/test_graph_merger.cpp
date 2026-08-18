@@ -283,3 +283,52 @@ TEST(GraphMergerEdgeCase, SequentialFanOut) {
     EXPECT_EQ(info.graph.inputCount(), 5u);
     EXPECT_TRUE(info.graph.isValid());
 }
+
+TEST(GraphMergerEdgeCase, MIMODAGMerge) {
+    // 构造一个模拟 MIMO/DAG 的合并测试
+    // 子图 0: 1 个输入, 1 个输出 (e.g. ReLU_Grad)
+    Graph g0;
+    auto desc = TensorDesc::fromShape({4, 4});
+    size_t g0_in0 = g0.addInput(desc);
+    size_t g0_node0 = g0.addNode(ReLUNode{desc}, {g0_in0}, desc);
+    g0.markOutput(g0_node0);
+
+    // 子图 1: 2 个输入, 1 个输出 (e.g. MatMul_W)
+    Graph g1;
+    size_t g1_in0 = g1.addInput(desc);
+    size_t g1_in1 = g1.addInput(desc);
+    size_t g1_node0 = g1.addNode(AddNode{desc, desc}, {g1_in0, g1_in1}, desc);
+    g1.markOutput(g1_node0);
+
+    // 子图 2: 2 个输入, 1 个输出 (e.g. MatMul_X)
+    Graph g2;
+    size_t g2_in0 = g2.addInput(desc);
+    size_t g2_in1 = g2.addInput(desc);
+    size_t g2_node0 = g2.addNode(MulNode{desc, desc}, {g2_in0, g2_in1}, desc);
+    g2.markOutput(g2_node0);
+
+    std::vector<Graph> sub_graphs = {g0, g1, g2};
+    MergeSpec spec;
+
+    // 链接 1：g0 (子图 0, 输出 0) -> g1 (子图 1, 输入 0)
+    spec.links.push_back(MergeLink{0, 0, 1, 0});
+    // 链接 2：g0 (子图 0, 输出 0) -> g2 (子图 2, 输入 0)
+    spec.links.push_back(MergeLink{0, 0, 2, 0});
+
+    MergedGraphInfo info = GraphMerger::merge(sub_graphs, spec);
+    EXPECT_TRUE(info.graph.isValid());
+
+    // 外部输入应为：g0.in0, g1.in1, g2.in1 = 3 个
+    EXPECT_EQ(info.external_input_ids.size(), 3u);
+
+    // 显式测试 clearOutputs 和重新标记
+    Graph& fg = info.graph;
+    fg.clearOutputs();
+    EXPECT_EQ(fg.outputCount(), 0u);
+
+    fg.markOutput(info.output_remap[0][0]);
+    fg.markOutput(info.output_remap[1][0]);
+    fg.markOutput(info.output_remap[2][0]);
+    EXPECT_EQ(fg.outputCount(), 3u);
+    EXPECT_TRUE(fg.isValid());
+}

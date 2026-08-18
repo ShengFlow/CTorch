@@ -104,6 +104,8 @@ inline bool c3OpDisabled(int op_id) {
 }} // namespace ct::detail
 #endif
 
+extern thread_local bool g_in_recomputation;
+
 class CtorchScheduler{
 
     // ========== [DEPRECATED] Trace-based fusion ==========
@@ -176,6 +178,8 @@ class CtorchScheduler{
     }
     ct::c3::RegionEntry* matched_region_ = nullptr;
     size_t prewalk_pos_ = 0;  // 当前预走到的位置（在 region 的 op_seq 中）
+    // [Prewalk] 缓存 region 执行所需的 external inputs（按 dispatch 顺序追加）
+    std::vector<Tensor> prewalk_external_inputs_;
 
     /// 缓存上次匹配的 region，避免空闲模式重复计算 hash
     ct::c3::RegionEntry* cached_region_ = nullptr;
@@ -191,20 +195,6 @@ class CtorchScheduler{
     /// 计算 op 的输出形状（用于预走占位符）
     std::vector<size_t> computeOutputShape(op op_type,
                                            const Tensor* inputs, size_t num_inputs) const;
-
-    /// 为预走占位张量构造惰性物化器（LazyBox）
-    /// @param cache 预走缓存（到目标 op 为止的前缀）
-    /// @param target_idx 目标 op 在 region op_seq 中的索引（物化到该 op 的输出）
-    /// @param dev 目标设备
-    /// @return 物化器（携带 eager 前缀重放闭包）；缓存为空时返回 nullptr
-    std::shared_ptr<LazyMaterializer> buildLazyMaterializer(
-        const std::vector<PrewalkEntry>& cache, size_t target_idx, DeviceType dev);
-
-    /// true prewalk 配套:创建 placeholder Tensor (空 storage + LazyMaterializer)
-    /// 闭包 re-run 当前 op(简化:cache 仅用于 future 优化,当前版本不重跑 prefix)
-    Tensor createPrewalkPlaceholder(
-        op op_type, const std::vector<Tensor>& inputs,
-        const std::vector<PrewalkEntry>& cache);
 #endif
 
 private:
@@ -356,6 +346,14 @@ public:
 
     template <op OpType>
     inline Tensor dispatch(const Tensor& a, const Tensor& b) {
+        if (g_in_recomputation) {
+            DeviceType target_dev = getTargetDevice(a, b);
+            BinaryKernelFunc func = selectBestBinary(OpType, target_dev, binary_kernels_);
+            if (func == nullptr) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");
+            }
+            return func(a, b);
+        }
 #ifndef CT_DISABLE_C3
         // [区域融合] 快速路径：预走模式中跳过 dtype/shape 检查，直接调用 tryRegionDispatch
         if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()) {
@@ -448,12 +446,9 @@ public:
         const bool c3_attemptable = !ct::detail::c3SingleKernelDisabled() &&
                                     !ct::detail::c3OpDisabled(static_cast<int>(OpType));
         const bool in_autograd = ct::detail::inAutogradScope(a.requires_grad(), b.requires_grad());
-        if (c3_attemptable && in_autograd) {
-            if (std::getenv("C3_AUTOGRAD_SINGLE") == nullptr) {
-                ct::c3::C3KernelRegistry::getInstance().recordBypass();
-            }
-        }
-        if (c3_attemptable && (!in_autograd || std::getenv("C3_AUTOGRAD_SINGLE") != nullptr)) {
+        // [实验] 直接允许 autograd scope 内执行单 kernel，不再 bypass
+        // 之前的"Eager→JIT 混合轨迹破坏训练一致性"假设需实测验证
+        if (c3_attemptable) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecute(OpType, a, b);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG
@@ -593,6 +588,14 @@ public:
 
     template <op OpType>
     inline Tensor dispatch(const Tensor& a) {
+        if (g_in_recomputation) {
+            DeviceType target_dev = a.device();
+            UnaryKernelFunc func = selectBestUnary(OpType, target_dev, unary_kernels_);
+            if (func == nullptr) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::PLATFORM_API, "Ctorch_Scheduler: 没有可用的Kernel");
+            }
+            return func(a);
+        }
 #ifdef CT_DEBUG
         // 无计数限制的 unary 追踪
         if constexpr (OpType == op::ReLU) {
@@ -633,12 +636,8 @@ public:
         const bool c3_attemptable_u = !ct::detail::c3SingleKernelDisabled() &&
                                       !ct::detail::c3OpDisabled(static_cast<int>(OpType));
         const bool in_autograd_u = ct::detail::inAutogradScope(a.requires_grad(), false);
-        if (c3_attemptable_u && in_autograd_u) {
-            if (std::getenv("C3_AUTOGRAD_SINGLE") == nullptr) {
-                ct::c3::C3KernelRegistry::getInstance().recordBypass();
-            }
-        }
-        if (c3_attemptable_u && (!in_autograd_u || std::getenv("C3_AUTOGRAD_SINGLE") != nullptr)) {
+        // [实验] 直接允许 autograd scope 内执行单 kernel，不再 bypass
+        if (c3_attemptable_u) {
             auto c3_result = ct::c3::C3KernelRegistry::getInstance().tryExecuteUnary(OpType, a);
             if (c3_result.has_value()) {
 #ifdef CT_DEBUG

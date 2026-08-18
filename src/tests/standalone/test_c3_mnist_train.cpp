@@ -18,6 +18,7 @@
 #include <vector>
 #include <csignal>
 #include <cstdio>
+#include <future>
 #include <execinfo.h>
 #include <unistd.h>
 
@@ -54,7 +55,7 @@ static constexpr size_t BATCH_SIZE = 128;
 static constexpr size_t HIDDEN1    = 256;
 static constexpr size_t HIDDEN2    = 128;
 static constexpr float  LR         = 0.001f;
-static constexpr int    EPOCHS     = 1;
+static constexpr int    EPOCHS     = 5;
 
 // ======================= 辅助函数 =======================
 
@@ -94,6 +95,8 @@ static float computeAccuracy(const Tensor& logits, const Tensor& labels) {
     return static_cast<float>(correct) / batch;
 }
 
+extern "C" void cblas_saxpy(const int N, const float alpha, const float *X, const int incX, float *Y, const int incY);
+
 // ======================= 训练 =======================
 
 /// 标准 MNIST 训练一个 epoch（与普通用户代码完全一致，无任何 C3 API）
@@ -105,25 +108,80 @@ static float trainEpoch(
     float total_loss = 0.0f;
     auto t0 = std::chrono::high_resolution_clock::now();
 
+    // 异步双缓冲 (Double-buffering prefetching) ── 用于并行化准备 one-hot 标签
+    Tensor one_hot_buffers[2] = {
+        Tensor(ShapeTag{}, {BATCH_SIZE, 10}, DType::kFloat, DeviceType::kCPU),
+        Tensor(ShapeTag{}, {BATCH_SIZE, 10}, DType::kFloat, DeviceType::kCPU)
+    };
+
+    auto fill_one_hot = [](const Tensor& by, Tensor& oh_dest, int actual_bs) {
+        oh_dest.zero();
+        const float* y_data = by.data_read<float>();
+        float* oh = oh_dest.data_write<float>();
+        for (int i = 0; i < actual_bs; ++i) {
+            oh[i * 10 + (int)y_data[i]] = 1.0f;
+        }
+    };
+
+    // 预备第 0 批的 one-hot
+    int init_end = std::min((int)BATCH_SIZE, (int)images.shape()[0]);
+    Tensor by_0 = labels.slice_dim0(0, init_end);
+    fill_one_hot(by_0, one_hot_buffers[0], init_end);
+
+    std::future<void> prefetch_future;
+
+    double fwd_time_acc = 0.0;
+    double loss_time_acc = 0.0;
+    double bwd_time_acc = 0.0;
+    double sgd_time_acc = 0.0;
+
     for (int b = 0; b < num_batches; ++b) {
         int start = b * BATCH_SIZE;
         int end = std::min(start + (int)BATCH_SIZE, (int)images.shape()[0]);
         int actual_bs = end - start;
 
-        // 取 batch
-        Tensor bx(ShapeTag{}, {static_cast<size_t>(actual_bs), 784}, DType::kFloat, DeviceType::kCPU);
-        std::memcpy(bx.data_write<float>(), images.data_read<float>() + start * 784,
-                    actual_bs * 784 * sizeof(float));
-        Tensor by(ShapeTag{}, {static_cast<size_t>(actual_bs)}, DType::kFloat, DeviceType::kCPU);
-        std::memcpy(by.data_write<float>(), labels.data_read<float>() + start,
-                    actual_bs * sizeof(float));
+        // 1. 沿第 0 维进行零拷贝切片 (Zero-copy views) ── 替代高开销的 memcpy 拷贝
+        Tensor bx = images.slice_dim0(start, actual_bs);
+        Tensor by = labels.slice_dim0(start, actual_bs);
+
+        // 2. 获取当前批次的 one-hot 标签
+        Tensor one_hot;
+        if (actual_bs == (int)BATCH_SIZE) {
+            one_hot = one_hot_buffers[b % 2];
+            // 确保上一批次的后台预取已经完成
+            if (prefetch_future.valid()) {
+                prefetch_future.get();
+            }
+        } else {
+            one_hot = Tensor(ShapeTag{}, {static_cast<size_t>(actual_bs), 10}, DType::kFloat, DeviceType::kCPU);
+            fill_one_hot(by, one_hot, actual_bs);
+        }
+
+        // 3. 异步预取并填充下一批次的 one-hot 标签到闲置缓冲区
+        int next_b = b + 1;
+        if (next_b < num_batches) {
+            int next_start = next_b * BATCH_SIZE;
+            int next_end = std::min(next_start + (int)BATCH_SIZE, (int)images.shape()[0]);
+            int next_actual_bs = next_end - next_start;
+
+            if (next_actual_bs == (int)BATCH_SIZE) {
+                Tensor next_by = labels.slice_dim0(next_start, next_actual_bs);
+                Tensor& next_oh_buf = one_hot_buffers[next_b % 2];
+                prefetch_future = std::async(std::launch::async, [fill_one_hot, next_by, &next_oh_buf, next_actual_bs]() {
+                    fill_one_hot(next_by, next_oh_buf, next_actual_bs);
+                });
+            }
+        }
 
         // 前向传播：标准 Tensor API，无任何 C3 痕迹
+        auto t_fwd_start = std::chrono::high_resolution_clock::now();
         Tensor z1 = bx.matmul(params[0]) + params[1];
         Tensor h1 = z1.relu();
         Tensor z2 = h1.matmul(params[2]) + params[3];
         Tensor h2 = z2.relu();
         Tensor logits = h2.matmul(params[4]) + params[5];
+        auto t_fwd_end = std::chrono::high_resolution_clock::now();
+        fwd_time_acc += std::chrono::duration<double, std::milli>(t_fwd_end - t_fwd_start).count();
 
 #ifdef CT_DEBUG
         // 调试：检查 h1 和 h2 的形状（每个 batch 都输出，用于定位 shape 漂移）
@@ -136,19 +194,18 @@ static float trainEpoch(
                 logits.shape().size() >= 2 ? logits.shape()[0] : 0, logits.shape().size() >= 2 ? logits.shape()[1] : 0);
 #endif
 
-        // one-hot 标签
-        Tensor one_hot(ShapeTag{}, {static_cast<size_t>(actual_bs), 10}, DType::kFloat, DeviceType::kCPU);
-        one_hot.zero();
-        const float* y_data = by.data_read<float>();
-        float* oh = one_hot.data_write<float>();
-        for (int i = 0; i < actual_bs; ++i) oh[i * 10 + (int)y_data[i]] = 1.0f;
-
+        auto t_loss_start = std::chrono::high_resolution_clock::now();
         Tensor loss = logits.cross_entropy(one_hot);
         float loss_val = loss.item<float>();
         total_loss += loss_val;
+        auto t_loss_end = std::chrono::high_resolution_clock::now();
+        loss_time_acc += std::chrono::duration<double, std::milli>(t_loss_end - t_loss_start).count();
 
         // 反向传播
+        auto t_bwd_start = std::chrono::high_resolution_clock::now();
         AutoGrad::backward(loss.getRelatedNode(), false);
+        auto t_bwd_end = std::chrono::high_resolution_clock::now();
+        bwd_time_acc += std::chrono::duration<double, std::milli>(t_bwd_end - t_bwd_start).count();
 
         // TEMP-DIAG: 逐 batch loss + 最后一层权重梯度符号（排查单 kernel hotpath 破坏）
         {
@@ -167,11 +224,11 @@ static float trainEpoch(
             accuracies->push_back(computeAccuracy(logits, by));
         }
 
-        // SGD 更新
+        // SGD 更新 (向量化 BLAS cblas_saxpy 优化)
         auto sgd = [](Tensor& p) {
             float* gp = p.grad_ptr();
             float* pd = p.data_write<float>();
-            for (size_t i = 0; i < p.numel(); ++i) pd[i] -= gp[i] * LR;
+            cblas_saxpy((int)p.numel(), -LR, gp, 1, pd, 1);
         };
         if (b < 3) {
             const float* l0 = logits.data_read<float>();
@@ -188,14 +245,26 @@ static float trainEpoch(
                 fprintf(stderr, "  grad[%d] sum=%.4e nan=%zu\n", pi, s, nn);
             }
         }
+        auto t_sgd_start = std::chrono::high_resolution_clock::now();
         sgd(params[0]); sgd(params[1]); sgd(params[2]);
         sgd(params[3]); sgd(params[4]); sgd(params[5]);
         params[0].zero_grad(); params[1].zero_grad(); params[2].zero_grad();
         params[3].zero_grad(); params[4].zero_grad(); params[5].zero_grad();
+        auto t_sgd_end = std::chrono::high_resolution_clock::now();
+        sgd_time_acc += std::chrono::duration<double, std::milli>(t_sgd_end - t_sgd_start).count();
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
     *epoch_loss = total_loss / num_batches;
+
+    // 打印采样数据报告 (Hotspot Profile Output)
+    double total_measured = fwd_time_acc + loss_time_acc + bwd_time_acc + sgd_time_acc;
+    fprintf(stderr, "\n[HOTSPOT PROFILE] Total Measured: %.2f ms\n", total_measured);
+    fprintf(stderr, "  |-- Forward (JIT):   %.2f ms (%.1f%%)\n", fwd_time_acc, (fwd_time_acc/total_measured)*100);
+    fprintf(stderr, "  |-- Loss (CrossEnt): %.2f ms (%.1f%%)\n", loss_time_acc, (loss_time_acc/total_measured)*100);
+    fprintf(stderr, "  |-- Backward (Grad): %.2f ms (%.1f%%)\n", bwd_time_acc, (bwd_time_acc/total_measured)*100);
+    fprintf(stderr, "  |-- Optimizer (SGD):  %.2f ms (%.1f%%)\n", sgd_time_acc, (sgd_time_acc/total_measured)*100);
+
     return std::chrono::duration<double, std::milli>(t1 - t0).count();
 }
 

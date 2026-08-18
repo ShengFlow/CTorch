@@ -373,6 +373,24 @@ Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
     return result;
 }
 
+// 沿第0维切片（零拷贝视图）
+Tensor Tensor::slice_dim0(size_t start, size_t size) const {
+    if (_shape.empty()) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "slice_dim0: 标量张量无法切片");
+    }
+    if (start + size > _shape[0]) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "slice_dim0: 索引越界");
+    }
+    Tensor result(*this);
+    result._shape[0] = size;
+    result.computeStrides();
+    size_t stride0 = _strides.empty() ? 1 : _strides[0];
+    result._storage_offset = _storage_offset + start * stride0;
+    return result;
+}
+
 /**
  * @brief 广播张量到指定形状
  * @details 实现标准的NumPy风格广播规则，支持完整的广播逻辑

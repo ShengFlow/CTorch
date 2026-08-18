@@ -579,6 +579,11 @@ class Tensor {
     [[nodiscard]] size_t storage_offset() const noexcept { return _storage_offset; }
 
     /**
+     * @brief 设置存储偏移量（JIT 3.0 零拷贝输出分配）
+     */
+    void set_storage_offset(size_t offset) { _storage_offset = offset; }
+
+    /**
      * @brief 检查存储偏移量是否有效
      * @return 如果存储偏移量有效返回true，否则返回false
      */
@@ -778,6 +783,14 @@ class Tensor {
      * @return 重塑后的张量
      */
     Tensor reshape(const std::vector<size_t> &new_shape) const;
+
+    /**
+     * @brief 沿第0维切片（零拷贝视图）
+     * @param start 起始索引
+     * @param size 切片大小
+     * @return 切片后的零拷贝张量
+     */
+    Tensor slice_dim0(size_t start, size_t size) const;
 
     /**
      * @brief 广播张量到指定形状
