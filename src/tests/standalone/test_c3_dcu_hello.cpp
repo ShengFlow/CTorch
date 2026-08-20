@@ -12,7 +12,7 @@
  * 输出: PASS = 整条链路打通 (C3 → MLIR → GCVM → DCU execute 数值跟 eager 一致)
  *       FAIL = 哪一环失败 (带详细 error message)
  *
- * 探针 (probe-dcu-dtk24.sh) 跑通后实装 GCVM C API 真实签名, 当前是 stub
+ * 探针 (probe-dcu-dtk24.sh) 跑通后实装 GCVM C API 真实签名, 当前 is stub
  */
 #include "C3/C3Engine.h"
 #include "C3/C3KernelRegistry.h"
@@ -27,7 +27,7 @@
 #include <cmath>
 
 #ifdef WITH_DCU
-    #include <hip/hip_runtime.h>
+    #include <hsa/hsa.h>
 #endif
 
 using namespace ct;
@@ -44,21 +44,35 @@ int main() {
     std::cout << "✅ GCVM 可用" << std::endl;
     std::cout << std::endl;
 
-    // === 检查 DCU 设备 ===
 #ifdef WITH_DCU
-    int device_count = 0;
-    hipError_t err = hipGetDeviceCount(&device_count);
-    if (err != hipSuccess || device_count == 0) {
-        std::cerr << "❌ hipGetDeviceCount failed or no DCU devices: "
-                  << hipGetErrorString(err) << std::endl;
+    // Use HSA for device detection (no HIP dependency)
+    hsa_status_t hsa_st = hsa_init();
+    if (hsa_st != HSA_STATUS_SUCCESS) {
+        // Handle gracefully if already initialized by GCVM
+        if (hsa_st != 4104) {
+            std::cerr << "❌ hsa_init failed: " << hsa_st << std::endl;
+            return 1;
+        }
+    }
+    hsa_agent_t gpu_agent = {0};
+    auto find_gpu = [](hsa_agent_t agent, void* data) -> hsa_status_t {
+        hsa_device_type_t type;
+        hsa_agent_get_info(agent, HSA_AGENT_INFO_DEVICE, &type);
+        if (type == HSA_DEVICE_TYPE_GPU) {
+            *(hsa_agent_t*)data = agent;
+            return HSA_STATUS_INFO_BREAK;
+        }
+        return HSA_STATUS_SUCCESS;
+    };
+    hsa_st = hsa_iterate_agents(find_gpu, &gpu_agent);
+    if (gpu_agent.handle == 0) {
+        std::cerr << "❌ No DCU device found" << std::endl;
+        hsa_shut_down();
         return 1;
     }
-    std::cout << "✅ DCU 设备数: " << device_count << std::endl;
-    hipDeviceProp_t prop;
-    hipGetDeviceProperties(&prop, 0);
-    std::cout << "   DCU[0] 名称: " << prop.name << std::endl;
-    std::cout << "   DCU[0] 显存: " << (prop.totalGlobalMem / 1e9) << " GB" << std::endl;
-    std::cout << "   DCU[0] compute capability: " << prop.major << "." << prop.minor << std::endl;
+    char agent_name[64] = {0};
+    hsa_agent_get_info(gpu_agent, HSA_AGENT_INFO_NAME, agent_name);
+    std::cout << "✅ DCU 设备: " << agent_name << std::endl;
 #else
     std::cerr << "❌ WITH_DCU=OFF, 跳过" << std::endl;
     return 1;
@@ -83,7 +97,7 @@ int main() {
     std::cout << "--- Phase 2b: C3 compile (MLIR backend) ---" << std::endl;
     ct::c3::CompileOptions opts;
     opts.backend = ct::c3::C3Backend::MLIR;
-    opts.target_device = ct::DeviceType::kDCU;  // ⚠️ 触发 DCU 路径 (需要 C3Engine 扩展)
+    opts.target_device = DeviceType::kDCU;  // ⚠️ 触发 DCU 路径 (需要 C3Engine 扩展)
 
     // TODO: probe-adjust: 当前 C3Engine 不支持 target_device=kDCU
     // 临时: 用 macOS MLIR 编译, 然后手动接 GCVM

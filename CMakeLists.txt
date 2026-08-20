@@ -456,7 +456,7 @@ add_library(CTorch OBJECT
         ${CT-Core-Headers}
         ${CT-CPU-BASIC-OPs}
         ${CT-CPU-SIMD-OPs}
-        ${CT-AMX-OPs}
+        # ${CT-AMX-OPs} # [DCU Fix] AMX skipped on Linux/DCU
         ${CT-Nodes}
         ${CT-Nodes-Headers}
         ${CT-Distributed}
@@ -525,16 +525,25 @@ endif()
 # 仅 WITH_DCU=ON 时生效, 在 DCU 节点 build
 if(CT_ENABLE_DCU)
     target_link_libraries(CTorch PUBLIC gcvm hip::host hip::device hipblas ${HIPBLAS_LIBRARY})
+    # [DCU Fix] Link HSA runtime for direct code object loading
+    target_link_libraries(CTorch PUBLIC -L${ROCM_PATH}/hsa/lib -L${ROCM_PATH}/lib -L${ROCM_PATH}/.hyhal/lib -lhsa-runtime64)
     target_include_directories(CTorch SYSTEM PUBLIC ${GCVM_INCLUDE_DIR})
+    # [DCU Fix] Include HSA header path
+    target_include_directories(CTorch SYSTEM PUBLIC ${ROCM_PATH}/.hyhal/include)
     target_compile_definitions(CTorch PUBLIC CT_ENABLE_DCU=1 WITH_DCU=1)
 endif()
 
 add_compile_options(-march=native)
 
 # 链接 Accelerate 框架（用于 AMX BLAS 加速）
-target_link_libraries(CTorch PUBLIC "-framework Accelerate")
-target_link_libraries(CTorch PUBLIC "-framework Metal")
-target_link_libraries(CTorch PUBLIC "-framework Foundation")
+if(APPLE)
+    target_link_libraries(CTorch PUBLIC "-framework Accelerate")
+    target_link_libraries(CTorch PUBLIC "-framework Metal")
+    target_link_libraries(CTorch PUBLIC "-framework Foundation")
+else()
+    # [DCU Fix] Linux MPS stubs and HSA include
+    target_sources(CTorch PRIVATE src/kernels/MPS/MPS_kernel_stubs.cpp)
+endif()
 
 # [Fix] v0.5.2 Linux build: <filesystem> 在 libstdc++ 早期版本 (12.3 之前) 需要
 # link -lstdc++fs 兜底. macOS libc++ 自带 filesystem, 不需要.
