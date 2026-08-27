@@ -8,6 +8,7 @@
 #include <utility>
 #include <queue>
 #include <algorithm>
+#include <unordered_map>
 
 #include "../../include/AutoGrad/ComputeCore.h"
 #include "../../include/AutoGrad/Node.h"
@@ -150,6 +151,35 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     bool original_enable_grad = AutoGrad::EnableGrad;
     AutoGrad::EnableGrad = false;
 
+    // [BW-SEG 2026-08-27] env C3_BW_SEG=1：量化 backward 编排各段，定位非 MIMO 的 ~36ms/epoch
+    struct BwSeg {
+        enum { POP=0, GET=1, NBWD=2, MIMO=3, DEC=4, ADD=5, PUSH=6, CLEAR=7, NUM=8 };
+        static std::atomic<uint64_t>& N(int i){ static std::atomic<uint64_t> v[NUM]; return v[i]; }
+        static std::atomic<uint64_t>& C(int i){ static std::atomic<uint64_t> v[NUM]; return v[i]; }
+        static bool on(){ static bool e=[](){ auto* p = std::getenv("C3_BW_SEG"); return p && *p=='1'; }(); return e; }
+    };
+    struct BwSegGuard {
+        int s; std::chrono::steady_clock::time_point t0; bool on_;
+        BwSegGuard(int i): s(i), on_(BwSeg::on()) { if (on_) t0 = std::chrono::steady_clock::now(); }
+        ~BwSegGuard(){
+            if (!on_) return;
+            uint64_t d = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            BwSeg::N(s).fetch_add(d, std::memory_order_relaxed);
+            BwSeg::C(s).fetch_add(1, std::memory_order_relaxed);
+            static thread_local size_t acc = 0;
+            if ((++acc) % 20 == 0) {
+                const char* nm[8] = {"pop","get","nbwd","mimo","dec","add","push","clear"};
+                fprintf(stderr, "[BW-SEG]");
+                for (int i = 0; i < 8; ++i) {
+                    uint64_t n = BwSeg::N(i).load(), c = BwSeg::C(i).load();
+                    fprintf(stderr, " %s=%.2fms/%llu", nm[i], n*1e-3, (unsigned long long)c);
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+    };
+
     GradBucket &bucket = GradBucket::getInstance();
     bucket.clear();
 
@@ -177,7 +207,8 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
 
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing ready nodes");
     while (true) {
-        std::shared_ptr<Node> node = tryPopReadyNode();
+        std::shared_ptr<Node> node;
+        { BwSegGuard _g(BwSeg::POP); node = tryPopReadyNode(); }
         if (!node) {
             if (!bucket.empty()) {
                 CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Grad bucket not empty but no ready nodes");
@@ -188,10 +219,7 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node");
 
         std::vector<Tensor> grads;
-        if (!bucket.tryGetGrad(node, grads)) {
-            CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - No grad found for node, skipping");
-            continue;
-        }
+        { BwSegGuard _g(BwSeg::GET); bool ok = bucket.tryGetGrad(node, grads); if (!ok) { continue; } }
 
         CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing node backward");
 
@@ -214,25 +242,28 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
                     grads[0].sizes(),
                     fwd_inputs[0].sizes(),
                     fwd_inputs);
-                auto c3_result = ct::c3::C3BackwardCapture::getInstance().tryExecuteBackward(
+                std::optional<std::vector<Tensor>> c3_result_box;
+            { BwSegGuard _g(BwSeg::MIMO);
+              c3_result_box = ct::c3::C3BackwardCapture::getInstance().tryExecuteBackward(
                     node.get(), grads[0], fwd_inputs);
-                if (c3_result.has_value() && c3_result->size() == fwd_inputs.size()) {
+            }
+            if (c3_result_box.has_value() && c3_result_box->size() == fwd_inputs.size()) {
                     bool shape_ok = true;
-                    for (size_t i = 0; i < c3_result->size(); ++i) {
-                        if ((*c3_result)[i].sizes() != fwd_inputs[i].sizes()) {
+                    for (size_t i = 0; i < c3_result_box->size(); ++i) {
+                        if ((*c3_result_box)[i].sizes() != fwd_inputs[i].sizes()) {
                             shape_ok = false;
                             break;
                         }
                     }
                     if (shape_ok) {
-                        result.reserve(c3_result->size());
-                        for (size_t i = 0; i < c3_result->size(); ++i) {
+                        result.reserve(c3_result_box->size());
+                        for (size_t i = 0; i < c3_result_box->size(); ++i) {
                             result.push_back(GradPack{
-                                upstream[i], {(*c3_result)[i]}, static_cast<int>(i)});
+                                upstream[i], {(*c3_result_box)[i]}, static_cast<int>(i)});
                         }
 #ifdef CT_DEBUG
                         std::cerr << "[DBG-C3BW-WIRE] node=" << typeid(*node).name()
-                                  << " C3-HIT n_grads=" << c3_result->size() << std::endl;
+                                  << " C3-HIT n_grads=" << c3_result_box->size() << std::endl;
                         std::cerr.flush();
 #endif
                     }
@@ -248,24 +279,47 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
         }
 #endif
         if (result.empty()) {
-            result = node->backward(grads);
+            { BwSegGuard _g(BwSeg::NBWD);
+              // [BW-NBWD 2026-08-27] env C3_BW_SEG=1：按 node 类型分桶 eager backward 耗时
+              if (BwSeg::on()) {
+                  auto tm0 = std::chrono::steady_clock::now();
+                  result = node->backward(grads);
+                  uint64_t d = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - tm0).count();
+                  static thread_local std::unordered_map<std::string,uint64_t> nm, nc;
+                  std::string key = typeid(*node).name();
+                  nm[key] += d; nc[key]++;
+                  static thread_local size_t acc = 0;
+                  if ((++acc) % 20 == 0) {
+                      fprintf(stderr, "[BW-NBWD]");
+                      for (auto& kv : nm)
+                          fprintf(stderr, " %s=%.2fms/%llu", kv.first.c_str(),
+                                  kv.second*1e-3, (unsigned long long)nc[kv.first]);
+                      fprintf(stderr, "\n");
+                  }
+              } else {
+                  result = node->backward(grads);
+              }
+            }
         }
 
         if (!result.empty()) {
             CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding " + std::to_string(result.size()) + " grad packs");
 
             std::vector<std::shared_ptr<Node>> ready_nodes;
-            for (const auto &pack : result) {
+            { BwSegGuard _g(BwSeg::DEC);
+              for (const auto &pack : result) {
                 if (pack._targetNode && pack._targetNode->decrease()) {
                     ready_nodes.push_back(pack._targetNode);
                 }
+              }
             }
 
-            bucket.add(std::move(result));
+            { BwSegGuard _g(BwSeg::ADD); bucket.add(std::move(result)); }
 
             for (const auto &node : ready_nodes) {
                 CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding upstream node to ready queue");
-                addReadyNode(node);
+                { BwSegGuard _g(BwSeg::PUSH); addReadyNode(node); }
             }
         }
 
@@ -278,10 +332,10 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     
     if (retainGraph) {
         std::unordered_set<Node *> restored;
-        root->restoreRecursive(restored);
+        { BwSegGuard _g(BwSeg::CLEAR); root->restoreRecursive(restored); }
     } else {
         std::unordered_set<Node *> cleared;
-        root->clearRecursive(cleared);
+        { BwSegGuard _g(BwSeg::CLEAR); root->clearRecursive(cleared); }
         root.reset();
     }
 

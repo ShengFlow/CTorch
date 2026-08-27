@@ -45,27 +45,31 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
             tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
         } else {
             // 用调度器走 SIMD/AMX 加法，替代标量循环累加
-            size_t start_idx = 0;
-            while (start_idx < downStreamGrads.size() && downStreamGrads[start_idx].numel() == 0) {
-                ++start_idx;
-            }
-
             Tensor accumulated;
-            if (start_idx < downStreamGrads.size()) {
-                accumulated = downStreamGrads[start_idx];
-                for (size_t i = start_idx + 1; i < downStreamGrads.size(); ++i) {
-                    if (downStreamGrads[i].numel() > 0) {
-                        accumulated = accumulated + downStreamGrads[i];
-                    }
-                }
+            // 单梯度快速路径：绝大多数场景（SGD、单消费）只有一个下游梯度
+            if (downStreamGrads.size() == 1 && downStreamGrads[0].numel() > 0) {
+                accumulated = downStreamGrads[0];
             } else {
-                accumulated = Tensor(ShapeTag{}, tensor->shape(), tensor->dtype(), tensor->device());
-                accumulated.zero();
+                size_t start_idx = 0;
+                while (start_idx < downStreamGrads.size() && downStreamGrads[start_idx].numel() == 0) {
+                    ++start_idx;
+                }
+                if (start_idx < downStreamGrads.size()) {
+                    accumulated = downStreamGrads[start_idx];
+                    for (size_t i = start_idx + 1; i < downStreamGrads.size(); ++i) {
+                        if (downStreamGrads[i].numel() > 0) {
+                            accumulated = accumulated + downStreamGrads[i];
+                        }
+                    }
+                } else {
+                    accumulated = Tensor(ShapeTag{}, tensor->shape(), tensor->dtype(), tensor->device());
+                    accumulated.zero();
+                }
             }
 
-            auto existing_grad = tensor->grad();
-            if (existing_grad.numel() > 0 && existing_grad.storage().data<float>() != nullptr) {
-                accumulated = accumulated + existing_grad;
+            // 仅当确有已有梯度时累加：grad_ptr() 探测避免 grad() 返回整 Tensor 拷贝
+            if (tensor->grad_ptr() != nullptr) {
+                accumulated = accumulated + tensor->grad();
             }
 
             tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));

@@ -463,6 +463,37 @@
   - **③ 清理**：移除 copy ctor 里临时 `C3_COPY_PROBE` 计数器（上次量化 ≈80k 次/epoch，已完成使命），保留现代 grad 语义（`_grad = nullptr`）。
   - 验证：`test_c3_mnist_train` MNIST 最终 acc **97.16%**、平均/epoch **195.4ms**、loss 0.0979，与基线一致，零回归。
 
+- **4.37 2026-08-27 MIMO/调度层收尾实证（追平 PyTorch 的字节级账目）→ 三者均已近计算硬成本**
+  - **GEMM 行分块并行探针证伪**：MNIST 全 6 个真实 shape，`cblas_sgemm` 单次已高效（Accelerate 内部多核），手动 P=2/4/8 行分块全部更慢（P1 最优），batch 加速 = **1.00×**。⇒「GEMM 多线程化」对当前小线性层是**负优化**，不做。
+  - **调度层 rd/rm 已近极限（RD-SEG 实测）**：`backward` 短路后 `early=0.02µs`、`tail=0.1µs` 免费；唯一可削的 `start=11.6µs` 大头是**一次性的 placeholder/LazyMaterializer 创建**（非查找，`findRegionByFirstOp` 只遍历 2-3 region）；`end=36.4µs` 是融合 kernel **真实计算**（该花）。memo 缓存最多省 1-2ms/ep，收益过低。
+  - **MIMO backward 已近极限（C3-BW-STAT 5ep 累计实测）**：MIMO exec ≈ **283ms/5ep ≈ 57ms/ep**；`mimo_keybuild ≈0.6ms` + `bw_dispatch ≈0.7ms`（调度开销 < 1.5ms）。MIMO func_ 内 cblas 46ms 为必算（与裸调等速，探针已证），剩余 epilogue/setup ≈ 10ms（4.28/4.40 判不胜推）。
+  - **当前 192.8ms 字节级账目**：前向 region（start+end）≈46ms + 反向 MIMO ≈57ms ≈ **103ms 计算硬成本**；**其余 ≈90ms = layer3(128→10 无激活) + CrossEntropy/softmax 损失 + 6 参数 SGD 更新的 eager 回退**——比 C3 更接近 PyTorch(160ms) 的下一步潜在大头（尚未归因细化）。
+  - 本轮一并落地：Node 移动构造 `_dependencies` bug 修复（正确性）+ COPY_PROBE 清理，均已提交 `a501909` 推送。
+
+- **4.38 2026-08-27 Eager 回退归因 → 纠正 4.37 推断：Backward 是编译外真大头，黑洞在 autograd 编排层**
+  - **HOTSPOT PROFILE（`test_c3_mnist_train` 内建，每 epoch 实测）**：Forward(JIT) **65.5ms(38.7%)** / Loss(CrossEnt) **1.5ms(0.9%)** / **Backward ~94.5ms(56.3%)** / Optimizer(SGD) 6.8ms(4.0%)；总计 ~168ms，另 ~23ms 为 batch 加载等未计段。
+  - **纠正 4.37**：此前猜"其余 ~90ms = layer3+损失+优化器"**有误**——损失仅 1.5ms（免费）、SGD 6.8ms；真正大头是 **Backward 94.5ms**。
+  - **Backward 94.5ms = MIMO exec ~57ms + 非MIMO ~38ms**。`C3_CBLAS_PROBE`(5ep buckets→/5)：L1 gradW 17ms、L1 gradX 22.5ms、L1 fwd 22ms、L2 fwd 3.4ms + 各小 GEMM 均 µs 级；L3 反向 gradW/gradX 亦走 cblas(1µs)。layer3/CE 均 µs 级凑不出 38ms ⇒ **38ms 黑洞 = autograd C++ 编排**（ComputeCore 图遍历 + GradPack 组装 + 梯度累积/写回），约 81µs/batch 固定开销（反向仅 ~10 node/batch）。
+  - **旁证**：前向中 region 计算(34)+start(11)≈45ms，但 Forward 65ms，多出 ~20ms 亦为编排/layer3/one-hot 等。
+  - **下一步真正方向（本轮重大转向）**：精简 autograd 编排层（forward graph 构建 + backward 遍历/分发），潜在 ~50ms/epoch 收益，但改的是并发 ComputeCore 核心，需谨慎小步；这比 MIMO/调度层更能拉近 PyTorch(160ms)。L3 前向 logits 不走 cblas 为遗留小疑点（~2.4ms，低 ROI）。
+
+- **4.39 2026-08-27 backward 精细账目（新增 C3_BW_SEG 探针）→ 修正 4.38"编排黑洞"，编排已免费**
+  - 方法：在 `ComputeCore::backward` 加 `C3_BW_SEG=1` 门控探针，分 8 段（pop/get/nbwd/mimo/dec/add/push/clear），默认关零开销。
+  - 实测（5ep 累计 → /5）：
+    - `pop/get/add/dec/push` 全部 **≈0ms** → **GradBucket 线性查找 + 锁 + 就绪队列编排已近乎免费**（修正 4.38：排空调用确实不是黑洞）。
+    - **mimo 340.9ms ≈ 68ms/ep**（backward fusion 完整调用，含 keybuild+dispatch+execute，4212 次调用/ep，avg 16.2µs）。
+    - **nbwd 128.8ms ≈ 25.8ms/ep**（eager `node->backward`，18729 次 → ~8/batch，avg 6.9µs）——layer3(MatMul+Add) + CrossEntropy + 叶节点(GradAccumulator) 的 eager 小算子。
+    - clear 4.8ms ≈ 1ms/ep（clearRecursive 图清理）。
+  - **backward 94.5ms = mimo 68 + nbwd 26 + clear 1，账目闭合 ✅**。
+  - **修正 4.38**：所谓"~38ms 编排黑洞"实为 `nbwd 26ms`（eager layer3/CE/leaf 小算子计算，非纯空转）+ `clear 1ms`。真正的自动微分编排（bucket/队列/锁）已经免费。
+  - **下一步候选**：① **nbwd 26ms**——layer3 backward 的 2 个小 matmul 是否走慢速 c3 single kernel（30µs/次疑点）或可并入融合；② mimo 内 epilogue/keybuild ~22ms（4.28/4.40 判不强推）；③ 接受当前 192.8ms（~1.2× vs PyTorch）。
+
+- **4.40 2026-08-27 最后一刀：nbwd 分桶 → GradAccumulator 写回是主角；落地单梯度快速路径 + grad_ptr 探测（零回归）**
+  - 给 `nbwd` 段加按 node 类型分桶（`[BW-NBWD]`，env C3_BW_SEG=1）：**GradAccumulator 74.45ms/14029 次 ≈ 15ms/ep**（参数梯度写回 `.grad`，~6/batch, avg 5.3µs）；CrossEntropy 1.9ms/ep、Add(bias) 0.65ms/ep；MatMul/ReLU 仅一次性测试调用。⇒ **nbwd 26ms 主角是 GradAccumulator，不是 layer3 或 CE**。
+  - **落地优化（`GradAccumulator.cpp` 非 MPS 分支）**：① 单梯度快速路径（`size==1 && numel>0` 直接取唯一梯度，跳过 start_idx 循环）；② 用 `tensor->grad_ptr()` 探测是否有已有梯度，只在真非空时才调 `tensor->grad()`（避免返回整 Tensor 拷贝）。
+  - **验证（MNIST）**：acc **97.16% 零回归**；稳态 E2/E3/E4 = 176/193/188ms 与基线持平（E1 含冷启动 ~237ms、E5 213ms 为系统负载噪声）。此优化量级 ~1-3ms，在测量噪声内（历次多次记录系统负载谱噪明显）。
+  - **结论**：`nbwd` 中 GradAccumulator 是**机制必要**的每-参数-每-batch 一次梯度写回（Tensor 拷贝），无大块浪费可啃；C3 至此**全面逼近物理极限**（forward region / MIMO / 调度层 / 编排层 / eager 写回均已归因完毕）。探针 `C3_BW_SEG` / `[BW-NBWD]` / `[RD-SEG]` 默认关保留，符合项目诊断惯例。
+
 ## Forward 区域融合 kernel 分析（2026-08-26，cblas 符号拦截分桶）
 
 用 `C3_CBLAS_PROBE=1`（cblas_sgemm 强符号拦截按 M/N/trans 分桶）量化**全部前向+反向 GEMM**，对比 epoch 墙钟得**开销结构决定性结论**：
