@@ -47,7 +47,7 @@ ssize_t GradBucket::find(const std::shared_ptr<Node> &target, int idx) {
 }
 
 void GradBucket::add(std::vector<GradPack>&& newPacks) {
-    std::lock_guard<std::mutex> lock(_mtx);
+    std::scoped_lock lock(_mtx);
     for (auto&& pack : newPacks) {
         const ssize_t idx = find(pack._targetNode);
         if (idx != -1) {
@@ -72,14 +72,14 @@ void GradBucket::add(std::vector<GradPack>&& newPacks) {
 }
 
 void GradBucket::remove(const std::shared_ptr<Node> &target) {
-    std::lock_guard lock(_mtx);
+    std::scoped_lock lock(_mtx);
     const ssize_t idx = find(target);
     if (idx != -1)
         _packs.erase(_packs.begin() + idx);
 }
 
 bool GradBucket::tryGetGrad(const std::shared_ptr<Node> &target, std::vector<Tensor> &out_grads) {
-    std::lock_guard lock(_mtx);
+    std::scoped_lock lock(_mtx);
     const ssize_t idx = find(target);
     if (idx != -1) {
         out_grads = std::move(_packs[idx]._grad);
@@ -90,17 +90,17 @@ bool GradBucket::tryGetGrad(const std::shared_ptr<Node> &target, std::vector<Ten
 }
 
 bool GradBucket::empty() {
-    std::lock_guard lock(_mtx);
+    std::scoped_lock lock(_mtx);
     return _packs.empty();
 }
 
 void GradBucket::clear() {
-    std::lock_guard<std::mutex> lock(_mtx);
+    std::scoped_lock lock(_mtx);
     _packs.clear();
 }
 
 std::vector<Tensor> GradBucket::operator[](const std::shared_ptr<Node> &target) {
-    std::lock_guard<std::mutex> lock(_mtx);
+    std::scoped_lock lock(_mtx);
     ssize_t idx = find(target);
     if (idx != -1) {
         auto result = std::move(_packs[idx]._grad);
@@ -113,7 +113,7 @@ std::vector<Tensor> GradBucket::operator[](const std::shared_ptr<Node> &target) 
 }
 
 std::shared_ptr<Node> ComputeCore::tryPopReadyNode() {
-    std::lock_guard lock(_mtx);
+    std::scoped_lock lock(_mtx);
     if (_readyNodes.empty())
         return nullptr;
     auto node = std::move(_readyNodes.front());
@@ -127,7 +127,7 @@ ComputeCore &ComputeCore::getInstance() {
 }
 
 void ComputeCore::addReadyNode(std::shared_ptr<Node> node) {
-    std::lock_guard lock(_mtx);
+    std::scoped_lock lock(_mtx);
     _readyNodes.push(std::move(node));
     _cv.notify_one();
 }

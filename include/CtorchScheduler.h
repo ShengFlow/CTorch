@@ -444,7 +444,7 @@ public:
                 g_count++;
                 if (g_count <= 20) {
                     fprintf(stderr, "[DISPATCH TIMING] op=%d dtype=%.0f shape=%.0f dev=%.0f vec=%.0f region=%.0f ns\n",
-                            (int)OpType,
+                            static_cast<int>(OpType),
                             (double)g_dtype_ns / g_count, (double)g_shape_ns / g_count,
                             (double)g_dev_ns / g_count, (double)g_vec_ns / g_count,
                             (double)g_region_ns / g_count);
@@ -472,7 +472,7 @@ public:
 #ifdef CT_DEBUG
                 {
                     std::ostringstream oss;
-                    oss << "[C3-Dispatch] binary_c3_hit op=" << (int)OpType
+                    oss << "[C3-Dispatch] binary_c3_hit op=" << static_cast<int>(OpType)
                         << " a=[";
                     for (size_t i = 0; i < a.shape().size(); ++i) {
                         if (i > 0) oss << ",";
@@ -528,7 +528,7 @@ public:
             static int dbg_cnt = 0;
             if (dbg_cnt < 500) {
                 std::ostringstream oss;
-                oss << "[C3-Dispatch] binary_eager op=" << (int)OpType
+                oss << "[C3-Dispatch] binary_eager op=" << static_cast<int>(OpType)
                     << " a=[";
                 for (size_t i = 0; i < a.shape().size(); ++i) {
                     if (i > 0) oss << ",";
@@ -539,7 +539,7 @@ public:
                     if (i > 0) oss << ",";
                     oss << b.shape()[i];
                 }
-                oss << "] dev=" << (int)target_dev;
+                oss << "] dev=" << static_cast<int>(target_dev);
                 CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL, ErrorType::UNKNOWN, oss.str());
             }
             dbg_cnt++;
@@ -662,7 +662,7 @@ public:
 #ifdef CT_DEBUG
                 {
                     std::ostringstream oss;
-                    oss << "[C3-Dispatch] unary_c3_hit op=" << (int)OpType
+                    oss << "[C3-Dispatch] unary_c3_hit op=" << static_cast<int>(OpType)
                         << " in=[";
                     for (size_t i = 0; i < a.shape().size(); ++i) {
                         if (i > 0) oss << ",";
@@ -703,13 +703,13 @@ public:
             static int dbg_unary_cnt = 0;
             if (dbg_unary_cnt < 500) {
                 std::ostringstream oss;
-                oss << "[C3-Dispatch] unary_eager op=" << (int)OpType
+                oss << "[C3-Dispatch] unary_eager op=" << static_cast<int>(OpType)
                     << " in=[";
                 for (size_t i = 0; i < a.shape().size(); ++i) {
                     if (i > 0) oss << ",";
                     oss << a.shape()[i];
                 }
-                oss << "] dev=" << (int)target_dev;
+                oss << "] dev=" << static_cast<int>(target_dev);
                 CtorchError::log(ErrorLevel::DEBUG, ErrorPlatform::kGENERAL,
                                  ErrorType::UNKNOWN, oss.str());
             }

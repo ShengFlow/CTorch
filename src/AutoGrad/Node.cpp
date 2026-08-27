@@ -44,8 +44,10 @@ Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
 
 Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs)
-               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)), _dependencies(upStreamNodes.size()) {
-    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队
+               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),
+                _dependencies(_upStreamNodes.size()) {
+    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队。
+    // 注意：必须在 move 完成后从被赋值成员读取 size，源参数已被 move 置空。
 }
 
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
@@ -60,8 +62,10 @@ Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::v
 Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs,
            const std::weak_ptr<Tensor>& result)
-               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),_result(result), _dependencies(upStreamNodes.size())
+               :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),_result(result),
+                _dependencies(_upStreamNodes.size())
 {
+    // 注意：必须在 move 完成后从被赋值成员读取 size，源参数已被 move 置空。
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
     }
@@ -77,7 +81,7 @@ Node::Node(const std::weak_ptr<Tensor> &result)
 }
 
 
-std::vector<std::shared_ptr<Node>> Node::getUpStreamNodes() const {return _upStreamNodes; }
+const std::vector<std::shared_ptr<Node>>& Node::getUpStreamNodes() const { return _upStreamNodes; }
 
 bool Node::requireAccelerate() const { return _requireAccelerate; }
 

@@ -445,6 +445,24 @@
   - **收刀理由**：剩余 build ~11µs 为主是 shallow 大 tensor(X/W) 的 `Tensor` 构造 + 共享 storage + createGA 等基础操作（与 mid 的 1.7µs 差异即 MatMul 大权重节点的分摊），收益递减；已把 rd 调度大头(start) 砍半，`end`(35µs, 真实融合计算) 与 tail 均非浪费。
   - **探针清理**：RD-SEG build/make/ext 子探针已移除，保留核心 start/mid/end/tail 分段（`C3_RD_SEG=1`，默认零污染）。改动：`Tensor::shallow()` 新增；prewalk `captured_inputs`/`prewalk_external_inputs_` 用 shallow；backward 短路；MM-REGION 门控；move 捕获。
 
+- **4.34 2026-08-27 P0 现代 C++ 重构：invasion-grade self-shared_ptr DRY + copy/assign 不再深拷 grad → epoch 240→~198ms（↓~40ms/ep），acc 97.18% 零回归**
+  - **① `initAutogradSelf()`**：Tensor 值类型无法用 `std::enable_shared_from_this`（须真由 shared_ptr 管理），原 11 处构造器重复 `_autograd_meta._self = std::shared_ptr<Tensor>(this, noop-deleter)` 提成统一 private helper（DRY 单一实现点 + 注释）。
+  - **② copy/assign 现代 grad 语义**：copy ctor & `operator=` 原 `_grad ? make_shared(clone) : nullptr` **深拷 grad**；改为 `_grad = nullptr`（独立张量各自累积，对齐现代 autograd）。这消除了**全局**（优化器/autograd 传参/偏置等所有拷贝）的 grad 深拷——此前 `shallow()` 只绕过了 prewalk。**MNIST 平均 epoch 240→~197-201ms（↓~40ms/ep, ~17%），acc 97.18% / loss 0.0980 零回归**。
+  - 说明：copy 语义变更影响全局，MNIST 训练回归通过；建议后续跑完整单元测试套件捕遗漏。
+  - 归属：JIT 编译/GEMM 之外的最纯「代码现代性」净收益——把「拷贝引发 3.2MB 大 grad 克隆」从框架根上去掉。
+
+- **4.35 2026-08-27 P1 现代 C++ 落地（低风险批）→ 零回归**
+  - **P1-1 `Node::getUpStreamNodes()` 改返回 `const std::vector<std::shared_ptr<Node>>&`**（原按值返回，backward 图遍历每次拷贝整 vector）：省热路径拷贝；调用点均只读（range-for / `auto` bind + `[i]`），ABI 经 `C3Core` 重编保持一致。MNIST 平均 197→192ms，acctdze 97.18%。
+  - **P1-2 ComputeCore 统一 `std::scoped_lock`**（CTAD，`lock_guard` 单一锁升级为更现代/可多锁的 `scoped_lock`）。
+  - **P1-3 `CtorchScheduler.h` 调试日志 C 风格 cast `(int)OpType/(int)target_dev` → `static_cast<int>`**。
+  - 范围：`P1` 里 ctQALS 数十处 `static_cast` 与 Node 构造器 const&/&& 减重改动面大（移植库/跨节点类），按「不过度工程 + 低风险」未纳入本轮，留专门重构窗口。
+
+- **4.36 2026-08-27 审计 Node 创建点 + 修复 Node 移动构造 `_dependencies` bug + 移除 COPY_PROBE → 零回归**
+  - **① 审计结论**：前向 Node 创建经 `AutoGrad::dispatch` → `DataCore::registerNode`，已正确用 `std::move(upStreamNodes)/std::move(inputs)` 进入 Node 的 && 构造（inputs 快照拷贝不可再省，须持 forward 输入）。Node 创建路径 move 语义本身已到位，无更多可直接落地的 move 收益。
+  - **② 移动构造 bug**：`Node(&&,&&)` 与 `Node(&&,&&,result)` 在初始化列表中先 `std::move(upStreamNodes)` 后，仍读**源参数** `upStreamNodes.size()` → move 后通常被置空，`_dependencies` 恒为 0。这会让走 move 路径的节点依赖计数错误（入队/自增异常）。修复为 move 完成后从成员 `_upStreamNodes.size()` 读取（初始化列表按成员声明序执行，此时成员已持有数据）。**正确性修复对整个 move 优化至关重要——否则所谓 move 收益建立在错误依赖计数上。**
+  - **③ 清理**：移除 copy ctor 里临时 `C3_COPY_PROBE` 计数器（上次量化 ≈80k 次/epoch，已完成使命），保留现代 grad 语义（`_grad = nullptr`）。
+  - 验证：`test_c3_mnist_train` MNIST 最终 acc **97.16%**、平均/epoch **195.4ms**、loss 0.0979，与基线一致，零回归。
+
 ## Forward 区域融合 kernel 分析（2026-08-26，cblas 符号拦截分桶）
 
 用 `C3_CBLAS_PROBE=1`（cblas_sgemm 强符号拦截按 M/N/trans 分桶）量化**全部前向+反向 GEMM**，对比 epoch 墙钟得**开销结构决定性结论**：

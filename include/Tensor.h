@@ -225,6 +225,14 @@ class Tensor {
     std::vector<size_t> _shape;
     //
 
+  private:
+    // 统一初始化 autograd 弱引用锚点。
+    // 值类型 Tensor 无法用 std::enable_shared_from_this（须真正由 shared_ptr 管理才可 shared_from_this），
+    // 故用 noop-deleter shared_ptr 提供 getWeakPtr() 的弱引用定位，不持有其生存期。所有构造器统一走此入口。
+    void initAutogradSelf() {
+        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor* /*noop del*/) {});
+    }
+
   public:
     // ======================= 构造和析构 =======================
 
@@ -241,7 +249,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
         _shape = {};
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
 #ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value;
@@ -274,7 +282,7 @@ class Tensor {
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(DType::kFloat) {
         _shape = {1};
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
 #ifdef CTORCH_DEBUG
         std::ostringstream oss;
         oss << ">>> Tensor标量构造, ID: " << tensor_id_ << ", 值: " << value << ", 设备: " << static_cast<int>(device);
@@ -305,7 +313,7 @@ class Tensor {
     Tensor(std::initializer_list<float> values)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(DeviceType::kCPU), _dtype(DType::kFloat) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._node.reset();
         _shape = {values.size()};
         computeStrides();
@@ -315,7 +323,7 @@ class Tensor {
     Tensor(std::initializer_list<float> values, DeviceType device)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(DType::kFloat) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._node.reset();
         _shape = {values.size()};
         computeStrides();
@@ -334,7 +342,7 @@ class Tensor {
            DeviceType device = DeviceType::kCPU, bool zero_init = true)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(dtype) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._node.reset();
         _shape = shape;
         computeStrides();
@@ -352,7 +360,7 @@ class Tensor {
            DType dtype = DType::kFloat, DeviceType device = DeviceType::kCPU)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(dtype) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._node.reset();
         _shape = shape;
         computeStrides();
@@ -370,7 +378,7 @@ class Tensor {
            bool zero_init = true)
         : tensor_id_(global_tensor_id++),
           _storage_offset(0), _device(device), _dtype(dtype) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._node.reset();
         _shape = {size};
         computeStrides();
@@ -392,9 +400,9 @@ class Tensor {
           _storage(other._storage),
           _shape(other._shape),
           _lazy(other._lazy) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
-        _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
+        _autograd_meta._grad = nullptr;  // 现代语义：copy/assign 不深拷 grad（独立张量各自按需累积）
         if (_autograd_meta._requires_grad) {
             _autograd_meta._node = createGradAccumulator(_autograd_meta._self);
         }
@@ -424,8 +432,8 @@ class Tensor {
             _lazy             = other._lazy;
             _autograd_meta._requires_grad    = other._autograd_meta._requires_grad;
             _autograd_meta._node.reset();
-            _autograd_meta._grad = other._autograd_meta._grad ? std::make_shared<Tensor>(other._autograd_meta._grad->clone()) : nullptr;
-            _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+            _autograd_meta._grad = nullptr;  // 现代语义：copy/assign 不深拷 grad（独立张量各自按需累积）
+            initAutogradSelf();
             if (_autograd_meta._requires_grad) {
                 _autograd_meta._node = createGradAccumulator(_autograd_meta._self);
             }
@@ -444,7 +452,7 @@ class Tensor {
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(std::move(other._storage)), _shape(std::move(other._shape)),
           _lazy(std::move(other._lazy)) {
-        _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+        initAutogradSelf();
         other.tensor_id_ = 0;
         other._shape.clear();
         other._strides.clear();
@@ -468,7 +476,7 @@ class Tensor {
             _storage          = std::move(other._storage);
             _lazy             = std::move(other._lazy);
             _autograd_meta    = std::move(other._autograd_meta);
-            _autograd_meta._self = std::shared_ptr<Tensor>(this, [](Tensor*) {});
+            initAutogradSelf();
 
             other.tensor_id_ = 0;
             other._shape.clear();
