@@ -188,6 +188,14 @@ public:
     Storage() : _size(0), _dtype(DType::kFloat), _device(DeviceType::kCPU) {}
 
     /**
+     * @brief 构造函数：托管外部底层数据（用于内存池复用）
+     * @details data 需携带自定义 deleter（如引用归零后归还到池）。底层数据共享所有权，
+     *          仅当所有引用释放（refcount 归零）时才触发 deleter，天然安全。
+     */
+    Storage(std::shared_ptr<char> data, size_t size, DType dtype, DeviceType device = DeviceType::kCPU)
+        : _size(size), _dtype(dtype), _device(device), _data(std::move(data)) {}
+
+    /**
      * @brief 默认析构函数
      */
     ~Storage() = default;

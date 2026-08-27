@@ -573,6 +573,14 @@ class Tensor {
     void setLazyMaterializer(std::shared_ptr<LazyMaterializer> m) { _lazy = std::move(m); }
 
     /**
+     * @brief 获取物化器指针（region 融合 kernel 已算出中间值时注入，跳过 eager 重算）
+     * @return 物化器，未设置时为空指针
+     */
+    [[nodiscard]] std::shared_ptr<LazyMaterializer> lazyMaterializer() const noexcept {
+        return _lazy;
+    }
+
+    /**
      * @brief 获取张量的存储偏移量
      * @return 存储中的起始偏移量
      */
@@ -1366,6 +1374,15 @@ class Tensor {
     Tensor detach() const;
 
     /**
+     * @brief 浅拷贝：共享底层 storage（零数据拷贝），保留 requires_grad 状态，但**不深拷贝 grad**。
+     * @note 普通拷贝构造会对 requires_grad 张量深拷其 grad（`_grad->clone()`，如权重 W 的 grad 3.2MB），
+     *       在 prewalk 占位捕获这类仅需 data 重算的场景是纯浪费。lazy materialize 重算 op 时会重建 grad 链，
+     *       故此处置空 grad + 重建 GradAccumulator，语义对齐 copy。
+     * @date 2026-08-27 (RD start 22µs 归因优化)
+     */
+    Tensor shallow() const;
+
+    /**
      * @brief 求交叉熵损失
      * @param target 目标张量
      * @return 交叉熵损失结果张量
@@ -1581,6 +1598,19 @@ public:
             materialized_ = true;
         }
         return result_;
+    }
+
+    /**
+     * @brief 预置真实中间值（region 融合 kernel 已算出时注入，跳过 eager 重算）
+     * @details 幂等：仅在尚未物化时生效。data_read() 后续触发 materialize() 时直接返回预置值，
+     *          使 backward 复用融合 kernel 的 pre-activation 值，避免 placeholder 首次读取触发 eager 重算。
+     */
+    void preload(const Tensor& value) {
+        std::lock_guard<std::mutex> lk(mutex_);
+        if (!materialized_) {
+            result_ = value;
+            materialized_ = true;
+        }
     }
 
 private:

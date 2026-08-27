@@ -472,6 +472,58 @@ Tensor CtorchScheduler::dispatch_softmax(const Tensor& a, int dim) {
 // ============================================================================
 // Region Fusion 预走接口 tryRegionDispatch()
 // ============================================================================
+
+#ifndef CT_DISABLE_C3
+// ---------------------------------------------------------------------------
+// [Prewalk 归因] C3_PREWALK=0 停用 prewalk 首 op 启动路径（保留原“末尾 op 匹配”
+// 路径），用于归因 prewalk 相对旧路径的净收益。C3_PREWALK_DIAG=1 打开物化采样。
+static bool prewalkStartEnabled() {
+    static const bool v = ([] {
+        const char* e = std::getenv("C3_PREWALK");
+        return !(e && std::string(e) == "0");
+    })();
+    return v;
+}
+static bool prewalkDiagEnabled() {
+    static const bool v = ([] {
+        const char* e = std::getenv("C3_PREWALK_DIAG");
+        return e && std::string(e) == "1";
+    })();
+    return v;
+}
+// ============================================================================
+// 惰性物化的 eager 重算实现
+// ============================================================================
+// 物化某个中间 op 的占位符：用 eager kernel 重算该 op 的真实值。
+// 供 LazyMaterializer 闭包调用（Eager 重算的值仅供 backward 读 forward 中间值用，
+// 唯一触发点是 placeholder 的 data_read()）。重算期间置位 g_in_recomputation，避免再次进入 C3
+// region fusion / 热路径注入，形成递归死循环。
+Tensor CtorchScheduler::eagerMaterializeOp(op op_type,
+                                           const std::vector<Tensor>& inputs,
+                                           DeviceType /*dev*/) {
+    if (prewalkDiagEnabled()) {
+        static std::atomic<size_t> cnt{0};
+        if ((++cnt) % 1000 == 1)
+            fprintf(stderr, "[PREWALK-DIAG] materialize op=%d inputs=%zu\n",
+                    (int)op_type, inputs.size());
+    }
+    struct RecomputeGuard {
+        RecomputeGuard() { g_in_recomputation = true; }
+        ~RecomputeGuard() { g_in_recomputation = false; }
+    } guard;
+
+    // 二元算子（含 MatMul/Add/Sub/Mul）：走 eager 二元 kernel
+    if (inputs.size() >= 2) {
+        return dispatch(inputs[0], inputs[1], op_type);
+    }
+    // 一元算子（ReLU/Sigmoid/Tanh）：走 eager 一元 kernel
+    if (inputs.size() == 1) {
+        return dispatch(inputs[0], op_type);
+    }
+    // 输入不完整：返回空张量（data_read 会判定物化失败 => nullptr）
+    return Tensor();
+}
+#endif // CT_DISABLE_C3
 // Prewalk 状态机（三态）：
 //   kIdle → 检查当前 op 是否是某 region 的首个 op → 设 kPrewalking + 返回 placeholder
 //   kPrewalking → 中间 op: 验证 op_seq 匹配 + 缓存 external inputs + 返回 placeholder
@@ -495,8 +547,45 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
         }
     } _guard(_t0);
 #endif
+    // [RD-SEG 2026-08-27] env C3_RD_SEG=1：量化 tryRegionDispatch 各段耗时，定位 forward ~10µs 大头
+    struct RdSeg {
+        enum { EARLY=0, PREWALK_START=1, PREWALK_MID=2, PREWALK_END=3, TAIL=4, NUM=5 };
+        static std::atomic<uint64_t>& N(int i){ static std::atomic<uint64_t> v[NUM]; return v[i]; }
+        static std::atomic<uint64_t>& C(int i){ static std::atomic<uint64_t> v[NUM]; return v[i]; }
+        static bool on(){ static bool e=[](){auto*p=std::getenv("C3_RD_SEG");return p&&*p=='1';}(); return e; }
+    };
+    int _rdseg = RdSeg::TAIL;  // 默认末尾 op 匹配路径
+    struct RdSegGuard {
+        bool on_; std::chrono::steady_clock::time_point t0; int* s;
+        RdSegGuard(int* p): on_(RdSeg::on()), t0(), s(p) { if(on_) t0 = std::chrono::steady_clock::now(); }
+        ~RdSegGuard(){
+            if(!on_ || *s<0 || *s>=RdSeg::NUM) return;
+            auto ns=(uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-t0).count();
+            RdSeg::N(*s).fetch_add(ns,std::memory_order_relaxed); RdSeg::C(*s).fetch_add(1,std::memory_order_relaxed);
+            static thread_local uint64_t acc=0;
+            if((++acc)%20000==0){
+                const char* nm[5]={"early","start","mid","end","tail"};
+                fprintf(stderr,"[RD-SEG]");
+                for(int i=0;i<5;++i){
+                    uint64_t n=RdSeg::N(i).load(), c=RdSeg::C(i).load();
+                    fprintf(stderr," %s=%.1fms/%llu(%.2fµs)", nm[i], n*1e-6,
+                        (unsigned long long)c, c? (double)n*1e-3/(double)c : 0.0);
+                }
+                fprintf(stderr,"\n");
+            }
+        }
+    } _rdseg_guard(&_rdseg);
+
+    // [RD 优化 2026-08-27] backward 期间直接短路：反向传播由 MIMO 融合 kernel 全覆盖（fusion_hit=0），
+    // backward 的候选 op（grad_W/grad_X/Add）尝试 forward region 全部落空，纯浪费的调度开销。
+    // region 只在 forward 命中，短路安全（acc 验证 97.18% 零回归）。
+    if (ct::detail::g_in_backward()) {
+        _rdseg = RdSeg::EARLY;
+        return std::nullopt;
+    }
     auto& registry = ct::c3::RegionFusionRegistry::getInstance();
     if (registry.installedCountNoLock() == 0) {
+        _rdseg = RdSeg::EARLY;
         return std::nullopt;
     }
 
@@ -506,6 +595,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
 
     // --- kPrewalking: 正在预走 region ---
     if (prewalk_state_ == PrewalkState::kPrewalking && matched_region_) {
+        _rdseg = RdSeg::PREWALK_MID;
         const auto& seq = matched_region_->op_seq;
         size_t next_pos = prewalk_pos_ + 1;
 
@@ -519,13 +609,14 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
             // 一元: 0 个 external
             if (op_type == op::MatMul) {
                 for (size_t k = 0; k < num_inputs; ++k)
-                    prewalk_external_inputs_.push_back(inputs[k]);
+                    prewalk_external_inputs_.push_back(inputs[k].shallow());
             } else if (num_inputs > 1) {
-                prewalk_external_inputs_.push_back(inputs[1]);
+                prewalk_external_inputs_.push_back(inputs[1].shallow());
             }
 
             // 如果是最后一个 op → 执行融合 kernel
             if (prewalk_pos_ == seq.size() - 1) {
+                _rdseg = RdSeg::PREWALK_END;
                 // 收集当前 op 的 external inputs
                 if (op_type == op::MatMul) {
                     // 已经在上面加了
@@ -560,9 +651,26 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
                     shapes.out_shape = out_shape;
                     shapes.fused_pattern = "prewalk-fusion";
 
+                    Tensor pre_act;
                     Tensor kernel_result = ct::c3::C3KernelRegistry::getInstance()
                         .executeFusedWithInputs(matched_region_->kernel,
-                                                prewalk_external_inputs_, shapes);
+                                                prewalk_external_inputs_, shapes,
+                                                &pre_act);
+                    // [Prewalk A] 融合 kernel 暴露了 preAct 中间值（第 2 输出）时，
+                    // 注入当前 op 输入占位符的物化器：backward 触发 data_read() 时
+                    // 直接复用融合算出的 pre-activation 值，避免 placeholder 首次读取
+                    // 触发 eager 重算 MatMul/Add。
+                    if (!pre_act.storage().empty() && inputs != nullptr) {
+                        if (auto lm = inputs[0].lazyMaterializer()) {
+                            lm->preload(pre_act);
+                            if (prewalkDiagEnabled()) {
+                                static std::atomic<size_t> pcnt{0};
+                                if ((++pcnt) % 1000 == 1)
+                                    fprintf(stderr, "[PREWALK-DIAG] preload preAct sz=%zu\n",
+                                            (size_t)pre_act.numel());
+                            }
+                        }
+                    }
                     // 恢复状态
                     prewalk_state_ = PrewalkState::kIdle;
                     matched_region_ = nullptr;
@@ -570,6 +678,32 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
 
                     if (kernel_result.storage().empty()) {
                         return std::nullopt;
+                    }
+                    // [forward 诊断] 统计 region prewalk 完成数（按 out_shape），受 C3_FWD_DIAG=1 控制，
+                    // 默认关闭避免高频加锁/插入的性能开销。
+                    static const bool fwd_pw_diag = [] {
+                        const char* e = std::getenv("C3_FWD_DIAG");
+                        return e && std::string(e) == "1";
+                    }();
+                    if (fwd_pw_diag) {
+                        static std::mutex mu;
+                        static std::unordered_map<std::string, uint64_t> g_pw_path;
+                        static uint64_t g_pw_total = 0;
+                        std::string key = std::to_string(out_shape[0]) + "x" +
+                                          (out_shape.size() > 1 ? std::to_string(out_shape[1]) : "1");
+                        uint64_t tot;
+                        {
+                            std::lock_guard<std::mutex> lk(mu);
+                            g_pw_path[key]++;
+                            tot = ++g_pw_total;
+                        }
+                        if (tot % 200 == 0 || tot <= 4) {
+                            std::lock_guard<std::mutex> lk(mu);
+                            std::string s;
+                            for (auto& kv : g_pw_path) s += " " + kv.first + "=" + std::to_string(kv.second);
+                            fprintf(stderr, "[PW-STAT] total=%llu:%s\n",
+                                    (unsigned long long)(tot), s.c_str());
+                        }
                     }
                     return kernel_result;
                 } catch (...) {
@@ -589,26 +723,12 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
             Tensor placeholder(PlaceholderTag{}, ph_shape, DType::kFloat, inputs[0].device());
             std::vector<Tensor> captured_inputs;
             for (size_t i = 0; i < num_inputs; ++i) {
-                captured_inputs.push_back(inputs[i]);
+                captured_inputs.push_back(inputs[i].shallow());
             }
-            auto mat_fn = [op_type, captured_inputs]() -> Tensor {
-                struct RecomputeGuard {
-                    RecomputeGuard() { g_in_recomputation = true; }
-                    ~RecomputeGuard() { g_in_recomputation = false; }
-                } guard;
-
-                if (op_type == op::MatMul) {
-                    return captured_inputs[0].matmul(captured_inputs[1]);
-                } else if (op_type == op::Add) {
-                    return captured_inputs[0] + captured_inputs[1];
-                } else if (op_type == op::ReLU) {
-                    return captured_inputs[0].relu();
-                } else if (op_type == op::Sigmoid) {
-                    return captured_inputs[0].sigmoid();
-                } else if (op_type == op::Tanh) {
-                    return captured_inputs[0].tanh();
-                }
-                return Tensor();
+            auto mat_fn = [this, op_type, captured_inputs = std::move(captured_inputs)]() -> Tensor {
+                DeviceType dev = captured_inputs.empty()
+                    ? DeviceType::kCPU : captured_inputs[0].device();
+                return eagerMaterializeOp(op_type, captured_inputs, dev);
             };
             placeholder.setLazyMaterializer(std::make_shared<LazyMaterializer>(mat_fn));
             return placeholder;
@@ -630,8 +750,8 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     }
 
     // --- kIdle: 检查是否是 region 首个 op → 启动 prewalk ---
-    // 直接开启 prewalk（训练+推理均生效）
-    if (prewalk_state_ == PrewalkState::kIdle) {
+    // 直接开启 prewalk（训练+推理均生效）；C3_PREWALK=0 时退回到末尾 op 匹配路径
+    if (prewalk_state_ == PrewalkState::kIdle && prewalkStartEnabled()) {
         if (registry.mayMatchAsFirstOp(op_type)) {
             // 构建 first_input_shapes
             std::vector<std::vector<size_t>> first_input_shapes;
@@ -642,7 +762,29 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
             }
 
             auto* region = registry.findRegionByFirstOp(op_type, first_input_shapes);
+            // [forward 诊断] 打印每个首次出现的首个-op(MatMul) 形状与 region 命中/活跃状态，
+            // 用于核对 L1(784→256) 与 L2(256→128) 是否都被注册为融合 region。
+            static const bool fwd_mm_diag = []{ auto* e = std::getenv("C3_FWD_DIAG"); return e && std::string(e) == "1"; }();
+            if (fwd_mm_diag && op_type == op::MatMul && !first_input_shapes.empty()) {
+                static std::mutex mu;
+                static std::unordered_map<std::string, bool> seen;
+                std::string sk;
+                for (auto& sh : first_input_shapes) { sk += std::to_string(sh.size()) + ":"; for (auto d : sh) sk += std::to_string(d) + "x"; sk += "|"; }
+                bool nfirst = false;
+                {
+                    std::lock_guard<std::mutex> lk(mu);
+                    if (!seen.count(sk)) { seen[sk] = true; nfirst = true; }
+                }
+                if (nfirst) {
+                    std::lock_guard<std::mutex> lk(mu);
+                    fprintf(stderr, "[MM-REGION] shapes=%s found=%d active=%d cost=%d\n",
+                            sk.c_str(), (region ? 1 : 0),
+                            (region ? (region->active ? 1 : 0) : 0),
+                            (region ? (region->cost.worthwhile ? 1 : 0) : 0));
+                }
+            }
             if (region && region->active && region->cost.worthwhile) {
+                _rdseg = RdSeg::PREWALK_START;
                 // 启动 prewalk!
                 matched_region_ = region;
                 prewalk_pos_ = 0;
@@ -652,9 +794,9 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
                 // 缓存首个 op 的 external inputs
                 if (op_type == op::MatMul) {
                     for (size_t k = 0; k < num_inputs; ++k)
-                        prewalk_external_inputs_.push_back(inputs[k]);
+                        prewalk_external_inputs_.push_back(inputs[k].shallow());
                 } else if (num_inputs > 1) {
-                    prewalk_external_inputs_.push_back(inputs[1]);
+                    prewalk_external_inputs_.push_back(inputs[1].shallow());
                 }
 
                 // 如果 region 只有 1 个 op（不可能，min=2），直接执行
@@ -669,26 +811,12 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
                 Tensor placeholder(PlaceholderTag{}, ph_shape, DType::kFloat, inputs[0].device());
                 std::vector<Tensor> captured_inputs;
                 for (size_t i = 0; i < num_inputs; ++i) {
-                    captured_inputs.push_back(inputs[i]);
+                    captured_inputs.push_back(inputs[i].shallow());
                 }
-                auto mat_fn = [op_type, captured_inputs]() -> Tensor {
-                    struct RecomputeGuard {
-                        RecomputeGuard() { g_in_recomputation = true; }
-                        ~RecomputeGuard() { g_in_recomputation = false; }
-                    } guard;
-
-                    if (op_type == op::MatMul) {
-                        return captured_inputs[0].matmul(captured_inputs[1]);
-                    } else if (op_type == op::Add) {
-                        return captured_inputs[0] + captured_inputs[1];
-                    } else if (op_type == op::ReLU) {
-                        return captured_inputs[0].relu();
-                    } else if (op_type == op::Sigmoid) {
-                        return captured_inputs[0].sigmoid();
-                    } else if (op_type == op::Tanh) {
-                        return captured_inputs[0].tanh();
-                    }
-                    return Tensor();
+                auto mat_fn = [this, op_type, captured_inputs = std::move(captured_inputs)]() -> Tensor {
+                    DeviceType dev = captured_inputs.empty()
+                        ? DeviceType::kCPU : captured_inputs[0].device();
+                    return eagerMaterializeOp(op_type, captured_inputs, dev);
                 };
                 placeholder.setLazyMaterializer(std::make_shared<LazyMaterializer>(mat_fn));
                 return placeholder;

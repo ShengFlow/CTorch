@@ -228,6 +228,102 @@ int main() {
     }
     std::printf("--- Periodic-broadcast RESULT: %d/%d passed ---\n", pb_passed, pb_total);
 
+    // ======================= 多维张量广播正确性验证 =======================
+    std::printf("\n--- 多维张量广播 (Multi-dimensional broadcast, LinalgBroadcastingKernel) ---\n");
+    int md_passed = 0, md_total = 0;
+    const ElementwiseOp md_ops[] = {ElementwiseOp::Add, ElementwiseOp::Sub, ElementwiseOp::Mul};
+    const char* md_names[] = {"Add(md)", "Sub(md)", "Mul(md)"};
+    
+    // 模拟常见的多维广播场景：
+    // Scenario 1: [2, 3] + [1, 3] -> [2, 3] (按行广播)
+    // Scenario 2: [2, 3] + [2, 1] -> [2, 3] (按列广播)
+    // Scenario 3: [1, 3] + [2, 1] -> [2, 3] (双向广播)
+    struct BroadcastScenario {
+        std::vector<size_t> lhs;
+        std::vector<size_t> rhs;
+        std::vector<size_t> out;
+    } scenarios[] = {
+        {{2, 3}, {1, 3}, {2, 3}},
+        {{2, 3}, {2, 1}, {2, 3}},
+        {{1, 3}, {2, 1}, {2, 3}},
+        {{1, 2, 3}, {4, 1, 3}, {4, 2, 3}}
+    };
+
+    for (int c = 0; c < 3; ++c) {
+        for (const auto& sc : scenarios) {
+            ++md_total;
+            size_t n_lhs = 1, n_rhs = 1, n_out = 1;
+            for (size_t d : sc.lhs) n_lhs *= d;
+            for (size_t d : sc.rhs) n_rhs *= d;
+            for (size_t d : sc.out) n_out *= d;
+
+            std::vector<float> lhs(n_lhs);
+            std::vector<float> rhs(n_rhs);
+            for (size_t i = 0; i < n_lhs; ++i) lhs[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+            for (size_t i = 0; i < n_rhs; ++i) rhs[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 2.f - 1.f;
+
+            std::vector<float> expected(n_out);
+            // 简单循环参考计算
+            size_t rank = sc.out.size();
+            std::vector<size_t> padded_lhs = sc.lhs;
+            std::vector<size_t> padded_rhs = sc.rhs;
+            while (padded_lhs.size() < rank) padded_lhs.insert(padded_lhs.begin(), 1);
+            while (padded_rhs.size() < rank) padded_rhs.insert(padded_rhs.begin(), 1);
+
+            for (size_t o_idx = 0; o_idx < n_out; ++o_idx) {
+                // 计算高维多维坐标
+                size_t temp = o_idx;
+                std::vector<size_t> coord(rank);
+                for (int i = (int)rank - 1; i >= 0; --i) {
+                    coord[i] = temp % sc.out[i];
+                    temp /= sc.out[i];
+                }
+
+                // 映射回输入坐标
+                size_t l_flat = 0, r_flat = 0;
+                for (size_t i = 0; i < rank; ++i) {
+                    size_t l_c = (padded_lhs[i] == 1) ? 0 : coord[i];
+                    size_t r_c = (padded_rhs[i] == 1) ? 0 : coord[i];
+                    l_flat = l_flat * padded_lhs[i] + l_c;
+                    r_flat = r_flat * padded_rhs[i] + r_c;
+                }
+
+                float lv = lhs[l_flat];
+                float rv = rhs[r_flat];
+                switch (md_ops[c]) {
+                case ElementwiseOp::Add: expected[o_idx] = lv + rv; break;
+                case ElementwiseOp::Sub: expected[o_idx] = lv - rv; break;
+                case ElementwiseOp::Mul: expected[o_idx] = lv * rv; break;
+                default: break;
+                }
+            }
+
+            // 编译多维广播 Kernel
+            auto kernel = getCachedLinalgBroadcastKernel(md_ops[c], 3, sc.lhs, sc.rhs, sc.out);
+            const float* in_ptrs[2] = {lhs.data(), rhs.data()};
+            std::vector<float> actual(n_out, -1.f);
+            kernel->execute(in_ptrs, actual.data(), sc.lhs, sc.rhs, sc.out);
+
+            bool ok = verifyApproxEqual(expected.data(), actual.data(), n_out, 1e-5f);
+            if (!ok) {
+                std::printf("  [DEBUG MISMATCH]\n");
+                std::printf("  LHS: "); for (float x : lhs) std::printf("%f, ", x); std::printf("\n");
+                std::printf("  RHS: "); for (float x : rhs) std::printf("%f, ", x); std::printf("\n");
+                std::printf("  EXP: "); for (float x : expected) std::printf("%f, ", x); std::printf("\n");
+                std::printf("  ACT: "); for (float x : actual) std::printf("%f, ", x); std::printf("\n");
+            }
+            std::printf("  [%s] shapes: ", md_names[c]);
+            for (size_t d : sc.lhs) std::printf("%zu,", d);
+            std::printf(" + ");
+            for (size_t d : sc.rhs) std::printf("%zu,", d);
+            std::printf(" -> ");
+            for (size_t d : sc.out) std::printf("%zu,", d);
+            std::printf(" => %s\n", ok ? "PASSED" : "FAILED");
+            if (ok) ++md_passed;
+        }
+    }
+    std::printf("--- Multi-dimensional broadcast RESULT: %d/%d passed ---\n", md_passed, md_total);
+
     // 缓存 key 区分 rhs_mod：不同 rhs_mod 应不同实例，相同 rhs_mod 应命中
     auto pm0 = getCachedLinalgKernel(ElementwiseOp::Add, 3, 0);
     auto pm1 = getCachedLinalgKernel(ElementwiseOp::Add, 3, 1);

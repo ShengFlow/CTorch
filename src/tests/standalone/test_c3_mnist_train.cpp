@@ -42,10 +42,71 @@ static void tempCrashHandler(int sig) {
 #include "C3/C3KernelRegistry.h"
 #include "C3/C3HotPathManager.h"
 #include "C3/C3BackwardCapture.h"  // DEBT-NEW-7 v0.5.1+ 调试用,看 backward fusion hit
+#include "C3/C3Engine.h"            // [MIMO 深挖] getMultiNodeExecTiming
 #include "C3/JITCache.h"             // [Dev] v0.5.2 (4) JITCache 1.0 stats 输出
 #endif
 #include "mnist/mnist_loader.h"
 #include "ctQALS/Random.h"
+
+// ======= [方案2 临时探针] cblas 符号拦截 · 按 (M,N,transA,transB) 分桶钉死 MIMO grad_W/grad_X 真实耗时 =======
+// 在可执行文件里定义同名强符号 cblas_sgemm（Mach-O 全局符号优先于加速库 dylib），
+// ORC JIT 与 eager 对该符号的所有解析都会落到这里，我们在转发前计时并按 shape 分桶。
+// 计数由 C3_CBLAS_PROBE=1 控制（默认关闭零开销→实际仍多一次转发，仅测量模式启用统计）。
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
+namespace ctprobe {
+    struct Bucket { uint64_t ns = 0; uint64_t cnt = 0; };
+    std::mutex& mu() { static std::mutex m; return m; }
+    std::unordered_map<uint64_t, Bucket>& map() { static std::unordered_map<uint64_t, Bucket> m; return m; }
+    std::atomic<bool>& on() { static std::atomic<bool> e{false}; return e; }
+}
+extern "C" {
+void record_cblas_probe(int M, int N, int tA, int tB, unsigned long long ns) {
+    if (!ctprobe::on().load(std::memory_order_relaxed)) return;
+    uint64_t key = ((uint64_t)(uint32_t)M << 40) | ((uint64_t)(uint32_t)N << 16)
+                 | ((uint64_t)(uint32_t)tA << 8) | (uint32_t)tB;
+    std::lock_guard<std::mutex> lk(ctprobe::mu());
+    auto& b = ctprobe::map()[key];
+    b.ns += ns; b.cnt++;
+}
+void report_cblas_probe() {
+    std::lock_guard<std::mutex> lk(ctprobe::mu());
+    fprintf(stderr, "[CBLAS-PROBE] bucket(M,N,tA,tB)=us/count\n");
+    for (auto& kv : ctprobe::map()) {
+        uint64_t M = (kv.first >> 40) & 0xFFFFFFFF, N = (kv.first >> 16) & 0xFFFFFF;
+        int tA = (kv.first >> 8) & 0xFF, tB = kv.first & 0xFF;
+        fprintf(stderr, "[CBLAS-PROBE] M=%llu N=%llu tA=%d tB=%d total_us=%llu count=%llu avg_us=%.3f\n",
+                (unsigned long long)M, (unsigned long long)N, tA, tB,
+                (unsigned long long)(kv.second.ns / 1000), (unsigned long long)kv.second.cnt,
+                kv.second.cnt ? (double)kv.second.ns / kv.second.cnt / 1000.0 : 0.0);
+    }
+}
+// 劫持所有 cblas_sgemm 调用（JIT kernel + eager 均绑到本强符号）
+// 签名与 Accelerate cblas.h 完全一致，避免 conflicting types
+void cblas_sgemm(const enum CBLAS_ORDER __Order, const enum CBLAS_TRANSPOSE __TransA,
+                 const enum CBLAS_TRANSPOSE __TransB, const int __M, const int __N, const int __K,
+                 const float __alpha, const float* __A, const int __lda, const float* __B,
+                 const int __ldb, const float __beta, float* __C, const int __ldc) {
+#ifdef __APPLE__
+    static auto real = (void (*)(enum CBLAS_ORDER, enum CBLAS_TRANSPOSE, enum CBLAS_TRANSPOSE,
+                                 int, int, int, float, const float*, int, const float*, int,
+                                 float, float*, int))dlsym(RTLD_NEXT, "cblas_sgemm");
+    if (!real) return; // 不应发生：RTLD_NEXT 应拿到加速库真实现
+    auto t0 = std::chrono::steady_clock::now();
+    real(__Order, __TransA, __TransB, __M, __N, __K, __alpha, __A, __lda, __B, __ldb, __beta, __C, __ldc);
+    auto ns = (unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    record_cblas_probe(__M, __N, (int)__TransA, (int)__TransB, ns);
+#else
+    (void)__Order;(void)__TransA;(void)__TransB;(void)__M;(void)__N;(void)__K;
+    (void)__alpha;(void)__A;(void)__lda;(void)__B;(void)__ldb;(void)__beta;(void)__C;(void)__ldc;
+#endif
+}
+} // extern "C"
 
 using namespace ct;
 
@@ -369,6 +430,8 @@ static void testAddEquivalence() {
 int main() {
     signal(SIGSEGV, tempCrashHandler);
     signal(SIGABRT, tempCrashHandler);
+    // [方案2 探针开关] C3_CBLAS_PROBE=1 时统计全部 cblas_sgemm 调用耗时并按 shape 分桶
+    ctprobe::on().store(getenv("C3_CBLAS_PROBE") != nullptr);
     CtorchError::setPrintLevel(PrintLevel::MEDIUM);  // MEDIUM 以显示 C3 DEBUG 日志
 #ifndef CT_DISABLE_C3
     // CFC 消融开关：CT_DISABLE_RF=1 时禁用区域融合（仅保留 C3 hotpath/JIT），
@@ -471,10 +534,19 @@ int main() {
                     hp.compilations_triggered, hp.calls_tracked);
             // DEBT-NEW-7 v0.5.1+ C3 backward stats
             auto bw = c3::C3BackwardCapture::getInstance().getStats();
-            fprintf(stderr, "[C3-BW-STAT] epoch=%d capture=%zu compile=%zu bw_hit=%zu bw_miss=%zu exec_fail=%zu fusion_compile=%zu fusion_hit=%zu fusion_miss=%zu\n",
+            auto mn = c3::getMultiNodeExecTiming();
+            fprintf(stderr, "[C3-BW-STAT] epoch=%d capture=%zu compile=%zu bw_hit=%zu bw_miss=%zu exec_fail=%zu fusion_compile=%zu fusion_hit=%zu fusion_miss=%zu mimo_compile=%zu mimo_hit=%zu mimo_miss=%zu mimo_exec_us=%llu mimo_keybuild_us=%llu bw_dispatch_us=%llu bw_exec_us=%llu mn_setup_us=%llu mn_func_us=%llu mn_calls=%llu\n",
                     epoch + 1, bw.capture_count, bw.compile_count,
                     bw.cache_hit_count, bw.cache_miss_count, bw.execution_failures,
-                    bw.fusion_compile_count, bw.fusion_hit_count, bw.fusion_miss_count);
+                    bw.fusion_compile_count, bw.fusion_hit_count, bw.fusion_miss_count,
+                    bw.mimo_compile_count, bw.mimo_hit_count, bw.mimo_miss_count,
+                    (unsigned long long)bw.mimo_exec_us,
+                    (unsigned long long)bw.mimo_keybuild_us,
+                    (unsigned long long)s.bw_dispatch_us,
+                    (unsigned long long)s.bw_exec_us,
+                    (unsigned long long)mn.setup_us,
+                    (unsigned long long)mn.func_us,
+                    (unsigned long long)mn.calls);
         }
 #endif
 #ifdef CT_PROFILE_PERF
@@ -537,6 +609,9 @@ int main() {
               << "  平均/epoch: " << avg_time << "ms" << std::endl;
     std::cout << "  平均/batch: " << std::setprecision(3)
               << (avg_time / num_batches) << "ms" << std::endl;
+
+    // [方案2 探针] C3_CBLAS_PROBE=1 时打印 cblas 分桶耗时
+    report_cblas_probe();
 
 #ifndef CT_DISABLE_C3
     fprintf(stderr, "[CLEANUP] begin shutdown\n");

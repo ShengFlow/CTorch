@@ -26,6 +26,16 @@
 #include "C3/RegionFusion.h"
 #endif
 
+namespace ct { namespace detail {
+// [dispatch 裁剪] 固定 region 候选 op 集合（与 Region 4-pattern 同步）：
+//   MatMul/Add/ReLU/Sigmoid 才可能构成当前已注册 region，其余 op 直接跳过
+//   tryRegionDispatch 调用，避免每次无谓的调度尝试。
+//   注意：若未来新增含其他 op 的 region pattern，必须在此补对应 op。
+constexpr bool isRegionCandidateOp(op t) {
+    return t == op::MatMul || t == op::Add || t == op::ReLU || t == op::Sigmoid;
+}
+}} // namespace ct::detail
+
 #ifdef C3_DISPATCH_TIMING
 #include <chrono>
 #endif
@@ -195,6 +205,13 @@ class CtorchScheduler{
     /// 计算 op 的输出形状（用于预走占位符）
     std::vector<size_t> computeOutputShape(op op_type,
                                            const Tensor* inputs, size_t num_inputs) const;
+
+    /// [Prewalk] 物化某个中间 op 的占位符：用 eager kernel 重算该 op 的真实值。
+    /// @details 供 LazyMaterializer 闭包调用。通过 data_read() 读取输入时，
+    ///          会自动链式物化上游占位符（幂等）。返回重算结果。
+    Tensor eagerMaterializeOp(op op_type,
+                              const std::vector<Tensor>& inputs,
+                              DeviceType dev);
 #endif
 
 private:
@@ -356,7 +373,8 @@ public:
         }
 #ifndef CT_DISABLE_C3
         // [区域融合] 快速路径：预走模式中跳过 dtype/shape 检查，直接调用 tryRegionDispatch
-        if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()) {
+        if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()
+                && ct::detail::isRegionCandidateOp(OpType)) {
             std::array<Tensor, 2> region_in = {a, b};
             auto region_result = tryRegionDispatch(OpType, region_in.data(), region_in.size(), getTargetDevice(a, b));
             if (region_result.has_value()) {
@@ -408,7 +426,7 @@ public:
 
         #ifndef CT_DISABLE_C3
         // [区域融合] 预走/匹配检查
-        if (ct::c3::regionFusionEnabled()) {
+        if (ct::c3::regionFusionEnabled() && ct::detail::isRegionCandidateOp(OpType)) {
             std::array<Tensor, 2> region_inputs = {a, b};
 #ifdef C3_DISPATCH_TIMING
             t1 = std::chrono::high_resolution_clock::now();
@@ -606,7 +624,8 @@ public:
 #endif
 #ifndef CT_DISABLE_C3
         // [区域融合] 快速路径：预走模式中跳过检查，直接调用 tryRegionDispatch
-        if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()) {
+        if (prewalk_state_ == PrewalkState::kPrewalking && ct::c3::regionFusionEnabled()
+                && ct::detail::isRegionCandidateOp(OpType)) {
             auto region_result = tryRegionDispatch(OpType, &a, 1, a.device());
             if (region_result.has_value()) {
                 return std::move(region_result.value());
@@ -618,7 +637,7 @@ public:
 
 #ifndef CT_DISABLE_C3
         // [区域融合] 预走/匹配检查
-        if (ct::c3::regionFusionEnabled()) {
+        if (ct::c3::regionFusionEnabled() && ct::detail::isRegionCandidateOp(OpType)) {
             std::array<Tensor, 1> region_inputs = {a};
             auto region_result = tryRegionDispatch(OpType, region_inputs.data(), region_inputs.size(), target_dev);
             if (region_result.has_value()) {

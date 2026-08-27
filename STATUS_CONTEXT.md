@@ -266,6 +266,115 @@
   - **自适应抢占注册表机制（Preemptive Registry）**：重构了 `C3KernelRegistry` 安装通道。新编译完 of CompiledKernel 附带自身的优化等级，当尝试注册进哈希表时，仅当其 `optLevel()` 严格优于当前注册的内核时，才会执行热替换（Hot Swap）覆盖。
   - **实测完美运行**：运行 MNIST 训练，可实时观察到两个 Tier 并发跑完，Tier 1 率先完成安装，Tier 2 在 5ms 之后完美执行“热抢占热替换”升级为 Ofast 终极内核；而后到的 Tier 1 编译结果则因为已有 Tier 2 的存在而被注册表安全丢弃，完美的零线程同步锁阻断！
 
+- **4.17 2026-08-26 突破：prewalk 训练模式全链路打通（方案 A：融合 kernel 暴露 preAct + 调度层回填）**
+  - **目标**：训练模式下 prewalk 占位符在 backward 被 ReLU 读取 `x>0` 时，LazyMaterializer 触发 eager 重算 MatMul/Add，浪费一次冗余前向计算。打通"融合 kernel 暴露中间值 + 调度层回填，backward 直接读"全链路消除重算。
+  - **kernel 侧（第 5 步·多输出）**：
+    - `C3HotPathManager::buildFusedGraph` 已把 MatMul 节点标记为第 2 输出（prewalk A，先前会话）。
+    - `MLIRKernelGen.cpp` 修正多输出段分配：`output_index` 段号改为严格按 `graph.outputs()` 顺序对齐（原来按 compute 拓扑序，多输出时与 `output_offsets`/`MultiNodeCompiledKernel out_shapes` 错位）；并给 `c3.matmul` 传入 `pre_act_ptr`（指向第 2 输出段 `out_ptr + output_offsets[seg]`），仅当 MatMul 被标记为额外输出段（seg≠0）时接线。
+    - lowering（`C3DialectLowering` cblas 向量/标量/small 三处）在 bias 之后、激活之前把 pre-activation 值 store 到 preAct，正是 ReLU backward 需要的输入。
+    - `C3KernelRegistry::executeFusedWithInputs` 增加 `Tensor* secondary_out` out-param，返回 kernel 的第 2 输出。
+  - **调度层（第 6 步·回填）**：
+    - `Tensor.h`：`LazyMaterializer` 新增 `preload(value)`（幂等预置缓存，跳过 eager 重算）；`Tensor` 新增 `lazyMaterializer()` getter（所有占位符拷贝共享同一 `_lazy` shared_ptr）。
+    - `CtorchScheduler.cpp`：region 末尾（激活 op dispatch）取到 preAct 后 `inputs[0].lazyMaterializer()->preload(preAct)`，backward 触发 data_read 直接复用。
+  - **验证（MNIST 训练）**：`C3_PREWALK_DIAG=1` 采样确认 preload 真实命中（sz=16384），且 materialize（eager 重算）诊断 **0 条** → backward 零重算。性能 **~1250ms/epoch vs 之前 ~1359ms（~8% 加速）**，精度 97.19% 稳定，**零回归**，fused_hit ~467/epoch、bypass=0。
+  - 遗留：reverse fusion（backward 融合）当前 fusion_hit=0 未参与，本改动对 `C3BackwardCapture` 的 4 输出路径是"按 graph.outputs() 序对齐"的正确性增强，风险低。
+
+- **4.18 2026-08-26 诊断：反向融合(MIMO)已满负荷；前向瓶颈定位 = L1(784→256) 从不融合**
+  - **reverse fusion 收官验证**：给 MIMO 加独立打点（`mimo_compile/hit/miss`），MNIST 实测 `mimo_compile=2`（2 个 ReLU 层 kernel，编译零报错）、`mimo_hit=4678/epoch` → 反向整段 ReLU→Add→MatMul 被单 kernel 吃掉。Backward 仅 22%（~257ms），已是 GEMM 计算下限。剩余 `bw_miss~938/epo` = layer3(128→10 无激活) + CrossEntropy，微型耗时，ROI 低（`C3_BW_MISS_TRACE=1` 定位）。
+  - **前向是真正瓶颈**：epoch 分解 Forward 77%（~910ms）/ Backward 22%。micro-bench 裸 `cblas_sgemm`（Accelerate）整 batch（fwd 3 + bwd 3 形状×次数）仅 **0.08ms/batch ≈ 37ms/epoch**，但实际 fwd+backward ≈1191ms → **~30× 开销缺口，瓶颈是 kernel 执行/前向调度开销 + 融合覆盖率，不是 GEMM 计算**。
+  - **根因实锤**：prewalk 完成计数 `[PW-STAT]` 显示所有完成均为 `128x128`（L2，256→128），**L1(784→256，最大 MatMul) 一次都没完成融合**；region 注册表 `[MM-REGION] found=0` 确认 L1 根本没注册。L1 前向退化为纯 eager（3 个独立 op）。
+  - **检测脆弱根因**：`C3HotPathManager::tryFuseRecentDispatches` 用环形缓冲"紧贴 last-3 窗口"检测，L1 在触发瞬间窗口为 `[..., Add×5(128,256,256), MatMul_L1, ReLU_L1, MatMul_L2]` —— ReLU 前是 MatMul，但 bias Add 跑到 MatMul 前面，被判成 **2-op "MatMul+ReLU"（漏 bias Add）**，且该 2-op region 因 cost 未进注册表；正确的 3-op `MatMul+Add+ReLU` 窗口从没对齐 → L1 失控。这是窗口检测的固有脆弱性。
+  - **遗留打点（保留，低成本）**：`C3BackwardCapture` 增 `mimo_*` 计数进 C3-BW-STAT；`preload`/`materialize`(C3_PREWALK_DIAG)、`bw miss`(C3_BW_MISS_TRACE)、前向 region(预演完成 C3_FWD_DIAG、region 匹配 MM-REGION、fusion 编译 FUSE-COMPILE/DUMP-BUF) 全部 env 开关可控，默认关闭零性能影响。
+  - **下一步候选（已实施，见下 4.19）**：稳健化链检测（2-op MatMul+ReLU 命中时优先配对缓冲内同形状 Add 提交 3-op）。
+
+- **4.19 2026-08-26 突破：前向区域融合修复 = L1 重新纳入融合，epoch 1184→385ms（~3×）**
+  - **修复**：`C3HotPathManager::tryFuseRecentDispatches` 的 2-op `MatMul+ReLU` 分支，在提交前扫描 recent 缓冲，优先配对与该 MatMul 输出 (M,N) 形状兼容的 `Add`（bias），提交完整的 `MatMul+Add+ReLU`；找不到才退回 2-op。修复 L1(784→256) 因窗口顺序（bias Add 被挤出 last-3）被判成漏 bias 的 2-op、从不注册 region、前向全程 eager 的问题。
+  - **验证（MNIST）**：`FUSE-COMPILE` 确认 L1 现在以 `MatMul+Add+ReLU`（op5:[128,784,784,256] op0:[128,256,256] op11:[128,256]）注册；`PW-STAT` 每 batch 两个 ReLU 层（128x256 + 128x128）均完成融合（fused_hit 467→934/epoch）。**Forward 918→~117ms（~7.8×），Backward 250ms，epoch ~1184→~385ms（~3×），精度 97.20%、loss 0.0982 零回归**。
+  - **反向现状**：前向修好后 Backward(250ms) 成为主瓶颈（~66%）。MIMO 已吃满反向融合（mimo_hit=934/epoch），但相对裸 GEMM 仍有 ~25× 开销缺口（待查 MIMO kernel 的 GEMM/epilogue 执行效率）。
+  - 风险提示：修复对"真·无 bias 的 MatMul+ReLU"模型，若缓冲内恰有同形状无关 Add 可能误配对（MNIST 的 Linear+ReLU 均有 bias，正确）。后续宜补回归测试验证。诊断打点（MIMO 计数、C3_FWD_DIAG / C3_BW_MISS_TRACE / C3_PREWALK_DIAG）env 可控，默认关闭。
+
+- **4.20 2026-08-26 诊断：反向 MIMO 开销归属 = 每次调用 4 输出分配 + 单线程串行 GEMM**
+  - **量化**：给 MIMO 内核执行加累计计时（`mimo_exec_us` 进 C3-BW-STAT）。Backward ≈371ms 中，**MIMO kernel->execute() ≈ 274ms（~74%）**，即 ~0.29ms/次 vs 裸 GEMM 反向 ~0.05ms → **~6× 缺口**。`C3_MLIR_DUMP=1` 确认 grad_W/grad_X 用 `cblas_sgemm`（非慢标量），故缺口主因 = 每次调用 flat Storage(4 输出，L1 约 1.3MB) 分配 + 单线程串行 4 个 GEMM / epilogue + 调用/key 构建开销。
+  - 备注：本轮系统负载谱噪明显（epoch 时间漂移 442→553ms，mimo_exec_us 逐 epoch 递增 206→274ms），数值含噪声，仅作归属依据。
+  - **候选优化**：A) 并行化（当前 `do_parallel` 要求 seg_n==1，MIMO seg_n==4 被禁，多核闲置）；B) 降低每调用分配（输出 tensor 逃逸，重用需缓存池 + 生命周期管理，风险高）；C) 转置折叠/减少中间转置拷贝；D) 精简 key 字符串构建 + hasBackwardKey。
+  - 打点：`mimo_exec_us` 累计计时已进 C3-BW-STAT（低成本，保留）。
+
+- **4.21 2026-08-26 方案 A 落地 + 结论反转：MIMO 非分配瓶颈，实为单线程 GEMM 计算上限**
+  - **实现**：`Storage` 新增"外部数据托管"构造器；MultiNodeCompiledKernel::execute 的 CPU flat 输出改走 `FlatOutPool`（带"引用归零才归还"deleter 的 shared_ptr<char> free-list，按字节大小分桶）。逃逸出的 Tensor 仅当全部释放后 refcount 归零才归还池，安全复用、天然零脏数据（C3 多节点 kernel 均全量写每个输出字节）。
+  - **验证（MNIST）**：精度 97.18%、loss 0.098，**零回归**；epoch 稳定 ~410ms（漂移消失）。但 `mimo_exec_us` 仅 206→~200ms/epoch，**收益小**。
+  - **结论反转**：早期"~6× 缺口"基于不完整 bench（漏了反向 grad_W/grad_X 的 [784,256]/[256,784] 大 GEMM）。重算：Forward 28 GFLOP/117ms≈240GF/s，Backward 56 GFLOP/200ms≈280GF/s，**两者吞吐相当 → 反向已是单线程 GEMM 计算上限，无分配/多余开销可砍**。
+  - **真正杠杆 = 并行化**（当前整训练单线程；cblas 对这些尺寸单线程，多核闲置）。候选：多线程 GEMM / batch 并行 / MIMO 内独立子图并行（跨 grad_W/grad_X 两个大 GEMM）。风险中-高，架构级。
+
+- **4.22 2026-08-26 反假设验证：cblas 已内部多线程，MIMO 并行 ROI 仅 ~1.2×，不做重型重构**
+  - 写 `scripts/bench_mimo_par.cpp`：真实反向大形状（grad_W=[784,256] transA / grad_X=[128,784] transB）×469 次，Accelerate cblas。
+  - **串行 55.14ms vs 双线程 45.33ms → speedup 仅 1.22×**。原因：Accelerate `cblas_sgemm` 自身已内部多线程（AMX+多核+带宽），两个并发 GEMM 互相争抢核心/带宽，净收益极小。
+  - **结论**：拆分 MIMO 为 grad_z-grad_b / grad_W / grad_X 3 个 kernel 做并发，属高风险低回报（~10% 换重构风险），**不实施**。系统 fwd~240 / bwd~280 GF/s 已接近整机 GEMM 吞吐上限，且 GEMM 期间其实已用多核。
+  - 保底：方案 A 输出分配池化（4.21）安全落地、零回归，为实打实的稳健改进。`scripts/bench_mimo_par.cpp` 保留作反事实证据。
+
+- **4.23 2026-08-26 深挖定位：MIMO「非 cargo ~100ms」不在 C++ 编排层，而在编译后 func_ 内部**
+  - **打点（低成本，进 C3-BW-STAT）**：给 MIMO/backward 加 3 级分段计时——`mimo_keybuild_us`（cache key 构建）、`bw_dispatch_us`（registry 锁+查表+shape 校验+输入 vector 组装，不含 execute）、`bw_exec_us`（kernel->execute）；并在 `MultiNodeCompiledKernel::execute` 内拆 `mn_setup_us`（data_read+flat 输出分配+Tensor 构造）与 `mn_func_us`（func_ 调用），经 `getMultiNodeExecTiming()` 上报。
+  - **测量（MNIST，终版 5 epoch）**：acc 97.18% 零回归，epoch 425ms。MIMO 总 exec ≈ 207ms/epoch，其中：keybuild **~0.7ms**、dispatch **~9ms**、execute 内 setup **~9ms（且含前向融合 kernel, MIMO 占比更小）**——三者合计 <20ms，**几乎不构成开销**。
+  - **行动**：以 `scripts/bench_mimo_par.cpp` 直测 cblas 裸 GEMM（L1 grad_W+grad_X ×469）= **55.34ms/epoch**；而 MIMO 编译 kernel 的 func_ ≈ 200ms/epoch。grad_W/grad_X 已确认 lowering 到 cblas_sgemm（4.20 C3_MLIR_DUMP）。⇒ **~2-3× 缺口全部落在编译后 func_ 内部，非 C++ 派发/分配/key 开销**。
+  - **结论修正**：4.21「已是单线程 GEMM 计算上限（280GF/s）」不成立——raw cblas 对这批形状实测 ~1.7TF/s，MIMO func_ 仅跑到其 ~40-50%。**真正瓶颈 = 编译 kernel 内部的序列化（单 region 串行做 4 部分）、中间转置/拷贝缓冲、或 epilogue 比预估重**，而非 4.20 候选 D 的「key/hasBackwardKey」（实测可忽略）。下一步应微探 func_ 内部逐段（transpose 是否引入拷贝、epilogue 量级），而非优化 C++ 编排层。
+  - 遗留：`mn_setup/func` 为 MultiNode 全局计数（含前向融合 kernel），非 MIMO 专属；如需 MIMO 专属归因，可在 forward 与 backward 分叉点分别打点（低成本，后续按需）。
+
+- **4.24 2026-08-26 func_ 内微探实证：MIMO 转置零拷贝折叠、无拷贝缓冲**
+  - **方法**：C3_AOT_CACHE_DIR 指向空目录强制重编 + `C3_MLIR_DUMP`，并用 `llvm-dis` 反汇编落盘 `.bc`（每 kernel 独立、无交错）审计真实调用序列。
+  - **结论①（转置 = 零拷贝折叠）**：MIMO 融合 kernel（`.bc` 996814=L1 / 5518b7=L2）内 grad_W、grad_X 的 MatMul 把上游 `TransposeNode` 折叠成 cblas 的 `transA/transB=112(CblasTrans)`：`cblas_sgemm(101,112,111,...)`、`cblas_sgemm(101,111,112,...)`。**cblas 直接按 trans 读，无独立转置循环、无预转置缓冲**。前向 MatMul 为 `111,111`(NoTrans)，符合预期。
+  - **结论②（无大规模拷贝缓冲）**：MIMO `.bc` 仅 ~2.4KB，函数内无大型 `alloca`（若有 X^T/W^T [784,128]/[256,784]=1.2MB 栈缓冲，IR 会显著膨胀）；非 cblas 部分仅 grad_z(ReLU 求导)+grad_b(axis0 sum) 的 `<8 x float>` SIMD 小循环（≤4 处向量块）。
+  - **量化折叠收益**：若不做折叠，L1 每 MIMO call 需拷贝 X^T(100352)+W^T(200704)=1.2MB → ~0.08ms/call ×936 ≈ **~75ms/epoch** 的转置拷贝 + 2 张中间缓冲分配；折叠后均 ≈0。
+  - **结论③（实测对照：转置折叠收益 ~56ms/epoch；cache 劣化仅 ~8%）**：`scripts/bench_mimo_par.cpp` 新增「trans 直读 vs 预转置+NoTrans」cblas 对照（L1 真实形状 ×469）：
+  - `[trans-直读]          41.13 ms`（现状=folding 方案）
+  - `[预转置+NoTrans 复用]  37.71 ms`（只拷一次, 纯 NoTrans GEMM）
+  - `[预转置+NoTrans 每次]  97.57 ms`（每 iter 拷 X^T/W^T + NoTrans）
+  - ⇒ **转置折叠是绝对正确且收益巨大的选择**：预转置的每次拷贝代价 ≈ **59.9ms/epoch**（97.57−37.71），远大于 trans 直读相对纯 NoTrans 的 cache 劣化（41.13−37.71 ≈ **3.4ms/epoch，仅 ~8%**）。折叠现状已把这个 ~56ms/epoch 拷贝彻底免除。
+  - **结论③修正**：4.24 上文曾猜「cache 劣化可能是 func_ 缺口主因」**被实测否定**——transpose 与 cache 合计 ~<4ms/epoch（非 ~75ms）。func_（~0.21ms/call）相对纯 cargo（~0.13ms/call）的 ~0.08ms/call 缺口，需继续往 epilogue 序列化 / cblas 小 shape 往返 / kernel 内中间 grad_z 多消费者读写 方向排查，**而非 transpose/拷贝**（已零拷贝且已验证最优）。
+
+- **4.25 2026-08-26 量化 grad_z 中间读写：~小；暴露「同操作真实 func_ ≈ 2× 慢于直调 cblas」根因方向**
+  - **方法**：`scripts/bench_gradz_overhead.cpp` 复现 MIMO L1 kernel 内 grad_z 序列（算 grad_z 写1次 → grad_W/grad_X 读 → grad_b 再读）并分段拆分，×469（L1 真实形状）。
+  - **测量**（2GEMM cargo=47.81ms 基线）：
+    - `[MIMO 完整路径]  49.98 ms`（grad_z 写 + 2GEMM + grad_b）
+    - `[+grad_z 无 grad_b] 43.56 ms`
+    - `[grad_b-only axis0sum]  7.20 ms`
+  - **结论①（grad_z 中间读写 ≈ 小）**：grad_z 写(⊙,32K element) + grad_b 再读 gz，净增 ≈ **~2–8ms/epoch**（完整 vs cargo 差值 2.2ms；grad_b 单测 7.2ms）。**远不是 func_ 缺口主因**。
+  - **结论②（真凶线索：编译 kernel 序列化 ≈ 2× 直调）**：同一 grad_z+2GEMM+grad_b 操作序列，**直调 cblas 微复现仅 ~0.10ms/call（49.98/469）**，而真实 MIMO `func_` ≈ **0.21ms/call**——**同操作编译后 kernel ≈ 2× 慢**。反推 func_ 缺口中 ~0.11ms/call（≈103ms/epoch）来自 **kernel 内部结构**（多输出段/中间 gz buffer 布局/序列化），而非操作本身的 FLOP/cargo。
+  - **下一步方向**：对比「真实 MIMO `.bc` 里 cblas 的 buffer 布局（grad_W/grad_X 的 A/B 是否指向输出 flat buffer 的中段/offset，cache 差）」vs 微复现的连续 gz；或逐次统计 2 个 cblas 在 kernel 内的真实耗时（加 per-call cblas 探针）定位 2× 落在哪个调用/循环。
+
+- **4.26 2026-08-26 方案1：审 MIMO `.bc` 指针布局 → flat 共享缓冲非 cache 劣势，逐项排除**
+  - **静态审计（`llvm-dis` 996814）**：`c3_kernel(%0 in_ptrs, %1 out_ptr, ..., %6 scratch)` 的 flat 输出缓冲段布局——段0 grad_z[128,256]@0、段1 grad_W[256,784]@32768、段2 grad_X[128,784]@233472、段3 grad_b[256]@333824。grad_z 计算：mask=(z>0) 先写 scratch %6，再 `<8xfloat>` SIMD `mask⊙grad` 写到 %1 段0。**grad_W(B)/grad_X(A)/grad_b 三消费者均从 %1 段0 连续读 gz**；grad_b 为跨 1KB stride 的标量 axis0 求和（cache 差、未向量化，但≤7ms/epoch 量级）。全程无灾难性 cache 冲突（各段地址分离）。
+  - **动态实测（`bench_gradz_overhead.cpp` 新增 (5) flat 真实布局版）**：把 gz 塞进 flat 段0、gW/gX/gb 写同 buffer 后续段、三消费者从段0 读——`[flat 真实布局] 48.24ms` vs `[MIMO 完整路径·独立buffer] 48.92ms`，**等速（均 ~0.10ms/call）**。⇒ **共享 flat 输出缓冲/段式布局不是 func_ 2× 缺口的来源**。
+  - **累计排除清单（func_ 缺口已排除项）**：① transpose 零拷贝折叠（4.24）≤~0；② cache 劣化 ~8%（59.9 拷贝 vs 3.4 劣化）；③ grad_z 中间读写 ~2–8ms/epoch（4.25）；④ flat 布局/cache 冲突 ≈0（4.26）。**余下唯一未量化 = cblas 调用往返 + kernel 内序列化/中间 mask scratch**，需方案2（per-call 探针）或接受该余量主要为既有 cargo+往返。
+
+- **4.27 2026-08-26 方案2：cblas 探针钉死——GEMM cargo 无罪，2× 全在编译 kernel 的 grad_z/grad_b epilogue**
+  - **方法**：在 `test_c3_mnist_train.cpp` 定义同名强符号 `cblas_sgemm`（Mach-O 全局符号优先于加速库），用 `dlsym(RTLD_NEXT)` 转发真实现并按 `(M,N,transA,transB)` 分桶计时（`C3_CBLAS_PROBE=1` 启用）。零侵入 C3 代码。
+  - **测量（真实 MNIST）：** MIMO L1 grad_W(784,256,tA=112)=**35.7µs**、L1 grad_X(128,784,tB=112)=**48.3µs**、L2 grad_W/grad_X≈6.3/8.9µs；前向 fusion L1(128,256,111,111)=42.1µs。MIMO 反向 4 桶 cblas 合计 ≈ **46.4ms/epoch**。
+  - **结论（2× 定位）**：`bw_exec ≈ 197ms/epoch`（MIMO execute）− cblas cargo 46.4ms ⇒ **kernel 内非 cblas（grad_z+grad_b+mask+prologue）≈ 150ms/epoch**；而直调复现做同操作只需 ~20µs/call（~18ms/epoch）⇒ **kernel 内 epilogue ≈ 8× 慢于最优，可挖 ~130ms/epoch**。GEMM 本身与裸 cblas 等速（探针铁证）。
+  - **根因（.bc）：** grad_z 用**两次遍历**——①未向量化标量循环 `(z>0)?1:0` 写 32K mask 到 scratch（多一次全量 pass + scratch 写），②再 SIMD 乘 grad；grad_b 为**跨 1KB stride 的标量 axis0 求和**（未向量化、cache 差）。最优应为"一次向量化 pass 内联 relu 导数 + 分块/向量化归约"。
+  - **下一步**：改 kernel 生成的 epilogue（融合 grad_z 为单 pass 内联导数、向量化 grad_b 归约），预期 epoch 减 ~100ms 量级。探针为测量态、env 门控，默认关闭。
+
+- **4.28 2026-08-26 决定性量级验证 + 落地 grad_b 行优先优化：epoch 425→401ms，epilogue 整段仅值 ~25ms**
+  - **推翻 4.27 量级**：`bench_epilogue.cpp` 复现 kernel epilogue 三种写法——A 两遍+stride=**32µs/call**、B 单pass+stride=20.7µs、C 单pass+行优先向量化=**4.9µs/call**。⇒ **kernel epilogue 优化总上限 ≈ 27µs/call ≈ 25ms/epoch**（grad_b 连续化 ~16µs + grad_z 单pass ~11µs），**撑不起 4.27 估的 ~100ms**；func_ 内「cblas+epilogue 之外」仍有 ~100ms 未归因。
+  - **落地 grad_b（`SumReduceOpLowering` axis==0）行优先连续化**：原「外 j 内 i」`out[j]+=input[i*N+j]` 沿 i 跨 1KB stride；改「外 i 内 j」input 行连续读 + out 连续累积（LLVM 可向量化内层）。数值等价（同列 j 累加 i 升序不变）。
+  - **实测（MNIST，C3_CBLAS_PROBE=1，新 AOT 缓存）**：**epoch 400.8ms（vs 优化前 410-425ms，~15-24ms 提升）**，`mimo_exec` 197→190ms/epoch，**acc 97.16% / loss 0.0981 零回归** ✓。
+  - **余项**：grad_z 两遍→单pass（~10ms，需 Gt/Mul 循环融合，收益有限暂缓）；真正主坑「func_ 内非 cblas 非 epilogue 的 ~100ms」仍未定位，疑在单输出 backward(layer3)/数据物化或 kernel 内其他调用，需继续。
+
+- **4.30 2026-08-26 主坑落定：死转置拷贝（~116ms/epoch），epoch 401→285ms** 🎯
+  - **决定性发现**：重读 MIMO L1 `.bc`（996814）开头（BB 16-53）——存在**两个显式转置拷贝循环**：X^T(128×784=100352 元素) 与 W^T(784×256=200704 元素) 写入 scratch `%6/%8`。但随后的 `cblas_sgemm` 用 **`transA/transB=112` 直读原 X/W，根本不消费这批转置结果**。
+  - **根因**：`MLIRKernelGen` 的 MatMul「转置折叠」（transA/B=112）**只改了 cblas 参数，却没抑制 TransposeNode 自身的输出循环生成** → 每次 MIMO call 白拷 ~300K 元素死数据；LLVM 因外部 `cblas_sgemm` 有副作用无法 DCE。
+  - **修正**：预扫描 compute_nodes，把被 MatMul(`inputs[i]` 直接是 `TransposeNode`) 折叠吸收的 Transpose id 收进 `trans_folded_skip`，生成循环顶部 `continue` 跳过。数值不变（cblas 走 trans=112 读原输入）。
+  - **实测（MNIST，新 AOT 缓存，零回归）**：**epoch 400.8→285.1ms**，`mimo_exec` 190→**72ms/epoch**、`mn_func` 214→90ms、acc 97.18% / loss 0.098 与修复前一致。账目终于闭合：MIMO func_(72ms) ≈ cblas(46.4) + epilogue(~14) + setup。
+  - **纠错**：4.24 曾断言「转置零拷贝折叠」——只看了 cblas 参数 112 就下结论，**漏了生成端仍并发死转置循环**。教训：折叠除改算子参数外，还必须剪掉被折叠节点的输出生成。
+  - **旅程累计**：epoch 425ms(4.13 基线) → 285ms，其中主坑(死转置 116ms) + grad_b 连续化(~15ms) 为两大贡献。
+
+- **4.31 2026-08-26 修复加固 + 其他算子审计：非「转置折叠不剪生成」类仅此一例，elementwise 链为可选次优**
+  - **守卫加固**：`trans_folded_skip` 限定「非图输出 && 单消费者」才跳过（防多消费/输出 Transpose 被误剪破坏正确性）。实测 MNIST **epoch 269ms**（比 285 再低）、acc 97.18% 零回归；修复后 MIMO L1 `.bc` 死转置循环已彻底消失（`cblas_sgemm(101,112,...)` 直读 X，函数体大幅精简）。
+  - **系统性排查结论（其他折叠路径均无同类死坑）**：
+    ① MatMul epilogue 融合（bias Add + Activation）：`fused_skip` 已正确 `ci+=fused_skip` 跳过被融节点 → 无死计算；
+    ② `FusedNode`（region fusion 一体融合）：走 `buildFusedMultiNode` 单 loop → 无死中间 buffer；
+    ③ 其余节点(Add/Sub/Mul/Div/Neg/Act/SumReduce/Transpose/Gt)各自生成、无「改参不剪生成」模式。
+    ⇒ **唯一「折叠改参不剪」死坑 = Transpose 转置折叠**，已修。
+  - **治理性次优（非死，可选）**：普通 graph 的 elementwise 链仍是**每节点独立 loop + 中间 buffer 往返**（串行多 pass）。MNIST 用 ReLU（grad_z = Gt+Mul 2 pass）影响约 ~10ms/epoch；对多节点激活（Sigmoid/Tanh 反向 7 节点链）影响显著。可做 elementwise 链融合（复用 `FusedNode` 机制），收益取决于激活类型。
+
 ---
 
 ## 📊 关键指标历史追踪
@@ -284,3 +393,144 @@
 | MNIST 5-epoch 训练对照（本轮实测） | Eager 49.97s | ⚡ **C3 8.42s（加速 5.93×，acc 97.18% 零损失）** | 总 49973ms→8424ms；平均/batch 21.36ms→3.60ms；详见 4.13 |
 | 图代数化简（Canonicalize）规则数 | ⚠️ 3 规则（未全实现） | 🟢 **11 规则（13/13 单元测试全绿）** | 完成规则 7 Reconstruction 重写，新增 Sub(x,0)/Div(x,1)/Sub(0,x)/Mul(x,-1) 等 |
 | Fused-Chain 向量化支持节点数 | ⚠️ 6 个基础节点 | 🟢 **11 个核心节点（数学函数全向量化）** | 全新解锁 Sigmoid/Tanh/Exp/Log/Div 向量化，打通 MathToLLVM JIT 下沉管线 |
+
+## 🟢 治理：普通图 elementwise 链融合（2026-08-26，生成层）
+
+`src/C3/MLIRKernelGen.cpp` `buildMultiNodeMLIR` 新增生成层 elementwise 链融合：
+- **动机**：MIMO 反向图走 `C3BackwardCapture` 时 `enable_fusion=false`（防多输出拓扑序/输入索引被打乱），前缀/后缀的独立 elementwise 链（如 ReLU backward 序列）退化为「每节点独立 loop + 中间 buffer 往返」的串行多 pass。
+- **实现**：预扫描 `compute_nodes`，识别「连续相邻 + 同 numel + 严格线性(input[0]=prev) + 中间节点单消费 + 非输出段」的 elementwise 子序列；命中时合并为单条 `buildFusedMultiNode*/Vectorized` 调用（复用 FusedNode 生成机制），消除中间 buffer 往返。
+- **覆盖算子**：Add/Sub/Mul/Div/Neg/ReLU/Sigmoid/Tanh/Gt/Exp/Log（scalar `buildFusedMultiNode` 同步补齐缺失的 Gt/Exp/Log 分支，与 vectorized 对称）。
+- **实验开关**：`C3_EW_CHAIN_FUSION=1` 才开启（**默认关闭**）。
+- **实测结论（MNIST 5ep，本机 LLVM 22.1.8 全量构建）**：开启≈关闭（264.65 vs 264.72ms/epoch，acc 均 97.18%），**无性能收益**——因 MIMO 多输出反向图里链检测（连续相邻 + 严格线性 input[0]=prev + 单消费 + 非输出段）匹配不到可融合链，`mn_func_us` 几乎不变。故默认关闭保持原行为，保留实验开关以备在有真正线性 elementwise 链的模型上二次验证。默认态 269.2ms/epoch、acc 97.18%、无崩溃。
+
+## MIMO backward `func_` 内部分析（2026-08-26，机器码逆向）
+
+用 `~/.c3cache/*.bc` + `llvm-dis` 反编译当前 MIMO L1 kernel `c3_kernel`（转置折叠修复后）：
+- **结构干净，无死转置拷贝**：`cblas_sgemm(112,111, 784×256×128)` 用 `transA=112` 直读 a；`cblas_sgemm(111,112, 128×784×256)` 用 `transB=112` 直读 W，且两 GEMM 完全共享 out 里的 `grad_z`。
+- **ReLU backward**：`Gt(z,0)→mask`（标量趟）→ `mul(mask,dz)`（v8 向量趟），占 epilogue；∑grad_b 已是行优先归约。
+- **耗时归属量化**：纯 cblas 两 GEMM ≈ **41.1ms/epoch**（trans-直读，接近最优；预转置复用 37.8ms 仅再省 ~8%）；epilogue bench「两趟 mask+mul」27.8ms vs「单pass+行优先」5.6ms，**理论可省 ~20ms**。
+- **实测却无净收益**：`Gt(Mask)→Mul` 链虽满足 ew_chain 检测（已用 graph trace 确认 id7→id8 线性连续单消费），但开启融合后 `mn_func` 几乎不变（420927 vs 414886µs）。归因：mask 128KB 往返驻留 L1/L2 成本低，且 func_ 由 GEMM(41ms) 主导，epilogue delta 被噪声/主次淹没。**结论：func_ 已是 GEMM 主导且接近最优，epilogue 单pass 合并收益在真实 kernel 不显著，不强推。**
+- 附带确认：scalar `buildFusedMultiNode` 补齐 Gt/Exp/Log 分支（与 vectorized 对称），修复了「含 Gt/Exp/Log 的链走 scalar 路径时 result 为空 → 后续 op 崩溃」的潜在缺陷。
+
+- **4.32 2026-08-26 亲手 A/B 验证 grad_z 链融合 → 确证无净收益，维持默认关闭**：本机 `build/` 直接跑 `./build/test_c3_mnist_train` 对照（`C3_EW_CHAIN_FUSION` 运行时 env，免重编）。默认 vs 开启：平均/ep 257.2→266.0ms（噪声主导）、E5 acc 97.16%→97.18%（零损失）、E5 `mn_func` 累计 417.3→409.6ms（仅 ~1.5ms/ep）。⇒ grad_z「Gt→Mask→Mul 两遍→单pass」确实被 GEMM(41ms) 主导淹没。**MIMO JIT 机器码优化清单至此全部闭环**：GEMM→cblas、epilogue→VL8、转置→零拷贝折叠+剪生成、grad_b→行优先、grad_z→单pass（已实现，实测无收益）。**MIMO func_ 已接近最优（cblas 主导），无需再啃。**
+- **真正大头（经本次 [C3-PERF] E5 复测）**：`rd` 累计 328ms(10.0µs/次) + `rm` 170.7ms(36.5µs/次) ≈ **Forward 调度层 ~100ms/ep**，仍为墙钟主导。下一啃点 = `tryRegionDispatch` per-call 开销（已做 `isRegionCandidateOp` 裁剪 -18%，剩 ~80ms 仍最硬）。
+
+- **4.33 2026-08-27 决定性归因：rd 大头在 prewalk（22.6µs/次），末尾匹配仅 0.19µs/次**
+  - 用 `C3_RD_SEG=1` 探针（env 门控，默认关）给 `tryRegionDispatch` 分段：`[RD-SEG] prewalk=192.9ms/8547次(22.57µs) tail=0.5ms/2852次(0.19µs)`。⇒ **~99% 耗时在 prewalk 状态机命中路径**（kPrewalking 中间 op / kIdle 启动 / 末尾执行），末尾 op 匹配路径几乎免费。
+  - **解谜：此前 STATUS 4.23 的 C3_DISPATCH_SEG 只探了末尾匹配路径**（findRegionByFirstOp/build/tail 均 <25ns），**没覆盖 prewalk 的 placeholder 构建/堆分配**——所以"各段都小却对不上总耗时 8µs"。真凶一直在 prewalk。
+  - **真凶构成**：prewalk 命中时每次创建 `Tensor placeholder(PlaceholderTag) + std::vector<Tensor> captured_inputs(复制) + make_shared<LazyMaterializer>(捕获 lambda，std::function 堆分配) + placeholder.setLazyMaterializer(...)`，~22µs/次。
+  - 已落地 **backward 短路**（`g_in_backward()` 入口 return，理由：backward 由 MIMO 全覆盖、region 从不命中）：acc 97.18% 零回归，但仅省 rd ~1.3ms/ep（backward candidate op 本就少）。
+  - **下一步**：轻量化 prewalk placeholder 构建（move 捕获省复制 / 池化或减少 make_shared / 缓存 computeOutputShape）。
+
+- **4.33-补充 2026-08-27 RD-SEG 完整拆开 rd 结构（钉死每个 µs 去哪）**
+  - `[RD-SEG] start=63ms/2850(22µs) mid=3.1ms/2850(1.1µs) end=100.7ms/2850(35µs) tail=0.3ms/2850(0.1µs)`，`FINDFIRST=0.03µs/call×4275(0.1ms)`。⇒
+  - **end(35.3µs/次) = 末尾执行融合 kernel 的真实计算**（MatMul+Add+ReLU），与 `rm` 统计重叠，**属有用工作、非调度浪费**；
+  - **start(22µs/次) = kIdle 启动的纯调度**（~950/ep ≈ **~21ms/ep**），是 rd 里唯一可挖的真调度；
+  - mid(1.1µs) / tail(0.1µs) / findRegionByFirstOp(0.03µs) / mayMatchAsFirstOp 全部便宜。
+  - **start 22µs 未锁定单点**：已排除 find(0.03µs)、first_input_shapes 构建、MM-REGION 诊断（已 `C3_FWD_DIAG` 门控，移除后 start 不变）。疑在 `placeholder + make_shared<LazyMaterializer> + 状态设置`——但同构的 mid 仅 1.1µs，MatMul 启动差异成因待 func_ 级采样（perf）。
+  - **已落地（acc 97.18% 零回归）**：① backward 短路（g_in_backward 入口 `return`，省 ~1.3ms/ep）；② prewalk `captured_inputs` 改 move 捕获（省一次 vector<Tensor> 复制）；③ MM-REGION 诊断门控 `C3_FWD_DIAG`（默认关，从热路径移除 string/mutex/unordered_map）。E5 稳定段 ~250ms（噪声 ±10ms 内），三者合计收益 ~2-4ms/ep，量级受噪声淹没。
+  - **RD-SEG 探针保留**（`C3_RD_SEG=1` 启用、默认零污染）；find 双调探针已清理。
+
+- **4.33b 2026-08-27 shallow() 啃掉 start 一半：prewalk 深拷 grad 元凶定位 + 修复，epoch ↓~10ms、acc 97.18% 零回归**
+  - **技巧**：macOS 无 Linux `perf`，`sample` 对 Release(-O3+LTO 无 -g) 短进程只有裸地址无法命名微观调用（实测 2345 行样本仅 1 处符号）。改用 RD-SEG 探针把 start 内部再拆「kIdle进入」vs「命中后 build」。
+  - **归因**：`build=23.25µs ≈ start=23.52µs` → 22µs 几乎全在「命中后→return」。带宽量级吻合：Tensor 拷贝构造 `_autograd_meta._grad ? make_shared.clone() : nullptr`（Tensor.h:397）在 prewalk 复制权重 W[784,256] 时**深拷贝 W.grad(≈3.2MB)**；mid(Add) 复制 bias.grad 仅 1KB 故 1.2µs。
+  - **修复**：新增 `Tensor::shallow()`（共享 storage 零拷贝 + 保留 requires_grad + 空 grad + 重建 GradAccumulator），prewalk `captured_inputs` 改用它（lazy materialize 重算 op 时自会重建 grad 链）。
+  - **实测**：`start 23.5→14.3µs`、`build 23.3→14.1µs`（RD-SEG）；正式跑**平均 ~233–246ms**（基线 ~251–257ms，**↓~10ms/ep**）、E5 224ms、**acc 97.18% 零回归**。
+  - **剩余**：`start` 仍 ~14µs，疑 primary 在复制 requires_grad W 时的 `createGradAccumulator` / `make_shared<LazyMaterializer>`，待续。
+
+- **4.33c 2026-08-27 剩余 14µs 归因收尾 + 收刀：start 23→~11µs，epoch ↓~10-15ms，acc 97.18% 零回归**
+  - **build 内定点**（RD-SEG 子计时）：`make_shared<LazyMaterializer>=0.2µs`（非元凶）；`ext`(prewalk_external_inputs_ clear+2×shallow X/W)=**~8µs**（build 大头）；其余(captured+placeholder+state)=~4µs。
+  - **shallow 推广**：把 `prewalk_external_inputs_` 的 push 也改 `shallow()`（不再深拷 W.grad）→ ext 14→8µs → shallow 后 ~6µs；`createGradAccumulator` 惰性实验（省 ~2µs）acc 97.18% 零回归，**但为保 autograd 语义恢复保留**（ext 大头非它，是 shallow 大 tensor 的 Tensor 构造/共享共享 + createGA）。
+  - **最终账目**：`start` 23.5→**~11.2µs**（砍 52%）；正式跑 **平均 ~240ms**（基线 ~257ms，**↓~10-15ms/ep**）、E5 224ms、**acc 97.18% 零回归**。
+  - **收刀理由**：剩余 build ~11µs 为主是 shallow 大 tensor(X/W) 的 `Tensor` 构造 + 共享 storage + createGA 等基础操作（与 mid 的 1.7µs 差异即 MatMul 大权重节点的分摊），收益递减；已把 rd 调度大头(start) 砍半，`end`(35µs, 真实融合计算) 与 tail 均非浪费。
+  - **探针清理**：RD-SEG build/make/ext 子探针已移除，保留核心 start/mid/end/tail 分段（`C3_RD_SEG=1`，默认零污染）。改动：`Tensor::shallow()` 新增；prewalk `captured_inputs`/`prewalk_external_inputs_` 用 shallow；backward 短路；MM-REGION 门控；move 捕获。
+
+## Forward 区域融合 kernel 分析（2026-08-26，cblas 符号拦截分桶）
+
+用 `C3_CBLAS_PROBE=1`（cblas_sgemm 强符号拦截按 M/N/trans 分桶）量化**全部前向+反向 GEMM**，对比 epoch 墙钟得**开销结构决定性结论**：
+- **总 cblas ≈ 73ms/epoch**（前向 24ms：W1`[128,784]×[784,256]`20.6ms + W2 3.5ms；反向 49ms：grad_W/grad_X L1+L2+小）
+- 而前向墙钟 117ms + 反向墙钟 123ms ≈ **240ms/epoch** → **非 cblas ≈ 167ms/epoch，占 ~70%！**
+  - Forward 非 cblas ≈ **93ms**（cblas 仅 24/117）
+  - Backward 非 cblas ≈ 74ms
+- Region fusion W1 kernel `.ll` 结构干净：`cblas(111,111,128×256×784)`＋标量 epilogue（bias 加＋ReLU max，LLVM 优化后向量化），epilogue 仅 32768 元素，非慢点。
+- **Forward bucket 缺失疑点**：`M=128 N=10 tA=111`（第三层 logits `128×10` 前向）**未出现在 cblas 探针** → 该层前向疑似走了非 cblas 路径（eager/手写/小矩阵），是 forward 93ms 非 cblas 的嫌疑对象之一（但 128×10 太小不足以解释全部 93ms）。
+- **结论**：瓶颈不在 GEMM，而在非 cblas 开销（~167ms/epoch，占大头）。下一步需给 forward 加分段归因，钉死这 93ms 的分配（第三层前向路径 / 单 kernel dispatch / 数据准备 vs epilogue），而非继续优化 GEMM。
+
+## Forward 93ms 归因结论（2026-08-26，[C3-PERF] 分桶）
+
+用测试内置 `C3-PERF` 探针（`CT_PROFILE_PERF=ON` 重编）分桶，epoch 稳定段累计 ÷5：
+- `rd` region_dispatch：39820 次/epoch × 8.0µs ≈ **64ms/epoch**
+- `rm` region_match：4678 次/epoch × 35.2µs ≈ **33ms/epoch**
+- `c3s` c3_single_invoke：3 次 ≈ 0.6ms（前向第三层 logits 单 kernel 可忽略）
+- `eager_invoke`：25781 次 × 10µs ≈ 52ms/epoch（未走 JIT 的 eager 回退）
+
+**决定性结论：Forward ~93ms 非 cblas ≈ `rd(64)+rm(33)` ≈ 97ms**，几乎完全对应 → **forward 真正瓶颈是 region fusion 调度层 `tryRegionDispatch` 的 per-call 开销**：
+- 每次 tensor op 调用都尝试 region 匹配，未命中 → 8µs/次，约 85 次/batch → 64ms/epoch
+- 命中 region 时匹配还要 ~35µs/次 → 33ms/epoch
+- 单 kernel 路径（logits）≈0.6ms，可忽略；eager 回退 52ms 为次大头。
+
+**下一步优化方向（新面的调度层，非 GEMM）**：降低 `tryRegionDispatch` 每调用成本——① 对明显不可能构成 region 的 op 加快速失败/短路，避免每次构建 region key + hash + 遍历 pattern；② 缓存「非 region」判定；③ 压 `region_match` 的 35µs 匹配逻辑。目标是把 ~97ms 调度开销压下去。
+
+## 📊 2026-08-26 C3 vs Eager 端到端性能测试（本机 LLVM 22.1.8 Release）
+
+同一份 `test_c3_mnist_train`（MNIST 784→256(ReLU)→128(ReLU)→10，5 ep × 128 batch，lr=0.001），仅 `CT_DISABLE_C3` 宏切换：
+
+| 指标 | Eager OFF | C3 ON | 加速比 |
+|------|-----------|-------|--------|
+| 平均 / epoch | 9557.2ms | 292.4ms | **≈ 32.7×** |
+| 稳定段 / epoch (E2–E5) | ~9400–9850ms | ~255–259ms | **≈ 36–37×** |
+| 5 epoch 总时间 | 47786ms | 1462ms | **≈ 32.7×** |
+| 平均 / batch | — | 0.62ms | — |
+| 最终 acc | 97.18% | 97.18% | **零损失** ✅ |
+
+分 epoch：C3 = 368.9 / 322.1 / 255.7 / 256.4 / 259.0 ms（E1 含 JIT 冷启动）；Eager = 9599.6 / 9849.5 / 9417.6 / 9524.8 / 9394.7 ms。
+> 注：C3 行用带 `CT_ENABLE_PERF` 探针的 build（上轮归因），探针在 hotpath 有少量累加开销；关探针预计 ~265ms/epoch。构建目录：`build/`（C3 ON）、`build_eager/`（Eager OFF）。
+
+## 📊 2026-08-26 外部对照：PyTorch CPU（本机 torch 2.8.0，5 线程）
+
+`scripts/bench_pytorch_cpu_mnist.py`（与 C3 `test_c3_mnist_train` 同网络/epochs/batch/lr/SGD/初始化/损失，已把 `MNIST_DIR` 改为 `mnist`），`/usr/bin/python3`（torch 2.8.0, MPS 可用, CPU 线程 5）：
+
+| 框架 | 平均/ep | 稳定/ep | 相对 C3 稳定 |
+|------|--------|--------|-------------|
+| PyTorch eager (CPU) | 166.5ms | ~160ms | 快 ~1.6× |
+| PyTorch `torch.compile(inductor)` | 663ms(含编译) | ~207ms | 快 ~1.24× |
+| **C3 ON** | 292.4ms | ~257ms | 基准 |
+| Ctorch Eager (无 C3) | 9557ms | ~9500ms | 慢 37× |
+
+**结论：PyTorch eager 目前最快，比 C3 快约 1.6×**（三种 acc 均 ≈97.18%，可比）。差距两因：① **GEMM 并行度**：PyTorch 5 线程 GEMM vs C3 `cblas_sgemm` 单线程；② **调度层**：C3 `tryRegionDispatch` 8µs/次（`rd` 64ms/ep）而 PyTorch eager 无此开销。
+**追赶路径**：GEMM 多线程化 + 削 `tryRegionDispatch` 的 `rd/rm`（97ms/ep）。
+
+## 调度层探针量化（2026-08-26，定位 8µs / 23µs 真凶）
+
+给 `tryRegionDispatch` 加 `C3_DISPATCH_SEG` 分段探针 + `bench_dispatch_overhead` 加一元 `tryExecuteUnary` 直调，实测：
+1. **`tryRegionDispatch` 8µs 无法在函数内定位到单点**：`findRegionByFirstOp avg=15ns`、`first_input_shapes 构建 avg=22ns`、`trace/hash tail avg≈0`、`computeOutputShape 0 次调用`（分段全部 <25ns，加起来 ~40ns 对不上 8µs）。**8µs 不在 find/build/tail/shape**，推测在 common path/入口判定或与 C3-PERF 计时口径相关，未锁定。
+2. **一元 dispatch 23µs = `kernel->execute`，不是调度**：`tryExecuteUnary` 分段 `disp_avg=49ns`（makeKey+锁+查表+复制C3Entry）、`exec_avg≈30200ns`（30.2µs）→ **C3 编译的 JIT 单 kernel 执行本身比手写 SIMD kernel（7.4µs）慢约 4×**（每次 execute 的 out 分配/参数整理/同步）。调度层几乎免费。
+3. **对当前 MNIST 影响有限**：真实训练中 C3 single unary 仅触发 ~3 次/epoch（forward ReLU 走 region 预走、backward 走 MIMO），故 30µs/次 的 unary kernel 慢对当前 epoch 贡献小；但它是「真慢但少用」的潜在缺陷。
+
+## dispatch 层裁剪（2026-08-26，已实施）
+
+在 `CtorchScheduler.h` 的 `dispatch`（binary/unary 各 2 处）调用 `tryRegionDispatch` 前加编译期 `ct::detail::isRegionCandidateOp(OpType)` 门控（region 候选集 = {MatMul, Add, ReLU, Sigmoid}，与 Region 4-pattern 同步）：
+- **结果**：rd 调用 39,820→32,798/epoch（**-18%**）；`rm` 命中 4,678 不变；**acc 97.18% 零损失**；avg/epoch ~272→262ms（改善，含噪声）。rd avg 8.0→9.7µs（跳过的是低 avg 的不相关 op，剩余为真实候选）。
+- **局限**：裁剪只去掉边际的不相关调用；真实大头仍是候选 op（MatMul/Add/ReLU/Sigmoid）的 `tryRegionDispatch`（avg ~9.7µs），其内部 find/build/tail/shape 各段都 <25ns、未定位到单点（见上探针），8µs 归属仍未锁定（可能 common path / 与 C3-PERF 口径相关）。
+- **后续候选**：削 `tryExecuteUnary` ~23µs；或在更上游减少候选 op 的尝试次数。
+
+## tryExecuteUnary 啃到底（2026-08-26）——已收敛，收益天花板明确
+
+**调度层已免费，真凶全在 JIT 单 kernel 执行本身。**
+
+| 环节 | 耗时 | 结论 |
+|------|------|------|
+| `makeKey`+锁+`unordered_map` 查表+copy `C3Entry` | **49ns** | 已接近零成本。copy 持 `shared_ptr`（kernel 保命防 UAF）是安全设计，不能换引用 |
+| `std::vector<Tensor> inputs={a}` | 纳秒级 | 可忽略 |
+| `ConcreteCompiledKernel::execute` | **~30.2µs** | 真凶，全部在这里 |
+| └ Tensor out 分配（100352 元素 ≈400KB） | 数 µs | 必须 |
+| └ `func_`/`func_any_` JIT 机器码 | ~20µs | **核心：标量/弱向量化** |
+
+**4× 差距根因（与调度无关）**：手写 `ReLU_SIMD_kernel` 用 NEON/AVX 逐块向量化（7.4µs，**含 Tensor 分配**）；而 C3 单 kernel 机器码慢 4×。确认 `opt_level` 默认 **3**，单节点逐要素在 `opt_level >= 2` 时被强制跳过 linalg（`tryBuildLinalgElementwise` 首行 `if (opt_level >= 2) return false`，为的是走「标准 MLIR 向量化管线」`makeOptimizingTransformer(3)`+Aggressive/Ofast）。**实测这条管线对单 elementwise 生成的机器码质量仍弱于手写 NEON**——这是 tryExecuteUnary 30µs 且手写 SIMD 7.4µs 的唯一解释（A 基准含分配、同为 100352 元素）。
+
+**对当前 MNIST 影响 ≈ 0.03%**：训练期 `tryExecuteUnary` 被 `inAutogradScope` guard bypass 挡掉，真实命中仅 ~3 次/epoch（90µs / 262ms）。**在此路径落地改写收益为零，故不做。** 用 doc/STUB 记录根因即可。
+
+**关键连接**：同一根因「C3 JIT 机器码质量弱于手写」在 MIMO 已撞见——编译 kernel `func_` 调用 ~200ms/ep vs 裸 `cblas_sgemm` ~55ms（慢 2-3×）。真正的战力在：
+1. **MIMO/region 的 JIT 机器码质量**（根因共用，拉基准大头）
+2. **GEMM 多线程化**（cblas_sgemm 单线程→多线程，追 PyTorch 5 线程，292→166ms 最大可落地项）
+3. 削 `tryRegionDispatch` 的 `rd+rm`（97ms/ep，真正的调度大头，非 tryExecuteUnary）

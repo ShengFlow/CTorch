@@ -1380,6 +1380,20 @@ Tensor Tensor::detach() const {
     return result;
 }
 
+Tensor Tensor::shallow() const {
+    // 浅拷贝：共享 storage（零数据拷贝），保留 requires_grad，但空 grad（避免深拷 W.grad 等大梯度）。
+    Tensor r(ShapeTag{}, _shape, _dtype, _device);
+    r._strides                        = _strides;
+    r._storage_offset                 = _storage_offset;
+    r._storage                        = _storage;   // 共享底层存储
+    r._autograd_meta._requires_grad   = _autograd_meta._requires_grad;
+    r._autograd_meta._grad            = nullptr;    // 不深拷 grad
+    r._autograd_meta._self            = std::shared_ptr<Tensor>(&r, [](Tensor*){});
+    if (r._autograd_meta._requires_grad)
+        r._autograd_meta._node        = createGradAccumulator(r._autograd_meta._self); // 保 autograd 语义
+    return r;
+}
+
 Tensor Tensor::to(DeviceType target_device) const {
     if (_device == target_device) {
         return *this;
