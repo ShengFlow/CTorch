@@ -614,6 +614,19 @@ add_executable(test_mnist_step src/tests/standalone/test_mnist_step.cpp mnist/mn
 target_link_libraries(test_mnist_step PRIVATE CTorch)
 target_include_directories(test_mnist_step PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(bench_ce_backward src/tests/standalone/bench_ce_backward.cpp)
+target_link_libraries(bench_ce_backward PRIVATE CTorch)
+target_include_directories(bench_ce_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(bench_fusion_scale src/tests/standalone/bench_fusion_scale.cpp)
+target_link_libraries(bench_fusion_scale PRIVATE CTorch)
+target_include_directories(bench_fusion_scale PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_options(bench_fusion_scale PRIVATE -rdynamic)
+
+add_executable(bench_wide_mlp_e2e src/tests/standalone/bench_wide_mlp_e2e.cpp)
+target_link_libraries(bench_wide_mlp_e2e PRIVATE CTorch)
+target_include_directories(bench_wide_mlp_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(test_relu_backward src/tests/standalone/test_relu_backward.cpp)
 target_link_libraries(test_relu_backward PRIVATE CTorch)
 target_include_directories(test_relu_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
