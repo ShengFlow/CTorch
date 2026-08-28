@@ -608,3 +608,74 @@
 - 采样复核：`MatMul_SIMD_kernel → cblas_sgemm → libBLAS` 主导，确认进入 Accelerate 优化 GEMM，朴素循环已消失。
 
 **教训**：eager 与 C3 性能差距本质是「复用先有 cblas」还是「自研朴素循环」——任何 CPU 数值核心都应优先复用平台最优实现（Accelerate/BLAS），而非手搓向量化循环。
+
+---
+
+## 4.42 2026-08-28 C3 反向融合 bw_miss 根因排查（CGO2027/arXiv 冲刺期）
+
+**背景**：CGO2027 截稿 3 天，目标 arXiv 兜底。全量基准显示 MNIST MLP（784→256→128→10, 5 epochs×128, CPU）当前：
+- **CTorch Eager（C3 off, cblas）= 142.6ms/epoch**（最快，acc 97.18%）
+- PyTorch eager（5 线程）= 169.4ms/epoch（acc 97.16%）
+- **CTorch C3 ON = 215ms/epoch**（acc 97.19%）
+- PyTorch inductor = 245.5ms/epoch（acc 97.27%）
+
+即：Eager 反超 PyTorch（硬实力可写论文）；但 **C3 比自家 Eager 慢 ~1.5×**，原「5.9× vs Eager」叙事因 eager cblas 化后不再成立。
+
+**排查步骤与结论**：
+
+1. **`MatMulOpLowering` 已有 cblas（STATUS_CONTEXT 4.30 旧述已过时）**：`C3DialectLowering.cpp` 的 `MatMulOpLowering` 已实现完整 cblas_sgemm 分支（total_ops≥256 时走 `getOrDeclareCblasSgemm` + LLVM CallOp，附向量化 bias/激活 epilogue）。MIMO 反向也经 `c3::MatMulOp` 走该 lowering。→ MatMul 非瓶颈。
+
+2. **C3 单 epoch（~205ms）时间账**：
+   - Backward mn_func（未融合 eager 反向）≈ **81ms** ← 最大
+   - Forward JIT ≈ 88ms
+   - MIMO 反向执行 ≈ 54ms
+
+3. **`bw_miss` 根因（决定性）**：用 `C3_BW_MISS_TRACE=1` 枚举到仅 **12 个不同缺失 key**，且 `compile=8`（成功安装）。再临时加 env 门控打印（`C3_BW_COMPILE_ERR=1`）到编译 catch 与 nullopt/identity 跳过点，实测：
+   - **CrossEntropyNode 反向 → `nullopt-build`（~2340 次/5ep）**：`buildBackwardGraphForTypeAndIndex` 不支持 CrossEntropy，每次 batch 都回退 eager。
+   - **Add bias 反向（grad 128,10）→ `identity` 跳过（~2373 次/5ep）**：被判定「无计算节点」（nodeCount==inputCount），不编译。
+   - **MatMul/ReLU 反向：8 次 install OK，正常编译命中**（非瓶颈）。
+   - `bw_miss ≈ 4713 ≈ nullopt(2340)+identity(2373)`，即 **bw_miss 几乎全来自 CrossEntropy + Add-bias**。
+
+4. **结论**：C3 追平 Eager 不是「补一个 MatMul cblas」的小修复（该修复早已存在），而是**需为 CrossEntropyNode 反向实现 C3 图融合**（softmax+CE 梯度，涉及正确性）+ 处理 Add-bias 直通。3 天内完成并验证风险高。→ 倾向「诚实收口」：论文以 CTorch Eager 超越 PyTorch 为性能主线，C3 作为 JIT 融合架构如实呈现（含其在 MatMul 密集小负载上的局限）。
+
+**诊断方法沉淀**（可复用）：
+- `C3_BW_MISS_TRACE=1`：打印首次未命中的反向 key。
+- 临时 `C3_BW_COMPILE_ERR=1` 门控打印：在 `C3BackwardCapture.cpp` 的编译 catch 与 nullopt-build / identity 跳过点加 `fprintf(stderr,...)`，可无侵入定位「编译失败 vs 构建不支持 vs identity 跳过」。注意 Release(NDEBUG) 下 `#ifdef CT_DEBUG` 不生效，需独立 env 门控。
+- 复现坑：`bench_auto_c3` 4/4 失败是其自身 bug——调用**运行时 `dispatch(a,b,op_type)`**（`CtorchScheduler.cpp:393`，不走 C3），应改走**编译期模板 `dispatch<op::...>`** 才会触发热路径；非系统回归（`test_region_fusion_auto` 与 MNIST 均正常）。
+
+---
+
+## 4.43 2026-08-28 C3 elementwise 融合崩溃排查与修复 + 端到端 C3 赢点探索
+
+**背景**：为「模型变大 C3 是否更有优势」找端到端 C3 赢点，新建 3 个基准：
+- `bench_fusion_scale`：kernel 级融合 vs eager（elementwise 链 + matmul+act 链，规模扫描）
+- `bench_wide_mlp_e2e`：宽 MLP 前向端到端（C3 ON vs C3 OFF，纯前向经真实调度器，含调度税）
+- `bench_ce_backward`：eager CE 反向微基准（ROI 探针）
+
+**kernel 级结论**：
+- matmul+act 融合 `sigmoid(X@W+B)`：C3 稳定更快，加速比随规模增大 **1.33×~1.58×**（[64,4096,4096]≈1.40×，[16,8192,8192]≈1.58×）。
+- 纯 elementwise 链：**分支 DAG（`sigmoid(x)*tanh(x)`）编译崩溃**，根因是 `unordered_map::at: key not found`。
+
+**崩溃根因（双 bug）**：
+1. `isFusedChainVectorizable` 只查算子类型/numel，**没校验线性链**。分支图被误判为可向量化 → 进 `buildFusedMultiNodeVectorized`（假设线性链，用 `prev_val` 只带上一 op 结果），内部中间分支值不在 `arg_ptrs` → `preloaded_ptrs.at()` 抛 out_of_range。
+2. 标量 `buildFusedMultiNode` 同样假设线性链，也有同一崩溃。
+3. **更深的 `fuse()` bug**：分支链融合后 FusedNode 的 ops 丢失分支中间 op（如 `sigmoid(x)*tanh(x)` 的 tanh op 未被写入 ops，但其输出 node 仍被 mul 引用）→ 即便代码生成层修好，分支仍无法编译。**该 `fuse()` bug 尚未修复**（需动融合图构建，作为后续项）。
+
+**已修复（MLIRKernelGen.cpp，+63/-33）**：
+- `isFusedChainVectorizable` 补严格线性链校验：op0 输入须全为外部 arg；op>0 首输入须为上一 op 输出（内部节点）、其余输入须为外部 arg。不满足 → 回退标量路径（防崩溃）。
+- `buildFusedMultiNode` 重写为支持分支 DAG：维护 `op_val_map`（op 输出 node_id → SSA 值），`getValue()` 优先取内部 op 输出、其次 loadExternal。配合 `fnode.op_node_ids` 传入，可正确处理任意 elementwise 图（线性 + 分支）。
+
+**修复后性能现实（诚实）**：
+- 线性 elementwise 链（`relu(sigmoid(tanh(x)))`）：**现在能编译**，但 C3 反而更慢（0.57~0.65×）——C3 编译 kernel 的 tanh/sigmoid 走 libm `expf/tanh` 调用，而 eager 用调优 SIMD kernel（`bench_simd_math` 实测 SIMD 4.24×），超越函数是 C3 的短板。
+- 分支 elementwise：仍崩（`fuse()` 丢 op）。
+- **matmul+act 融合是 C3 在本机唯一可靠赢点**（kernel 级 1.3~1.5×）。
+
+**端到端探索结论**（`bench_wide_mlp_e2e`，B=64 H=4096 L=4，20 步）：
+- Eager 417ms vs C3 554ms → C3 仍慢（融合确实生效 fused_hit=76，但 matmul 密集下 eager cblas 太优，融合省下的激活 epilogue 被巨量 matmul 成本稀释 + 调度税）。
+- 即：本机当前 C3 **端到端难赢**——matmul 密集 eager 赢、elementwise 密集 C3 超越函数拼不过 SIMD。论文应以 **kernel 级融合收益（规模依赖）** 为 C3 贡献主线，端到端局限如实陈述。
+
+**其他发现**：
+- 自定义 autograd 训练循环中 `std::vector<Tensor>` 的叶参数拿不到梯度（`grad_ptr` 全 null）——疑似向量扩容/拷贝破坏 autograd 节点归属；`bench_wide_mlp_e2e` 因此改为纯前向（也顺带隔离了 C3 调度税 vs 融合收益）。
+- `bench_ce_backward`：MNIST CE 反向仅 2.52µs/call（~1.2ms/epoch）→ 融合 CE 反向 ROI≈0，确认不是性能大头。
+
+**调试方法沉淀**：lldb C++ 异常断点（`breakpoint set -E c++` + `bt`）可精确定位 C3 内部 `unordered_map::at` 抛出点；本环境 python 命令偶发 300s 超时，优先用 `str_replace_editor` 或 bash cat 编辑。
