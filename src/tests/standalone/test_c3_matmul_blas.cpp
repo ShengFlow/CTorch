@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "C3/Graph.h"
 #include "C3/C3Engine.h"
 #include "C3/C3KernelRegistry.h"
+#include "C3/C3Cleanup.h"
 
 using namespace ct;
 using namespace ct::c3;
@@ -364,5 +366,10 @@ int main() {
         std::cout << "  Result: " << (ok ? "PASS" : "FAIL") << "\n" << std::endl;
     }
 
-    return 0;
+    // LLVM ExecutionEngine 的全局析构顺序在 macOS 上可能访问已析构 mutex。
+    // 与其他 C3 standalone 测试保持一致：先显式清理，再绕过第三方静态析构。
+    ct::c3::shutdownAll();
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(0);
 }

@@ -27,3 +27,10 @@ cmake-build-debug
 /cmake_install.cmake
 /tl-ArrayTest[1]_include.cmake
 .hilo/
+
+# 本地实验产物与验证构建：统一放入 .workspace-artifacts/，不纳入版本库
+.workspace-artifacts/
+*.log
+*.tmp
+.DS_Store
+.matplotlib/

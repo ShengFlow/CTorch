@@ -9,6 +9,7 @@
  * @date 2026/8/4
  */
 
+#include <cstdlib>
 #include <iostream>
 #include <chrono>
 #include <thread>
@@ -571,5 +572,8 @@ int main() {
         std::cout << "  (可能是异步编译尚未完成，但测试结果仍然正确)" << std::endl;
     }
 
-    return pass ? 0 : 1;
+    const int exit_code = pass ? 0 : 1;
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(exit_code);
 }

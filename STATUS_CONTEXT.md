@@ -583,3 +583,28 @@
 1. **MIMO/region 的 JIT 机器码质量**（根因共用，拉基准大头）
 2. **GEMM 多线程化**（cblas_sgemm 单线程→多线程，追 PyTorch 5 线程，292→166ms 最大可落地项）
 3. 削 `tryRegionDispatch` 的 `rd+rm`（97ms/ep，真正的调度大头，非 tryExecuteUnary）
+
+---
+
+## 4.41 2026-08-27 Eager 模式采样归因 + MatMul_SIMD_kernel 委托 cblas 复用（epoch 9.58s → 0.15s，~62×）
+
+**背景**：上一轮攻 C3 后，转攻 **eager 模式**（`CT_DISABLE_C3=ON`）做采样分析（macOS `sample`，2532 样本）。
+
+**采样归因（决定性）**：
+- **`MatMul_SIMD_kernel` 占 2503/2532 ≈ 98.8%** ☠️（eager 的 CPU MatMul 全部落此 kernel）。
+- backward 占主线程 89%，其中 `MatMulNode::backward` 占其 99%+，几乎全在 GEMM 计算。
+- 之前担心的调度层、Tensor 拷贝、GradAccumulator、转置拷贝**全部证伪**（合计 <1%）。转置拷贝仅 9 样本，折叠早已到位。
+- **根因**：eager 张量 device 是 `kCPU`（非 `kAMX`），[selectBestBinary](src/CtorchScheduler.cpp) 走到末尾分支返回 CPU-SIMD kernel → [MatMul_SIMD_kernel.cpp](src/kernels/CPU-SIMD/MatMul_SIMD_kernel.cpp) 是朴素 `i-k-j + #pragma omp simd` 三重循环：**无分块、无寄存器累加、不走 cblas**，比 Accelerate 慢 ~50×。
+
+**修复（最小改动，1 个文件 + 平台守卫）**：
+- `MatMul_SIMD_kernel` 内部委托 `cblas_sgemm`（Accelerate）+ 转置折叠：
+  - 行列连续 → `cblas NoTrans`；
+  - 转置视图（stride==(1,R)，来自 `B.transpose(0,1)`/`A.transpose(0,1)`）→ `cblas Trans` 直读原存储**零拷贝**（同 MIMO 折叠）；
+  - 仅真正任意 stride 才回退原 SIMD 循环（保正确性）。
+- **平台守卫**：Accelerate 是 macOS 专属，`#ifdef __APPLE__` 包住 include + cblas 分支，Linux/DCU 走原循环（同 AMX 守卫策略）。
+
+**验证**：
+- MNIST：**epoch 9.58s → 0.15s（~62×）**，最终 acc **97.1838%** 与基线完全一致，loss 0.0976，零回归。
+- 采样复核：`MatMul_SIMD_kernel → cblas_sgemm → libBLAS` 主导，确认进入 Accelerate 优化 GEMM，朴素循环已消失。
+
+**教训**：eager 与 C3 性能差距本质是「复用先有 cblas」还是「自研朴素循环」——任何 CPU 数值核心都应优先复用平台最优实现（Accelerate/BLAS），而非手搓向量化循环。

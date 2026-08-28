@@ -58,7 +58,7 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
                     accumulated = downStreamGrads[start_idx];
                     for (size_t i = start_idx + 1; i < downStreamGrads.size(); ++i) {
                         if (downStreamGrads[i].numel() > 0) {
-                            accumulated = accumulated + downStreamGrads[i];
+                            accumulated = Add_SIMD_kernel(accumulated, downStreamGrads[i]);
                         }
                     }
                 } else {
@@ -68,8 +68,12 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
             }
 
             // 仅当确有已有梯度时累加：grad_ptr() 探测避免 grad() 返回整 Tensor 拷贝
+            // [Eager/C3 优化 2026-08-27] 直接调 Add_SIMD_kernel，绕开 operator+/dispatch。
+            //   此前用 `accumulated + tensor->grad()` 会走 C3HotPathManager::recordCall + tryExecute
+            //   热路径调度（14000 次/5ep ≈ 107ms），而这是参数梯度累加、本就无需 C3 追踪/融合。
+            //   Add_SIMD_kernel 是纯 CPU 计算、形状相同走 SIMD，语义等价、零调度开销。
             if (tensor->grad_ptr() != nullptr) {
-                accumulated = accumulated + tensor->grad();
+                accumulated = Add_SIMD_kernel(accumulated, tensor->grad());
             }
 
             tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
