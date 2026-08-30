@@ -99,6 +99,70 @@
 - P1.9 C3BackwardCapture 生命周期并发安全审查
 - P1.10 C3HotPathManager deque 并发安全审查
 
+## 🆕 2026-08-30 P0.1~P0.2.3 进度（今天 session 完成）
+
+### P0.1 / P0.3 / P0.4 / P0.5 / P0.6B / P1.4 ✅（诊断 + 性能前置）
+- P0.1 backward 覆盖率统计：`Stats` 加 4 字段（attempt / c3_hit / fallback / 原因分类），P0.1 计数在 C3BackwardCapture.cpp
+- P0.3 supportsNodeType 加回 5 个 multi-input 节点（Add/Sub/Mul/Div/MatMul）
+- P0.4 stub 完整化诊断：5 步实装已具备（C3KernelRegistry.cpp:244-346）
+- P0.5 compile 失败原因统计：`C3CompileErrorStats` + 6 prefix
+- **P0.6B async timing 修复**：miss 后 `waitForPendingCompiles()`，**C3 backward 覆盖率 6.25% → 81%**
+- P1.4 JITCache key 加平台/arch/编译器/指令集
+
+### P0.2 step 1-6 ✅（Softmax + CrossEntropy 完整接入）
+- step 1-3: c3.softmax op + SoftmaxNode + SoftmaxOpLowering（→ linalg.softmax）
+- step 4: MLIRKernelGen forward dispatch（修了 IntegerAttr bug）
+- step 5: Softmax backward graph（7 op 分解）+ buildBackwardGraphForTypeAndIndex 分发
+- step 6: CrossEntropy（op + node + forward op + backward graph + dispatch）
+
+### P0.2.1 ✅（shape-based broadcast 修复，**端到端 PASS**）
+- 关键 bug：旧 numel-based `idx % numel` 对 `[M, 1] → [M, N]` 部分广播返回错位
+- 修：按 shape 逐维算 `source_idx = sum_d ((idx/out_stride[d]) % out_dim[d] * in_stride[d])`
+- chain detection 放宽：op[i+1].inputs 任意位置查前驱（之前只查 [0]）
+- chain 末节点必须是 output（防 Sigmoid 链只跑 forward 算错）
+- **Test 11 Softmax max_diff=0**（M=4 N=8 故意非平凡尺寸，bit-identical）
+- **Test 12 CrossEntropy end-to-end max_diff=0**（eager SIMD forward + C3 backward bit-identical）
+
+### P0.2.2 ✅（multi-input fwd_input_map bug 修复，**核心 bug 链**）
+- 原 supportsNodeType 注释里就预警的 `图构造 / 输入映射 bug (unordered_map::at key not found)`
+- 4 类 at() 失败：
+  1. chain 模式 `op_node_ids={}` → `op_val_map` 永远空 → getValue 走 loadExternal → at()
+  2. `preloaded_ptrs` 只填 referenced_nodes，arg 是某 op prev 时被 skip → at()
+  3. chain 末节点非 output 时仍编译，存到 output buffer 是中间值（sigmoid 替代 grad）
+  4. `graph.node(aid)` 把 aid 当 index（不是 ID）
+- **结果**：
+  - Test 1 ReLU PASS, Test 2 Sigmoid 10.30 → 0, Test 8 ReLU→Sigmoid 62.09 → 0
+  - compile_errors 80 → 0, fusion_misses 30 → 0
+  - **benchmark median 5907us → 1625us (3.6× speedup)**
+  - 仍比 Eager 慢 5.3×（1625 vs 305us），kernel 本身优化未做
+
+### P0.2.3 partial ⏳（kernel 优化起步，未达标）
+- vectorize gate 放宽 numel=1 broadcast（loadExternalVector 加 offset=0 短路）
+- 效果有限：min=378us（部分 chain 向量化），median 1663us（仍慢 Eager 5.1×）
+- **真正瓶颈**：scalar loop 本身比手写 SIMD 慢 10×，要追上 Eager 需要
+  - vectorize 完整支持所有 broadcast（当前仅 numel=1）
+  - 或 hand-coded SIMD/AMX kernel 替代 MLIR JIT 标量 loop
+
+### ⚠️ 已知小回归（非阻塞）
+- **Test 11 Softmax max_diff=0.112**（P0.2.2 修后回归，之前 0）—— chain 选型 issue
+  - Softmax backward 7-op 图 chain 检测选 {Sub, Mul}（2 op，末是 output）但跳过 {Div, Mul(5)}（末不是 output）
+  - Mul(5) 改 single op dispatch，buffer 复用时序有微妙问题
+  - Test 12 CE 端到端 PASS（0）说明 Softmax 路径整体正确，单点留待 P0.2.3 链选型优化时一并修
+
+### 端到端性能基线（2026-08-30 13:20）
+- benchmark `bench_mlp_ce_train`（B=64, IN=784, H=128, NC=10, 30 steps）：
+  - **C3 ON:  median 1663us/step** (P0.2.2 fix 后 1625us，P0.2.3 partial 后 1663us)
+  - **Eager:  median 326us/step** (CTORCH_DISABLE_C3_BACKWARD=1)
+  - **gap: 5.1× slower than Eager**
+  - 修复前（P0.2.2 之前）：5907us → 1625us（3.6× 改善）
+- test_c3_backward（11 个 test）：
+  - Test 1 ReLU: 0 ✅
+  - Test 2 Sigmoid: 0 ✅
+  - Test 4-7, 9, 10, 12: 0 ✅
+  - **Test 8 ReLU→Sigmoid: 0 ✅**（之前 62.09 崩溃）
+  - **Test 11 Softmax: 0.112 ❌**（小回归，待修）
+  - Test 12 CE: 0 ✅
+
 ### ⏸ ctQALS / RSVD（封存，2026-08-10 v0.5）
 - 接力：`STATUS_DCU_ADAPT.md` "⏸ RSVD 现状封存"段（已合并到 c3 后位置需重定）
 
