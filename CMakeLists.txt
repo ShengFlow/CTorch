@@ -618,6 +618,10 @@ add_executable(bench_ce_backward src/tests/standalone/bench_ce_backward.cpp)
 target_link_libraries(bench_ce_backward PRIVATE CTorch)
 target_include_directories(bench_ce_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(bench_mlp_ce_train src/tests/standalone/bench_mlp_ce_train.cpp)
+target_link_libraries(bench_mlp_ce_train PRIVATE CTorch)
+target_include_directories(bench_mlp_ce_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(bench_fusion_scale src/tests/standalone/bench_fusion_scale.cpp)
 target_link_libraries(bench_fusion_scale PRIVATE CTorch)
 target_include_directories(bench_fusion_scale PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
