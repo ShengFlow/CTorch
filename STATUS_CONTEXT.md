@@ -1,4 +1,109 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-17 PyTorch Eager 对照 + C3 性能回归定位)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-30 ASPLOS 战略 + C3 完善优先)
+
+## 🆕 战略调整（2026-08-30 洛锦 HITL）
+
+- **会议**：**ASPLOS 2027**（替代 CGO 2027，CCF A 类）—— "Architectural Support for Programming Languages and Operating Systems"
+- **C3 完善优先**（不再赶 25 天 CGO 2027 截稿）
+- **时间窗**：~12 个月（ASPLOS 2027 截稿预计 2027-06~07）
+- **主线**：补 C3 backward 覆盖率 + CrossEntropy/Softmax C3 Graph + 区域融合性能 + MatMul 标量根因 + 端到端训练 ≥ Eager
+- **DCU 适配降级**：C3 完善后 + ASPLOS 论文需要时再启动
+- **ASPLOS 论文三大 contribution 候选**：
+  1. 自研 C3 MLIR Dialect + One-Shot Linalg fusion
+  2. 异构非阻塞区域融合 + 预走 + MIMO 反向融合
+  3. 海光 DCU 适配（C3 → GCVM → HSACO 全链路）
+
+## 📦 项目模块状态（接手必读速览）
+
+> **重要路径修正**：C3 在 **submodule `c3/`** 内（`c3/include/C3/` + `c3/src/C3/`），不在主仓的 `include/C3/` `src/C3/`。最新 commit `e174d55` (2026-08-27)，跟主仓 `STATUS_CONTEXT.md` 描述的 v0.5.2 (8.15) 状态有 ~12 天差异。
+
+### 🟢 C3 区域融合（本文件主体）
+- 状态：JIT 3.0（C3 自研 Dialect + One-Shot Linalg fusion + One-Shot env flag），MIMO unified backward fusion（e07c0cf 8.27）
+- 区域融合**功能完整**但**性能不达标**（256² ~0.62-0.76× Eager）—— 见下方 P0/P1
+- 主线性能：CTorch C3 **75.226ms/batch vs Eager 28.658ms/batch**（C3 < Eager 2.6×）—— 8.17 性能回归
+
+### 🔴 C3 现状批判性评估（2026-08-30 洛锦列的 5 大类问题 + 7 个 P0/P1）
+
+#### 一、明确属于未完成或偷工减料
+
+1. **C3KernelRegistry backward stub**（P0）✅ 已核实
+   - `C3KernelRegistry.cpp:230-241` "TODO(c3-backward): 当前 stub 返回 nullopt → 反向全走 eager"
+   - 即使 backward kernel 编译完成装进 `backward_entries_`，**也没人能找到**它
+
+2. **多输入节点 backward fallback**（P0）✅ 已核实
+   - `C3BackwardCapture.cpp:547-551` 2 个 bug：① 图构造/输入映射（unordered_map::at key not found）② 数值正确性（Mul 返回 [a,a] 而非 [b,a]）
+   - Add/Sub/Mul/Div/MatMul/CrossEntropy/Softmax **从 supportsNodeType 中移除**，全部 fallback eager
+   - 当前 `supportsNodeType` 只支持：ReLU/Sigmoid/Tanh/Neg/GELU/LReLU/Sin/Cos/Abs/Exp/Log/Min/Max（13 个 unary element-wise）
+
+3. **CrossEntropy/Softmax 在 C3 Graph 缺失**（P0）✅ 已核实
+   - `grep "Softmax|softmax|CrossEntropy"` in `c3/include/C3` —— **0 命中**
+   - 整个 c3 submodule 完全没有 Softmax/CrossEntropy
+
+4. **多输出 + preAct IR 脆弱**（P1）
+   - 多输出 kernel 输出布局依赖约定
+   - preAct 和主输出 offset 需调用方 + lowering 同步
+   - secondary preAct preload 取消（不安全）
+   - 关闭 preAct 会让 LazyBox 物化崩溃
+
+5. **区域融合功能能用但性能不达标**（P0）
+   - test_region_fusion_auto 9/12 或 10/12 passed
+   - **256² MatMul+Add+ReLU 区域融合 ~0.62-0.76× Eager（比 Eager 慢）**
+   - 失败的是性能阈值（不是正确性）
+
+6. **C3KernelRegistry fused lookup 验证不充分**（P1）
+   - "融合 kernel 暂不注册到 registry / 多节点 kernel 暂不注册到 registry" 注释
+   - 缺 CPU/MPS 设备隔离 / shape 不误命中 / 序列匹配 / inactive entry / opt level 选择 / 并发 lookup 测试
+
+#### 二、合理保守 fallback
+
+7. **MatMul epilogue 标量化**（P1，稳定性 workaround）
+   - `MLIRKernelGen.cpp:1080` scalar buildFusedMultiNode 已补齐 Gt/Exp/Log 分支
+   - **但**：cblas sgemm 路径在 `C3DialectLowering.cpp:582-797` 已实装（getOrDeclareCblasSgemm + MatMulOpLowering）
+   - **L635 条件**：`total_ops < 256 || ct::c3::matmulNoCblasEnabled()` 才走小矩阵标量
+   - **8.17 性能回归根因**（C3 75ms vs Eager 28ms）的真正根因可能不是 cblas 缺失，而是 cblas 没被有效触发 / epilogue 抵消 / matmulNoCblasEnabled() 默认开
+
+8. **JITCache key 不全**（P1）✅ 已核实
+   - `JITCache.h:86` `makeKey(const std::string& graph_str, int opt_level)` —— **只含 graph_str + opt_level**
+   - **不含** 平台 / -march / MLIR 版本 / LLVM 版本 / ABI / 目标设备能力
+   - 跨环境可能误复用 bitcode
+
+#### 三、并发和生命周期风险
+
+9. **C3BackwardCapture 生命周期加固但复杂度高**（P1）
+10. **C3HotPathManager deque 并发安全待审查**（P1）
+11. **RegionFusionRegistry 静态析构依赖调用方主动 clear**（P1）
+12. **C3 端到端训练不一定快于 Eager**（P1）—— 215 vs 142.6 ms/epoch，slow 1.5×
+
+#### 四、工程交付问题
+
+13. **主仓库 vs c3 submodule 边界不清**（P1）—— 2 边都有未提交修改
+14. **实验文件 / 未跟踪文件多**（P2）—— assets/ / docs/ideas/ / scripts/bench_pytorch_cpu_mnist.py / videos/ / MEMORY.md
+15. **文档可能与代码不同步**（P2）
+
+#### P0/P1 优先级（洛锦列的）
+
+**P0**：
+- P0.1 C3 backward 覆盖率统计（hits / fallback / 原因分类）—— **getStats() 已部分实现（L566-583），缺 fallback 原因分类**
+- P0.2 CrossEntropy/Softmax C3 Graph 接入（先 forward 后 backward）
+- P0.3 Add/Mul/MatMul/Sub/Div backward 重新接入（修 2 个 bug：① 输入映射 ② Mul 数值）
+- P0.4 C3KernelRegistry tryExecuteBackward stub 完整化
+
+**P1**：
+- P1.1 MatMul epilogue vector lowering（区域融合性能瓶颈）—— cblas 已实装，要看为什么没起飞
+- P1.2 区域融合性能达标（0.62× → 1.0+×）
+- P1.3 C3 端到端训练 ≥ Eager（215 → ≤ 142 ms/epoch）
+- P1.4 JITCache key 完整化（平台 / march / MLIR / LLVM 版本）
+- P1.5 统一 C3Cleanup 退出路径（消除静态析构依赖）
+- P1.6 MLP benchmark 拆分（smoke / correctness / warm / cold）
+- P1.7 多输出 + preAct IR 完善
+- P1.8 C3KernelRegistry fused lookup 单元测试
+- P1.9 C3BackwardCapture 生命周期并发安全审查
+- P1.10 C3HotPathManager deque 并发安全审查
+
+### ⏸ ctQALS / RSVD（封存，2026-08-10 v0.5）
+- 接力：`STATUS_DCU_ADAPT.md` "⏸ RSVD 现状封存"段（已合并到 c3 后位置需重定）
+
+### 🔧 海光 DCU 适配（v0.5 阶段，C3 完善优先后启动）
+- 接力：`STATUS_DCU_ADAPT.md`（独立 STATUS 接力棒）
 
 ## 🔴 紧急：C3 性能回归根因（2026-08-17 定位）
 

@@ -660,16 +660,16 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
                     // 注入当前 op 输入占位符的物化器：backward 触发 data_read() 时
                     // 直接复用融合算出的 pre-activation 值，避免 placeholder 首次读取
                     // 触发 eager 重算 MatMul/Add。
-                    if (!pre_act.storage().empty() && inputs != nullptr) {
-                        if (auto lm = inputs[0].lazyMaterializer()) {
-                            lm->preload(pre_act);
-                            if (prewalkDiagEnabled()) {
-                                static std::atomic<size_t> pcnt{0};
-                                if ((++pcnt) % 1000 == 1)
-                                    fprintf(stderr, "[PREWALK-DIAG] preload preAct sz=%zu\n",
-                                            (size_t)pre_act.numel());
-                            }
-                        }
+                    // 不把 secondary preAct 直接 preload 到 LazyBox：融合 kernel 的多输出
+                    // buffer 是共享平面 storage，且当前回填对象可能是 MatMul 输入占位符而非
+                    // 本次 Add 的输出占位符。错误回填会把未对应的输出段（常见为全零或仅 MM）
+                    // 伪装成 z1。保留 secondary 输出用于诊断，但让 LazyBox 通过其闭包按完整
+                    // eager 图重算，确保 z1 = MatMul + bias 的语义正确。
+                    if (!pre_act.storage().empty() && prewalkDiagEnabled()) {
+                        static std::atomic<size_t> pcnt{0};
+                        if ((++pcnt) % 1000 == 1)
+                            fprintf(stderr, "[PREWALK-DIAG] secondary preAct available sz=%zu (not preloaded)\n",
+                                    (size_t)pre_act.numel());
                     }
                     // 恢复状态
                     prewalk_state_ = PrewalkState::kIdle;

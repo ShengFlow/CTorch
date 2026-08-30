@@ -1386,6 +1386,7 @@ Tensor Tensor::shallow() const {
     r._strides                        = _strides;
     r._storage_offset                 = _storage_offset;
     r._storage                        = _storage;   // 共享底层存储
+    r._lazy                            = _lazy;      // LazyBox 闭包也必须随浅拷贝保留
     r._autograd_meta._requires_grad   = _autograd_meta._requires_grad;
     r._autograd_meta._grad            = nullptr;    // 不深拷 grad
     r._autograd_meta._self            = std::shared_ptr<Tensor>(&r, [](Tensor*){});

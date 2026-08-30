@@ -18,6 +18,7 @@
 #include "CtorchScheduler.h"
 #include "C3/C3HotPathManager.h"
 #include "C3/C3KernelRegistry.h"
+#include "C3/RegionFusion.h"
 #include "C3/C3Engine.h"
 
 using namespace ct;
@@ -371,6 +372,10 @@ int main() {
     // CompiledKernel 在静态析构阶段触发 LLVM ExecutionEngine 清理。
     engine.shutdown();
     engine.clearCache();
+    // RegionFusionRegistry 也持有带 LLVM ExecutionEngine 的 CompiledKernel；
+    // 必须在进程退出前先释放它，再卸载 kernel registry，避免 LLVM 全局锁析构后
+    // 静态析构 MultiNodeCompiledKernel 触发 recursive_mutex 异常。
+    ct::c3::RegionFusionRegistry::getInstance().clear();
     registry.uninstallAll();
 
     std::cout << "\n=== 验证完成 ===" << std::endl;
