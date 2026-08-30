@@ -30,7 +30,38 @@ static void printStats(const std::string& label) {
     auto stats = C3BackwardCapture::getInstance().getStats();
     std::cout << "  [" << label << "] C3 backward: hits=" << stats.cache_hit_count
               << " misses=" << stats.cache_miss_count
-              << " compiles=" << stats.compile_count << std::endl;
+              << " compiles=" << stats.compile_count
+              // [P0.1 2026-08-30 苏璃珞] backward 覆盖率统计打印
+              << " | attempt=" << stats.backward_attempt_count
+              << " c3_hit=" << stats.backward_c3_attempt_count
+              << " fallback=" << stats.backward_eager_fallback_count;
+    if (!stats.backward_fallback_reasons.empty()) {
+        std::cout << " reasons=[";
+        bool first = true;
+        for (const auto& [k, v] : stats.backward_fallback_reasons) {
+            if (!first) std::cout << ",";
+            std::cout << k << ":" << v;
+            first = false;
+        }
+        std::cout << "]";
+    }
+    std::cout << std::endl;
+
+    // [P0.5 2026-08-30 苏璃珞] compile 失败原因统计打印
+    auto err_stats = C3Engine::getInstance().getCompileErrorStats();
+    std::cout << "  [" << label << "] C3 compile errors: total=" << err_stats.total_failures
+              << " last_error_size=" << err_stats.last_error_size;
+    if (!err_stats.reasons.empty()) {
+        std::cout << " reasons=[";
+        bool first = true;
+        for (const auto& [k, v] : err_stats.reasons) {
+            if (!first) std::cout << ",";
+            std::cout << k << ":" << v;
+            first = false;
+        }
+        std::cout << "]";
+    }
+    std::cout << std::endl;
 }
 
 int main() {
@@ -550,6 +581,49 @@ int main() {
         }
         std::cout << "  Test 10 MLP 最大误差 max_diff=" << max_diff << std::endl;
         overall_max_diff = std::max(overall_max_diff, max_diff);
+    }
+
+    // ========== Test 11: Softmax backward（验证 P0.2.1 shape-based broadcast） ==========
+    // 关键：[M, 1] → [M, N] 广播（SumReduce[keepdim] 输出 + Sub/Div 节点）
+    // 之前 numel-based `idx % M` 在 M=4, N=8 等尺寸会返回错位
+    {
+        sched.resetRegionFusion();
+        std::cout << "\n[Test 11] Softmax backward (P0.2.1 shape-based broadcast)" << std::endl;
+        const size_t M = 4, N = 8;  // 注意 M != N 的非平凡尺寸，专门打 broadcast bug
+        // Eager 参考
+        Tensor x_ref(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+        float* xref = x_ref.data_write<float>();
+        for (size_t i = 0; i < M * N; ++i) xref[i] = (static_cast<float>(i) / (M * N) - 0.5f) * 4.0f;
+        x_ref.requires_grad(true);
+        Tensor y_ref = x_ref.softmax(1);
+        AutoGrad::backward(y_ref.getRelatedNode(), false);
+        auto ref_grad = x_ref.grad();
+
+        double max_diff = 0.0;
+        for (int iter = 0; iter < 6; ++iter) {
+            Tensor x(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+            float* xp = x.data_write<float>();
+            for (size_t i = 0; i < M * N; ++i) xp[i] = (static_cast<float>(i) / (M * N) - 0.5f) * 4.0f;
+            x.requires_grad(true);
+            Tensor y = x.softmax(1);
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (iter == 5) {
+                auto got = x.grad();
+                const float* r = ref_grad.data_read<float>();
+                const float* g = got.data_read<float>();
+                std::cout << "  Softmax grad (got vs ref):" << std::endl;
+                for (size_t i = 0; i < M * N; ++i) {
+                    if (i % N == 0) std::cout << "    row " << (i / N) << ": ";
+                    std::cout << "[" << i << "]=" << g[i] << "/" << r[i] << " ";
+                    if ((i + 1) % N == 0) std::cout << std::endl;
+                    double d = std::fabs(static_cast<double>(g[i]) - static_cast<double>(r[i]));
+                    if (d > max_diff) max_diff = d;
+                }
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 11 Softmax max_diff=" << max_diff
+                  << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
     }
 
     // 安全退出
