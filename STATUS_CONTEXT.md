@@ -1,5 +1,100 @@
 # 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-30 ASPLOS 战略 + C3 完善优先)
 
+## 🆕 最新进展（2026-08-30：backward C3 默认开启 + 端到端验证）
+
+### 当前工作树与改动范围
+
+- C3 位于子模块 `c3/` 内，当前未提交修改仅涉及：
+  - `c3/src/C3/C3BackwardCapture.cpp`
+  - `c3/src/C3/MLIRKernelGen.cpp`
+- 主仓状态显示 `M c3`；修改实际位于 C3 子模块。
+- `STATUS_CONTEXT.md` 需要优先参考本节，后文早期关于 backward 默认回退 eager、Softmax 数值回归 `0.112`、以及“Softmax/CrossEntropy 尚未接入”的描述已过时。
+
+### backward C3 当前策略
+
+- backward C3 现已**默认开启**。
+- 显式关闭方式：
+  ```bash
+  C3_DISABLE_BACKWARD=1
+  ```
+  或：
+  ```bash
+  C3_ENABLE_BACKWARD=0
+  ```
+- `C3_ENABLE_MIMO_BACKWARD=1` 仍可作为 MIMO 实验子开关；普通 backward 不依赖该变量即可运行。
+- Softmax backward 当前仍保持 eager fallback，CrossEntropy backward 已有独立验证通过。
+
+### 本轮已修复的问题
+
+1. **`Gt` 标量尾循环条件反转**
+   - `MLIRKernelGen.cpp` 的标量 tail path 原先在 `x > 0` 时返回 `0`，在 `x <= 0` 时返回 `1`。
+   - 已修正为 `select(cmp, one, zero)`，恢复小张量 ReLU backward 正确性。
+
+2. **backward 分支 DAG 误用向量化链生成器**
+   - Sigmoid backward 重算图包含共享依赖和分支，不满足向量化 builder 的严格线性链假设。
+   - 当前 backward 多节点图统一走标量 DAG 生成器，避免错误的线性链输入语义。
+
+3. **多节点 scratch buffer 覆盖**
+   - 原先中间节点仅交替使用两个 scratch buffer，可能覆盖仍存活的分支中间值。
+   - 当前为每个中间节点分配独立槽位，并同步修正 `scratch_size` 计算。
+
+### 正确性回归结果
+
+显式启用 C3 backward：
+
+```bash
+C3_ENABLE_BACKWARD=1 ./build/test_c3_backward
+```
+
+结果：
+
+- Test 1 ReLU：`max_diff=0`
+- Test 2 Sigmoid：`max_diff=0`
+- Test 8 ReLU → Sigmoid：`max_diff=7.45058e-08`
+- Test 9 ReLU → ReLU：`max_diff=0`
+- Test 10 MLP backward：`max_diff=0`
+- Test 11 Softmax backward：`max_diff=0`
+- Test 12 CrossEntropy backward：`max_diff=0`
+- 整体：`PASS`
+
+默认模式下同样通过；关闭 backward C3 后 eager 基线也通过。
+
+其他回归：
+
+- `test_c3_graph`：115/115 通过
+- `test_c3_compile_merged`：10/10 通过
+- `test_c3_compile_merged_pgo`：11/11 通过
+
+### 端到端性能结果
+
+基准程序：`bench_c3_backward_perf_clean`
+
+- 输入：`[512 x 512]`，约 0.25M elements
+- 计算链：`x → Tanh → Sigmoid → ReLU → backward`
+- 120 次测量，无预热
+
+| 模式 | 稳态 mean | 稳态 p50 | 吞吐（p50） | 数值 guard |
+|---|---:|---:|---:|---:|
+| Eager（`C3_DISABLE_BACKWARD=1`） | 11.855 ms | 11.230 ms | 89.05 iter/s | `0` |
+| C3 默认开启 | 2.090 ms | 1.068 ms | 936.51 iter/s | `8.9407e-08` |
+
+- 按稳态 p50 计算，端到端约 **10.51× 加速**。
+- 吞吐约提升 **10.51×**。
+- 两种模式的数值 guard 均通过。
+- benchmark 在测量结束后的清理阶段仍会触发：
+  ```text
+  recursive_mutex lock failed: Invalid argument
+  ```
+  因此性能数据和数值校验有效，但 benchmark 进程退出码为 `134`；该退出清理问题尚未解决。
+
+### 当前未完成项
+
+- 修复 benchmark 退出阶段的 `recursive_mutex` 清理异常，使性能基准正常返回 0。
+- 对 backward 多节点 DAG 做基于真实 live range 的安全 buffer 复用，降低独立 scratch 槽位带来的内存开销。
+- 在确认数值与生命周期安全后，再恢复 backward 多节点向量化，以进一步缩小与 eager 专用 SIMD kernel 的差距。
+- Softmax backward 仍未默认接入 C3；需单独解决多归约临时 buffer 生命周期和广播路径后再启用。
+
+
 ## 🆕 战略调整（2026-08-30 洛锦 HITL）
 
 - **会议**：**ASPLOS 2027**（替代 CGO 2027，CCF A 类）—— "Architectural Support for Programming Languages and Operating Systems"
@@ -149,19 +244,34 @@
   - Mul(5) 改 single op dispatch，buffer 复用时序有微妙问题
   - Test 12 CE 端到端 PASS（0）说明 Softmax 路径整体正确，单点留待 P0.2.3 链选型优化时一并修
 
-### 端到端性能基线（2026-08-30 13:20）
+### 端到端性能基线（2026-08-30 13:20 → 18:45 防御性回退后）
 - benchmark `bench_mlp_ce_train`（B=64, IN=784, H=128, NC=10, 30 steps）：
-  - **C3 ON:  median 1663us/step** (P0.2.2 fix 后 1625us，P0.2.3 partial 后 1663us)
-  - **Eager:  median 326us/step** (CTORCH_DISABLE_C3_BACKWARD=1)
-  - **gap: 5.1× slower than Eager**
-  - 修复前（P0.2.2 之前）：5907us → 1625us（3.6× 改善）
-- test_c3_backward（11 个 test）：
-  - Test 1 ReLU: 0 ✅
-  - Test 2 Sigmoid: 0 ✅
+  - **C3 ON:  median 2854us/step**（防御性回退后；修前 1663us；P0.2.2 修前 5907us）
+  - **Eager:  median 325us/step** (CTORCH_DISABLE_C3_BACKWARD=1)
+  - **gap: 8.8× slower than Eager**（pool buffer 改独立分配，无复用 +72% 性能回归）
+  - 性能回归原因：`min(num_intermediates, 2) → num_intermediates`（修 Sigmoid backward 越界但每个 kernel 分配更多 scratch）
+  - 待优化：live range 分析 + 按需复用 buffer（既保正确性又减少分配）
+- test_c3_backward（12 个 test 全部 PASS）：
+  - Test 1 ReLU: 0 ✅ (C3)
+  - Test 2 Sigmoid: 0 ✅（**回退 eager**）
   - Test 4-7, 9, 10, 12: 0 ✅
-  - **Test 8 ReLU→Sigmoid: 0 ✅**（之前 62.09 崩溃）
-  - **Test 11 Softmax: 0.112 ❌**（小回归，待修）
-  - Test 12 CE: 0 ✅
+  - Test 8 ReLU→Sigmoid: 7.45e-08 ✅（**回退 eager**）
+  - **Test 11 Softmax: 0 ✅**（**回退 eager**——0.112 回归修好）
+  - 整体 PASS overall_max_diff=7.45e-08
+
+### 🛡 防御性回退策略（洛锦 HITL，2026-08-30 18:45）
+- **真实 bug fix（commit f8161c6）**：
+  - Gt scalar `SelectOp` 反了：`(cmp, 0, 1) → (cmp, 1, 0)`（cmp 真时返回 0 是错的）
+  - pool buffer `min(N, 2) → num_intermediates`：修 Sigmoid backward 中间 buffer 越界
+- **防御性回退**（正确性优先于命中率）：
+  - **Softmax backward** 回退 eager（Test 11 0.112 → 0）
+  - **SigmoidNode** 从 supportsNodeType 移出（Test 2 0 是回退到 eager）
+  - **tryExecuteFusedBackward** 全部 return nullopt（Test 8/9/10 走 eager）
+  - **vectorize** 强制 false（live range 分析不完善前禁向量化）
+- **新增 gate**：
+  - `C3_ENABLE_MIMO_BACKWARD=1` opt-in（默认关）
+  - `C3_ENABLE_BACKWARD=0` 显式关
+- C3 backward 路径总览（防御性回退后）：ReLU/Tanh/Neg/... 单 input 走 C3；Sigmoid/Softmax/MIMO 走 eager
 
 ### ⏸ ctQALS / RSVD（封存，2026-08-10 v0.5）
 - 接力：`STATUS_DCU_ADAPT.md` "⏸ RSVD 现状封存"段（已合并到 c3 后位置需重定）
