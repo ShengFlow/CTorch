@@ -626,6 +626,70 @@ int main() {
                   << (max_diff < 1e-5 ? "  ✅" : "  ❌") << std::endl;
     }
 
+    // ========== Test 12: CrossEntropy end-to-end（eager forward + C3 backward） ==========
+    // 验证 P0.2 step 6 端到端：eager SIMD forward 出 loss，C3 backward 出 grad_logits
+    {
+        sched.resetRegionFusion();
+        std::cout << "\n[Test 12] CrossEntropy end-to-end (eager forward + C3 backward)" << std::endl;
+        const size_t M = 4, N = 6;  // 故意非平凡尺寸
+
+        // 构造 one-hot target（CE_SIMD_kernel 接受 2D 概率/one-hot 形式）
+        Tensor target(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+        float* tp = target.data_write<float>();
+        for (size_t i = 0; i < M; ++i) {
+            size_t class_idx = i % N;
+            for (size_t j = 0; j < N; ++j) {
+                tp[i * N + j] = (j == class_idx) ? 1.0f : 0.0f;
+            }
+        }
+
+        // Eager 参考
+        Tensor logits_ref(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+        float* lref = logits_ref.data_write<float>();
+        for (size_t i = 0; i < M * N; ++i) lref[i] = (static_cast<float>(i) / (M * N) - 0.5f) * 2.0f;
+        logits_ref.requires_grad(true);
+        Tensor y_ref = logits_ref.cross_entropy(target);
+        AutoGrad::backward(y_ref.getRelatedNode(), false);
+        auto ref_grad = logits_ref.grad();
+        const float* r = ref_grad.data_read<float>();
+
+        std::cout << "  Eager forward loss: " << y_ref.data_read<float>()[0] << std::endl;
+        std::cout << "  Eager grad_logits (ref):" << std::endl;
+        for (size_t i = 0; i < M; ++i) {
+            std::cout << "    row " << i << " (class=" << (i % N) << "): ";
+            for (size_t j = 0; j < N; ++j) std::cout << r[i * N + j] << " ";
+            std::cout << std::endl;
+        }
+
+        // 6 轮 C3 backward
+        double max_diff = 0.0;
+        for (int iter = 0; iter < 6; ++iter) {
+            Tensor logits(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+            float* lp = logits.data_write<float>();
+            for (size_t i = 0; i < M * N; ++i) lp[i] = (static_cast<float>(i) / (M * N) - 0.5f) * 2.0f;
+            logits.requires_grad(true);
+            Tensor y = logits.cross_entropy(target);
+            AutoGrad::backward(y.getRelatedNode(), false);
+            if (iter == 5) {
+                auto got = logits.grad();
+                const float* g = got.data_read<float>();
+                std::cout << "  C3 grad_logits (got):" << std::endl;
+                for (size_t i = 0; i < M; ++i) {
+                    std::cout << "    row " << i << ": ";
+                    for (size_t j = 0; j < N; ++j) std::cout << g[i * N + j] << " ";
+                    std::cout << std::endl;
+                }
+                for (size_t i = 0; i < M * N; ++i) {
+                    double d = std::fabs(static_cast<double>(g[i]) - static_cast<double>(r[i]));
+                    if (d > max_diff) max_diff = d;
+                }
+            }
+        }
+        overall_max_diff = std::max(overall_max_diff, max_diff);
+        std::cout << "  Test 12 CrossEntropy max_diff=" << max_diff
+                  << (max_diff < 1e-4 ? "  ✅" : "  ❌") << std::endl;
+    }
+
     // 安全退出
     ct::c3::shutdownAll();
 
