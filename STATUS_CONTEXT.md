@@ -1,4 +1,73 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-09-02 下午：MIMO setup 优化落地 87% 削减)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-09-02 下午：Add 恒等旁路 → CE 摘除 → C3 触底 eager 水平)
+
+## 🆕 CrossEntropy 反向摘除（2026-09-02：CE 99.6% miss 根因 → miss 归零，稳态 ~162ms/ep）
+
+### 追踪链路（按 key 统计累计 miss 次数）
+1. 升级 `C3_BW_MISS_TRACE` 探针（从「仅打印首次 key」→「按 key 累计 miss 数，每 500 次输出 top8+hasKey」），跑 5ep：
+   **`CrossEntropyNode|grad:1|inputs:128,10,128,10|in:0` 稳态 miss=1991/2000（~99.6%）**，
+   其余 ReLU/Add/MatMul 每个仅 miss 1 次（**首轮编译后即命中**，正常）。
+2. 且 CE 的 key **hasKey=1（已装表）**但仍执行失败 → 定位于 execute 阶段，非查表 miss。
+3. `C3_BW_DIAG=1` 无输出 → 非 buildGraph=nullopt / no-compute；推测 execute 端入参数不符。
+
+### 根因（CE 反向与 C3 逐输入协议的语义冲突）
+- 读取 `CrossEntropyNode::backward`：eager 只给 **upstream[0](logits) 投 1 个梯度，不给 target 投梯度**。
+- C3 逐输入协议（ComputeCore L249/L251）强制 `out.size()==fwd_inputs.size()`（CE=2，含 target）且逐梯度 shape 与输入一致。
+- 而 `buildCrossEntropyBackwardGraph` 图只登记 `[logits, target]`（不用 grad），`num_inputs=graph.inputCount()=2`；
+  execute 端 `tryExecuteBackward` 却总是第一个 push grad → 3 个入参 vs num_inputs=2 → `inputs.size()!=num_inputs` → 每 batch 静默 nullopt。
+- 方向 A（给 CE 图补一个 grad 占位输入）曾让 in:0 命中，但循环继续走到 in:1(target)——in:1 从不编译（supportsNodeType 对 input_index=1 返回 nullopt）→ 每 batch in:1 miss 且不短路 → 端到端退化到 ~800ms。
+- 方向 B（in:1 补零梯度）→ CE 返回 2 个梯度，其中 target 上游收到错误形状梯度 → **GradBucket::add → Add_SIMD 形状不兼容崩溃**。
+
+### 修复（C3BackwardCapture.cpp tryExecuteBackward，type_name 之后）
+- **正确结论：CE 反向只产 1 个梯度，与 C3 强制「含 target 的全输入梯度」协议天生冲突，不应走 C3。**
+- 在拿到 `type_name` 后、进入逐输入循环前，加 CE 短路：`if (type_name.find("CrossEntropyNode") != npos) return std::nullopt;`
+  → 静默回退 eager，彻底摘除 CE 的逐输入查找/execute/miss/commit 链路。
+- 回退方向 A（build CE 图 grad 占位）与方向 B（in:1 零梯度旁路），保证语义纯正、无残留 hack。
+
+### 实测（5 epoch，acc 97.1755% 零损失）
+- **miss（BW-MISS-TOP）归零**：不再打印任一累计 miss（1991 CE miss 全消）。
+- 性能恢复：epoch1 327ms（含首次编译），**稳态 epoch2-5 = 152~170ms**（HOTSPOT measured 154~170ms），贴住 eager 144ms。
+- 平均/epoch ~200ms（含 epoch1 编译），平均/batch ~0.427ms。
+
+### 遗留
+- ReLU/Add/MatMul 各 1 次首轮 miss 属正常「首遍编译」，无需处理。
+- `waitForPendingCompiles` 仍 `sleep 1ms`忙轮询，但 miss 归零后已无实际 waiting 路径，可保留。
+
+---
+
+### 追踪链路（一层层定位）
+1. 给 tryExecuteBackward 整体分段 `C3_BW_SEG2=1`：prefix/mimo/phase2/phase1/miss/wrap。
+   实测 5ep：**miss=3061ms/4679（~654µs/次，占 backward ~85%）**，mimo=485ms，phase1=44ms，其余可忽略。
+2. `C3_PH1_MISS=1` 拆分 miss 的 compile vs wait：**compile=1.5ms（~0.33µs/次，hasBackwardKey 去重后几乎免费）**，
+   **wait=2973ms（646µs/次）** → 整个 miss 开销 = `waitForPendingCompiles` 忙轮询阻塞。
+3. `C3_BW_DIAG=1`（worker 内每 key 首次报失败原因）→ 仅 3 个 `AddNode|...|in:0` 报
+   `no-compute (nodeCount<=inputCount)`：**Add 反向往返是恒等 passthrough，buildAddBackwardGraph 产出无算力节点图，
+   worker 跳过、从不装表 → hasBackwardKey 恒 false → 每批重起线程 + wait 白等**。
+
+### 根因（关键：这些 Add 是「广播 bias 加」不是同形加）
+- miss key 形如 `AddNode|grad:128,256|inputs:128,256,256|in:0`：输入0=[128,256]（激活侧）、输入1=[256]（bias 侧）。
+- bias 加 in:0（激活侧）梯度 == grad 本身、无需算力；in:1（bias 侧）才需 sumreduce。
+- 之前的整节点「no_bcast 才短路」方案太严（bias 加有广播 → 拦不住），已回退为逐输入旁路。
+
+### 修复（C3BackwardCapture.cpp tryExecuteBackward Phase1 逐输入循环）
+- 在逐输入循环里加旁路：`节点是 AddNode 且 该输入形状 == grad 形状` → `out.push_back(grad); continue;`，
+  完全跳过 kernel 查找/编译/等待。其余输入（广播 bias 侧）仍走正常编译 sumreduce kernel。
+- 正确性：Add 反演 dL/dx_i 当 x_i.shape==grad.shape 时恒等于 grad（广播侧另行归约），符合自动微分语义。
+
+### 实测（5 epoch，acc 97.1755% 零损失）
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| 平均/epoch | ~837ms | **~192ms** |
+| 平均/batch | 1.79ms | **0.41ms** |
+| 稳态 epoch 2-5 | ~810ms | **~162ms**（eager 144ms） |
+| miss 段总耗时 | 3048ms | **148ms** |
+| miss 调用数 | 4679 | 2345 |
+
+- C3 端到端从 ~840ms/ep 掉到 ~192ms/ep（稳态 ~162ms），**首次贴到自家 eager（144ms）水平**，端到端加速比翻盘。
+- 剩余 miss（~148ms/5ep≈29ms/ep）为 MatMul in:1（grad_W）/CrossEntropy 等零星 shape-mismatch 或编译开销，已非主导。
+
+### 遗留
+- 剩余 2345 miss 的精确 reason 未逐一追（BF 可再跑 C3_BW_DIAG 看 MatMul/CrossEntropy 是否 SHAPE MISMATCH）。
+- `waitForPendingCompiles` 仍是 `sleep 1ms` 忙轮询；若日后 miss 归零可换 CV 或去掉。
 
 ## 🆕 MIMO setup 优化落地（2026-09-02 下午：确定性白赚，零精度损失）
 
