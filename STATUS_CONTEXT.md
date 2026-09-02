@@ -1,4 +1,154 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-08-30 ASPLOS 战略 + C3 完善优先)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-09-02 下午：MIMO setup 优化落地 87% 削减)
+
+## 🆕 MIMO setup 优化落地（2026-09-02 下午：确定性白赚，零精度损失）
+
+### 探针拆分 setup（C3_MN_SETUP_TRACE=1，把 setup 拆为 data_read / offset+pool / tensor_ctor 三段）
+- 优化前 setup=`mn_setup_us≈197ms/ep`，其中 **data_read 占 87.6%**（≈173ms/ep），offset+pool 12.3%，tensor_ctor 0.1%。
+- 定位：热路径输入 z 是 prewalk 占位张量（`z_lazy!=0`，X/W 正常）。backward 每次 `data_read(z)` 触发 `eagerMaterializeOp(MatMul/Add)` 重算 pre-activation → 每 batch 多跑一次前向 MatMul，即 MIMO 反向的 ~130ms/ep 冗余。
+
+### 优化一：setup 偏移预计算（MultiNodeCompiledKernel::execute）
+- `out_shapes_` 编译期固定，把每输出平坦偏移 `out_offsets_` 与总元素数 `total_out_numel_` 在构造期预计算成成员，热路径直接复用，消除 execute 内每调用的多次 shape 向量分配/拷贝。
+
+### 优化二：Prewalk A+ 安全 preload preAct（在 src/CtorchScheduler.cpp prewalk 完成点）
+- 融合 kernel 的 secondary 输出即 pre-activation（Add 输出 = ReLU 输入 = z）。prewalk 完成时 `inputs[0]` 正是该 ReLU 输入占位符。
+- 加形状守卫（`pre_act` 非空 且 shape/numel 与 `inputs[0]` 一致）才 `lazyMaterializer()->preload(pre_act)`，使 backward `data_read(z)` 直接复用融合算出的 preAct，消除 eager 重算。平面输出 storage 由 shared_ptr 引用托管，preload 后仍保活。
+- 替代了原「保守弃用」决策（原注释担心回填段不对应/伪装 z1），形状守卫保证语义。
+
+### 实测（build/ clean run，5 epoch）
+- 最终 acc **97.1755%**（优化前 97.18%）→ 精度零损失，正确性不受影响。
+- `mn_setup_us`：197ms/ep → **~25ms/ep（-87%）**；mimo_exec：~528 → ~386ms/ep。
+- 平均/epoch：**1741ms → 1609ms（-7.6%）**。
+
+### 剩余瓶颈
+- setup 现仅 ~25ms/ep，其中 offset+pool 占 95.5%（≈24ms/ep，FlatOutPool 每次 execute 的 shared_ptr 控制块 malloc + 加锁）。
+- 真正大头转向 `mn_func_us≈576ms/ep`：两个反向 GEMM（grad_W/grad_X）为 CPU 内存带宽下界，多核并行已证伪正收益（见 bench_mimo_par），除非下沉 MPS/GPU 否则是硬地板。
+
+## 🆕 MIMO kernel 优化探源（2026-09-02 上午：决定性考古结论）
+
+### 主坑定位（C3_MN_DETAIL + C3_CBLAS_PROBE + 定向 bench 三重实锤）
+- MNIST 大 MIMO kernel（elem_n=200704，~470 call/ep）单次 **540µs**，其全部 cargo ≈ 两个反向 GEMM：
+  - `grad_W1=X^T@dz [784×256×128]` → cblas** avg 267µs**（count 2340）
+  - `grad_X1=dz@W^T [128×784×256]` → cblas **avg 315µs**（count 2340）
+  - 每 ep 大 MIMO `mn_func_us≈254ms`、32768 档≈68ms、16384 档≈20ms，合计 `mn_func_us≈489ms/ep`
+- cblas probe 显示真实 C3 里这两个 GEMM 是 ~267/315µs；干净 warm-cache 基准仅 ~31µs → 差异 = **冷缓存/真实 batch 数据的内存带宽下界，非对齐（alignA/C=0）、非 JIT 调用、非线程上下文**
+- 第二坑 `mn_setup_us≈184ms/ep`（data_read 收集输入指针 + 平坦输出池分配 + Tensor 构造）
+
+### 多核并行化彻底证伪（决定性负结果，两路都测）
+- `bench_mimo_par`：grad_W+grad_X 两 GEMM 双线程并行 serial 40.7ms vs par2 44.4ms → **负收益**（带宽竞争）
+- 新增 `bench_mimo_split`：单个 grad_W(784×256×128) 内部按 M 行块切 P=2/4/8 段并行 cblas，
+  串行 65.5µs vs P2=66.1 / P4=60.1 / P8=75.3µs → **无正收益，单核 cblas 已用满内存带宽**
+- 结论：CPU 上反向大 GEMM 是**内存带宽下界**，MIMO 标量化/多线程均不可救；relu_grad 段已走 VEC 向量化（/tmp dump 可见 vector<8xf32>），sum_reduce 为小开销
+
+### 对优化/论文的含义
+- C3 MIMO 反向的 ~489ms/ep 大部分是被 eager 用**更快路径（MPS 等）**规避的固有 GEMM；要在 CPU 上靠 MIMO 追平/超 eager 不可行
+- 唯一实质加速方向：**把 grad_W/grad_X 大 GEMM 下沉 MPS(SIMT)/GPU**（大工程，只能追平 eager 非反超）
+- 或白赚项：`mn_setup` 184ms/ep（data_read/输出分配/Tensor 构造）低风险可砍 ~100ms/ep
+- 论文端到端加速比（当前 C3 ~1734 vs eager ~144，慢 ~12×）在 CPU 上无翻转可能 → 建议维持机制/覆盖率叙事
+
+---
+
+## 历史基线（2026-09-01 晚 MIMO 向量化恢复重测 = 负结果）
+
+## 🆕 最新实测（2026-09-01：恢复多节点向量化 + 扇入收紧 + 标量广播修复后的真实重测）
+
+### MNIST 5ep（build/ = Release -O3 + LTO + region/single-kernel 全开；数据在 CWD 下运行）
+- **C3 epoch 平均 1734ms / 5ep 总 8670ms / acc 97.17%**；`mimo_hit=4678/ep`、`mimo_compile=2`、`exec_fail=0`
+- 分段（ep5）：Forward JIT 270ms(15.7%)、Loss 8ms(0.5%)、**Backward 1415ms(82.3%)**、SGD 26ms(1.5%)
+- MIMO 账目（ep5 差值）：`mn_func_us≈565ms/ep`、`mn_calls≈2808/ep` → **每次 MIMO kernel 调用 ≈201µs**（标量，灾难级）
+- `mn_setup_us` 亦偏高 ≈208ms/ep（对比 08-31 曾 58ms/ep）——setup+func 双双走差
+
+### ⚠️ 关键纠偏（决定性负结果）
+- **「恢复多节点向量化」在 MNIST 上未兑现**：MNIST 主链 Add→ReLU 因 ReLU 输入为外部 preAct，
+  `isFusedChainVectorizable` 线性链校验依旧排除 → 实际**仍走 SCL 标量**。本轮 MLIRKernelGen 改动
+  （默认开向量化 + 扇入排除 + `loadExternalVector` 标量广播 undef/insertelement 展开）
+  **并未让 MNIST 主 benchmark 进入 VEC 路径**，却把端到端从 08-31 的 ~906ms 进一步推到 **1734ms**；
+  `mn_func_us` 从 129ms/ep 涨到 ~565ms/ep（~4.4×）。Test 8 max_diff 以 `7.45e-08` 通过（扇入回退 + 标量广播修复有效）。
+- 净值：**「走恢复向量化路线救端到端加速比」这条路已被实测证伪**——向量化开关对 MNIST 主链不生效，且当前 HEAD
+  的 MIMO 标量 kernel 每 call ~201µs 是独立深坑（相对黄金态 ~20µs/call 慢 ~10×），需单独专项（真·MIMO kernel
+  向量化 / 减调用 / 多线程），不是改一个开关能救的。
+
+### 结论（论文路线硬输入）
+- C3 1734 vs 自家 eager ~144ms/ep：**C3 慢 ~12×**，「端到端加速比」卖点在当前状态彻底不成立。
+- 若要保可发表卖点，唯一现实出路是**重构论文叙事**：放弃端到端加速比作为头号 claim，改写
+  「MIMO 多输出反向融合机制 / 反向融合覆盖率(4678 hits) / 异步双管线 / 预走机制 / 逐元素融合的
+  分段·分增·减性数据」为支撑的机制/覆盖类叙事，并用真实数据兜底（负结果如实报告）。
+
+---
+
+## 历史实测（2026-08-31 晚：MIMO 向量化探源结论 + 干净基线复核）
+
+### MNIST 5ep 真实复测（MIMO 恢复 + 扇入收紧，Release build）
+- **C3 epoch ~906ms / 5ep 总 4532ms / acc 97.17%**；`mimo_hit=4678/epoch`、`mimo_compile=2`、`exec_fail=0`
+- 分段（epoch5 累积）：Forward JIT ~74ms、Loss ~3ms、**Backward ~780ms(89%)**、SGD ~13ms
+- MIMO 账目（累积→单 ep 均摊）：`mn_func_us=643.6ms`(=129ms/ep，主坑)、`mn_setup_us=292ms`(=58ms/ep)、
+  `mn_calls=2807/ep` → **每次 MIMO 融合内核调用 ~46µs**（标量 kernel，性能灾难级）
+- 相对自家 eager(~144ms/ep) **C3 慢 ~6.3×**；相对黄金态(~192ms/ep) 缺口 ~714ms 几乎全在 MIMO 标量执行
+
+### 向量化探源结论（关键纠偏）
+- **MNIST 的 MIMO 融合链（Add→ReLU、numel 256/128/24）在 current HEAD 本就走 `SCL` 标量路径**——
+  ReLU 的输入是外部 preAct（非上一 op 输出），`isFusedChainVectorizable` 的线性链校验(非 arg 首输入)本就排除之。
+  即 **`buildFusedMultiNodeVectorized` 对 MNIST 主 benchmark 不生效**，向量化并非当前瓶颈的开关。
+- 只有 Test 8 的 sigmoid 导数链 `Sub{2,6}→Mul{7,6}→Mul{8,0}`（算 `A*(1-A)*grad`）被判定 VEC 且出错。
+
+### 新增正确性加固（c3:MLIRKernelGen.cpp）
+- **扇入排除**：`isFusedChainVectorizable` 拒绝「同一外部 arg 被 >1 个 op 消费」的链（如 sigmoid 导数 `A*(1-A)`）——
+  MIMO 多输出平面缓冲下该模式触发输出/输入别名，向量化结果与 eager 不符（Test 8 0.88）。回退图级标量。
+- `[CHAIN-TRACE]/[MN-TRACE]` 增打每个 op 节点类型 + out_ids（仅 `C3_CHAIN_TRACE` 时启用，无性能开销）。
+
+### ⚠️ Test 8 遗留深层 MIMO bug（未修，独立深坑）
+- 会话当前 MIMO 恢复下 Test 8（`x.sigmoid().relu()`）仍红：iter0=eager 正确，iter1+=编译后 C3 kernel **只写 out[0]、1+ 全 0**
+  （`out_desc.numel=1` → 循环上界=1，MIMO 计划里广播到 2048 的展开缺失/错误）。属 MIMO fused-node 广播实现 bug，
+  与向量化无关；因 MIMO backward 恢复默认开启才暴露（f0cfebd 时被 gate 关着走 eager 故 12/12）。
+- 对 ReLU/MatMul 主导的 MNIST 训练无影响（acc 无回归）。**留待 MIMO 计划重制时一并修**。
+
+### 结论（论文路线输入）
+- 端到端加速比在当前实际状态**不成立**（C3 906 vs eager 144，慢 6.3×）。恢复需先解决 MIMO 标量 kernel 的
+  ~46µs/调用开销（向量化/多线程/减少调用），属独立大工作流。
+- 若要保住可发表卖点，需在「MIMO 机制/反向融合覆盖率」或「异步双管线」等不依赖端到端 sum 的维度上重构叙事。
+
+---
+
+## 早期进展（2026-08-31 上午：MIMO 反向默认开启 + pool 2 槽复用 + 干净对比基线）
+
+### 回归根因（mismatch 定位）
+
+- **HEAD 回归**：commit `f8161c6`（防御性）把 MIMO 反向融合改为 `C3_ENABLE_MIMO_BACKWARD=1` opt-in
+  （默认关），导致 backward 全走 eager，端到端曾跌到 ~2178ms。该提交同时为正确性把
+  **多节点 vectorize 强制关** + **pool buffer 改 num_intermediates 独立槽位**，埋下标量化性能回归。
+
+### 已落地修复（c3 子模块 2 commit）
+
+1. `2ea44ab` — 去掉 `C3_ENABLE_MIMO_BACKWARD` opt-in 门控，**MIMO 默认开启**；补 `SoftmaxOp::build`
+   手写实现（修复 C3 MLIR 路径 softmax 链接失败）。保留 f8161c6 正确性守卫（Gt SelectOp / Softmax·Sigmoid 回退 eager / tryExecuteFusedBackward 短路）。
+2. `f739b4a` — 恢复 **2 槽 pool buffer 复用**（当初需独立槽位的 Sigmoid/Softmax 多归约图已回退 eager，
+   不再触达 buildMultiNodeMLIR，安全）。MNIST 1626→1405ms，acc 不变。
+
+### 验证（真实数据）
+
+- **正确性套件 `test_c3_backward`：12/12 PASS**，`overall_max_diff=7.45e-08`（含 MatMul 精度上界）。
+- **MNIST 5ep（Release）**：final acc 97.17%，loss 0.0975（与 eager 97.18% 一致），MIMO 编译零报错。
+- **MIMO hit**：`mimo_compile=2`（2 个 ReLU 层 kernel）、`mimo_hit=4678/epoch`、`exec_fail=0`。
+
+### C3 vs Eager 全链干净基线（todo 4）
+
+| 指标 | C3（恢复后） | Eager | 说明 |
+|---|---|---|---|
+| epoch | ~1405-1460ms | ~141ms | C3 慢 ~10×（黄金态 192ms 曾快于 eager） |
+| final acc | 97.17% | 97.18% | 零损失 |
+
+**⚠️ 核心结论**：MIMO 功能已恢复、正确性完好，但 C3 端到端仍慢 Eager ~10×。
+账目归属：MIMO exec ~364ms/ep（主因 `mn_func_us`，标量化）；其余 ~1040ms 在 forward 区域融合
++ autograd 编排 + layer3/CE eager 回退。相对黄金态 192ms 的缺口主要来自 `f8161c6` 的
+**vectorize 强制关**（多节点内核全部标量化）。速度恢复属独立深坑，牵涉正确性-性能权衡，
+需单独决策。
+
+### 运行方式备注
+
+- MNIST 数据文件需在 CWD（`/Users/ghostface/CTorch-optimize-AutoDiff`）下运行
+  `./build/test_c3_mnist_train`，否则报 `无法打开文件: train-images-idx3-ubyte`（非代码 crash）。
+- C3 与 Eager 同源测试：`build/`(C3) vs `build_eager/`(`CT_DISABLE_C3=ON`)。
+
+---
 
 ## 🆕 最新进展（2026-08-30：backward C3 默认开启 + 端到端验证）
 

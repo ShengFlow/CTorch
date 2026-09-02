@@ -59,30 +59,33 @@ static void tempCrashHandler(int sig) {
 #include <mutex>
 #include <unordered_map>
 namespace ctprobe {
-    struct Bucket { uint64_t ns = 0; uint64_t cnt = 0; };
+    struct Bucket { uint64_t ns = 0; uint64_t cnt = 0; int alignA = 0; int alignC = 0; };
     std::mutex& mu() { static std::mutex m; return m; }
     std::unordered_map<uint64_t, Bucket>& map() { static std::unordered_map<uint64_t, Bucket> m; return m; }
     std::atomic<bool>& on() { static std::atomic<bool> e{false}; return e; }
+    std::atomic<bool>& align() { static std::atomic<bool> e{false}; return e; }
 }
 extern "C" {
-void record_cblas_probe(int M, int N, int tA, int tB, unsigned long long ns) {
+void record_cblas_probe(int M, int N, int tA, int tB, unsigned long long ns, int alignA, int alignC) {
     if (!ctprobe::on().load(std::memory_order_relaxed)) return;
     uint64_t key = ((uint64_t)(uint32_t)M << 40) | ((uint64_t)(uint32_t)N << 16)
                  | ((uint64_t)(uint32_t)tA << 8) | (uint32_t)tB;
     std::lock_guard<std::mutex> lk(ctprobe::mu());
     auto& b = ctprobe::map()[key];
     b.ns += ns; b.cnt++;
+    b.alignA = alignA; b.alignC = alignC;
 }
 void report_cblas_probe() {
     std::lock_guard<std::mutex> lk(ctprobe::mu());
-    fprintf(stderr, "[CBLAS-PROBE] bucket(M,N,tA,tB)=us/count\n");
+    fprintf(stderr, "[CBLAS-PROBE] bucket(M,N,tA,tB)=us/count alignA alignC\n");
     for (auto& kv : ctprobe::map()) {
         uint64_t M = (kv.first >> 40) & 0xFFFFFFFF, N = (kv.first >> 16) & 0xFFFFFF;
         int tA = (kv.first >> 8) & 0xFF, tB = kv.first & 0xFF;
-        fprintf(stderr, "[CBLAS-PROBE] M=%llu N=%llu tA=%d tB=%d total_us=%llu count=%llu avg_us=%.3f\n",
+        fprintf(stderr, "[CBLAS-PROBE] M=%llu N=%llu tA=%d tB=%d total_us=%llu count=%llu avg_us=%.3f alignA=%d alignC=%d\n",
                 (unsigned long long)M, (unsigned long long)N, tA, tB,
                 (unsigned long long)(kv.second.ns / 1000), (unsigned long long)kv.second.cnt,
-                kv.second.cnt ? (double)kv.second.ns / kv.second.cnt / 1000.0 : 0.0);
+                kv.second.cnt ? (double)kv.second.ns / kv.second.cnt / 1000.0 : 0.0,
+                kv.second.alignA, kv.second.alignC);
     }
 }
 // 劫持所有 cblas_sgemm 调用（JIT kernel + eager 均绑到本强符号）
@@ -100,7 +103,8 @@ void cblas_sgemm(const enum CBLAS_ORDER __Order, const enum CBLAS_TRANSPOSE __Tr
     real(__Order, __TransA, __TransB, __M, __N, __K, __alpha, __A, __lda, __B, __ldb, __beta, __C, __ldc);
     auto ns = (unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now() - t0).count();
-    record_cblas_probe(__M, __N, (int)__TransA, (int)__TransB, ns);
+    record_cblas_probe(__M, __N, (int)__TransA, (int)__TransB, ns,
+                       (int)(((uintptr_t)__A) & 63), (int)(((uintptr_t)__C) & 63));
 #else
     (void)__Order;(void)__TransA;(void)__TransB;(void)__M;(void)__N;(void)__K;
     (void)__alpha;(void)__A;(void)__lda;(void)__B;(void)__ldb;(void)__beta;(void)__C;(void)__ldc;
