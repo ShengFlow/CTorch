@@ -1278,3 +1278,39 @@ C3_ENABLE_BACKWARD=1 ./build/test_c3_backward
 - 纯 forward matmul 密集场景 eager（cblas）占优（C3 慢 ~1.3×）。
 
 **论文叙事建议**：C3 主卖点 = 自动微分反向融合（~10×）且不拖累端到端；端到端与最优 Eager 同量级，靠 backward 融合 + 稳态零卡顿 + 零动态分配换取；纯 forward matmul 密集场景如实陈述为 eager 优势区。
+
+---
+
+## 4.45 2026-09-03 backward 数值 guard FAIL 排查（bench_c3_backward_perf_clean 无预热）
+
+**现象**：`bench_c3_backward_perf_clean`（[512×512] x→Tanh→Sigmoid→ReLU→backward，无预热）的数值 guard（iter0 dx vs 紧随再跑一次的 iter0_ref）在 C3 模式下 **max_abs_diff = 0.185736 确定性 FAIL**（>1e-4）；Eager（C3_DISABLE_BACKWARD=1）guard = 0 PASS。
+
+**关键实验（排除冷启动假象）**：同一 `.c3cache`（预热态）再跑一次，guard **仍 FAIL 且 max_abs_diff 完全等于 0.185736**——确定性、可复现，**非编译时序噪声**。
+
+**矛盾点**：
+- `test_c3_backward` 稳态验证 C3 vs Eager 梯度 max_diff ≈ 7.45e-8（一致）——说明稳态下 C3 数值正确。
+- 但本 bench 同一进程内 iter0 与 iter0_ref 差 0.185（远大于 7.45e-8），且预热后仍如此。
+- 0.185 远大于"C3 vs Eager 的普通差异（7e-8 级）"，指向某个**具体的、确定性的路径/状态差异**，而非普通数值偏差。
+
+**待定位根因**（假设未验证）：
+1. iter0 触发的 backward 图构建/内核安装与紧随的 iter0_ref 处于不同阶段（渐进融合的部分路径差异）；
+2. C3 backward 内部存在未同步的异步边界（`C3BackwardCapture` 有 `std::thread + detach` 后台编译），导致 iter0 读 grad 时可能读到非完整状态；
+3. retainGraph=false 释放图的时序导致 iter0/iter0_ref 图状态不同。
+
+**影响判断**：未定论。`test_c3_backward` 稳态 PASS 说明稳态数值正确；但本 bench 的"无预热首跑即时一致性"是否代表真实用户首次运行的正确性问题，需定位根因后确认。**论文 claim '数值位级一致（max_diff=0）' 需以本问题查清为前提**（若真存在首跑/过渡态数值差异，需在论文中明确适用边界或修正表述）。
+
+**建议**：转子代理深度 debug（加日志定位 iter0 vs iter0_ref 差异分布、C3 backward 首跑是否有过渡态、retainGraph 语义影响），因其关系到论文 correctness claim。
+
+**§4.45 诊断结论（梯度快照实验，2026-09-03）**：在 bench 临时加诊断（存 iter0/iter1/iter2/末次梯度快照），C3 模式实测：
+- `iter0 vs iter1 = 0.185736`；`iter0_ref vs iter1 = 0.000000`（bitwise 一致）；`g1 vs g2 = 0`、`g2 vs glast = 0`。
+- **仅 iter0（进程内该图首次 backward）是离群值**，与后续稳定结果差 0.185736（差异元素 259658/262144 ≈ 99%，样例 v0=0.014 vs v1=0.199，v0 明显偏小）。iter0_ref 及 iter1+ 互相 bitwise 自洽。
+- iter0 耗时 ≈1.2ms（C3 级，非 eager 15.7ms）——排除 iter0 走 eager 全路径。
+- **主假设**：C3 backward 的**进程内首次调用**触发内核首次编译/安装，存在**异步未同步边界**——backward() 返回时梯度可能未完全写入，iter0 读到部分/中间态梯度（偏小）；iter1+ 内核就绪、同步完成，读到完整值。bench guard 因此 FAIL。
+- **影响待确认**：若真实用户首次调 `AutoGrad::backward` 后立即读 `grad`，可能读到不完整梯度 → 需确认 C3 是否需要显式 flush/wait（`waitForPendingCompiles` 等），或首次调用是否应同步等待编译完成再写梯度。`test_c3_backward` 稳态 PASS（跑多次后比较）与此不矛盾（其比较发生在内核就绪后）。
+- 诊断代码已从 bench 移除（git checkout 恢复），未提交。
+
+**§4.45 miss 诊断补充**（C3_BW_SEG2/C3_BW_MISS_TRACE，2026-09-03）：首次调用 120 次迭代中 miss=209.67ms/**3**（仅首次 3 个 backward 节点各 miss 1 次，同步编译约 70ms/次），此后 77+ 次全命中。**证实 iter0（进程首访）触发了 3 个节点的首次编译**。但 iter0 单次仅 1.2ms（无编译停顿观感），且 iter0 梯度值偏小（v0≈0.014 vs 正常 0.199）——指向首次 miss 编译路径存在**未完全同步的边界**：miss 后（compileBackwardAsyncForInput + waitForPendingCompiles）返回 nullopt 走 eager 回退，但 iter0 读到的梯度并非完整 eager 或 C3 稳态值（二者稳态差仅 7.45e-8），而是偏小的中间态 → **首次 backward 读梯度可能拿到不完整/异常值**。
+
+**影响判定**：疑似**真实缺陷**——真实用户首次调用 `AutoGrad::backward` 后立即读 `grad`（训练首步更新参数）可能拿到不完整梯度。需在首次 miss 路径确保「编译真正同步完成并执行」或「eager 回退完整同步」后再写梯度；或 backward 读梯度前需显式同步。`test_c3_backward`（跑多次、内核就绪后比较）PASS 与此不矛盾。待修复优先级：高（关系到论文'数值位级一致'claim 与真实首步正确性）。
+
+**§4.45 修复完成（2026-09-03）**：修改 `C3BackwardCapture.cpp` miss 段——compile+wait 后**重试 execute**（不再直接 return nullopt 走 eager），使首访即同步用 C3 内核。验证：bench guard 0.185736 FAIL → **0 PASS**（冷启动+预热均 PASS），iter0 耗时 1.2→0.894ms（免首访 eager 回退更快），回归 test_c3_backward 12/12、graph 115/115、compile_merged 10/10、pgo 11/11 全绿。详见 docs/C3_BACKWARD_FIRST_CALL_BUG_REPORT.md。
