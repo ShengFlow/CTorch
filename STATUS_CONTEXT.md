@@ -1,4 +1,81 @@
-# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-09-02 下午：Add 恒等旁路 → CE 摘除 → C3 触底 eager 水平)
+# 区域融合自动链路 · 上下文恢复 (最新同步版：2026-09-02：外部审阅建议整理入档)
+
+## 🆕 审阅建议整理（2026-09-02：外部评审给出的系统类论文改进清单，待排期执行）
+
+### 总体评价（作者同意）
+- 定位：轻量级 C++ 框架编译器插件，系统性/工程创新扎实（异步双管线、MIMO、零分配）。
+- **最大短板 = 实验基准单薄（仅 MNIST MLP）**，目前不具备公开发表说服力。
+- 潜力：补齐大/中模型 + 真实 SOTA 对比后，可投 CGO / MLSys。
+
+### 认可的硬核亮点
+- Tier-1/Tier-2 双管线解耦 + 原子热替换（一次 206ms，之后零卡顿）；自适应冷却/背压设计工业级。
+- MIMO 反向融合（>55% 命中）+ 形状全等校验防 SIGBUS，性能与安全兼顾。
+- 第 5.5 节「诚实实证边界」：敢报逐元素「甜点-悬崖」负收益，学术道德加分。
+
+### 待办行动（按优先级）
+- **P0 补大/中模型实验**：至少 ResNet-50 on CIFAR-100 或 BERT-tiny/Transformer，证明编译优化在真实模型（非 MNIST 浅层）的价值。
+- **P0 补真实 SOTA 对比**：同机（M3 Pro）跑 PyTorch+Inductor / JAX+XLA 的 MNIST MLP，给出冷启动 + 稳态吞吐对比，证明异步架构相对基线优势。
+- **P1 弱化「吞吐量对齐」措辞**：既然 C3 稳态（162ms）比最优 Eager（144ms）慢 ~12.5%，主打点改为「零卡顿 + 零动态分配」的系统级收益（平滑性 / 确定性延迟），而非吞吐加速；审稿人眼中 JIT 若不能明显快于 Eager 会被质疑存在价值。
+- **P2 范畴论术语降级**：Coproduct/Catamorphism → 平实「编译期类型安全分派」表述，重点给「std::visit vs 虚表」的 Micro-benchmark 数据支撑。
+- **P3 勘误**：文中「焊人」→「焊入」；统一 Epilogue 为「尾随融合/后置融合」；补全 PDF 中缺失的实际图片；XLA 引用（2020）过旧，补 2023-24 的 StableHLO / Triton 文献。
+
+### 已知硬约束（当前版本未覆盖，正文须如实交代）
+- 仅 Apple Silicon M3 Pro + AMX；NEON/AVX2 显式 8 路 SIMD 不可移植；依赖 Apple 私有 cblas_sgemm。
+- 文末已承认：当前不支持 GPU（MLIR→LLVM→PTX/HIP 未打通）——深度学习领域功能缺失，需在正文明确边界。
+
+---
+
+## 🆕 深宽 MLP 训练测：单步微基准不可靠（2026-09-03：后台编译线程污染 → 改为 epoch 级/融合级测量） ### 动机（对应审阅 P0「补中等模型」）
+- 框架算子集无 conv/batchnorm/layernorm/maxpool，ResNet/CIFAR 搭不出来；最接近的中等模型是**深宽 MLP**。
+- 把 `bench_mlp_ce_train` 扩展为多层深宽 MLP（depth 参数，IN→H×depth→NC），并加 `CT_DISABLE_C3` 宏守卫使其能在 build-eager（真纯 eager）编译。
+
+### 测量方法学发现（重要教训）
+- **单步（per-step）微基准在 C3 上不可靠**：H=2048（depth=2）多次运行时 C3 时快（14693 vs 15051，快 2.4%）时慢（15097 vs 14220，慢 6%），结果可翻转。
+- **根因**：异步后台编译线程（`compileBackwardAsync*` detached）在整个训练循环持续争用 CPU；单步计时信号太弱，被该争用污染，SNR 极低。
+- **经验**：论文不可用 single-step 时延曲线论证 C3 训练吞吐；应改用 **epoch 级累计总耗时**（编译占比被摊薄、信噪比高，即 MNIST 162/144 的方法）。
+
+### 观察（仅供定性，不敛入论文曲线）
+- 深宽 MLP 训练态单步时延随 depth(1→3)、width(256→512) 变化极小 → **C3 调度税与 GEMM 规模基本无关**。
+- 结论倾向：C3 的收益不是加速 compute-bound 的 GEMM 训练吞吐，而在 memory-bound 逐元素融合甜点（4.28×）、MatMul+Act epilogue（≥1024² 1.32-1.45×）、以及一次性冷启动 + 零动态分配。
+- 数据点（depth=2, B=64，WARMUP 变化下仅定性）：H=512 C3≈1617/eager≈1557；H=1024 ≈4553/4504；H=2048 快慢翻转（噪声）。**这些数字不进论文**。
+
+### 落地
+- 论文不新增深宽 MLP 训练加速比曲线（不可靠）。
+- 论文补「模型规模与收益可扩展性」分析：用可靠数据（MatMul+Act epilogue 融合大 GEMM 正收益、MNIST epoch 级、零冷启动/零分配）做定性论证，并明示「训练态单步微基准因异步编译线程争用噪音大，故采用 epoch/融合级累计测量」——学术诚实加分。
+
+---
+
+## 🆕 冷启动实测补测（2026-09-02：论文「537ms→0.40ms / -1300× / 首 Batch 0.40ms」被证伪，替换为真实实测）
+
+### 数据真实性审计
+- **发现**：论文摘要/评估表里的「首 Batch 冷启动 0.40ms、相对同步 JIT 537ms 下降 -1300×」**无任何落盘实测出处**（仓库全扫无来源，`make_figs.py` 里 `[537.0, 1.2, 0.40]` 是硬编码）。
+- 用户核实请求 → 编写并运行 `exp_mnist_cold_start`（`src/tests/standalone/exp_mnist_cold_start.cpp`）清空 JIT cache 从头实测。Release 构建、MNIST 784→256→128→10、2 epochs、batch=128。
+
+### 实测数据（Apple M3，2026-09-02，`exp_mnist_cold_start` 逐 batch 墙钟）
+| 项 | 值 |
+| --- | --- |
+| 首 batch 尖峰（含首个 region kernel 一次性 JIT 编译） | **205.85 ms**（程序 `*` 标注） |
+| 第二个 region kernel 编译尖峰 | 7.08 ms |
+| 稳态 per-batch p50 | **0.28 ms** |
+| 稳态 per-batch p95 | 0.33 ms |
+| Epoch1 总耗时（含两次编译尖峰） | 572.0 ms |
+| Epoch2 总耗时（已无编译，纯稳态） | 362.2 ms |
+| 首 epoch 尖峰数（≥3×p50） | 2/468（两次 region kernel 编译） |
+| 稳态 epoch2 尖峰数 | 0/468 |
+
+> 注：`batch_ms` 口径 = 单 batch「前向 + 反向」墙钟（不含 batch 数据拷贝与 SGD），故 Epoch 总耗时（含其余开销）高于 batch 延迟之和。
+
+### 结论（诚实修正）
+1. **异步双管线确实让编译「只发生一次」**：首个 region kernel 的 JIT 编译把首 batch 拉到 ~206ms，之后全部 batch 稳定在 ~0.28ms、零重复阻塞。这是「本地高效 JIT」的真实形态。
+2. **但不该声称「首 Batch 冷启动降到 0.40ms / -1300×」**：真实首 batch 是 ~206ms 的一次性编译墙；0.40ms 只是稳态 per-batch p50（且本轮实测为 0.28ms）。
+3. **同步 JIT 基线 537ms 无出处** → 论文已改为仅报实测：首 kernel 冷启动 ~206ms（一次性）+ 稳态 per-batch ~0.28ms，不再使用 537/-1300× 硬编码。
+4. 已同步修正 `make_figs.py` `fig_pipeline`（柱子改为 205.85 vs 0.28，真实值）与中英文 tex 的摘要/正文/评估表表述。
+
+## 附加遗留（无出处，论文已移除）
+- PyTorch Eager 基准 **218 ms/ep 无来源**；STATUS 内仅记录过 5ep 总 9599ms 那次（含 GEMM 线程差异）。论文今日暂以「稳态 144ms（自家最优 eager，STATUS L1115）」为基线，未再引用 218ms。
+- **0 堆分配**：有 M2 阶段工程实现支撑（可信），但「11700 vs 46800 次」对比数字无出处，论文已不列该项。
+
+---
 
 ## 🆕 CrossEntropy 反向摘除（2026-09-02：CE 99.6% miss 根因 → miss 归零，稳态 ~162ms/ep）
 
@@ -1177,3 +1254,27 @@ C3_ENABLE_BACKWARD=1 ./build/test_c3_backward
 - `bench_ce_backward`：MNIST CE 反向仅 2.52µs/call（~1.2ms/epoch）→ 融合 CE 反向 ROI≈0，确认不是性能大头。
 
 **调试方法沉淀**：lldb C++ 异常断点（`breakpoint set -E c++` + `bt`）可精确定位 C3 内部 `unordered_map::at` 抛出点；本环境 python 命令偶发 300s 超时，优先用 `str_replace_editor` 或 bash cat 编辑。
+
+---
+
+## 4.44 2026-09-03 统一性能口径 · C3 赢面地图
+
+**背景**：此前存在三组矛盾性能口径（论文端到端 C3≈Eager；C3_BACKWARD_OPTIMIZATION_PLAN 报 backward 快 ~10.5×；另一组"端到端慢 8.8×"），需固定口径重测。
+
+**动作**（详见 [docs/C3_PERF_UNIFIED_MATRIX.md](docs/C3_PERF_UNIFIED_MATRIX.md)）：
+- 重建可靠 eager build：`build-eager` 原二进制不可靠（bench 的 `mode` 字符串只看 `CTORCH_DISABLE_C3_BACKWARD` env、与 `CT_DISABLE_C3` 编译宏无关，误导判据）；以 `-DCT_DISABLE_C3=ON` 重新 configure 编译后，以"是否打印 C3 stats"为真纯 eager 判据。
+- 固定口径、干净机器实测 backward / 端到端训练 / 端到端前向三口径。
+
+**结论（实测）**：
+| 口径 | C3 | Eager | 加速比 |
+|---|---|---|---|
+| Backward（单链 512×512→Tanh→Sigmoid→ReLU→bw） | p50 1.50/1.26 ms | 16.2/16.0 ms | **快 ~10.8-12.7×** |
+| 端到端训练（MNIST-MLP 型，depth 1/4） | median 401/667 us | 373/618 us | ≈1.08× 慢（同量级） |
+| 端到端前向（宽 matmul 密集 B64/H4096/L4） | 35.6 ms/step | 27.4 ms/step | ≈1.30× 慢 |
+
+**关键修正**：
+- 旧"端到端 C3 慢 8.8×（2854 vs 325 us）"说法**不成立**——固定口径 + 正确 eager 对比后 C3 ≈ Eager（~1.08×），与论文口径（162 vs 144 ms）一致。
+- **backward 反向融合是 C3 主场（~10×）**；`C3-禁backward` 端到端反而更慢（579 vs 401 us），证明 backward MIMO 融合（命中率 100%）为净收益。
+- 纯 forward matmul 密集场景 eager（cblas）占优（C3 慢 ~1.3×）。
+
+**论文叙事建议**：C3 主卖点 = 自动微分反向融合（~10×）且不拖累端到端；端到端与最优 Eager 同量级，靠 backward 融合 + 稳态零卡顿 + 零动态分配换取；纯 forward matmul 密集场景如实陈述为 eager 优势区。

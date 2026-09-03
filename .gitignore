@@ -34,3 +34,8 @@ cmake-build-debug
 *.tmp
 .DS_Store
 .matplotlib/
+
+# 连字符 build 变体（build-eager/build-release 等，不入库）
+build-*
+# 论文工作区（不入库）
+paper/
