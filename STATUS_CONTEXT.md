@@ -1607,3 +1607,57 @@ DEBT-2 降级注释 (C3BackwardCapture)。以上正式回归全部绿 → 无功
    Accelerate, 融合消除中间张量是 C3 相对 eager 的核心增益(非 GEMM 本身)。
 2. 向量化采用"自研高层 op→LLVM 层 + arith-on-vector + undef/insertelement splat"架构,
    不经 vector 方言/VectorToLLVM(后者与该架构不兼容会卡死)。
+
+## 4.56 2026-09-05 C3 偷工减料专项审查(3 子代理并行 + 父级核实)
+
+范围: c3/src/C3 全部核心文件。标记: [亲核]=父级已亲自读代码确认; [子报]=子代理报(未逐一复核)。
+
+### A. 真偷懒/死代码冒充支持(建议清理)
+1. [亲核] C3BackwardCapture.cpp:913-952 buildCrossEntropyBackwardGraph — `(void)grad_desc`
+   不乘 grad、不做 1/M、用朴素 exp; 注释自曝对 M=4,N=8 错位。因 tryExecuteBackward 已对
+   CrossEntropy 短路(179-180, 正确性决策), 该 builder 实际不可达 → 挂着"已支持 CE 反向"
+   的近似实现, 误导维护者, 应删或标 dead。
+2. [亲核] C3BackwardCapture.cpp:719-727 vs 627-690 — supportsNodeType 让 GELU/LReLU/Sin/
+   Cos/Abs/Min/Max 返 true, 但 buildBackwardGraphForTypeAndIndex 无这些 case(落 690 nullopt)
+   → 名义支持、实际编不出 kernel, 与注释"必须与 isElementWiseBackward 完全一致"脱节。
+3. [子报] LinalgFusedGen.cpp:171 vs 104-116 — 声称支持广播, 但 buildLinalgFusedFunc 全
+   input/output 压成 1D dynamic memref + identity map, 广播未编码 → 若真遇短 operand 越界。
+4. [子报] MLIRKernelGen.cpp:2225-2250 — JITCache 只 store/recordHit 从不反序列化读回 →
+   命中仍全量重编译(缓存形同虚设)。
+
+### B. 潜在真 bug(待修, 高优先级)
+1. [子报] MLIRKernelGen.cpp:691-694 — 向量化主循环加了标量广播短路, 但尾循环未处理
+   numel=1 标量广播 → n%VL≠0 时尾循环越界读。
+2. [子报] C3Engine.cpp:354-400 — 并行切片对所有输入 in_ptrs[i]+start 统一偏移, 遇广播
+   operand 错位。
+3. [亲核] PGOManager.cpp:217 triggerCompilationChain 直接 `shared_from_this()` 无 ownership
+   防护 → 栈上/非 shared_ptr 的 PGOCompiledKernel 触发即抛 bad_weak_ptr = test_c3_pgo_deopt
+   失败(5/7)的直接源头。
+4. [子报] RegionFusionRegistry.cpp:149-175 matchFromPosition 第三参 input_shapes 完全未用,
+   install()/installFromCompiledKernel() entry 仅 op-hash key → 不同 shape 同 op_seq 可能
+   dispatch 误命中(installWithCost 已混 shape, 另两条未)。
+
+### C. 死代码/半成品/注释脱节(中低)
+- C3BackwardCapture:674+846+ buildSoftmaxBackwardGraph 完整实现却从不 dispatch(674 返 nullopt),
+  "待生命周期验证"悬置多版无回归。MNIST 无 softmax 不暴露。
+- Graph.cpp:38-111 CanonicalizeRules::defaults() 12 条 lambda 只 type-check 后 return nullopt,
+  实际靠 canonicalize() 内字符串手写重放 → 装饰性死代码。
+- C3DialectLowering.cpp:290-298 Transpose else 分支(非 2D 轴交换)= 恒等拷贝无维度守卫 → 若
+  触达更高维转置静默错(当前疑死分支)。
+- LinalgOneShotGen 多维 lowering(matmul/transpose/sumreduce) 与 flat-1D ABI 不一致 → 死脚手架。
+- MLIRToLLVMIR.cpp:207-216 用文本 find/replace 给 c3_kernel 加 amdgpu_kernel 标记(脆弱 hack)。
+- C3BackwardCapture:715 Sigmoid "暂回退 eager" 注释已过期(实际有 builder 且 MIMO 能编, 仅挡在
+  融合序列外)。
+
+### D. 排除(亲核非偷懒, 勿误报)
+- CrossEntropy 3 遍 for-j = max→sum_exp→normalize 数据依赖必要; C3Engine 那批 catch(...){}
+  = 防御包裹 record/cleanup; Fast-Math 多项式逼近 = C3_FAST_MATH 门控+误差注释; SumReduce 认真;
+  buildExpBackwardGraph 用 input 当 out = exp 保形数值等价; CE 短路 + DEBT-2 superseded = 明确决策。
+
+### E. 修复优先级建议
+1. (让红测试转绿) PGOManager:217 bad_weak_ptr — 需理清 PGOCompiledKernel 所有权后给 shared_from_this
+   加防护或用安全分支; 连带 test_c3_pgo_deopt / test_c3_compile_error 可能转绿。
+2. (越界风险) MLIRKernelGen 尾循环标量广播越界。
+3. (低风险清理) 把不可达的 buildCrossEntropyBackwardGraph 标 dead / 删名义不支持的
+   supportsNodeType 项 / Graph CanonicalizeRules 装饰死代码。
+
