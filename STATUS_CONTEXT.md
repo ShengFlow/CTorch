@@ -1483,3 +1483,30 @@ ArithDialect::materializeConstant → Operation::create 反复执行，永不收
 2. 或改用 LLVM 层自动向量化（生成标量 epilogue + 让 LLVM 自动向量化），绕开 MLIR vector 方言。
 3. 缩小 vector.broadcast 使用范围到不触发不收敛的形状。
 
+
+## 4.52 2026-09-05 VectorToLLVM greedy 不收敛 — 深挖根因
+
+### 实验过程
+1. 补 createConvertVectorToLLVMPass 到 pipeline,恢复 MatMul epilogue 向量化。
+2. macOS sample 抓栈: 卡 ConvertVectorToLLVMPass::runOnOperation → applyPatternsGreedily
+   → ArithDialect::materializeConstant → Operation::create 反复执行(死循环)。
+3. 独立最小复现(单函数 broadcast/arith): 全部快速完成(0.3-4.3ms),不卡。
+4. C3_DUMP_VECTOR_IR 抓真实会卡 IR: JITCompile.AddGraphExecute 的 Add 图在 SCFToCF 后
+   已是 cf.br + llvm.load vector<4xf32>(无 vector 方言 broadcast op,已是 LLVM 层)。
+5. 即使把 VectorToLLVM 提前到 SCFToCF 前, 仍卡 JITCompile.AddGraphExecute。
+
+### 根因结论
+- 卡的不是 vector.broadcast 本身(最小复现证明 broadcast 快速),而是 ConvertVectorToLLVMPass
+  对这个仓库特有的 IR 结构(已降层到 LLVM dialect + vector<Nxf32> 类型)greedy 不收敛。
+- runC3Lowering 直接把算子降到 LLVM 层(scf.for + llvm.load/vector 类型),此时 VectorToLLVM
+  已不该介入,但加进去后其 greedy pattern 对 vector<Nxf32> 类型反复 materialize 死循环。
+- 该仓库的 lowering 架构是【自研高层 op→直接 LLVM dialect + vector 类型】,不经标准
+  vector 方言/scf 结构,因此标准 VectorToLLVM pass 与之不兼容(位置无关地会卡)。
+
+### 后续真正方案(待专项)
+1. 向量化应直接走 LLVM 层(生成已向量化的 LLVM IR + llvm intrinsic),不经 vector 方言,
+   与现有 runC3Lowering 架构一致 —— 而非补标准 VectorToLLVM pass。
+2. 或改 runC3Lowering: 生成标准 vector 方言 + scf(而非直接 LLVM),再走标准 lowering 管线,
+   但这是大架构改动,影响所有已调优内核,风险高。
+3. MatMul epilogue 维持标量(现状),避免触碰不兼容路径。
+
