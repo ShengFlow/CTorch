@@ -800,6 +800,13 @@ add_executable(test_c3_backward src/tests/standalone/test_c3_backward.cpp)
 target_link_libraries(test_c3_backward PRIVATE CTorch)
 target_include_directories(test_c3_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# [PEL25 mitigation 2026-09-05] DEBT-2 数值回归测试 — ReLU→Sigmoid / ReLU→ReLU 链
+# PEL25: 跑 eager sanity check (C3_FUSED_BW 默认 0,fused 路径 nullopt)
+# PEL26+: 修 DEBT-2 后,期望 C3_FUSED_BW=1 真正 re-enable 链 fusion
+add_executable(test_fused_bw_debt2 src/tests/standalone/test_fused_bw_debt2.cpp)
+target_link_libraries(test_fused_bw_debt2 PRIVATE CTorch)
+target_include_directories(test_fused_bw_debt2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(bench_accessor_overhead src/tests/standalone/bench_accessor_overhead.cpp)
 target_link_libraries(bench_accessor_overhead PRIVATE CTorch)
 target_include_directories(bench_accessor_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
