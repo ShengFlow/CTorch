@@ -1508,5 +1508,42 @@ ArithDialect::materializeConstant → Operation::create 反复执行，永不收
    与现有 runC3Lowering 架构一致 —— 而非补标准 VectorToLLVM pass。
 2. 或改 runC3Lowering: 生成标准 vector 方言 + scf(而非直接 LLVM),再走标准 lowering 管线,
    但这是大架构改动,影响所有已调优内核,风险高。
-3. MatMul epilogue 维持标量(现状),避免触碰不兼容路径。
+3. (已落地,见 4.53) MatMul epilogue 恢复向量化,不碰 VectorToLLVM。
+
+## 4.53 2026-09-05 MatMul epilogue 标量回退修复 —— LLVM 层直接向量化(落地)
+
+### 目标
+恢复 §4.50 判为"必要约束"而回退的 MatMul epilogue 向量化,同时彻底避开
+vector 方言/VectorToLLVM 不兼容路径(§4.51/4.52 根因)。
+
+### 改动(C3DialectLowering.cpp, MatMulOpLowering::vec_body)
+1. 常数向量(act==1 ReLU 的 0、act==2 Sigmoid 的 1)已用 DenseElementsAttr splat(前一实验)。
+2. bias 广播(原仓库仅剩的两处 vector::BroadcastOp:bias_numel==M 行广播 / ==1 标量广播)
+   改为新增 helper buildScalarSplatVec():LLVM UndefOp + VL 次 InsertElementOp,
+   与 MLIRKernelGen 595-607 既存标量→vector 展开一致。
+3. bias_numel==N(列广播,最常见)本就走 vector load,无需改。
+4. buildVectorizedLoop 的 vec_body 从死代码恢复为实际执行;scalar_body 仅作尾部 cleanup。
+
+改后整个仓库源码不再出现 vector::BroadcastOp / vector 方言 op(仅注释提及)。
+
+### 关键事实:MLP benchmark 之前为何仍报 missing translation
+- 4.51/4.52 实验只把常数改成 DenseElementsAttr splat,却遗留了 bias 广播的
+  两处 vector::BroadcastOp。MLP 前向经 MatMulOpLowering 时 bias_numel==M/==1 分支命中,
+  于是 ExecutionEngine 翻译仍见 vector.broadcast → "missing LLVMTranslationDialectInterface
+  for op: vector.broadcast"(快失败,非卡死)。
+- 本仓库 BroadcastOp 全源码仅 C3DialectLowering.cpp 这两处;MLIRKernelGen.cpp 的
+  broadcast 是 shape/mod 数学的标量级广播,非 vector 方言 op。
+
+### 回归(Release, Apple Silicon)
+- test_c3_graph: 115/115 通过(4.4s),含 Benchmark 全套。
+  MLP_3Layer C3 Fused 1.79x / MLP_Large 1.22x / MLP_Huge 1.39x vs Eager AMX ——
+  向量化 epilogue 生效,不再报 broadcast / 不再卡死。
+- test_c3_backward / test_c3_mnist_step / test_c3_compile_merged(10)/
+  test_c3_compile_merged_pgo(11)/ test_fused_bw_debt2(sanity) 全部通过。
+- 稳态性能基线未回退(向量化只走 epilogue 行内,GEMM 仍走 cblas)。
+
+### 结论
+仓库架构(runC3Lowering 直接 LLVM 层 + arith-on-vector)可行;向量化坚持"LLVM 层
+undef+insertelement/DenseElementsAttr"造向量,绝不引入 vector 方言,即可既向量化
+又不触发不兼容的 VectorToLLVM。
 
