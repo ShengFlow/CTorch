@@ -203,6 +203,146 @@ __m256 rsqrt256_ps(__m256 x) {
 
 #endif  // __AVX__
 
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+
+// ======================= AVX-512 实现 (16-wide, F+DQ) =======================
+// 算法与 AVX2 (exp256_ps 等) 完全同构：Cephes 风格 range reduction +
+// 多项式逼近，寄存器宽度扩展为 512-bit (16 x f32)。
+// 数学常量沿用 AVX2 命名空间内常量 (kLn2/kInvLn2/...)。
+
+__m512 exp512_ps(__m512 x) {
+    // 1. Clamp 到 [-87, 87]
+    x = _mm512_min_ps(x, _mm512_set1_ps(87.0f));
+    x = _mm512_max_ps(x, _mm512_set1_ps(-87.0f));
+
+    // 2. x = k*ln2 + r
+    __m512 fx = _mm512_mul_ps(x, _mm512_set1_ps(kInvLn2));
+    __m512 fk = _mm512_roundscale_ps(fx, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+    __m512 r = _mm512_fnmadd_ps(fk, _mm512_set1_ps(kLn2Hi), x);
+    r = _mm512_fnmadd_ps(fk, _mm512_set1_ps(kLn2Lo), r);
+
+    // 3. exp(r) 多项式（Horner, 7 阶）
+    __m512 y = _mm512_set1_ps(1.0f / 5040.0f);
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f / 720.0f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f / 120.0f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f / 24.0f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f / 6.0f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(0.5f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f));
+    y = _mm512_fmadd_ps(y, r, _mm512_set1_ps(1.0f));
+
+    // 4. 2^k via biased exponent shift
+    __m512i k_i = _mm512_cvtps_epi32(fk);
+    __m512i biased_k = _mm512_add_epi32(k_i, _mm512_set1_epi32(127));
+    __m512i pow2_k = _mm512_slli_epi32(biased_k, 23);
+    __m512 pow2_k_f = _mm512_castsi512_ps(pow2_k);
+
+    return _mm512_mul_ps(y, pow2_k_f);
+}
+
+__m512 log512_ps(__m512 x) {
+    // 1. 分解 x = 2^k * m, m in [1,2)
+    __m512i x_i = _mm512_castps_si512(x);
+    __m512i e_i = _mm512_srli_epi32(x_i, 23);
+    __m512i m_i = _mm512_and_si512(x_i, _mm512_set1_epi32(0x007FFFFF));
+    m_i = _mm512_or_si512(m_i, _mm512_set1_epi32(0x3F800000));
+    __m512 m = _mm512_castsi512_ps(m_i);
+
+    // 2. k = e - 127
+    __m512i k_i = _mm512_sub_epi32(e_i, _mm512_set1_epi32(127));
+    __m512 k = _mm512_cvtepi32_ps(k_i);
+
+    // 3. 范围缩减到 [sqrt(0.5), sqrt(2)]
+    __mmask16 cmp = _mm512_cmp_ps_mask(m, _mm512_set1_ps(1.41421356237f), _CMP_GT_OQ);
+    m = _mm512_mask_mul_ps(m, cmp, m, _mm512_set1_ps(0.5f));
+    k = _mm512_mask_add_ps(k, cmp, k, _mm512_set1_ps(1.0f));
+
+    // 4. r = (m-1)/(m+1); log(m) = 2*r*(1 + r^2*(1/3 + r^2*(1/5 + r^2/7)))
+    __m512 r = _mm512_div_ps(_mm512_sub_ps(m, _mm512_set1_ps(1.0f)),
+                             _mm512_add_ps(m, _mm512_set1_ps(1.0f)));
+    __m512 r2 = _mm512_mul_ps(r, r);
+    __m512 t = _mm512_set1_ps(1.0f / 7.0f);
+    t = _mm512_fmadd_ps(t, r2, _mm512_set1_ps(1.0f / 5.0f));
+    t = _mm512_fmadd_ps(t, r2, _mm512_set1_ps(1.0f / 3.0f));
+    t = _mm512_fmadd_ps(t, r2, _mm512_set1_ps(1.0f));
+    __m512 log_m = _mm512_mul_ps(_mm512_mul_ps(r, _mm512_set1_ps(2.0f)), t);
+
+    // 5. log(x) = k*ln2 + log_m
+    __m512 result = _mm512_fmadd_ps(k, _mm512_set1_ps(kLn2Hi), log_m);
+    result = _mm512_fmadd_ps(k, _mm512_set1_ps(kLn2Lo), result);
+    return result;
+}
+
+__m512 tanh512_ps(__m512 x) {
+    __m512 x_abs = _mm512_andnot_ps(_mm512_set1_ps(-0.0f), x);
+
+    // Padé [5/4]
+    __m512 x2 = _mm512_mul_ps(x_abs, x_abs);
+    __m512 x4 = _mm512_mul_ps(x2, x2);
+    __m512 num = _mm512_set1_ps(945.0f);
+    num = _mm512_fmadd_ps(x2, _mm512_set1_ps(105.0f), num);
+    num = _mm512_fmadd_ps(x4, _mm512_set1_ps(1.0f), num);
+    __m512 den = _mm512_set1_ps(945.0f);
+    den = _mm512_fmadd_ps(x2, _mm512_set1_ps(420.0f), den);
+    den = _mm512_fmadd_ps(x4, _mm512_set1_ps(15.0f), den);
+    __m512 pade = _mm512_div_ps(_mm512_mul_ps(x_abs, num), den);
+
+    // exp 公式路径
+    __m512 two_x = _mm512_min_ps(_mm512_add_ps(x_abs, x_abs), _mm512_set1_ps(20.0f));
+    __m512 exp_neg_2x = exp512_ps(_mm512_sub_ps(_mm512_setzero_ps(), two_x));
+    __m512 exp_result = _mm512_div_ps(
+        _mm512_sub_ps(_mm512_set1_ps(1.0f), exp_neg_2x),
+        _mm512_add_ps(_mm512_set1_ps(1.0f), exp_neg_2x));
+
+    // |x| < 1.0 用 Padé
+    __mmask16 use_pade = _mm512_cmp_ps_mask(x_abs, _mm512_set1_ps(1.0f), _CMP_LT_OQ);
+    __m512 tanh_abs = _mm512_mask_blend_ps(use_pade, exp_result, pade);
+
+    __m512 sign_mask = _mm512_set1_ps(-0.0f);
+    __m512 x_sign = _mm512_and_ps(x, sign_mask);
+    return _mm512_xor_ps(tanh_abs, x_sign);
+}
+
+__m512 sigmoid512_ps(__m512 x) {
+    x = _mm512_min_ps(x, _mm512_set1_ps(20.0f));
+    x = _mm512_max_ps(x, _mm512_set1_ps(-20.0f));
+
+    __mmask16 neg = _mm512_cmp_ps_mask(x, _mm512_setzero_ps(), _CMP_LT_OQ);
+
+    __m512 exp_neg_x = exp512_ps(_mm512_sub_ps(_mm512_setzero_ps(), x));
+    __m512 sig_pos = _mm512_div_ps(_mm512_set1_ps(1.0f),
+                                   _mm512_add_ps(_mm512_set1_ps(1.0f), exp_neg_x));
+
+    __m512 exp_x = exp512_ps(x);
+    __m512 sig_neg = _mm512_div_ps(exp_x, _mm512_add_ps(_mm512_set1_ps(1.0f), exp_x));
+
+    return _mm512_mask_blend_ps(neg, sig_pos, sig_neg);
+}
+
+__m512 gelu512_ps(__m512 x) {
+    __m512 x2 = _mm512_mul_ps(x, x);
+    __m512 x3 = _mm512_mul_ps(x2, x);
+    __m512 inner = _mm512_fmadd_ps(_mm512_set1_ps(kGeluCoeff), x3, x);
+    __m512 arg = _mm512_mul_ps(_mm512_set1_ps(kSqrt2OverPi), inner);
+    __m512 t = tanh512_ps(arg);
+    __m512 one_plus_t = _mm512_add_ps(_mm512_set1_ps(1.0f), t);
+    return _mm512_mul_ps(_mm512_mul_ps(_mm512_set1_ps(0.5f), x), one_plus_t);
+}
+
+__m512 rsqrt512_ps(__m512 x) {
+    // AVX-512 无原生 512-bit 倒数平方根近似；用除法 + Newton-Raphson 保持精度
+    __m512 approx = _mm512_div_ps(_mm512_set1_ps(1.0f), _mm512_sqrt_ps(x));
+    // Newton-Raphson: y' = y * (3 - x*y^2) / 2
+    __m512 xy2 = _mm512_mul_ps(_mm512_mul_ps(x, approx), approx);
+    __m512 nr = _mm512_mul_ps(approx,
+        _mm512_mul_ps(_mm512_set1_ps(0.5f), _mm512_sub_ps(_mm512_set1_ps(3.0f), xy2)));
+    return nr;
+}
+
+#endif  // __AVX512F__ && __AVX512DQ__
+
+
+
 #ifdef __aarch64__
 
 // ======================= NEON 实现 =======================
@@ -365,7 +505,14 @@ float32x4_t gelu_neon_f32(float32x4_t x) {
 // ======================= 跨平台 wrapper =======================
 
 void vexp(const float* in, float* out, size_t n) {
-#ifdef __AVX__
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], exp512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = std::exp(in[i]);
+#elif defined(__AVX__)
     size_t i = 0;
     for (; i + 7 < n; i += 8) {
         __m256 x = _mm256_loadu_ps(&in[i]);
@@ -385,7 +532,14 @@ void vexp(const float* in, float* out, size_t n) {
 }
 
 void vlog(const float* in, float* out, size_t n) {
-#ifdef __AVX__
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], log512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = std::log(in[i]);
+#elif defined(__AVX__)
     size_t i = 0;
     for (; i + 7 < n; i += 8) {
         __m256 x = _mm256_loadu_ps(&in[i]);
@@ -405,7 +559,14 @@ void vlog(const float* in, float* out, size_t n) {
 }
 
 void vtanh(const float* in, float* out, size_t n) {
-#ifdef __AVX__
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], tanh512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = std::tanh(in[i]);
+#elif defined(__AVX__)
     size_t i = 0;
     for (; i + 7 < n; i += 8) {
         __m256 x = _mm256_loadu_ps(&in[i]);
@@ -425,7 +586,14 @@ void vtanh(const float* in, float* out, size_t n) {
 }
 
 void vsigmoid(const float* in, float* out, size_t n) {
-#ifdef __AVX__
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], sigmoid512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = 1.0f / (1.0f + std::exp(-in[i]));
+#elif defined(__AVX__)
     size_t i = 0;
     for (; i + 7 < n; i += 8) {
         __m256 x = _mm256_loadu_ps(&in[i]);
@@ -445,7 +613,17 @@ void vsigmoid(const float* in, float* out, size_t n) {
 }
 
 void vgelu(const float* in, float* out, size_t n) {
-#ifdef __AVX__
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], gelu512_ps(x));
+    }
+    for (; i < n; ++i) {
+        float v = 0.7978845608f * (in[i] + 0.044715f * in[i] * in[i] * in[i]);
+        out[i] = 0.5f * in[i] * (1.0f + std::tanh(v));
+    }
+#elif defined(__AVX__)
     size_t i = 0;
     for (; i + 7 < n; i += 8) {
         __m256 x = _mm256_loadu_ps(&in[i]);

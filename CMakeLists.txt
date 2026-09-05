@@ -9,6 +9,23 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffast-math -march=native")
 
+# ---- SIMD 目标架构开关（可选覆盖 -march=native）----
+# CT_TARGET_SIMD: AUTO(默认,由 -march=native 自动检测) | NEON | AVX2 | AVX512
+# 显式指定时追加对应编译宏/指令集 flag。AVX512 需 F+DQ。
+set(CT_TARGET_SIMD "AUTO" CACHE STRING "Target SIMD arch: AUTO|NEON|AVX2|AVX512")
+string(TOUPPER "${CT_TARGET_SIMD}" CT_TARGET_SIMD_UPPER)
+if(CT_TARGET_SIMD_UPPER STREQUAL "AVX512")
+    add_compile_definitions(__AVX512F__ __AVX512DQ__ __AVX2__ __AVX__)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mfma")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mavx512f -mavx512dq -mfma")
+elseif(CT_TARGET_SIMD_UPPER STREQUAL "AVX2")
+    add_compile_definitions(__AVX2__ __AVX__)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mavx2 -mfma")
+elseif(CT_TARGET_SIMD_UPPER STREQUAL "NEON")
+    add_compile_definitions(__aarch64__)
+endif()
+
 # LTO (链接时优化) - Thin LTO (平衡编译速度和运行时性能)
 # 通过 CT_ENABLE_LTO 开关控制，默认开启；关闭后可做 no-LTO 基线/PGO 对照实验
 option(CT_ENABLE_LTO "Enable Link-Time Optimization (Thin LTO)" ON)

@@ -90,6 +90,44 @@ __m256 rsqrt256_ps(__m256 x);
 
 #endif // __AVX__
 
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+
+// ======================= AVX-512 (x86_64, F+DQ) API =======================
+
+/**
+ * @brief 向量化 expf（16-wide AVX-512）
+ * @note max ULP error < 2 vs std::expf
+ */
+__m512 exp512_ps(__m512 x);
+
+/**
+ * @brief 向量化 logf（16-wide AVX-512）
+ * @note max ULP error < 2 vs std::logf
+ */
+__m512 log512_ps(__m512 x);
+
+/**
+ * @brief 向量化 tanhf（16-wide AVX-512）
+ */
+__m512 tanh512_ps(__m512 x);
+
+/**
+ * @brief 向量化 sigmoid（16-wide AVX-512）
+ */
+__m512 sigmoid512_ps(__m512 x);
+
+/**
+ * @brief 向量化 GELU（16-wide AVX-512）
+ */
+__m512 gelu512_ps(__m512 x);
+
+/**
+ * @brief 向量化 1/sqrtf（16-wide AVX-512）
+ */
+__m512 rsqrt512_ps(__m512 x);
+
+#endif // __AVX512F__
+
 // ======================= NEON (aarch64) API =======================
 
 #ifdef __aarch64__

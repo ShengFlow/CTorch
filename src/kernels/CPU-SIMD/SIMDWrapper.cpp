@@ -4,11 +4,15 @@
  * @details 将 SIMD 超越函数库暴露为 C ABI 符号，供 MLIR JIT 后端调用。
  *          每个函数只做一层转发，性能开销可忽略（函数调用被内联）。
  *
+ *          向量宽度由编译期架构检测决定（见 kernels/SIMDConfig.h）：
+ *          AVX-512 (F+DQ) -> 16 lanes, AVX2 -> 8 lanes, NEON -> 4 lanes。
+ *
  * @date 2026/08/03
  * @see SIMDWrapper.h
  */
 
 #include "kernels/SIMDWrapper.h"
+#include "kernels/SIMDConfig.h"
 #include "kernels/SIMDMath.h"
 
 // ======================= extern "C" 包装 =======================
@@ -36,6 +40,8 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vgelu(const
 }
 
 // ======================= 批量算术运算 =======================
+// x86-64 分支内先判 AVX-512 (16 lanes)，否则回退 AVX2 (8 lanes)；
+// aarch64 用 NEON (4 lanes)。标量尾段补全保证边界安全。
 
 extern "C" __attribute__((used, visibility("default"))) void ct_simd_vadd(const float* a, const float* b, float* out, size_t n) {
     size_t i = 0;
@@ -46,11 +52,19 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vadd(const 
         vst1q_f32(out + i, vaddq_f32(va, vb));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        _mm512_storeu_ps(out + i, _mm512_add_ps(va, vb));
+    }
+    #else
     for (; i + 8 <= n; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
         _mm256_storeu_ps(out + i, _mm256_add_ps(va, vb));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = a[i] + b[i];
 }
@@ -64,11 +78,19 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vmul(const 
         vst1q_f32(out + i, vmulq_f32(va, vb));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        _mm512_storeu_ps(out + i, _mm512_mul_ps(va, vb));
+    }
+    #else
     for (; i + 8 <= n; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
         _mm256_storeu_ps(out + i, _mm256_mul_ps(va, vb));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = a[i] * b[i];
 }
@@ -82,11 +104,19 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vsub(const 
         vst1q_f32(out + i, vsubq_f32(va, vb));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        _mm512_storeu_ps(out + i, _mm512_sub_ps(va, vb));
+    }
+    #else
     for (; i + 8 <= n; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
         _mm256_storeu_ps(out + i, _mm256_sub_ps(va, vb));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = a[i] - b[i];
 }
@@ -100,11 +130,19 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vdiv(const 
         vst1q_f32(out + i, vdivq_f32(va, vb));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_loadu_ps(a + i);
+        __m512 vb = _mm512_loadu_ps(b + i);
+        _mm512_storeu_ps(out + i, _mm512_div_ps(va, vb));
+    }
+    #else
     for (; i + 8 <= n; i += 8) {
         __m256 va = _mm256_loadu_ps(a + i);
         __m256 vb = _mm256_loadu_ps(b + i);
         _mm256_storeu_ps(out + i, _mm256_div_ps(va, vb));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = a[i] / b[i];
 }
@@ -119,10 +157,17 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vneg(const 
         vst1q_f32(out + i, vnegq_f32(v));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 16 <= n; i += 16) {
+        __m512 v = _mm512_loadu_ps(in + i);
+        _mm512_storeu_ps(out + i, _mm512_sub_ps(_mm512_setzero_ps(), v));
+    }
+    #else
     for (; i + 8 <= n; i += 8) {
         __m256 v = _mm256_loadu_ps(in + i);
         _mm256_storeu_ps(out + i, _mm256_sub_ps(_mm256_setzero_ps(), v));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = -in[i];
 }
@@ -136,11 +181,19 @@ extern "C" __attribute__((used, visibility("default"))) void ct_simd_vrelu(const
         vst1q_f32(out + i, vmaxq_f32(v, zero));
     }
 #elif defined(__x86_64__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+    __m512 zero512 = _mm512_setzero_ps();
+    for (; i + 16 <= n; i += 16) {
+        __m512 v = _mm512_loadu_ps(in + i);
+        _mm512_storeu_ps(out + i, _mm512_max_ps(v, zero512));
+    }
+    #else
     __m256 zero = _mm256_setzero_ps();
     for (; i + 8 <= n; i += 8) {
         __m256 v = _mm256_loadu_ps(in + i);
         _mm256_storeu_ps(out + i, _mm256_max_ps(v, zero));
     }
+    #endif
 #endif
     for (; i < n; ++i) out[i] = (in[i] > 0.0f) ? in[i] : 0.0f;
 }
