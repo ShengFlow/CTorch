@@ -1407,3 +1407,32 @@ MIMO 反向 4 输出 × 14042 次 execute/epoch → 累积成 48ms/epoch 纯浪�
 - 下一个真正的杠杆是结构性改动：RC2 进程级异步（c3d 守护进程 + 共享内存 IPC，蓝图已齐），
   或算子集扩展（CNN/Transformer）——均超出单机微优化范畴，待用户排期。
 
+
+## 4.49 2026-09-05 PEL25 三处修复独立 Review + 全仓代码/性能排查
+
+### P0 修复 Review 结论（独立 Agent 所写，苏璃珞复核）
+- P0-1 FlatOutPool malloc nullptr：真实，修复正确（throw bad_alloc）。thread_local 归还逻辑未破坏。
+- P0-3 fused backward 禁用：删除的是已禁用函数内 289 行 unreachable dead code（8-30 f8161c6 已 early-return），
+  删除安全。MIMO 反向融合（mimo_hit=4678）走独立路径不受影响。
+- P0-4 DCU fail-fast：方向合理，但 DCU 无调用方（未接入），接入时需补 try/catch。本机无法实测 DCU。
+- 编号撞车：DEBT-2 误用 C3-BUG-20260903-01（已修 bug 编号）→ 已改为 C3-BUG-20260905-01 + 独立报告
+  docs/C3_FUSED_BACKWARD_DEBT2_BUG_REPORT.md
+
+### 代码错误排查
+- 编译 warning：MLIRKernelGen format 类型(long vs long long) x3，在诊断代码，非核心路径；
+  JITCache store nodiscard 忽略 x2，无害（调用方不需要返回值）。
+- singleton new 泄漏：有意（避免静态析构顺序），非 bug。shutdown/taskStarted/Finished 已实装。
+- test_relu_backward MPS 段崩溃：设备类型不匹配，GradAccumulator MPS 分支未动（grep=0），非本改动引入。
+- test_grad_accum CPU/MPS 全 PASS：GradAccumulator 原地累加数值正确。
+- test_region_fusion '4 失败'：全为性能软断言（加速比<1.0 噪声），正确性断言全过（STATUS §794 已记录）。
+- test_region_fusion_auto 9/12：历史就是 9/12 或 10/12（STATUS §439），z1 中间值 MISMATCH 为既有边界，非回归。
+
+### 性能回退排查
+- 当前稳态 epoch 2-5 = 137~139.4ms，与修改前 §4.48 记录(140~143ms)持平甚至略优。
+- mn_setup 维持低位，mimo_hit=4678 正常。无性能回退。
+
+### 结论
+- Agent 的 P0/P1 修复均为合理加固，无夹带 bug。
+- 主要改进建议：① DEBT-2 编号已分离；② DCU 接入时补异常处理(TODO)。
+- 无本次改动引入的代码错误或性能回退。
+
