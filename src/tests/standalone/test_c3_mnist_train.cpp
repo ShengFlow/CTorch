@@ -239,13 +239,45 @@ static float trainEpoch(
         }
 
         // 前向传播：标准 Tensor API，无任何 C3 痕迹
+        // [FWD-BREAK 探针] C3_FWD_BREAK=1: 逐层计时 L1/L2/L3 与 matmul 单独段（env 门控默认关）
+        static const bool fwd_break = [] { auto* e = std::getenv("C3_FWD_BREAK"); return e && std::string(e) == "1"; }();
+        static std::atomic<uint64_t> fbt[8] = {};
         auto t_fwd_start = std::chrono::high_resolution_clock::now();
-        Tensor z1 = bx.matmul(params[0]) + params[1];
+        auto fbt0 = t_fwd_start;
+        Tensor z1m = bx.matmul(params[0]);
+        auto fbtA = std::chrono::high_resolution_clock::now();
+        Tensor z1 = z1m + params[1];
+        auto fbt1 = std::chrono::high_resolution_clock::now();
         Tensor h1 = z1.relu();
-        Tensor z2 = h1.matmul(params[2]) + params[3];
+        auto fbt2 = std::chrono::high_resolution_clock::now();
+        Tensor z2m = h1.matmul(params[2]);
+        auto fbtB = std::chrono::high_resolution_clock::now();
+        Tensor z2 = z2m + params[3];
+        auto fbt3 = std::chrono::high_resolution_clock::now();
         Tensor h2 = z2.relu();
+        auto fbt4 = std::chrono::high_resolution_clock::now();
         Tensor logits = h2.matmul(params[4]) + params[5];
-        auto t_fwd_end = std::chrono::high_resolution_clock::now();
+        auto fbt5 = std::chrono::high_resolution_clock::now();
+        auto t_fwd_end = fbt5;
+        if (fwd_break) {
+            fbt[0].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbtA-fbt0).count());
+            fbt[1].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbt1-fbtA).count());
+            fbt[2].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbt2-fbt1).count());
+            fbt[3].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbtB-fbt2).count());
+            fbt[4].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbt3-fbtB).count());
+            fbt[5].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbt4-fbt3).count());
+            fbt[6].fetch_add((uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(fbt5-fbt4).count());
+            static std::atomic<uint64_t> cnt{0};
+            if ((++cnt) % 468 == 0) {
+                uint64_t n = cnt.load();
+                double a0=fbt[0].load()/1e6, a1=fbt[1].load()/1e6, a2=fbt[2].load()/1e6;
+                double a3=fbt[3].load()/1e6, a4=fbt[4].load()/1e6, a5=fbt[5].load()/1e6, a6=fbt[6].load()/1e6;
+                fprintf(stderr, "[FWD-BREAK] ep=%llu L1mm=%.2f L1add=%.2f L1relu=%.2f L2mm=%.2f L2add=%.2f L2relu=%.2f L3=%.2f (ms)",
+                        (unsigned long long)n, a0, a1, a2, a3, a4, a5, a6);
+                fputc(10, stderr);
+                for (int i=0;i<8;i++) fbt[i].store(0);
+            }
+        }
         fwd_time_acc += std::chrono::duration<double, std::milli>(t_fwd_end - t_fwd_start).count();
 
 #ifdef CT_DEBUG

@@ -764,12 +764,13 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
     // 直接开启 prewalk（训练+推理均生效）；C3_PREWALK=0 时退回到末尾 op 匹配路径
     if (prewalk_state_ == PrewalkState::kIdle && prewalkStartEnabled()) {
         if (registry.mayMatchAsFirstOp(op_type)) {
-            // 构建 first_input_shapes
-            std::vector<std::vector<size_t>> first_input_shapes;
+            // [perf 2026-09-05] 指针数组传参：避免热路径每次构造 vector<vector<size_t>> 拷贝堆分配
+            std::vector<const std::vector<size_t>*> first_input_shapes;
             if (op_type == op::MatMul && num_inputs >= 2) {
-                first_input_shapes = {inputs[0].shape(), inputs[1].shape()};
+                first_input_shapes.push_back(&inputs[0].shape());
+                first_input_shapes.push_back(&inputs[1].shape());
             } else if (num_inputs > 0) {
-                first_input_shapes = {inputs[0].shape()};
+                first_input_shapes.push_back(&inputs[0].shape());
             }
 
             auto* region = registry.findRegionByFirstOp(op_type, first_input_shapes);
@@ -780,7 +781,7 @@ std::optional<Tensor> CtorchScheduler::tryRegionDispatch(
                 static std::mutex mu;
                 static std::unordered_map<std::string, bool> seen;
                 std::string sk;
-                for (auto& sh : first_input_shapes) { sk += std::to_string(sh.size()) + ":"; for (auto d : sh) sk += std::to_string(d) + "x"; sk += "|"; }
+                for (auto& shp : first_input_shapes) { const auto& sh = *shp; sk += std::to_string(sh.size()) + ":"; for (auto d : sh) sk += std::to_string(d) + "x"; sk += "|"; }
                 bool nfirst = false;
                 {
                     std::lock_guard<std::mutex> lk(mu);

@@ -69,14 +69,45 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
 
             // 仅当确有已有梯度时累加：grad_ptr() 探测避免 grad() 返回整 Tensor 拷贝
             // [Eager/C3 优化 2026-08-27] 直接调 Add_SIMD_kernel，绕开 operator+/dispatch。
-            //   此前用 `accumulated + tensor->grad()` 会走 C3HotPathManager::recordCall + tryExecute
-            //   热路径调度（14000 次/5ep ≈ 107ms），而这是参数梯度累加、本就无需 C3 追踪/融合。
-            //   Add_SIMD_kernel 是纯 CPU 计算、形状相同走 SIMD，语义等价、零调度开销。
+            // [perf 2026-09-05] 升级为原地累加：Add_SIMD_kernel 会新建 Tensor(malloc+zero 整个
+            //   梯度 buffer，W1 梯度 800KB 每次白做)。改为直接 SIMD 循环写入已有 grad 的
+            //   storage（g[i] += a[i]），零分配、零构造，语义等价（浮点加可交换）。
             if (tensor->grad_ptr() != nullptr) {
-                accumulated = Add_SIMD_kernel(accumulated, tensor->grad());
+                float* g = tensor->grad_ptr();
+                const float* a = accumulated.data_read<float>();
+                const size_t n = accumulated.numel();
+                if (g != a && n == tensor->numel()) {
+                    size_t i = 0;
+#if defined(__x86_64__) || defined(__i386__)
+                    #if defined(__AVX512F__) && defined(__AVX512DQ__)
+                    for (; i + 16 <= n; i += 16) {
+                        __m512 vg = _mm512_loadu_ps(g + i);
+                        __m512 va = _mm512_loadu_ps(a + i);
+                        _mm512_storeu_ps(g + i, _mm512_add_ps(vg, va));
+                    }
+                    #else
+                    for (; i + 8 <= n; i += 8) {
+                        __m256 vg = _mm256_loadu_ps(g + i);
+                        __m256 va = _mm256_loadu_ps(a + i);
+                        _mm256_storeu_ps(g + i, _mm256_add_ps(vg, va));
+                    }
+                    #endif
+#elif defined(__aarch64__)
+                    for (; i + 4 <= n; i += 4) {
+                        float32x4_t vg = vld1q_f32(g + i);
+                        float32x4_t va = vld1q_f32(a + i);
+                        vst1q_f32(g + i, vaddq_f32(vg, va));
+                    }
+#endif
+                    for (; i < n; ++i) g[i] += a[i];
+                } else {
+                    // 别名或形状不匹配的异常路径：保守回退到原实现
+                    accumulated = Add_SIMD_kernel(accumulated, tensor->grad());
+                    tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
+                }
+            } else {
+                tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
             }
-
-            tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
         }
     }
     return {};
