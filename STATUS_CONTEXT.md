@@ -1457,3 +1457,29 @@ MIMO 反向 4 输出 × 14042 次 execute/epoch → 累积成 48ms/epoch 纯浪�
    / singleton new 泄漏 / DCU fail-fast) 均为合理架构设计,非偷工减料。
 5. 无本浏览引入的性能回退:MNIST 稳态 ~137ms,acc 97.14%。
 
+
+## 4.51 2026-09-05 MatMul epilogue 向量化失败根因定位（VectorToLLVM greedy 不收敛）
+
+### 背景
+尝试恢复 MatMul epilogue 向量化（补 createConvertVectorToLLVMPass 到 lowering pipeline +
+把 buildLoop 改回 buildVectorizedLoop）。初测 mnist_step 通过，但 test_c3_graph 全量跑卡死
+(>11 分钟)，非单个测试慢（单独跑 MLP_Huge=716ms / JITCompile.AddGraphExecute=41ms）。
+
+### 根因（macOS sample 抓栈定位）
+卡在 ConvertVectorToLLVMPass::runOnOperation → applyPatternsGreedily → 
+ArithDialect::materializeConstant → Operation::create 反复执行，永不收敛。
+即 VectorToLLVM 的贪婪 pattern 重写在 MatMul epilogue 生成的 vector.broadcast + 大向量上
+无法终止（反复匹配-撤销-重建 arith.constant），形成死循环。
+通用逐元素 buildVectorizedLoop 能用是因不走相同 vector 模式，未触发此路径。
+
+### 结论与回滚
+- 8-30 退回标量不仅是绕 missing-translation 崩溃，更规避了 VectorToLLVM greedy 不收敛。
+- 补 createConvertVectorToLLVMPass 虽解 missing-translation，但触发 greedy 死循环。
+- 已全部回滚：C3DialectLowering.cpp 恢复基线（标量回退），graph 115/115 @ 3.5s。
+
+### 后续正确路径（待专项）
+1. 定位并修复 vector.broadcast 触发的 greedy 不收敛（可能需避免大 vector broadcast /
+   改用 dialect conversion 而非 greedy，或检查生成 IR 的规范性）。
+2. 或改用 LLVM 层自动向量化（生成标量 epilogue + 让 LLVM 自动向量化），绕开 MLIR vector 方言。
+3. 缩小 vector.broadcast 使用范围到不触发不收敛的形状。
+
