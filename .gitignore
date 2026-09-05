@@ -39,3 +39,7 @@ cmake-build-debug
 build-*
 # 论文工作区（不入库）
 paper/
+
+# Python cache
+__pycache__/
+*.pyc

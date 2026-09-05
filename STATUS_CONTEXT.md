@@ -1314,3 +1314,96 @@ C3_ENABLE_BACKWARD=1 ./build/test_c3_backward
 **影响判定**：疑似**真实缺陷**——真实用户首次调用 `AutoGrad::backward` 后立即读 `grad`（训练首步更新参数）可能拿到不完整梯度。需在首次 miss 路径确保「编译真正同步完成并执行」或「eager 回退完整同步」后再写梯度；或 backward 读梯度前需显式同步。`test_c3_backward`（跑多次、内核就绪后比较）PASS 与此不矛盾。待修复优先级：高（关系到论文'数值位级一致'claim 与真实首步正确性）。
 
 **§4.45 修复完成（2026-09-03）**：修改 `C3BackwardCapture.cpp` miss 段——compile+wait 后**重试 execute**（不再直接 return nullopt 走 eager），使首访即同步用 C3 内核。验证：bench guard 0.185736 FAIL → **0 PASS**（冷启动+预热均 PASS），iter0 耗时 1.2→0.894ms（免首访 eager 回退更快），回归 test_c3_backward 12/12、graph 115/115、compile_merged 10/10、pgo 11/11 全绿。详见 docs/C3_BACKWARD_FIRST_CALL_BUG_REPORT.md。
+
+## 4.46 2026-09-05 forward/backward 调度税归因修正 + MIMO setup 浪费消除
+
+### 背景：重新定位真实热点
+此前 STATUS 归因『调度税 ~97ms/epoch（rd 64ms + rm 33ms）是端到端 forward 大头』，但经
+C3_MN_SETUP_TRACE 实测，调度税已被 prewalk A+ 等优化大幅压掉（bw_dispatch 仅 ~3.3ms/epoch），
+旧结论过时。当前稳态 epoch ≈185ms 的 HOTSPOT 分解：
+- Forward (JIT) 61.3ms (34.7%)
+- Backward (Grad) 104ms (58.9%)  ← 当前最大头
+- Loss 2.5ms / SGD 8.9ms
+
+### 根因定位（MN-DIAG 细粒度探针）
+backward 的 mn_setup（MIMO 内核 execute 的 setup 段）≈48ms/epoch，其中：
+- data_read 2.5%
+- offset+pool 96%  ← 元凶
+进一步拆 offset+pool：outs_loop（输出 Tensor 构造循环）占 97%，acquire+Storage 仅 3%。
+
+### 真正根因：输出 Tensor 构造的浪费 malloc + zero
+MultiNodeCompiledKernel::execute 构造输出 Tensor 时用 Tensor(ShapeTag{}, shape, ...)，
+该构造函数内部会：
+1. _shape = shape（拷贝 shape 向量）
+2. _storage = Storage(numel(), ...) —— 分配 numel 个 float 的新 Storage
+3. zero() —— 零初始化整个新 buffer
+随即被 t.storage() = out_storage 覆盖丢弃。每个输出每次 execute 都白做一次 malloc+zero。
+MIMO 反向 4 输出 × 14042 次 execute/epoch → 累积成 48ms/epoch 纯浪费。
+
+### 修复：改用 PlaceholderTag 构造（零分配）
+把输出 Tensor 构造从 ShapeTag{} 改为 PlaceholderTag{}（只设 shape+strides，不分配/零初始化
+独立 Storage），随后 t.storage()=out_storage 接管池化缓冲。
+
+### 结果（实测，acc 97.14% 零回归）
+- mn_setup_us 稳态 epoch5：48ms → 6.5ms（↓87%）
+- 稳态 epoch：185ms → 179ms（↓~3.3%）
+- 回归全绿：test_c3_backward max_diff=0 / test_c3_mnist_step PASS / test_c3_graph 115/115
+
+### 附带改动
+- FlatOutPool 加 thread_local 无锁快速路径（同线程 acquire/release 不碰全局锁；多线程跨线程归还
+  回退全局池）。经测不是本热点主因（acquire 仅占 3%），但正确且对多线程有益，保留。
+- 新增 C3_MN_SETUP_TRACE 下 MN-DIAG 细粒度探针（acquire vs outs_loop），env 门控默认关。
+
+### 遗留方向（下轮）
+- mn_func（cargo GEMM/epilogue）仍是 backward 大头（~52ms/epoch），但这是 cblas 必算成本，
+  与 4.28/4.40 判定的『已近极限』一致，非本次目标。
+- forward 61ms 的进一步归因（第三层前向路径 / 单 kernel dispatch / 数据准备）可下轮做。
+
+
+## 4.47 2026-09-05 forward 逐层归因（FWD-BREAK 探针）+ findRegionByFirstOp 零拷贝
+
+### forward 57ms 逐层分解（稳态，每 epoch，C3_FWD_BREAK=1 实测）
+- L1relu 25.2ms：L1 融合 kernel 执行（含 cblas GEMM 128x784x256 ~20ms 真实计算 + relu）
+- L1mm   8.4ms：MatMul 首 op 的 placeholder 创建 + autograd 节点 + dispatch（训练态必要开销）
+- L2relu  7.0ms：L2 融合 kernel（含 cblas GEMM 128x256x128 ~3.5ms）
+- L2mm   2.0ms / L3 2.6ms / L1add+L2add ~2ms
+- 结论：forward 主体是 L1/L2 的 cblas GEMM 真实计算（~24ms），placeholder/autograd/dispatch
+  开销 ~13ms（其中 L1mm 8.4ms 含 autograd 节点创建——backward 依赖，非纯浪费）。
+  调度税旧归因（97ms）彻底证伪：bw_dispatch 仅 ~3ms，forward 侧 region dispatch 也已轻量。
+
+### 微优化：findRegionByFirstOp 零拷贝传参
+- 原：每次 MatMul dispatch 构造 vector<vector<size_t>> 并拷贝 2 个 shape 向量 + 持全局锁遍历 map
+- 改：指针数组传参（vector<const vector<size_t>*>），消除 shape 堆分配拷贝
+- 实测：L2mm 2.1→2.0ms 微降；L1mm 基本不变（大头在 autograd 节点创建 + make_shared 物化器，非 shape 拷贝）
+- 回归全绿：backward max_diff=0 / mnist_step PASS / graph 115/115 / compile_merged 10/10
+
+### 判断：forward 剩余可压点
+- L1mm 的 make_shared<LazyMaterializer>(lambda) 每 MatMul 一次堆分配可池化（收益 ~2-3ms/epoch，中等风险）
+- placeholder Tensor 构造含 initAutogradSelf+computeStrides 可预计算复用（收益小）
+- L1relu 的 25ms 里 cblas GEMM 是硬成本；relu 本身可确认是否与 GEMM epilogue 融合充分
+- 更大杠杆在 backward 的 mn_func（cargo epilogue）与 L3 前向 logits 未走 cblas 的遗留疑点
+
+
+## 4.48 2026-09-05 两处优化收尾：L3 疑点关闭 + GradAccumulator 原地累加
+
+### L3 前向 logits『不走 cblas』疑点——反事实实验关闭
+- 代码审查：MatMulOpLowering total_ops = M*N*K = 128*128*10 = 163840 ≥ 256，走 cblas_sgemm 分支。
+- 反事实实验（C3_MATMUL_NO_CBLAS=1）：L1relu 25ms→11605ms（470x）、L2relu 7ms→1549ms、
+  L3 2.6ms→15.3ms（6x）——三者都走 cblas，疑点彻底关闭。cblas 委托是 forward 绝对主力，无漏点。
+
+### GradAccumulator 原地累加（正确、收益 <1ms）
+- 原：已有 grad 时 Add_SIMD_kernel(accumulated, grad()) 新建 Tensor（malloc+zero 整个梯度
+  buffer，W1 梯度 800KB）。改：g[i]+=a[i] 原地 SIMD 循环直写已有 grad 的 storage，零分配。
+- 探针验证 inplace=10000+ fallback=0（路径 100% 命中），acc 97.1421% 零回归，
+  test_c3_backward max_diff=0 / mnist_step PASS。
+- 实测性能收益 <1ms（epoch 141~144ms vs 138~143ms，噪声级）——macOS 分配器下 malloc+zero
+  成本低于预期。优化保留（结构更优、零分配、无风险），但不构成可报告提速。
+
+### 结论：低垂果实已摘完
+- forward：cblas GEMM 是硬成本（L1 20ms + L2 3.5ms），调度/placeholder 开销已压至 ~13ms，
+  其中 autograd 节点创建是 backward 依赖的必需品。
+- backward：cblas 46ms 必算 + epilogue/setup（setup 已 48→6.5ms）+ GradAccumulator（已原地化）。
+- 剩余可压项均 <3ms 且风险上升（L1mm make_shared 池化 ~2-3ms，中等风险）。
+- 下一个真正的杠杆是结构性改动：RC2 进程级异步（c3d 守护进程 + 共享内存 IPC，蓝图已齐），
+  或算子集扩展（CNN/Transformer）——均超出单机微优化范畴，待用户排期。
+
