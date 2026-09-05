@@ -1661,3 +1661,24 @@ DEBT-2 降级注释 (C3BackwardCapture)。以上正式回归全部绿 → 无功
 3. (低风险清理) 把不可达的 buildCrossEntropyBackwardGraph 标 dead / 删名义不支持的
    supportsNodeType 项 / Graph CanonicalizeRules 装饰死代码。
 
+
+## 4.57 2026-09-05 修 §4.56 审查发现的偷工减料(c3 c1f7239, 已 push)
+
+已修 4 类(逐条见 commit message):
+1. PGOManager triggerCompilationChain shared_from_this() 无 ownership 防护 → 捕获 bad_weak_ptr
+   降级同步编译。修后 test_c3_pgo_deopt 7/7、test_c3_compile_error 11/11 由崩溃转绿。
+2. MLIRKernelGen 向量化标量尾循环漏 numel==1 广播短路 → 与 loadExternalVector 对齐读 ptr[0],
+   消除 n%VL!=0 时对 1 元素 buffer 的越界读。
+3. C3Engine MIMO 并行切片: 所有输入统一 in_ptrs[i]+start 遇广播 operand 错位/越界 → 加
+   "任一输入 numel != elem_n_ 则回退串行" 的广播防护。
+4. C3BackwardCapture 死代码清理: buildCrossEntropyBackwardGraph 加不可达警告(CE 已短路);
+   supportsNodeType 移除 GELU/LReLU/Sin/Cos/Abs/Min/Max 名义支持(无 builder case 的脱节)。
+
+未修(记录, 低风险/纯装饰/superseded 路径, 不动以免引入风险):
+- Graph.cpp CanonicalizeRules::defaults() 12 条装饰死代码(纯装饰不影响行为, 仅记录)
+- buildSoftmaxBackwardGraph 从不 dispatch(半成品, superseded 融合路径)
+- Transpose else 恒等拷贝(无守卫, 疑死分支)、OneShot 多维 lowering 死脚手架、
+  MLIRToLLVMIR 文本 hack、RegionFusion input_shapes 未用 —— 均为"疑似待核", 留待专项。
+
+回归: graph 115/115, backward 0 diff, mnist_step/merged(10)/merged_pgo(11)/matmul_blas/
+debug_fused/fused_bw_debt2 全绿; mnist 稳态 epoch5 ~150ms acc 97.1421% 无回退。
