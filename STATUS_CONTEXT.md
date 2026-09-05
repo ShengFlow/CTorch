@@ -1436,3 +1436,24 @@ MIMO 反向 4 输出 × 14042 次 execute/epoch → 累积成 48ms/epoch 纯浪�
 - 主要改进建议：① DEBT-2 编号已分离；② DCU 接入时补异常处理(TODO)。
 - 无本次改动引入的代码错误或性能回退。
 
+
+## 4.50 2026-09-05 C3 代码浏览：偷工减料/简化实现排查
+
+### 排查方法
+扫描 c3 (~1.5 万行) 的占位/TODO/stub/catch/标量回退/死代码信号，聚焦核心路径。
+
+### 发现与结论
+1. 【重要】MatMul epilogue 标量回退是必要约束,非偷懒:
+   C3DialectLowering.cpp 定义了向量化 vec_body 但实际用 buildLoop(scalar_body) 执行,
+   8-30 因 vector.broadcast 缺 LLVMTranslationDialectInterface 导致大型 MLP ExecutionEngine
+   创建失败而回退标量。实验改回 buildVectorizedLoop 验证:MNIST/bench 通过但
+   test_c3_graph 的 Benchmark.MLP_Large/Huge/3Layer 触发 missing LLVMTranslation
+   DialectInterface for vector.broadcast 崩溃(4 FAILED)。证实该 bug 在 MLIRKernelGen
+   多节点路径仍活跃。已还原标量,graph 115/115 恢复。→ 遗留 ~90 行死代码 vec_body,
+   待 MLIRKernelGen 补 vector translation 注册后可启用向量化(8-30 至今的已知技术债)。
+2. LinalgOneShotGen.cpp 空 catch(...){} 吞 fast-math 设置失败 → 改为记录 warning。
+3. C3KernelRegistry.cpp 头/内 stub 阶段过时注释(代码已实装) → 修正。
+4. 其余(installIntoRegistry 基类默认 false / 单算子 fusion 不走 registry / catch(...) 降级
+   / singleton new 泄漏 / DCU fail-fast) 均为合理架构设计,非偷工减料。
+5. 无本浏览引入的性能回退:MNIST 稳态 ~137ms,acc 97.14%。
+
