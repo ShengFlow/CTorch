@@ -1547,3 +1547,26 @@ vector 方言/VectorToLLVM 不兼容路径(§4.51/4.52 根因)。
 undef+insertelement/DenseElementsAttr"造向量,绝不引入 vector 方言,即可既向量化
 又不触发不兼容的 VectorToLLVM。
 
+## 4.54 2026-09-05 MNIST 稳态性能画像 + DEBT-2 降级为 superseded
+
+### MNIST 稳态画像 (epoch5, Release, C3_FWD_BREAK=1)
+- Epoch ~140.8ms: Forward(JIT) 48.8ms / Loss 1.9ms / Backward(Grad) 74.2ms(55.6%) / SGD 8.5ms
+- CBLAS probe(按 shape 分桶, 强符号劫持全部 cblas_sgemm)证明:
+  backward 74ms 主体即各 Accelerate sgemm(大 GEMM 每 batch 40-50us, 与独立微基准
+  ~34us 同量级)→ 反向已被 MIMO 融合 + 落在 Accelerate, 接近 M3 单次小 GEMM 硬件上限。
+- Forward 逐层累计为整 epoch(468 batch)合计: L1 fused FC ~27ms(折每次 ~58us, 已向量化
+  epilogue), 非单次耗时(早期误读为单次, 实为探针按 cnt%468 打印的累计)。
+
+### DEBT-2 查证结论 → 降级 superseded
+- tryExecuteBackward 调用序: 先 MIMO(tryExecuteUnifiedMIMOBackward), miss 后才 fallback
+  到 tryExecuteFusedBackward(旧)。MNIST 稳态 mimo_hit=4678/epoch, mimo_miss 仅 2(首编)。
+- MIMO 匹配 Activation→Add→MatMul(FC 层整层反向, 一次算 grad_z/W/X/b), 已覆盖 FC 主路径。
+- tryExecuteFusedBackward 只服务"无 MatMul 夹层的纯 element-wise 连续链"(如 ReLU→Sigmoid
+  直接堆叠), MIMO 对此 miss → 属泛化扩展, 与 MNIST/FC 发布基准脱钩, 稳态 0 触发。
+- 编译侧(recordBackwardNode→compileFusedBackwardAsync)仍为其编译(fusion_compile=1)但
+  执行端永不命中 = 无谓编译线程; 该路径为 P0-3 critical + pending_intercepted_ 裸 Node*
+  生命周期脆弱。
+- 决策: DEBT-2 降级为 superseded, 不复活高危旧代码(C3BackwardCapture.cpp 顶部注释已更新);
+  若未来要支持 element-wise dense(无 FC)模型再单独立项, 且须用 MIMO 已验证的 pending 模式
+  重写 + 数值回归对照, 而非直接复活旧实现。
+
