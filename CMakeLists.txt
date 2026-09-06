@@ -667,6 +667,11 @@ add_executable(bench_wide_mlp_e2e src/tests/standalone/bench_wide_mlp_e2e.cpp)
 target_link_libraries(bench_wide_mlp_e2e PRIVATE CTorch)
 target_include_directories(bench_wide_mlp_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(bench_llama_ffn_train src/tests/standalone/bench_llama_ffn_train.cpp)
+target_link_libraries(bench_llama_ffn_train PRIVATE CTorch)
+target_include_directories(bench_llama_ffn_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_options(bench_llama_ffn_train PRIVATE -rdynamic)
+
 add_executable(test_relu_backward src/tests/standalone/test_relu_backward.cpp)
 target_link_libraries(test_relu_backward PRIVATE CTorch)
 target_include_directories(test_relu_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

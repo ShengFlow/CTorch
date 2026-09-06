@@ -1682,3 +1682,42 @@ DEBT-2 降级注释 (C3BackwardCapture)。以上正式回归全部绿 → 无功
 
 回归: graph 115/115, backward 0 diff, mnist_step/merged(10)/merged_pgo(11)/matmul_blas/
 debug_fused/fused_bw_debt2 全绿; mnist 稳态 epoch5 ~150ms acc 97.1421% 无回退。
+
+## 4.58 2026-09-06 LLaMA-FFN 训练基准 + 发现 sum()/mean() 反向断链 bug
+
+### 新增 bench_llama_ffn_train (src/tests/standalone/bench_llama_ffn_train.cpp)
+LLaMA-1B 尺寸 SwiGLU FFN 训练 loop: silu(x@W_gate)*(x@W_up) -> @W_down -> 分类头 + CE。
+参数: BS=128, HID=4096, INT=11008 (LLaMA-1B 真实维度), FP32, SGD。三环境对照(同 binary):
+C3 default / C3_DISABLE_HOTPATH=1 / C3_DISABLE_REGION_FUSION=1。带 SIGSEGV backtrace handler
+(-rdynamic), 逐段 fwd/bwd/upd 计时 + C3/BW 统计。
+
+### 发现 1: Tensor::sum()/mean() 反向传播断链 (框架真 bug, 未修)
+- Tensor::sum() (src/Tensor.cpp:756) = flat.dot(ones), 注释声称 dispatch<op::Dot> 自动创建
+  DotNode、backward 链路完整。
+- 实际: 仓库无 DotNode (include/AutoGrad/Nodes/ 无 Dot*, include/AutoGrad.h 无 op::Dot 分支,
+  仅 Ctools.h:186 有 op::Dot 枚举)。
+- 后果: sum()/mean() 作 loss 时 backward 静默不填任何叶子梯度 (grad_ptr()==nullptr),
+  训练完全无效且无报错。bench 初版用 out.sum() 触发, 已改 cross_entropy 绕过。
+- 建议: 补 DotNode(标量 dot 反向=grad*b) 或把 sum() 改走已有节点机制; 加一个 sum-loss 梯度
+  回归测试。
+
+### 发现 2: LLaMA FFN 训练期实测 (8 steps, FP32, 干净机器)
+| 配置 | fwd | bwd | upd | total/step |
+|---|---|---|---|---|
+| C3 default | 36.9 | 115.1 | 16.8 | 168.8ms |
+| region-fusion-off | 38.1 | 117.9 | 18.0 | 173.9ms |
+| hotpath-off | 39.6 | 125.4 | 20.0 | 185.0ms |
+
+- forward region fusion 训练期 fused_hit=0 (MatMul+SiLU region 编译 1 个但从不 invoke):
+  "训练期 zero hit" 在 LLaMA FFN 场景属实 (与 MNIST 不同, MNIST 有 bias+ReLU 会命中)。
+- backward MIMO mimo_hit=0: FFN 无 bias/add, MIMO 的 Activation→Add→MatMul 结构不匹配,
+  backward 全走单 kernel (bw_hit=66), bwd=115ms 占总 68%。
+- C3 default 仍比 hotpath-off 快 ~10%: forward/backward 单 kernel 编译真实有效,
+  进一步证明"砍训练期 forward"是错的。
+
+### 大模型方向结论
+1. C3 训练期价值 = 单 kernel 编译 (forward+backward) 已有净收益; region fusion zero hit 属
+   "编译了不执行", bookkeeping 开销可忽略 (default 最快)。
+2. 真正机会 = 把 MIMO 反向融合扩展到无 bias 的 MatMul+SiLU FFN 反向 (grad_gate/grad_up/grad_x
+   一次 kernel), 直接压 backward 115ms —— C3 大模型化的关键下一步。
+3. 修 sum()/mean() 断链 bug (影响所有用 sum/mean 做 loss 的训练)。
