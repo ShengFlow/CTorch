@@ -402,6 +402,13 @@ extern "C" void SGD_Step_MPS_kernel(const Tensor& param, const Tensor& grad, flo
 extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad, float lr);
 extern "C" void MPS_update_begin();
 extern "C" void MPS_update_end();
+
+// [PEL25 Stage 6] SIMD fused SGD update (1:1 对标 PyTorch SGD fused kernel)
+// 一次走完 N 个 param, 消除 launch overhead + ARM64 NEON 4-wide float (fms)
+// 预期收益: 8x 加速 (CTorch 1101ms -> ~140ms, 跟 PyTorch 136ms 持平)
+extern "C" void sgd_fused_update_6params(
+    Tensor* W1, Tensor* b1, Tensor* W2, Tensor* b2, Tensor* W3, Tensor* b3,
+    float lr);
 extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
 
 #ifdef __OBJC__

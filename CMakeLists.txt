@@ -429,6 +429,8 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/SiLU_SIMD_kernel.cpp
         # PEL25 Stage 3.2: SwiGLU SIMD kernel (双输入)
         src/kernels/CPU-SIMD/SwiGLU_SIMD_kernel.cpp
+        # PEL25 Stage 6: SIMD fused SGD update kernel
+        src/kernels/CPU-SIMD/SGD_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Log_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Exp_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Abs_SIMD_kernel.cpp

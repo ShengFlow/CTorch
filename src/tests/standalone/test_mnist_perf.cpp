@@ -118,14 +118,9 @@ public:
             SGD_Step_Zero_MPS_kernel(b3, b3.grad(), learning_rate);
             MPS_update_end();
         } else {
-            auto sgd = [this](Tensor& param) {
-                float* p = param.data_write<float>();
-                float* g = param.grad_ptr();
-                for (size_t i = 0; i < param.numel(); ++i) {
-                    p[i] -= g[i] * learning_rate;
-                }
-            };
-            sgd(W1); sgd(b1); sgd(W2); sgd(b2); sgd(W3); sgd(b3);
+            // [PEL25 Stage 6] 用 SIMD fused SGD update (1:1 对标 PyTorch fused SGD)
+            // 一次走完 6 个 param + NEON 4-wide fms, 预期 ~8x 加速
+            sgd_fused_update_6params(&W1, &b1, &W2, &b2, &W3, &b3, learning_rate);
 
             W1.zero_grad(); b1.zero_grad();
             W2.zero_grad(); b2.zero_grad();
