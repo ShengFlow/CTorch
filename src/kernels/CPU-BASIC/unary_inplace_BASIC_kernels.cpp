@@ -91,6 +91,16 @@ void GELU_BASIC_inplace(Tensor& a) {
     }
 }
 
+// [PEL25 Stage 3.1] SiLU inplace: silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+void SiLU_BASIC_inplace(Tensor& a) {
+    check_cpu(a, "SiLU");
+    size_t count = a.numel();
+    float* data = a.data_write<float>();
+    for (size_t i = 0; i < count; ++i) {
+        data[i] = data[i] / (1.0f + std::exp(-data[i]));
+    }
+}
+
 void LReLU_BASIC_inplace(Tensor& a) {
     check_cpu(a, "LReLU");
     size_t count = a.numel();

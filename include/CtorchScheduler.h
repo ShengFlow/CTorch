@@ -27,12 +27,13 @@
 #endif
 
 namespace ct { namespace detail {
-// [dispatch 裁剪] 固定 region 候选 op 集合（与 Region 4-pattern 同步）：
-//   MatMul/Add/ReLU/Sigmoid 才可能构成当前已注册 region，其余 op 直接跳过
+// [dispatch 裁剪] 固定 region 候选 op 集合（与 Region pattern 同步）：
+//   MatMul/Add/ReLU/Sigmoid/SiLU 才可能构成当前已注册 region，其余 op 直接跳过
 //   tryRegionDispatch 调用，避免每次无谓的调度尝试。
+//   PEL25 #7: 新增 SiLU (LLaMA/PaLM FFN SwiGLU 第一个 op, 跟 MatMul 构成 region)
 //   注意：若未来新增含其他 op 的 region pattern，必须在此补对应 op。
 constexpr bool isRegionCandidateOp(op t) {
-    return t == op::MatMul || t == op::Add || t == op::ReLU || t == op::Sigmoid;
+    return t == op::MatMul || t == op::Add || t == op::ReLU || t == op::Sigmoid || t == op::SiLU;
 }
 }} // namespace ct::detail
 
@@ -226,8 +227,8 @@ private:
     // 以下硬编码数字是 ABI 变更的强制检查点。新增枚举值时必须同步更新此处，
     // 否则编译失败，防止调度表维度与注册逻辑错位。
     // 详见 ABI_POLICY.md 第 3.2 节“新增算子 ABI 检查清单”。
-    static_assert(static_cast<size_t>(op::kCount) == 28,
-                  "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md)");
+    static_assert(static_cast<size_t>(op::kCount) == 30,
+                  "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md) — PEL25 #6: 28→30 (SiLU + SwiGLU)");
     // [Dev] v0.5.2 DCU 接入: kDCU = 7 加到 DeviceType 后, kCount 改 8
     // 注: DeviceType 跟 ABI_POLICY 一起看, DCU 节点 activation 后重新 review
     static_assert(static_cast<size_t>(DeviceType::kCount) == 8,

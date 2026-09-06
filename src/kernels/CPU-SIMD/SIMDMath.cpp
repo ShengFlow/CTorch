@@ -190,6 +190,18 @@ __m256 gelu256_ps(__m256 x) {
     return _mm256_mul_ps(_mm256_mul_ps(_mm256_set1_ps(0.5f), x), one_plus_t);
 }
 
+// [PEL25 Stage 4.1] SiLU(x) = x * sigmoid(x) — 复用 sigmoid256_ps
+__m256 silu256_ps(__m256 x) {
+    return _mm256_mul_ps(x, sigmoid256_ps(x));
+}
+
+// [PEL25 Stage 4.2] SwiGLU(x, gate) = (x * sigmoid(x)) * gate — fused 1 sigmoid + 2 mul
+__m256 swiglu256_ps(__m256 x, __m256 gate) {
+    __m256 sig = sigmoid256_ps(x);
+    __m256 silu = _mm256_mul_ps(x, sig);  // silu(x) = x * sigmoid(x)
+    return _mm256_mul_ps(silu, gate);     // silu(x) * gate
+}
+
 __m256 rsqrt256_ps(__m256 x) {
     // 单次 _mm256_rsqrt_ps 精度约 12 bit；加 1 次 Newton-Raphson 迭代达到 ~23 bit
     __m256 approx = _mm256_rsqrt_ps(x);
@@ -327,6 +339,18 @@ __m512 gelu512_ps(__m512 x) {
     __m512 t = tanh512_ps(arg);
     __m512 one_plus_t = _mm512_add_ps(_mm512_set1_ps(1.0f), t);
     return _mm512_mul_ps(_mm512_mul_ps(_mm512_set1_ps(0.5f), x), one_plus_t);
+}
+
+// [PEL25 Stage 4.1] SiLU(x) = x * sigmoid(x) — 复用 sigmoid512_ps
+__m512 silu512_ps(__m512 x) {
+    return _mm512_mul_ps(x, sigmoid512_ps(x));
+}
+
+// [PEL25 Stage 4.2] SwiGLU(x, gate) — fused 1 sigmoid + 2 mul
+__m512 swiglu512_ps(__m512 x, __m512 gate) {
+    __m512 sig = sigmoid512_ps(x);
+    __m512 silu = _mm512_mul_ps(x, sig);
+    return _mm512_mul_ps(silu, gate);
 }
 
 __m512 rsqrt512_ps(__m512 x) {
@@ -500,6 +524,18 @@ float32x4_t gelu_neon_f32(float32x4_t x) {
     return vmulq_f32(vmulq_f32(vdupq_n_f32(0.5f), x), one_plus_t);
 }
 
+// [PEL25 Stage 4.1] SiLU(x) = x * sigmoid(x) — 复用 sigmoid_neon_f32
+float32x4_t silu_neon_f32(float32x4_t x) {
+    return vmulq_f32(x, sigmoid_neon_f32(x));
+}
+
+// [PEL25 Stage 4.2] SwiGLU(x, gate) — fused 1 sigmoid + 2 mul
+float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate) {
+    float32x4_t sig = sigmoid_neon_f32(x);
+    float32x4_t silu = vmulq_f32(x, sig);
+    return vmulq_f32(silu, gate);
+}
+
 #endif  // __aarch64__
 
 // ======================= 跨平台 wrapper =======================
@@ -647,6 +683,77 @@ void vgelu(const float* in, float* out, size_t n) {
     for (size_t i = 0; i < n; ++i) {
         float v = 0.7978845608f * (in[i] + 0.044715f * in[i] * in[i] * in[i]);
         out[i] = 0.5f * in[i] * (1.0f + std::tanh(v));
+    }
+#endif
+}
+
+// [PEL25 Stage 4.1] vsilu: 跨平台向量化 SiLU
+void vsilu(const float* in, float* out, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], silu512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = in[i] / (1.0f + std::exp(-in[i]));
+#elif defined(__AVX__)
+    size_t i = 0;
+    for (; i + 7 < n; i += 8) {
+        __m256 x = _mm256_loadu_ps(&in[i]);
+        _mm256_storeu_ps(&out[i], silu256_ps(x));
+    }
+    for (; i < n; ++i) out[i] = in[i] / (1.0f + std::exp(-in[i]));
+#elif defined(__aarch64__)
+    size_t i = 0;
+    for (; i + 3 < n; i += 4) {
+        float32x4_t x = vld1q_f32(&in[i]);
+        vst1q_f32(&out[i], silu_neon_f32(x));
+    }
+    for (; i < n; ++i) out[i] = in[i] / (1.0f + std::exp(-in[i]));
+#else
+    for (size_t i = 0; i < n; ++i) out[i] = in[i] / (1.0f + std::exp(-in[i]));
+#endif
+}
+
+// [PEL25 Stage 4.2] vswiglu: 跨平台向量化 SwiGLU (双输入 fused)
+void vswiglu(const float* x_in, const float* g_in, float* out, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&x_in[i]);
+        __m512 g = _mm512_loadu_ps(&g_in[i]);
+        _mm512_storeu_ps(&out[i], swiglu512_ps(x, g));
+    }
+    for (; i < n; ++i) {
+        float sig = 1.0f / (1.0f + std::exp(-x_in[i]));
+        out[i] = x_in[i] * sig * g_in[i];
+    }
+#elif defined(__AVX__)
+    size_t i = 0;
+    for (; i + 7 < n; i += 8) {
+        __m256 x = _mm256_loadu_ps(&x_in[i]);
+        __m256 g = _mm256_loadu_ps(&g_in[i]);
+        _mm256_storeu_ps(&out[i], swiglu256_ps(x, g));
+    }
+    for (; i < n; ++i) {
+        float sig = 1.0f / (1.0f + std::exp(-x_in[i]));
+        out[i] = x_in[i] * sig * g_in[i];
+    }
+#elif defined(__aarch64__)
+    size_t i = 0;
+    for (; i + 3 < n; i += 4) {
+        float32x4_t x = vld1q_f32(&x_in[i]);
+        float32x4_t g = vld1q_f32(&g_in[i]);
+        vst1q_f32(&out[i], swiglu_neon_f32(x, g));
+    }
+    for (; i < n; ++i) {
+        float sig = 1.0f / (1.0f + std::exp(-x_in[i]));
+        out[i] = x_in[i] * sig * g_in[i];
+    }
+#else
+    for (size_t i = 0; i < n; ++i) {
+        float sig = 1.0f / (1.0f + std::exp(-x_in[i]));
+        out[i] = x_in[i] * sig * g_in[i];
     }
 #endif
 }

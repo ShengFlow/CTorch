@@ -82,6 +82,40 @@ __m256 sigmoid256_ps(__m256 x);
 __m256 gelu256_ps(__m256 x);
 
 /**
+ * @brief 向量化 SiLU (8-wide AVX2) — PEL25 Stage 4.1
+ * @param x 输入向量
+ * @return x * sigmoid(x) = x / (1 + exp(-x))
+ * @details 复用 sigmoid256_ps (含 1-x 数值稳定), 单 SIMD 调用
+ *          vs 标量 std::expf 约 10x throughput
+ */
+__m256 silu256_ps(__m256 x);
+
+/**
+ * @brief 向量化 SwiGLU (8-wide AVX2, 双输入 fused) — PEL25 Stage 4.2
+ * @param x     主输入
+ * @param gate  门控输入
+ * @return silu(x) * gate = (x * sigmoid(x)) * gate
+ * @details 1 次 sigmoid256 + 2 次 mul, 比 2 次 silu256_ps + 1 次 mul 节省 1 次
+ *          fused: sigmoid 计算一次, 同时给 silu 和 gate mul 用
+ */
+__m256 swiglu256_ps(__m256 x, __m256 gate);
+
+/**
+ * @brief 向量化 GELU（16-wide AVX-512）
+ */
+__m512 gelu512_ps(__m512 x);
+
+/**
+ * @brief 向量化 SiLU (16-wide AVX-512) — PEL25 Stage 4.1
+ */
+__m512 silu512_ps(__m512 x);
+
+/**
+ * @brief 向量化 SwiGLU (16-wide AVX-512, 双输入 fused) — PEL25 Stage 4.2
+ */
+__m512 swiglu512_ps(__m512 x, __m512 gate);
+
+/**
  * @brief 向量化 1/sqrtf（8-wide AVX2）
  * @param x 输入向量（必须 > 0）
  * @return 1/sqrt(x)
@@ -157,6 +191,16 @@ float32x4_t sigmoid_neon_f32(float32x4_t x);
  */
 float32x4_t gelu_neon_f32(float32x4_t x);
 
+/**
+ * @brief 向量化 SiLU (4-wide NEON) — PEL25 Stage 4.1
+ */
+float32x4_t silu_neon_f32(float32x4_t x);
+
+/**
+ * @brief 向量化 SwiGLU (4-wide NEON, 双输入 fused) — PEL25 Stage 4.2
+ */
+float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate);
+
 #endif // __aarch64__
 
 // ======================= 跨平台 wrapper =======================
@@ -188,6 +232,19 @@ void vsigmoid(const float* in, float* out, size_t n);
  * @brief 跨平台向量化 GELU
  */
 void vgelu(const float* in, float* out, size_t n);
+
+/**
+ * @brief 跨平台向量化 SiLU — PEL25 Stage 4.1
+ */
+void vsilu(const float* in, float* out, size_t n);
+
+/**
+ * @brief 跨平台向量化 SwiGLU (双输入) — PEL25 Stage 4.2
+ * @param x_in  主输入 (sigmoid(x) * x)
+ * @param g_in  门控输入
+ * @param out   输出 (= silu(x) * gate)
+ */
+void vswiglu(const float* x_in, const float* g_in, float* out, size_t n);
 
 }  // namespace simd
 }  // namespace kernels

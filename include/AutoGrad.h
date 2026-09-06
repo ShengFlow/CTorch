@@ -28,6 +28,8 @@ class Node;
 #include "AutoGrad/Nodes/TanhNode.h"
 #include "AutoGrad/Nodes/SigmoidNode.h"
 #include "AutoGrad/Nodes/GELUNode.h"
+#include "AutoGrad/Nodes/SiLUNode.h"  // PEL25 Stage 5.1: SiLU dispatch
+#include "AutoGrad/Nodes/SwiGLUNode.h"  // PEL25 Stage 5.1: SwiGLU dispatch (双输入)
 #include "AutoGrad/Nodes/MatMulNode.h"
 #include "AutoGrad/Nodes/CrossEntropyNode.h"
 #include "AutoGrad/Nodes/SoftmaxNode.h"
@@ -134,6 +136,8 @@ namespace AutoGrad {
                 registerNode<MinNode>(a, b, result_weak);
             } else if constexpr (OpType == op::Max) {
                 registerNode<MaxNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::SwiGLU) {  // PEL25 Stage 5.1: SwiGLU dispatch
+                registerNode<SwiGLUNode>(a, b, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());
@@ -218,6 +222,8 @@ namespace AutoGrad {
                 registerNode<ExpNode>(a, result_weak);
             } else if constexpr (OpType == op::Abs) {
                 registerNode<AbsNode>(a, result_weak);
+            } else if constexpr (OpType == op::SiLU) {  // PEL25 Stage 5.1: SiLU dispatch
+                registerNode<SiLUNode>(a, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());

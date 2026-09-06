@@ -1352,6 +1352,25 @@ class Tensor {
     Tensor &gelu_();
 
     /**
+     * @brief SiLU (Sigmoid Linear Unit) 激活函数
+     * @details silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+     *          LLaMA / PaLM / SwiGLU 核心组件
+     * @return SiLU结果张量
+     * @note Stage 1: Eager CPU 路径, 不接 C3 dispatch (避免 op 枚举扩展)
+     */
+    Tensor silu() const;
+
+    /**
+     * @brief SwiGLU 激活函数 (双输入)
+     * @details swiglu(x, gate) = silu(x) * gate
+     *          LLaMA / PaLM FFN 核心组件
+     * @param gate 门控信号张量, shape 必须跟 *this 一致
+     * @return SwiGLU结果张量, shape 跟 *this 一致
+     * @note Stage 1: Eager CPU 路径, 不接 C3 dispatch
+     */
+    Tensor swiglu(const Tensor& gate) const;
+
+    /**
      * @brief 求Softmax操作
      * @param dim 进行Softmax的维度
      * @return Softmax结果张量

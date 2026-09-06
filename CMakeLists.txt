@@ -301,6 +301,8 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/TanhNode.h
         include/AutoGrad/Nodes/SigmoidNode.h
         include/AutoGrad/Nodes/GELUNode.h
+        include/AutoGrad/Nodes/SiLUNode.h
+        include/AutoGrad/Nodes/SwiGLUNode.h
         include/AutoGrad/Nodes/ReLUNode.h
         include/AutoGrad/Nodes/LReLUNode.h
         include/AutoGrad/Nodes/MatMulNode.h
@@ -326,6 +328,8 @@ set(CT-Nodes
         src/AutoGrad/Nodes/TanhNode.cpp
         src/AutoGrad/Nodes/SigmoidNode.cpp
         src/AutoGrad/Nodes/GELUNode.cpp
+        src/AutoGrad/Nodes/SiLUNode.cpp
+        src/AutoGrad/Nodes/SwiGLUNode.cpp
         src/AutoGrad/Nodes/ReLUNode.cpp
         src/AutoGrad/Nodes/LReLUNode.cpp
         src/AutoGrad/Nodes/MatMulNode.cpp
@@ -365,6 +369,15 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/Min_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Max_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/unary_inplace_BASIC_kernels.cpp
+        # PEL25 §6 SwiGLU Stage 1: Eager CPU 算子
+        src/ops/SiLU.cpp
+        src/ops/SwiGLU.cpp
+        # PEL25 Stage 3.1: SiLU kernel (BASIC + AMX)
+        src/kernels/CPU-BASIC/SiLU_BASIC_kernel.cpp
+        src/kernels/AMX/SiLU_AMX_kernel.cpp
+        # PEL25 Stage 3.2: SwiGLU kernel (BASIC + AMX, 双输入)
+        src/kernels/CPU-BASIC/SwiGLU_BASIC_kernel.cpp
+        src/kernels/AMX/SwiGLU_AMX_kernel.cpp
 )
 set(CT-AMX-OPs
         src/kernels/AMX/MatMul_AMX_kernel.cpp
@@ -412,6 +425,10 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/Tanh_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Sigmoid_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/GELU_SIMD_kernel.cpp
+        # PEL25 Stage 3.1: SiLU SIMD kernel
+        src/kernels/CPU-SIMD/SiLU_SIMD_kernel.cpp
+        # PEL25 Stage 3.2: SwiGLU SIMD kernel (双输入)
+        src/kernels/CPU-SIMD/SwiGLU_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Log_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Exp_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Abs_SIMD_kernel.cpp

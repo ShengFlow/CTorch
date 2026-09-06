@@ -200,6 +200,33 @@ Tensor GELU_AMX_kernel(const Tensor& a);
 Tensor GELU_MPS_kernel(const Tensor& a);
 
 /**
+ * @brief 基本SiLU算子实现 (PEL25 Stage 3.1)
+ * @details silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
+ *          LLaMA / PaLM 核心组件, SwiGLU 子模块
+ * @param a 输入张量
+ * @return SiLU结果张量
+ */
+Tensor SiLU_BASIC_kernel(const Tensor& a);
+Tensor SiLU_SIMD_kernel(const Tensor& a);
+Tensor SiLU_CUDA_kernel(const Tensor& a);
+Tensor SiLU_AMX_kernel(const Tensor& a);
+Tensor SiLU_MPS_kernel(const Tensor& a);
+
+/**
+ * @brief 基本SwiGLU算子实现 (PEL25 Stage 3.2, 双输入)
+ * @details swiglu(x, gate) = silu(x) * gate = (x * sigmoid(x)) * gate
+ *          LLaMA / PaLM FFN 核心组件
+ * @param a 主输入张量 (x)
+ * @param b 门控张量 (gate)
+ * @return SwiGLU结果张量
+ */
+Tensor SwiGLU_BASIC_kernel(const Tensor& a, const Tensor& b);
+Tensor SwiGLU_SIMD_kernel(const Tensor& a, const Tensor& b);
+Tensor SwiGLU_CUDA_kernel(const Tensor& a, const Tensor& b);
+Tensor SwiGLU_AMX_kernel(const Tensor& a, const Tensor& b);
+Tensor SwiGLU_MPS_kernel(const Tensor& a, const Tensor& b);
+
+/**
  * @brief 基本Softmax算子实现
  * @details 执行张量的Softmax操作
  * @param a 输入张量
@@ -327,6 +354,10 @@ void Sigmoid_MPS_inplace(Tensor& a);
 
 void GELU_BASIC_inplace(Tensor& a);
 void GELU_MPS_inplace(Tensor& a);
+
+// [PEL25 Stage 3.4] SiLU inplace (单输入)
+void SiLU_BASIC_inplace(Tensor& a);
+void SiLU_MPS_inplace(Tensor& a);
 
 void LReLU_BASIC_inplace(Tensor& a);
 void LReLU_MPS_inplace(Tensor& a);

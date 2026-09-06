@@ -10,6 +10,11 @@
 #include "kernels/kernels.h"
 #include "../include/AutoGrad.h"
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
+#include "../include/AutoGrad/Nodes/SiLUNode.h"
+#include "../include/AutoGrad/Nodes/SwiGLUNode.h"
+#include "../include/ops/SiLU.h"
+#include "../include/ops/SwiGLU.h"
+#include "../include/Arena.h"
 #include "../include/DeviceAllocator.h"
 #include "../include/CtorchScheduler.h"
 
@@ -1113,6 +1118,25 @@ Tensor &Tensor::gelu_() {
     check_inplace_safe_("gelu_");
     CtorchScheduler::getInstance().dispatch_inplace(*this, op::GELU);
     return *this;
+}
+
+// SiLU激活函数 (PEL25 §6 SwiGLU 算子开发协议 Stage 5.1)
+//
+// Stage 5.1 简化: 改走 AutoGrad::dispatch<op::SiLU>(*this) 模板, 跟 gelu() 模式一致
+//   - C3 dispatch 自动选最优 kernel (kSIMD > kCPU > kAMX)
+//   - SiLUNode 由 dispatch 模板 if constexpr 分支自动注册
+//   - Stage 4 真 SIMD (ct::kernels::simd::silu256_ps) 路径在用户代码激活
+Tensor Tensor::silu() const {
+    return AutoGrad::dispatch<op::SiLU>(*this);
+}
+
+// SwiGLU激活函数 (PEL25 §6 SwiGLU 算子开发协议 Stage 5.1, 双输入)
+//
+// Stage 5.1 简化: 改走 AutoGrad::dispatch<op::SwiGLU>(*this, gate) 模板
+//   - C3 dispatch 走 set_bin 表, 优先 SwiGLU_SIMD_kernel (Stage 4 真 SIMD)
+//   - SwiGLUNode 由 dispatch 模板 if constexpr 分支自动注册 (双输入)
+Tensor Tensor::swiglu(const Tensor& gate) const {
+    return AutoGrad::dispatch<op::SwiGLU>(*this, gate);
 }
 
 // Softmax激活函数

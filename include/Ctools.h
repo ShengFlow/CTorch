@@ -217,7 +217,10 @@ enum class op{
 
    GELU,       ///< GELU激活函数
 
-   kCount,     ///< 算子数量（哨兵值，不参与运算）
+   SiLU,       ///< SiLU (Sigmoid Linear Unit) 激活函数, silu(x) = x * sigmoid(x)
+   SwiGLU,     ///< SwiGLU 激活函数 (双输入), swiglu(x, gate) = silu(x) * gate
+
+   kCount,     ///< 算子数量（哨兵值，不参与运算，PEL25 #6: 28→30）
 };
 
 /**

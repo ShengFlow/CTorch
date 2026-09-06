@@ -96,6 +96,8 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Tanh, DeviceType::kCPU, Tanh_BASIC_kernel);
     set_unary(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_kernel);
     set_unary(op::GELU, DeviceType::kCPU, GELU_BASIC_kernel);
+    set_unary(op::SiLU, DeviceType::kCPU, SiLU_BASIC_kernel);  // PEL25 Stage 3.4
+    set_bin(op::SwiGLU, DeviceType::kCPU, SwiGLU_BASIC_kernel);  // PEL25 Stage 3.4 (双输入)
     set_unary(op::LReLU, DeviceType::kCPU, LReLU_BASIC_kernel);
     set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
     set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
@@ -109,6 +111,7 @@ void CtorchScheduler::initKernels() {
     set_unary_inplace(op::Tanh, DeviceType::kCPU, Tanh_BASIC_inplace);
     set_unary_inplace(op::Sigmoid, DeviceType::kCPU, Sigmoid_BASIC_inplace);
     set_unary_inplace(op::GELU, DeviceType::kCPU, GELU_BASIC_inplace);
+    set_unary_inplace(op::SiLU, DeviceType::kCPU, SiLU_BASIC_inplace);  // PEL25 Stage 3.4
     set_unary_inplace(op::LReLU, DeviceType::kCPU, LReLU_BASIC_inplace);
     set_unary_inplace(op::Log, DeviceType::kCPU, Log_BASIC_inplace);
     set_unary_inplace(op::Exp, DeviceType::kCPU, Exp_BASIC_inplace);
@@ -130,6 +133,8 @@ void CtorchScheduler::initKernels() {
     set_unary(op::Tanh, DeviceType::kSIMD, Tanh_SIMD_kernel);
     set_unary(op::Sigmoid, DeviceType::kSIMD, Sigmoid_SIMD_kernel);
     set_unary(op::GELU, DeviceType::kSIMD, GELU_SIMD_kernel);
+    set_unary(op::SiLU, DeviceType::kSIMD, SiLU_SIMD_kernel);  // PEL25 Stage 3.4
+    set_bin(op::SwiGLU, DeviceType::kSIMD, SwiGLU_SIMD_kernel);  // PEL25 Stage 3.4 (双输入)
     set_unary(op::Log, DeviceType::kSIMD, Log_SIMD_kernel);
     set_unary(op::Exp, DeviceType::kSIMD, Exp_SIMD_kernel);
     set_unary(op::Abs, DeviceType::kSIMD, Abs_SIMD_kernel);
@@ -154,6 +159,7 @@ void CtorchScheduler::initKernels() {
 #ifdef __APPLE__
     set_bin(op::MatMul, DeviceType::kAMX, MatMul_AMX_kernel);
     set_unary(op::GELU, DeviceType::kAMX, GELU_AMX_kernel);
+    set_unary(op::SiLU, DeviceType::kAMX, SiLU_AMX_kernel);  // PEL25 Stage 3.4 (AMX 降级)
 #endif
 
     // MPS kernels
@@ -983,7 +989,8 @@ std::vector<size_t> CtorchScheduler::computeOutputShape(
         | (1ull << static_cast<size_t>(op::Log))
         | (1ull << static_cast<size_t>(op::Abs))
         | (1ull << static_cast<size_t>(op::GELU))
-        | (1ull << static_cast<size_t>(op::Softmax));
+        | (1ull << static_cast<size_t>(op::Softmax))
+        | (1ull << static_cast<size_t>(op::SiLU));  // PEL25 #6: SiLU 是单输入 unary, 加进 bitmask
     auto isUnary = [](op t) {
         return (kUnaryOpMask >> static_cast<size_t>(t)) & 1ull;
     };
