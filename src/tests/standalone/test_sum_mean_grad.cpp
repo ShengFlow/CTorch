@@ -150,6 +150,36 @@ int main() {
         CHECK(ok, "relu→sum(dim=1) 梯度 = relu mask");
     }
 
+    // Test 8: sum(dims={0,1}) 前向 = 全和, 梯度全 1 (多级 DimReduceNode 链)
+    {
+        Tensor x(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        float* p = x.data_write<float>();
+        for (int i = 0; i < 6; ++i) p[i] = i + 1.0f;  // 总和 21
+        x.requires_grad(true);
+        Tensor l = x.sum(std::vector<int>{0, 1});
+        CHECK(std::abs(l.item<float>() - 21.0f) < 1e-5f, "sum({0,1}) 前向 = 21");
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* g = x.grad_ptr();
+        bool ok = (g != nullptr);
+        for (int i = 0; ok && i < 6; ++i) ok = (g[i] == 1.0f);
+        CHECK(ok, "sum({0,1}) 梯度全 1");
+    }
+
+    // Test 9: mean(dims={0,1}) 前向 = 全均值, 梯度全 1/6
+    {
+        Tensor x(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        float* p = x.data_write<float>();
+        for (int i = 0; i < 6; ++i) p[i] = i + 1.0f;  // 均值 3.5
+        x.requires_grad(true);
+        Tensor l = x.mean(std::vector<int>{0, 1});
+        CHECK(std::abs(l.item<float>() - 3.5f) < 1e-5f, "mean({0,1}) 前向 = 3.5");
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* g = x.grad_ptr();
+        bool ok = (g != nullptr);
+        for (int i = 0; ok && i < 6; ++i) ok = (std::abs(g[i] - 1.0f / 6.0f) < 1e-6f);
+        CHECK(ok, "mean({0,1}) 梯度全 1/6");
+    }
+
     std::cout << (g_fails == 0 ? "=== ALL PASS ===" : "=== HAS FAIL ===") << "\n";
     return g_fails;
 }

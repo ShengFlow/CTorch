@@ -1350,12 +1350,17 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
 }
 
 Tensor Tensor::sum(const std::vector<int> &dims, bool keepdim) const {
+    // [Fix 2026-09-06] 此前 result = *this 拷贝起步, 第一级 sum 挂在拷贝的 GradAccumulator
+    // 上 → 梯度填不到原始张量(多级链 x.grad 为 null)。改为第一级直接对 *this 归约。
+    if (dims.empty()) {
+        return sum();  // 空 dims = 全 reduce(与 PyTorch 语义一致)
+    }
     std::vector<int> sorted_dims = dims;
     std::sort(sorted_dims.begin(), sorted_dims.end(), std::greater<int>());
 
-    Tensor result = *this;
-    for (int dim : sorted_dims) {
-        result = result.sum(dim, keepdim);
+    Tensor result = sum(sorted_dims[0], keepdim);
+    for (size_t i = 1; i < sorted_dims.size(); ++i) {
+        result = result.sum(sorted_dims[i], keepdim);
     }
     return result;
 }
@@ -1517,6 +1522,23 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
         }
     }
 
+    return result;
+}
+
+Tensor Tensor::mean(const std::vector<int> &dims, bool keepdim) const {
+    // [Fix 2026-09-06] 此前 mean(dims) 只有声明无实现(调用即链接错误)。
+    // 与 sum(dims) 同构: 第一级直接对 *this 归约(避免拷贝 GradAccumulator 断链),
+    // 后续降序逐个 mean(dim), 每级挂 DimReduceNode → 反向链完整。
+    if (dims.empty()) {
+        return mean();
+    }
+    std::vector<int> sorted_dims = dims;
+    std::sort(sorted_dims.begin(), sorted_dims.end(), std::greater<int>());
+
+    Tensor result = mean(sorted_dims[0], keepdim);
+    for (size_t i = 1; i < sorted_dims.size(); ++i) {
+        result = result.mean(sorted_dims[i], keepdim);
+    }
     return result;
 }
 
