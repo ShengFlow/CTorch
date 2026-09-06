@@ -100,7 +100,8 @@ int main(int argc, char** argv) {
         Tensor h = g * u;                  // Mul (SwiGLU 逐元素门控)
         Tensor out = h.matmul(W_d);        // MatMul
         Tensor logits = out.matmul(W_cls); // 分类头
-        Tensor loss = logits.cross_entropy(one_hot);
+        static const bool use_sum = std::getenv("FFN_LOSS_SUM") != nullptr;
+        Tensor loss = use_sum ? out.sum() : logits.cross_entropy(one_hot);
         return loss;
     };
 
@@ -131,6 +132,16 @@ int main(int argc, char** argv) {
             }
             cblas_saxpy((int)p.numel(), -LR, gp, 1, p.data_write<float>(), 1);
         };
+        if (std::getenv("FFN_DUMP_GRAD") && s < 2) {
+            float* ggd = W_g.grad_ptr();
+            float* gud = W_u.grad_ptr();
+            float* gdd = W_d.grad_ptr();
+            fprintf(stderr, "[GRAD-DUMP] step=%zu loss=%.6f Wg[0:2]=%.6f,%.6f Wu[0:2]=%.6f,%.6f Wd[0:2]=%.6f,%.6f\n",
+                    s, loss.item<float>(),
+                    ggd ? ggd[0] : -99.0f, ggd ? ggd[1] : -99.0f,
+                    gud ? gud[0] : -99.0f, gud ? gud[1] : -99.0f,
+                    gdd ? gdd[0] : -99.0f, gdd ? gdd[1] : -99.0f);
+        }
         upd(W_g); upd(W_u); upd(W_d); upd(W_cls);
         auto t3 = hires::now();
         double f = std::chrono::duration_cast<msd>(t1 - t0).count();

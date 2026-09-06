@@ -1721,3 +1721,29 @@ C3 default / C3_DISABLE_HOTPATH=1 / C3_DISABLE_REGION_FUSION=1。带 SIGSEGV bac
 2. 真正机会 = 把 MIMO 反向融合扩展到无 bias 的 MatMul+SiLU FFN 反向 (grad_gate/grad_up/grad_x
    一次 kernel), 直接压 backward 115ms —— C3 大模型化的关键下一步。
 3. 修 sum()/mean() 断链 bug (影响所有用 sum/mean 做 loss 的训练)。
+
+## 4.59 2026-09-06 LLaMA FFN 反向 MIMO 扩展(c3 12ac4c6) + sum-loss 断链遗留
+
+### FFN 反向 MIMO(已落地, 数值验证正确)
+- 匹配: MatMul(out:h@W_d) -> Mul(h=g*u) -> {SiLU(g) <- MatMul(x@W_g), MatMul(x@W_u)}。
+- 一次 kernel 9 输出: grad_h/grad_W_d/grad_g/grad_u/grad_gate_pre/grad_x_gate/grad_W_g/
+  grad_x_up/grad_W_u; pending 表回填 Mul/SiLU/两个 MatMul 的 backward。
+- 实现要点: GraphMerger 不去重外部输入 → 用双输出子图合并 grad/x 重复引用;
+  外部输入序 grad,h,W_d,u,g,gate_pre,x,W_g,x,W_u(10 个)。
+- 数值: 与 numpy 精确复算逐位一致(CE loss 链); LLaMA FFN 128x4096x11008 上
+  mimo_hit 命中, bw_hit 66→16(backward 由 MIMO 融合)。
+- 性能: bwd ~120ms 与单 kernel 持平(转置物化抵消了部分融合收益), 后续优化点 =
+  MatMulOpLowering 用 cblas transB 免转置物化, 可再压 backward。
+
+### 遗留: sum-loss 场景反向断链(未修, 独立问题)
+- 现象: FFN 训练用 out.sum() 作 loss 时, backward 后所有叶子 grad 为 null
+  (loss=CE 时正常)。C3_ENABLE_BACKWARD=0 同样复现 → 非 MIMO 引入。
+- 已排除: sum()/mean() 本身(修复后 relu→sum/mul→sum 双 requires_grad 测试全过,
+  test_sum_mean_grad Test10)。
+- 嫌疑: backward 图里存在"死节点"(如 sum loss 时仍注册的 CE 头 MatMul 及其链),
+  依赖计数模型下未投 GradPack 的节点残留 → MatMul(out) 未解锁。待专门修:
+  诊断 ComputeCore 依赖模型对死分支的处理, 或 backward 前修剪无关节点。
+
+### 回归
+graph 115/backward 0 diff/mnist_step/sum_mean_grad(18)/fused_bw 全绿;
+mnist 稳态 138.4ms acc 97.1421% 无回退。

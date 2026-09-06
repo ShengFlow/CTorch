@@ -180,6 +180,30 @@ int main() {
         CHECK(ok, "mean({0,1}) 梯度全 1/6");
     }
 
+    // Test 10: 双输入都 requires_grad 时 mul→sum 是否断链(FFN bench 断链根因定位)
+    {
+        Tensor x(ShapeTag{}, {4}, DType::kFloat, DeviceType::kCPU);
+        float* xp = x.data_write<float>();
+        for (int i = 0; i < 4; ++i) xp[i] = 1.0f + i;
+        x.requires_grad(true);
+        Tensor w(ShapeTag{}, {4}, DType::kFloat, DeviceType::kCPU);
+        float* wp = w.data_write<float>();
+        for (int i = 0; i < 4; ++i) wp[i] = 2.0f + i;
+        w.requires_grad(true);
+        Tensor out = x * w;
+        Tensor l = out.sum();
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* gx = x.grad_ptr();
+        const float* gw = w.grad_ptr();
+        CHECK(gx != nullptr, "双 requires_grad mul→sum: x 收到梯度");
+        bool okx = (gx != nullptr);
+        for (int i = 0; okx && i < 4; ++i) okx = (std::abs(gx[i] - (2.0f + i)) < 1e-6f);
+        CHECK(okx, "x 梯度 = w 值");
+        bool okw = (gw != nullptr);
+        for (int i = 0; okw && i < 4; ++i) okw = (std::abs(gw[i] - (1.0f + i)) < 1e-6f);
+        CHECK(okw, "w 梯度 = x 值");
+    }
+
     std::cout << (g_fails == 0 ? "=== ALL PASS ===" : "=== HAS FAIL ===") << "\n";
     return g_fails;
 }
