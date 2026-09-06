@@ -1,24 +1,43 @@
 # CTorch Agent Context
 
 > AI agent onboarding doc for **CTorch** — 笙歌/ShengFlow 团队的轻量级 C++ 深度学习框架。
-> Last updated: 2026-09-06 (post PEL25 Stage 5)
+> Last updated: 2026-09-06 (session: sum/mean 断链 + FFN 反向 MIMO + 性能画像)
 
 ## 项目一句话
 
-轻量级 C++ 深度学习框架, 类 PyTorch 接口, 核心是 **C3 JIT 编译器** (MLIR → LLVM IR → ExecutionEngine) + 区域融合 (region fusion) + 多后端 kernel (CPU-BASIC / CPU-SIMD / AMX / MPS)。
+轻量级 C++ 深度学习框架, 类 PyTorch 接口, 核心是 **C3 JIT 编译器** (MLIR → LLVM IR → ExecutionEngine) + 区域融合 (region fusion) + MIMO 反向融合 + 多后端 kernel (CPU-BASIC / CPU-SIMD / AMX / MPS)。
 
-## 当前状态 (2026-09-06)
+## 当前状态 (2026-09-06 晚)
 
-| Stage | 状态 | 关键交付 |
-|-------|------|----------|
-| **Stage 1-4** | ✅ DONE | SwiGLU/SiLU 算子开发 (PEL25 §6 协议完整闭环) |
-| **Stage 5.1** | ✅ DONE | `Tensor::silu()/swiglu()` 走 C3 dispatch, 端到端 1.37-1.48x |
-| **Stage 5.2** | ✅ DONE | Region fusion `MatMul+Add+SiLU` (3-op) + `MatMul+SiLU` (2-op) 装上 |
-| **Stage 5.3+** | 🟡 PENDING | LLaMA-1B SwiGLU FFN 端到端 bench, DCU 节点验证, CGO 2027 论文 |
+| 领域 | 状态 | 关键交付 |
+|------|------|----------|
+| PEL25 Stage 1-5 (SwiGLU/SiLU + region fusion) | ✅ DONE | 30 op; SiLU/SwiGLU; MatMul+SiLU region fusion |
+| **MatMul epilogue 向量化** | ✅ DONE | 移除 vector.broadcast → arith-on-vector + undef/insertelement splat (c3 4b1d459) |
+| **DEBT-2 (fused backward)** | 🔴 superseded | 被 MIMO 取代, 不复活 (c3 43d9fbe, STATUS §4.54) |
+| **sum()/mean() 家族反向断链** | ✅ DONE | DotNode 缺失 bug; SumNode/MeanNode/DimReduceNode + NEON SIMD (主仓 99e1fae/dbe6e92/b57a52d) |
+| **sum-loss 死分支断链** | ✅ DONE | ComputeCore 活跃子图依赖重算 (主仓 3085a6b) |
+| **LLaMA FFN 反向 MIMO** | ✅ DONE | 无 bias SwiGLU FFN 整段反向→单内核 9 输出 (c3 12ac4c6, STATUS §4.59) |
+| LLaMA-1B FFN bench | ✅ 新增 | `bench_llama_ffn_train` (c3 vs eager ~5% 快, bwd ~8%) |
+| 论文 | ✅ 更新 | 中英 MIMO 节加"无 bias SwiGLU FFN"扩展 (本地 paper/, gitignored) |
 
-**已完成算子数**: 30 个 (kCount=30, Ctools.h:178-221), 包含 8 个 SIMD 真向量化 + 6 个 region fusion pattern (MatMul+Add+ReLU/Sigmoid/SiLU × 2/3-op)。
+**最近变更速览** (详细日志见 `STATUS_CONTEXT.md` §4.53-4.59 + git log):
+- §4.53 MatMul epilogue 向量化; §4.54 DEBT-2 降级 + MNIST 画像
+- §4.55 全量回归矩阵; §4.56/4.57 偷工减料审查+修复
+- §4.58 sum/mean 断链 + LLaMA-FFN bench; §4.59 FFN MIMO + sum-loss 断链遗留→已修(3085a6b)
 
-**当前测试**: test_swiglu 3208/3208 PASS。
+**当前性能基线** (M3 Pro, 需干净机器, 数值受热降频 ±15% 波动):
+- MNIST 训练稳态 epoch ~138-160ms, acc 97.1421%, loss 0.0985
+- LLaMA FFN(128×4096×11008): C3 ~180ms/step vs eager ~190ms (bwd MIMO ~8% 快)
+- MIMO 命中: MNIST mimo_hit 4678/epoch; FFN mimo_hit 命中, bw_hit 66→16
+
+## 🔧 下一步待办 (2026-09-06)
+
+1. **batched GEMM 合并压 FFN backward**: transpose folding 已生效(probe 证实 tA/tB=112),
+   GEMM ~370 GFLOP/s 近 M3 上限; 唯一结构性空间 = 权重预拼接把 grad_W_g/grad_W_u 等合并成大 GEMM。
+2. **修 pre-existing standalone 失败**: test_c3_pgo_deopt/compile_error 已修绿; 仍红 = test_relu_backward
+   (MPS 设备类型崩溃, 不经 C3)、test_region_fusion(性能退化, bench 波动类)。
+3. DCU 节点验证 + x86 AVX-512 实测 (曙光智算, 机时充足)。
+4. forward 优化 + RC2 进程级异步 (c3d, docs/C3_PROCESS_ASYNC_*)。
 
 ## 关键路径速查
 
@@ -40,26 +59,36 @@
 
 ## 构建 & 测试
 
+> ⚠️ 本会话(sum/mean/FFN 修复)在 **`build-release/`**(Release + ninja)开发/验证; `build/` 与 `build_eager/` 是另两套(可能旧)。
+> - `build-release/`  = C3 + autograd 完整 Release (跑所有 test_c3_* / bench_*)
+> - `build_eager/` / `build-eager/` = `CT_DISABLE_C3`(纯 eager 对照, 测 C3 vs eager 用)
+> - mnist 数据在仓库根(`train-images-idx3-ubyte` 等), 跑 mnist test 须从根目录执行
+
 ```bash
-# 构建
-cd /Users/ghostface/CTorch-optimize-AutoDiff/build
-cmake --build . --target test_swiglu -j 4  # 或 ctest -j 4 跑全部
+# 构建 (本会话主用 build-release)
+cd /Users/ghostface/CTorch-optimize-AutoDiff/build-release
+ninja test_c3_graph test_c3_backward test_sum_mean_grad bench_llama_ffn_train  # 按需编目标
 
-# 跑单个 test
-./test_swiglu  # 3208 断言 (SiLU/SwiGLU 5+3+1+1 测试)
+# 跑测试(从仓库根, mnist 数据)
+cd /Users/ghostface/CTorch-optimize-AutoDiff
+./build-release/test_c3_graph      # 115 断言(含 Benchmark)
+./build-release/test_sum_mean_grad # sum/mean/dim/dims 梯度回归(18 断言)
+./build-release/test_c3_backward   # 反向正确性(max_diff=0)
+./build-release/test_c3_mnist_train  # MNIST 端到端训练(acc 97.1421%)
+./build-eager/test_c3_mnist_train    # 纯 eager 对照
 
-# 跑全部 (ctest 50+ test)
-ctest --output-on-failure -j 4
-
-# Bench harness (Stage 4-5 验证用)
-./bench_swiglu_simd 1048576 100    # SiLU/SwiGLU kernel-level + e2e
-/tmp/bench_region_fusion_silu 200 30  # Region fusion inference (外部 link)
+# LLaMA FFN 训练基准 (c3 vs eager)
+./build-release/bench_llama_ffn_train 128 4096 11008 8   # C3(MIMO)
+./build-eager/bench_llama_ffn_train 128 4096 11008 8     # 纯 eager 对照
+#   env: FFN_CBLAS_PROBE=1(cblas GEMM 分桶) / C3_FFN_DUMP=1(MIMO 中间梯度)
+#        FFN_LOSS_SUM=1(sum loss) / FFN_DUMP_GRAD=1(打印 W 梯度)
 ```
 
 **关键开关** (env):
 - `C3_DISABLE_HOTPATH=1` 关闭 C3 hotpath 检测
 - `C3_DISABLE_REGION_FUSION=1` 关闭 region fusion
 - `C3_DISABLE_SINGLE_KERNEL=1` 关闭单 kernel 编译触发
+- `C3_ENABLE_BACKWARD=0` 关 C3 backward(走 eager; 注意 forward 仍可能走 C3 单 kernel, 非纯 eager 对照)
 
 ## PEL25 §6 新算子开发协议 (Stage 1-4 沉淀)
 
@@ -86,13 +115,15 @@ ctest --output-on-failure -j 4
 
 ## 已知未解决问题
 
-| 级别 | 问题 | 触发场景 | 建议 |
+| 级别 | 问题 | 触发/现状 | 建议 |
 |------|------|----------|------|
 | **P0** | 无 | - | - |
-| **P1** | Region fusion 训练期零命中 (跟 ReLU/Sigmoid 一致) | forward 末 3 = [MM, Add, CE] ≠ [MM, Add, ReLU/SiLU] | 走 scratchpad 切片路线 (PEL25 §6 P1-2), 联合 P1-1 三阶段 JIT |
-| **P1** | Stage 5.2 ARM64 NEON fused 加速 0.77x (反直觉) | x86 AVX-512 + DCU 节点预期显著加速 | Stage 5.4 DCU 验证 |
-| **P1** | x86 AVX-512 实测未做 | 曙光智算节点机时充足 | Stage 5.4 |
-| **P2** | Stage 1 伪 SIMD (8-wide + 标量 exp) 比纯标量慢 -2.4% | anti-pattern, ops/SiLU.cpp 仍保留 | Stage 5.1 dispatch 改后, ops 路径降级 fallback |
+| **P1** | 训练期 region fusion 命中因结构而异 | MNIST(FC 带 bias) fused_hit 高; **LLaMA FFN(无 bias) fused_hit=0**(编译了不执行)。但 C3 default 仍最快(~5-10% vs hotpath-off) | 结论: 不是"C3 浪费"; forward 单 kernel + MIMO 已覆盖。训练期 forward fusion 命中是大 forward 结构(FFN)的可选增益 |
+| **P1** | sum-loss(非 CE 头)场景若图含无关死分支 | 已修: ComputeCore 活跃子图依赖重算(3085a6b); 正常 CE loss 训练不受影响 | 保留回归 test_sum_mean_grad(18 断言) |
+| **P1** | Stage 5.2 ARM NEON fused 0.77x (反直觉) | x86 AVX-512 + DCU 预期显著加速 | Stage 5.4 DCU 验证 |
+| **P1** | x86 AVX-512 实测未做 | 曙光智算机时充足 | Stage 5.4 |
+| **P2** | 非核心 standalone 红(pre-existing) | test_relu_backward(MPS 设备崩溃, 不经 C3)、test_region_fusion(性能退化类) | 独立立项; 与主线无交集 |
+| **P2** | Stage 1 伪 SIMD (8-wide + 标量 exp) | ops/SiLU.cpp 仍保留 | 可降级 fallback |
 
 ## Cross-Project Memory (Agent lessons, 跨项目适用)
 
@@ -130,24 +161,29 @@ append 到 `/Users/ghostface/.minimax/agents/mavis/memory/MEMORY.md` 的 CTorch 
 # 新会话开头:
 1. cat ~/skills/main.md  # 洛锦的 AGI 总纲
 2. cd /Users/ghostface/CTorch-optimize-AutoDiff
-3. git log --oneline -20  # 看最新 commit (洛锦 9bc3361 = C3 8.3x 退步根因 commit)
-4. ls build/  # 看 test_* 可跑 binary
-5. 跟洛锦确认 scope + 决策门
+3. cat AGENTS.md          # 本文件: 当前状态/已知问题/下一步/红线
+4. git log --oneline -20  # 看最新 commit; 详细日志 tail STATUS_CONTEXT.md
+5. tail -120 STATUS_CONTEXT.md  # 最近几条工作记录(§4.5x)
+6. 跟洛锦确认 scope + 决策门
 
-# 跑测试 sanity:
-cd build && cmake --build . --target test_swiglu -j 4 && ./test_swiglu
+# 跑测试 sanity (主用 build-release, 从仓库根跑 mnist 需数据在根)
+cd /Users/ghostface/CTorch-optimize-AutoDiff
+./build-release/test_c3_graph && ./build-release/test_sum_mean_grad && ./build-release/test_c3_backward
 ```
 
 ## Test 矩阵 (跑这些保平安)
 
 | 关注点 | 测试 target | 备注 |
 |--------|-------------|------|
-| SwiGLU/SiLU (Stage 5 核心) | `test_swiglu` | 3208 断言, 必过 |
-| GELU (孪生兄弟, dispatch 模式) | `test_gelu` | 改动 if constexpr 必跑 |
+| C3 graph + Benchmark 全量 | `test_c3_graph`(build-release) | 115 断言含 MLP/MLIR, 必过 |
+| **sum/mean 梯度回归** | `test_sum_mean_grad`(build-release) | 18 断言(sum/mean/dim/dims/DotNode 断链回归) |
+| 反向正确性 | `test_c3_backward` | max_diff=0 |
+| MNIST 端到端训练 | `test_c3_mnist_train`(根目录) | acc 97.1421% 基线 |
+| LLaMA FFN MIMO | `bench_llama_ffn_train`(128 4096 11008) | build-release vs build-eager 对照 |
+| SwiGLU/SiLU (Stage 5) | `test_swiglu` | 3208 断言 |
+| GELU (dispatch 模式) | `test_gelu` | if constexpr 改动必跑 |
 | Autograd 通用 | `test_autograd_issues` `test_autograd_v2` | dispatch 模板改动必跑 |
-| C3 region fusion | `test_c3_graph` `test_graph_merger` | LinalgFusedGen 改动必跑 |
-| C3 compile pipeline | `test_c3_compile_and_inject` `test_c3_compile_merged` | region fusion pattern 改动必跑 |
-| Elementwise linalg IR | `test_linalg_elementwise` | Stage 2 #8 LinalgElementwiseGen 改 SiLU 必跑 |
-| Inplace op | `test_unary_inplace` | SiLU_BASIC_inplace 必跑 |
-| Kernel hot swap | `test_kernel_hot_swap` | dispatch 表改动必跑 |
-| 端到端 | `MnistTest` `test_mnist_perf` | 性能回归 baseline |
+| C3 region fusion | `test_graph_merger` | 改动 LinalgFusedGen/checkPattern 必跑 |
+| C3 compile pipeline | `test_c3_compile_merged` `test_c3_compile_merged_pgo` | 10/11 断言 |
+| 反向 fusion/DEBT | `test_fused_bw_debt2` | fused BW 默认 off, sanity |
+| pgo/错误路径(已修绿) | `test_c3_pgo_deopt` `test_c3_compile_error` | bad_weak_ptr 已修 |
