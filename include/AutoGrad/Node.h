@@ -119,6 +119,9 @@ public:
     /** @brief 设置当前活跃的依赖计数 */
     void setCount(size_t count);
 
+    /** @brief 获取当前活跃依赖计数(下游完成倒计时) */
+    [[nodiscard]] size_t getCount() const;
+
     /** @brief 获取上游节点列表（返回 const 引用，避免热路径图遍历每次拷贝） */
     [[nodiscard]] const std::vector<std::shared_ptr<Node>>& getUpStreamNodes() const;
 

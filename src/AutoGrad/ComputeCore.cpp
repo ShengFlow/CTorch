@@ -8,7 +8,9 @@
 #include <utility>
 #include <queue>
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "../../include/AutoGrad/ComputeCore.h"
 #include "../../include/AutoGrad/Node.h"
@@ -203,6 +205,31 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     }
 
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Adding root to ready nodes");
+    // [Fix 2026-09-06 苏璃珞] 依赖计数只计从 root 反向可达的活跃子图。
+    // 根因: 图里存在"死分支"时(如 sum-loss 训练里仍构造了无关的 CE 头 MatMul),
+    // 死节点注册时对上游 increase() 使活跃节点的 _count(下游完成倒计时)永远多 1,
+    // 死节点永不处理 → 活跃节点永远不 ready → 所有叶子梯度静默为 null。
+    // 修复: 从 root 反向 DFS 得活跃子图, 按"活跃下游数"重算每个节点的 _count,
+    // 排除死分支的 increase。无死分支时重算结果与注册时一致, 行为不变。
+    {
+        std::unordered_set<Node*> active;
+        std::function<void(Node*)> dfs = [&](Node* n) {
+            if (!n || active.count(n)) return;
+            active.insert(n);
+            for (const auto& up : n->getUpStreamNodes()) {
+                if (up) dfs(up.get());
+            }
+        };
+        dfs(root.get());
+        for (Node* n : active) n->setCount(0);
+        for (Node* n : active) {
+            for (const auto& up : n->getUpStreamNodes()) {
+                if (up && active.count(up.get())) {
+                    up->setCount(up->getCount() + 1);
+                }
+            }
+        }
+    }
     addReadyNode(root);
 
     CTORCH_TRACE(ErrorPlatform::kAutoDiff, "ComputeCore::backward - Processing ready nodes");

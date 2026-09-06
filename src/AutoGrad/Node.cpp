@@ -36,6 +36,8 @@ void Node::setDependencies(size_t dependencies) {
 
 void Node::setCount(const size_t count) { _count = count; }
 
+size_t Node::getCount() const { return _count.load(std::memory_order_acquire); }
+
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
            const std::vector<Tensor> &inputs)
                :_upStreamNodes(upStreamNodes),_inputs(inputs), _dependencies(upStreamNodes.size()) {

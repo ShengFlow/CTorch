@@ -127,8 +127,9 @@ int main(int argc, char** argv) {
         auto upd = [&](Tensor& p) {
             float* gp = p.grad_ptr();
             if (!gp) {
-                std::cerr << "[UPD-ERR] grad_ptr() null for param numel=" << p.numel() << "\n";
-                std::exit(3);
+                // 死分支参数(如 sum-loss 下未参与的 CE 头)无梯度, 跳过更新
+                std::cerr << "[UPD-SKIP] no grad for param numel=" << p.numel() << "\n";
+                return;
             }
             cblas_saxpy((int)p.numel(), -LR, gp, 1, p.data_write<float>(), 1);
         };
