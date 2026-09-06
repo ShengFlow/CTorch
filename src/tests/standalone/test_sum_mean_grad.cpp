@@ -96,6 +96,60 @@ int main() {
         CHECK(ok, "w 梯度全 2");
     }
 
+    // Test 5: sum(dim=1) 前向值 + 梯度全 1
+    {
+        Tensor x(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        float* p = x.data_write<float>();
+        for (int i = 0; i < 6; ++i) p[i] = i + 1.0f;  // [[1,2,3],[4,5,6]]
+        x.requires_grad(true);
+        Tensor l = x.sum(1);
+        CHECK(l.numel() == 2 && std::abs(l.data_read<float>()[0] - 6.0f) < 1e-5f &&
+                  std::abs(l.data_read<float>()[1] - 15.0f) < 1e-5f,
+              "sum(dim=1) 前向 = [6,15]");
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* g = x.grad_ptr();
+        bool ok = (g != nullptr);
+        for (int i = 0; ok && i < 6; ++i) ok = (g[i] == 1.0f);
+        CHECK(ok, "sum(dim=1) 梯度全 1");
+    }
+
+    // Test 6: mean(dim=0) 前向值 + 梯度全 1/n
+    {
+        Tensor x(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        float* p = x.data_write<float>();
+        for (int i = 0; i < 6; ++i) p[i] = i + 1.0f;  // [[1,2,3],[4,5,6]]
+        x.requires_grad(true);
+        Tensor l = x.mean(0);
+        const float* lv = l.data_read<float>();
+        CHECK(l.numel() == 3 && std::abs(lv[0] - 2.5f) < 1e-5f && std::abs(lv[1] - 3.5f) < 1e-5f &&
+                  std::abs(lv[2] - 4.5f) < 1e-5f,
+              "mean(dim=0) 前向 = [2.5,3.5,4.5]");
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* g = x.grad_ptr();
+        bool ok = (g != nullptr);
+        for (int i = 0; ok && i < 6; ++i) ok = (std::abs(g[i] - 0.5f) < 1e-6f);
+        CHECK(ok, "mean(dim=0) 梯度全 1/2");
+    }
+
+    // Test 7: 链式 relu→sum(dim=1), 梯度 = relu mask
+    {
+        Tensor x(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+        float* p = x.data_write<float>();
+        const float vals[6] = {-2.0f, 0.5f, 1.0f, 3.0f, -1.0f, 0.0f};
+        for (int i = 0; i < 6; ++i) p[i] = vals[i];
+        x.requires_grad(true);
+        Tensor y = x.relu();
+        Tensor l = y.sum(1);
+        AutoGrad::backward(l.getRelatedNode(), false);
+        const float* g = x.grad_ptr();
+        bool ok = (g != nullptr);
+        for (int i = 0; ok && i < 6; ++i) {
+            float expect = (vals[i] > 0.0f) ? 1.0f : 0.0f;
+            if (std::abs(g[i] - expect) > 1e-6f) ok = false;
+        }
+        CHECK(ok, "relu→sum(dim=1) 梯度 = relu mask");
+    }
+
     std::cout << (g_fails == 0 ? "=== ALL PASS ===" : "=== HAS FAIL ===") << "\n";
     return g_fails;
 }

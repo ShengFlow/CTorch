@@ -12,6 +12,8 @@
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/AutoGrad/Nodes/SumNode.h"
 #include "../include/AutoGrad/Nodes/MeanNode.h"
+#include "../include/AutoGrad/Nodes/DimReduceNode.h"
+#include "kernels/CPU-SIMD/ReduceSIMD.h"
 #include "../include/AutoGrad/Nodes/SiLUNode.h"
 #include "../include/AutoGrad/Nodes/SwiGLUNode.h"
 #include "../include/ops/SiLU.h"
@@ -1288,14 +1290,20 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
     case DType::kFloat: {
         const float *data  = this->data_read<float>();
         float *result_data = result.data_write<float>();
-        for (size_t i = 0; i < pre_dim_elements; ++i) {
-            for (size_t k = 0; k < post_dim_elements; ++k) {
-                float sum = 0.0f;
-                for (size_t j = 0; j < dim_size; ++j) {
-                    size_t index = i * pre_dim_stride + j * stride_dim + k;
-                    sum += data[index];
+        if (stride_dim == 1) {
+            // [SIMD 2026-09-06] 最内维归约(contiguous): 每 pre 行 dim_size 连续元素,
+            // NEON 4-wide 累加器 + 尾部, 替换原三重标量循环。
+            ctorch::kernels::simd::reduce_rows_sum_f32(data, pre_dim_elements, dim_size, result_data);
+        } else {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    float sum = 0.0f;
+                    for (size_t j = 0; j < dim_size; ++j) {
+                        size_t index = i * pre_dim_stride + j * stride_dim + k;
+                        sum += data[index];
+                    }
+                    result_data[i * post_dim_elements + k] = sum;
                 }
-                result_data[i * post_dim_elements + k] = sum;
             }
         }
         break;
@@ -1318,6 +1326,24 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
     default:
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                                     "sum: 不支持的数据类型");
+    }
+
+    // [Fix 2026-09-06] 反向传播: sum(dim) 此前完全未挂节点 → backward 静默断链。
+    // 挂 DimReduceNode(scale=1), 反向 = grad 沿 dim 广播(SIMD 填充)。
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+        AutoGrad::registerNode<DimReduceNode>(*this, result_weak);
+        if (result_ptr->getRelatedNode()) {
+            result.setRelatedNode(result_ptr->getRelatedNode());
+            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
+            auto node = std::dynamic_pointer_cast<DimReduceNode>(result_ptr->getRelatedNode());
+            if (node) {
+                node->setReduceMeta(static_cast<int>(dim), keepdim, dim_size, stride_dim,
+                                    pre_dim_elements, post_dim_elements, pre_dim_stride, 1.0f);
+            }
+        }
     }
 
     return result;
@@ -1392,6 +1418,105 @@ Tensor Tensor::mean() const {
             result_ptr->getRelatedNode()->setResultOwner(result_ptr);
         }
     }
+    return result;
+}
+
+Tensor Tensor::mean(int dim, bool keepdim) const {
+    // [Fix 2026-09-06] 此前 mean(dim) 只有声明无实现(链接错误)且反向断链。
+    // 与 sum(dim) 同构: SIMD 归约(最内维) + 除以 dim_size, 挂 DimReduceNode(scale=1/dim_size)。
+    if (dim < 0) {
+        dim += static_cast<int>(_shape.size());
+    }
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "mean: 维度超出范围");
+    }
+
+    std::vector<size_t> output_shape;
+    for (size_t i = 0; i < _shape.size(); ++i) {
+        if (i == static_cast<size_t>(dim)) {
+            if (keepdim) output_shape.push_back(1);
+        } else {
+            output_shape.push_back(_shape[i]);
+        }
+    }
+    if (output_shape.empty()) output_shape = {1};
+
+    Tensor result(ShapeTag{}, output_shape, _dtype, _device);
+
+#ifdef __APPLE__
+    if (_device == DeviceType::kMPS) {
+        MPS_flush_wait(true);
+    }
+#endif
+
+    const size_t dim_size      = _shape[dim];
+    const size_t stride_dim    = _strides[dim];
+    size_t pre_dim_elements    = 1;
+    for (int i = 0; i < dim; ++i) pre_dim_elements *= _shape[i];
+    size_t post_dim_elements   = 1;
+    for (size_t i = dim + 1; i < _shape.size(); ++i) post_dim_elements *= _shape[i];
+    const size_t pre_dim_stride = stride_dim * dim_size;
+    const float inv_dim         = 1.0f / static_cast<float>(dim_size);
+
+    switch (_dtype) {
+    case DType::kFloat: {
+        const float *data  = this->data_read<float>();
+        float *result_data = result.data_write<float>();
+        if (stride_dim == 1) {
+            // [SIMD 2026-09-06] 最内维归约: NEON 4-wide 累加 + SIMD 缩放 1/dim_size
+            ctorch::kernels::simd::reduce_rows_sum_f32(data, pre_dim_elements, dim_size, result_data);
+            ctorch::kernels::simd::scale_f32(result_data, pre_dim_elements * post_dim_elements, inv_dim);
+        } else {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    float sum = 0.0f;
+                    for (size_t j = 0; j < dim_size; ++j) {
+                        sum += data[i * pre_dim_stride + j * stride_dim + k];
+                    }
+                    result_data[i * post_dim_elements + k] = sum * inv_dim;
+                }
+            }
+        }
+        break;
+    }
+    case DType::kDouble: {
+        const double *data  = this->data_read<double>();
+        double *result_data = result.data_write<double>();
+        const double inv_d  = 1.0 / static_cast<double>(dim_size);
+        for (size_t i = 0; i < pre_dim_elements; ++i) {
+            for (size_t k = 0; k < post_dim_elements; ++k) {
+                double sum = 0.0;
+                for (size_t j = 0; j < dim_size; ++j) {
+                    sum += data[i * pre_dim_stride + j * stride_dim + k];
+                }
+                result_data[i * post_dim_elements + k] = sum * inv_d;
+            }
+        }
+        break;
+    }
+    default:
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+                                    "mean: 不支持的数据类型");
+    }
+
+    // 反向: 挂 DimReduceNode, scale=1/dim_size
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+        AutoGrad::registerNode<DimReduceNode>(*this, result_weak);
+        if (result_ptr->getRelatedNode()) {
+            result.setRelatedNode(result_ptr->getRelatedNode());
+            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
+            auto node = std::dynamic_pointer_cast<DimReduceNode>(result_ptr->getRelatedNode());
+            if (node) {
+                node->setReduceMeta(static_cast<int>(dim), keepdim, dim_size, stride_dim,
+                                    pre_dim_elements, post_dim_elements, pre_dim_stride, inv_dim);
+            }
+        }
+    }
+
     return result;
 }
 

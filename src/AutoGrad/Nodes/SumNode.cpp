@@ -7,6 +7,9 @@
 #include "AutoGrad/Nodes/SumNode.h"
 #include "Tensor.h"
 #include "Ctools.h"
+#include "kernels/CPU-SIMD/ReduceSIMD.h"
+
+using ctorch::kernels::simd::fill_f32;
 
 SumNode::SumNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs)
     : Node(upStreamNodes, inputs) {}
@@ -34,10 +37,9 @@ std::vector<GradPack> SumNode::backward(const std::vector<Tensor>& downStreamGra
     }
     float g = gdata[0];  // 下游标量梯度 dL/dc
 
-    // 全 reduce 反向: 把标量 g 广播(填满)到输入形状
+    // 全 reduce 反向: 把标量 g 广播(填满)到输入形状, NEON 4-wide 填充
     Tensor grad_input(ShapeTag{}, input.sizes(), input.dtype(), input.device());
-    grad_input.ones();
-    grad_input = grad_input * g;  // 纯数值标量乘(grad_input 不需 autograd)
+    fill_f32(grad_input.data_write<float>(), input.numel(), g);
 
     ret.push_back(GradPack{_upStreamNodes[0], std::vector({grad_input}), 0});
     return ret;

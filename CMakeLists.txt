@@ -294,6 +294,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/AddNode.h
         include/AutoGrad/Nodes/SumNode.h
         include/AutoGrad/Nodes/MeanNode.h
+        include/AutoGrad/Nodes/DimReduceNode.h
         include/AutoGrad/Nodes/SubNode.h
         include/AutoGrad/Nodes/MulNode.h
         include/AutoGrad/Nodes/DivNode.h
@@ -323,6 +324,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/AddNode.cpp
         src/AutoGrad/Nodes/SumNode.cpp
         src/AutoGrad/Nodes/MeanNode.cpp
+        src/AutoGrad/Nodes/DimReduceNode.cpp
         src/AutoGrad/Nodes/SubNode.cpp
         src/AutoGrad/Nodes/MulNode.cpp
         src/AutoGrad/Nodes/DivNode.cpp

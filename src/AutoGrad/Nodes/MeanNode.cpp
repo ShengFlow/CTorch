@@ -7,6 +7,9 @@
 #include "AutoGrad/Nodes/MeanNode.h"
 #include "Tensor.h"
 #include "Ctools.h"
+#include "kernels/CPU-SIMD/ReduceSIMD.h"
+
+using ctorch::kernels::simd::fill_f32;
 
 MeanNode::MeanNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs)
     : Node(upStreamNodes, inputs) {}
@@ -34,10 +37,9 @@ std::vector<GradPack> MeanNode::backward(const std::vector<Tensor>& downStreamGr
     }
     float g = gdata[0] / static_cast<float>(input.numel());  // dL/dc / n
 
-    // 全 reduce 反向: 把 g/n 广播(填满)到输入形状
+    // 全 reduce 反向: 把 g/n 广播(填满)到输入形状, NEON 4-wide 填充
     Tensor grad_input(ShapeTag{}, input.sizes(), input.dtype(), input.device());
-    grad_input.ones();
-    grad_input = grad_input * g;
+    fill_f32(grad_input.data_write<float>(), input.numel(), g);
 
     ret.push_back(GradPack{_upStreamNodes[0], std::vector({grad_input}), 0});
     return ret;
