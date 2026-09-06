@@ -10,6 +10,8 @@
 #include "kernels/kernels.h"
 #include "../include/AutoGrad.h"
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
+#include "../include/AutoGrad/Nodes/SumNode.h"
+#include "../include/AutoGrad/Nodes/MeanNode.h"
 #include "../include/AutoGrad/Nodes/SiLUNode.h"
 #include "../include/AutoGrad/Nodes/SwiGLUNode.h"
 #include "../include/ops/SiLU.h"
@@ -754,13 +756,12 @@ void Tensor::applyHouseholder(const Tensor& v, float tau, std::size_t k_offset) 
 
 // 求和操作
 Tensor Tensor::sum() const {
-    // ============= P2 修复：sum() 改为用 dot(ones) 实现，自动通过 AutoGrad::dispatch 挂 Node =============
-    // 原 bug：sum() 是裸 for 循环求和，从未创建任何 Node → L.getRelatedNode() 返回 nullptr，
-    // 后续 AutoGrad::backward(nullptr, ...) 直接 nullptr deref → SIGSEGV。
-    // 修复：用 dot(全 1 tensor) 等价实现 sum：
-    //   - 数值：a·ones = Σ_i a_i * 1 = Σ a_i ✅
-    //   - 反向：dL/dot = scalar, dL/da_i = dL/dot * 1_i → 标量广播为 a.shape（与 sum 反向完全一致 ✅）
-    //   - Node：dot 走 AutoGrad::dispatch<op::Dot>，自动创建 DotNode，backward 链路完整 ✅
+    // ============= 2026-09-06 反向传播修复 =============
+    // 旧实现 = flat.dot(ones), 注释声称 dispatch<op::Dot> 自动挂 DotNode、backward 完整,
+    // 但仓库从未实现 DotNode(仅 Ctools.h 有 op::Dot 枚举, AutoGrad.h 无 dispatch 分支)
+    // → sum/mean 作 loss 时 backward 静默不填任何梯度。
+    // 修复: 前向数值仍用 dot(ones)(走调度 kernel, O(numel)), 反向显式挂 SumNode
+    // (全 reduce: ∂L/∂a = dL/dc 广播), 绕过缺失的 DotNode/ReshapeNode。
     if (_shape.empty()) {
         // 空 tensor：返回 shape={1}, val=0
         Tensor result(ShapeTag{}, {1}, _dtype, _device);
@@ -770,16 +771,23 @@ Tensor Tensor::sum() const {
         }
         return result;
     }
-    // 修复：必须 flat 成 1D 再 dot，避免 2D dot 误触发大矩阵运算
-    //   - flat shape: {numel()}
-    //   - ones 1D shape {numel()}: 1D·1D = Σ a_i * 1 = Σ a_i，数值与原 sum() 完全一致 ✅
-    //   - dot 走 AutoGrad::dispatch<op::Dot>，自动创建 DotNode，backward 链路完整 ✅
-    //   - 计算量：O(numel) 与原始裸循环实现相同 ✅（不会再 19x 退化）
     const size_t N = numel();
     Tensor flat_this = reshape({N});
     Tensor ones_1d(ShapeTag{}, {N}, _dtype, _device);
     ones_1d.ones();
-    return flat_this.dot(ones_1d);
+    Tensor result = flat_this.dot(ones_1d);  // 前向数值: Σ a_i
+
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+        AutoGrad::registerNode<SumNode>(*this, result_weak);
+        if (result_ptr->getRelatedNode()) {
+            result.setRelatedNode(result_ptr->getRelatedNode());
+            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
+        }
+    }
+    return result;
 }
 
 // ======================= 运算符模板辅助函数 =======================
@@ -1355,24 +1363,35 @@ Tensor Tensor::min(const Tensor &other) const { return AutoGrad::dispatch<op::Mi
 Tensor Tensor::max(const Tensor &other) const { return AutoGrad::dispatch<op::Max>(*this, other); }
 
 Tensor Tensor::mean() const {
-    Tensor result(ShapeTag{}, {}, _dtype, _device);
+    // ============= 2026-09-06 反向传播修复 =============
+    // 旧实现为裸循环求和且完全未挂节点 → backward 静默断链。
+    // 修复: 前向 = dot(ones) * (1/n)(走调度 kernel), 反向显式挂 MeanNode
+    // (全 reduce: ∂L/∂a = dL/dc / n 广播)。
+    if (numel() == 0) {
+        Tensor result(ShapeTag{}, {1}, _dtype, _device);
+        if (_dtype == DType::kFloat) {
+            float* rw = result.data_write<float>();
+            if (rw) *rw = 0.0f;
+        }
+        return result;
+    }
+    const size_t N = numel();
+    const float inv_n = 1.0f / static_cast<float>(N);
+    Tensor flat_this = reshape({N});
+    Tensor ones_1d(ShapeTag{}, {N}, _dtype, _device);
+    ones_1d.ones();
+    Tensor result = flat_this.dot(ones_1d) * inv_n;  // 前向数值: Σ a_i / n
 
-    if (_dtype == DType::kFloat) {
-        const float *data = this->data_read<float>();
-        if (!data || numel() == 0) {
-            return result;
-        }
-        float sum = 0.0f;
-        for (size_t i = 0; i < numel(); ++i) {
-            sum += data[i];
-        }
-        result._storage    = Storage(1, _dtype, _device);
-        float *result_data = result.data_write<float>();
-        if (result_data) {
-            *result_data = sum / static_cast<float>(numel());
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+        AutoGrad::registerNode<MeanNode>(*this, result_weak);
+        if (result_ptr->getRelatedNode()) {
+            result.setRelatedNode(result_ptr->getRelatedNode());
+            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
         }
     }
-
     return result;
 }
 

@@ -292,6 +292,8 @@ set(CT-Core-Headers
 set(CT-Nodes-Headers
         include/AutoGrad/Node.h
         include/AutoGrad/Nodes/AddNode.h
+        include/AutoGrad/Nodes/SumNode.h
+        include/AutoGrad/Nodes/MeanNode.h
         include/AutoGrad/Nodes/SubNode.h
         include/AutoGrad/Nodes/MulNode.h
         include/AutoGrad/Nodes/DivNode.h
@@ -319,6 +321,8 @@ set(CT-Nodes-Headers
 set(CT-Nodes
         src/AutoGrad/Node.cpp
         src/AutoGrad/Nodes/AddNode.cpp
+        src/AutoGrad/Nodes/SumNode.cpp
+        src/AutoGrad/Nodes/MeanNode.cpp
         src/AutoGrad/Nodes/SubNode.cpp
         src/AutoGrad/Nodes/MulNode.cpp
         src/AutoGrad/Nodes/DivNode.cpp
@@ -830,6 +834,10 @@ target_include_directories(test_c3_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(test_fused_bw_debt2 src/tests/standalone/test_fused_bw_debt2.cpp)
 target_link_libraries(test_fused_bw_debt2 PRIVATE CTorch)
 target_include_directories(test_fused_bw_debt2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_sum_mean_grad src/tests/standalone/test_sum_mean_grad.cpp)
+target_link_libraries(test_sum_mean_grad PRIVATE CTorch)
+target_include_directories(test_sum_mean_grad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(bench_accessor_overhead src/tests/standalone/bench_accessor_overhead.cpp)
 target_link_libraries(bench_accessor_overhead PRIVATE CTorch)
