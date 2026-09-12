@@ -764,6 +764,105 @@ int main() {
         runActFC("Test 14 Sigmoid", /*use_tanh=*/false);
     }
 
+    // ========== Test 15: 通用树识别器纯函数黄金用例 (§4.110 FCIS 层次1) ==========
+    // buildGenericChainMatch 是「函数式内核」: 只读 Node 图拓扑与 shape → 判定/规格,
+    // 不触碰任何成员状态、无副作用。因此可脱离编译与执行单独断言其契约 ——
+    // 本测试只构图 + 调识别器, 不触发 JIT(图 in → 规格 out)。
+    int golden_fail = 0;
+    std::cout << "\n[Test 15] 通用树识别器(纯函数)黄金用例" << std::endl;
+    {
+        auto chk = [&](bool ok, const std::string& what) {
+            std::cout << "    " << (ok ? "✅" : "❌") << " " << what << std::endl;
+            if (!ok) ++golden_fail;
+        };
+        // typeid().name() 形如 "9ReLUNode"(数字长度前缀), 与识别器内部同口径比对
+        auto typeIs = [](const std::string& t, const char* cls) {
+            size_t i = 0;
+            while (i < t.size() && t[i] >= '0' && t[i] <= '9') ++i;
+            return t.compare(i, std::string::npos, cls) == 0;
+        };
+        auto fill = [](Tensor& t) {
+            float* p = t.data_write<float>();
+            for (size_t i = 0; i < t.numel(); ++i) p[i] = (static_cast<float>(i) - 3.0f) * 0.25f;
+            t.requires_grad(true);
+        };
+
+        // ---- 用例 A: FC 链 relu(x @ w) → 命中, 2 节点(BFS: firing ReLU → MatMul) ----
+        {
+            Tensor x(ShapeTag{}, {8, 16}, DType::kFloat, DeviceType::kCPU);
+            Tensor w(ShapeTag{}, {16, 4}, DType::kFloat, DeviceType::kCPU);
+            fill(x); fill(w);
+            Tensor y = x.matmul(w).relu();
+            Tensor g(ShapeTag{}, {8, 4}, DType::kFloat, DeviceType::kCPU);
+            const ::Node* y_node = y.getRelatedNode().get();
+            auto m = capture.buildGenericChainMatch(y_node, g);
+            chk(m.has_value(), "A1 relu(x@w) 命中");
+            if (m.has_value()) {
+                chk(m->spec.types.size() == 2, "A2 树节点数 = 2");
+                chk(m->nodes.size() == m->spec.types.size(), "A3 nodes 与 types 等长");
+                chk(m->nodes[0] == y_node, "A4 index0 = firing 节点");
+                chk(typeIs(m->spec.types[0], "ReLUNode"), "A5 index0 类型 = ReLUNode");
+                chk(typeIs(m->spec.types[1], "MatMulNode"), "A6 index1 类型 = MatMulNode");
+                chk(m->spec.parent_idx.size() == 2 && m->spec.parent_idx[0] == -1 &&
+                    m->spec.parent_idx[1] == 0, "A7 父子关系 parent_idx=[-1,0]");
+                chk(m->spec.key.rfind("mimo_generic|g:", 0) == 0, "A8 key 前缀 = mimo_generic");
+                // 纯性: 同一输入两次调用必须给出同一规格(确定性, 可缓存/可并发)
+                auto m2 = capture.buildGenericChainMatch(y_node, g);
+                chk(m2.has_value() && m2->spec.key == m->spec.key && m2->spec.types == m->spec.types,
+                    "A9 确定性: 两次调用 key/types 相同");
+            }
+        }
+
+        // ---- 用例 B: 单 MatMul(无白名单上游) → 捕获条件「≥2 节点」拒绝 ----
+        {
+            Tensor x(ShapeTag{}, {8, 16}, DType::kFloat, DeviceType::kCPU);
+            Tensor w(ShapeTag{}, {16, 4}, DType::kFloat, DeviceType::kCPU);
+            fill(x); fill(w);
+            Tensor y = x.matmul(w);
+            Tensor g(ShapeTag{}, {8, 4}, DType::kFloat, DeviceType::kCPU);
+            auto m = capture.buildGenericChainMatch(y.getRelatedNode().get(), g);
+            chk(!m.has_value(), "B  单 MatMul → nullopt(树节点 < 2)");
+        }
+
+        // ---- 用例 C: 非白名单入口(单输入 Exp) → 入口守卫拒绝 ----
+        {
+            Tensor x(ShapeTag{}, {8, 4}, DType::kFloat, DeviceType::kCPU);
+            fill(x);
+            Tensor y = x.exp();
+            Tensor g(ShapeTag{}, {8, 4}, DType::kFloat, DeviceType::kCPU);
+            auto m = capture.buildGenericChainMatch(y.getRelatedNode().get(), g);
+            chk(!m.has_value(), "C  Exp 入口 → nullopt(入口守卫)");
+        }
+
+        // ---- 用例 D: 带 bias 的 FC 链 relu(x @ w + b) → 3 节点(ReLU → Add → MatMul) ----
+        {
+            Tensor x(ShapeTag{}, {8, 16}, DType::kFloat, DeviceType::kCPU);
+            Tensor w(ShapeTag{}, {16, 4}, DType::kFloat, DeviceType::kCPU);
+            Tensor b(ShapeTag{}, {4}, DType::kFloat, DeviceType::kCPU);
+            fill(x); fill(w); fill(b);
+            Tensor y = (x.matmul(w) + b).relu();
+            Tensor g(ShapeTag{}, {8, 4}, DType::kFloat, DeviceType::kCPU);
+            auto m = capture.buildGenericChainMatch(y.getRelatedNode().get(), g);
+            chk(m.has_value(), "D1 relu(x@w+b) 命中");
+            if (m.has_value()) {
+                chk(m->spec.types.size() == 3, "D2 树节点数 = 3(ReLU/Add/MatMul)");
+                chk(typeIs(m->spec.types[0], "ReLUNode") && typeIs(m->spec.types[1], "AddNode") &&
+                    typeIs(m->spec.types[2], "MatMulNode"), "D3 BFS 序 = ReLU → Add → MatMul");
+                chk(m->spec.parent_idx.size() == 3 && m->spec.parent_idx[0] == -1 &&
+                    m->spec.parent_idx[1] == 0 && m->spec.parent_idx[2] == 1,
+                    "D4 脊柱 parent_idx=[-1,0,1]");
+                chk(m->spec.parent_edge.size() == 3 && m->spec.parent_edge[1] == 0 &&
+                    m->spec.parent_edge[2] == 0, "D5 父边输入索引=[-1,0,0]");
+                // 每节点 forward 输入 desc 数 = 树的输入槽声明(B 侧: bias 是外部输入)
+                chk(m->spec.input_descs.size() == 3 && m->spec.input_descs[0].size() == 1 &&
+                    m->spec.input_descs[1].size() == 2 && m->spec.input_descs[2].size() == 2,
+                    "D6 input_descs 形状声明 = [1,2,2]");
+            }
+        }
+    }
+    std::cout << "  Test 15 黄金用例: " << (golden_fail == 0 ? "全部通过 ✅" : "存在失败 ❌")
+              << " (fail=" << golden_fail << ")" << std::endl;
+
     // 安全退出
     ct::c3::shutdownAll();
 
@@ -777,6 +876,10 @@ int main() {
         pass = false;
     } else {
         std::cout << "\n✅ PASS: C3 backward 结果正确 (overall_max_diff=" << final_max_diff << ")" << std::endl;
+    }
+    if (golden_fail != 0) {
+        std::cout << "❌ FAIL: 通用树识别器黄金用例失败 " << golden_fail << " 项" << std::endl;
+        pass = false;
     }
 
     if (!has_c3_hits) {
