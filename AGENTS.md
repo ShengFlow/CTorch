@@ -61,6 +61,9 @@
 - §4.96 **全局审查 13 条 P1 全部修复**(四批: 批1 局部/批2 所有权/批3 CE 1/N 行为变更/批4 复核); 两个自我纠正: P1-03 初版替换节点截断梯度链 → 改 rebind 虚函数; 批3 MNIST 验证假阳性(测试自带 LR 未重编) → 五处 CE 训练点 lr 同步; 最终全量回归绿, MNIST 97.1421% 逐位一致(STATUS 新)
 - §4.97 **P2 批量清理四批 + 交叉去重**: 引擎(原子化/声明清理/PGO 计数锁序) / MLIR+图融合(Div NaN 统一/maximumf/默认映射抛异常/哈希序列化) / 反向捕获(FC 校验/多轴回退/A-B 计数) / kernels+运行时(SIMD 守卫/AMX 真委托/tanh 溢出/UB/RAII/别名/copy 语义); 同步×异步交叉去重补全; 最终全量回归绿(STATUS 新)
 - §4.98 **leaky_relu 梯度断链根因修复**: supportsNodeType 子串匹配把 LReLUNode 误判为 ReLUNode("LReLUNode" 后缀即 "ReLUNode") → 改完整类名精确匹配 + 非名单入口短路; lrelu 5 项 FAIL 全过; **遗留** relu 的 C3 反向执行层 0.42 污染(下一轮)(STATUS 新)
+- §4.109 **C3 codegen 质量优化 A1/A2**(审查驱动): A1 广播二元算子全标量 + remui 阻碍自动向量化 → 三支向量化(同尺寸/标量 splat/对齐周期广播连续 load); A2 2D 转置裸双层列式写 → 32×32 tile + min 边界 + 内层连续写; IR 指纹确认(49 处向量 fadd + insertelement splat; tile=32 + smin 四层嵌套); **A2 当前 benchmark 不可达**(transA/B folding 吸收 transpose), 收益面向注意力类显式转置; 性能量化待安静窗口(STATUS 新)
+- §4.110 **通用树识别器抽为纯函数(FCIS 层次1)**: `buildGenericChainMatch(node,grad) const` 纯识别器(判定逐行搬移, 行为零变化) + 产物 `GenericChainMatch{spec, nodes}`; `tryExecuteGenericChainMIMO` 退化为「调识别器 + 命令式外壳」(registry/喂入/slot/pending/统计/miss 编译); 同批品味清理(三处喂入统一 `fwdFeedTensorFor` / 5 处放弃编译统一 `bail_compile()` / 删调试钩子 C3_GEN_FEED_DUMP); **新增 fwd_plan 索引自校验**(越界即放弃编译 → 执行侧透传安全回退); 新增 `test_c3_backward` Test 15 黄金用例 15 断言(识别器可脱离 JIT 单独断言); 全矩阵逐位不变(STATUS 新)
+- §4.110b **FFN SIGBUS 根因闭环(重要教训)**: `bench_llama_ffn_train 128 4096 11008 2` 间歇 SIGBUS, 一度疑为"helper 抽取引入潜伏 UB / 代码形态玄学"。`.ips` 崩溃报告给出硬结论: `KERN_PROTECTION_FAILURE` 且故障地址**恒为 `commpage (reserved)` 区起始字节**(紧邻 4MB Malloc Small 区末尾) ⇒ **读越过缓冲区末端**, 撞未映射页才崩(相邻页恰好映射时静默错值)。根因是中途那版 helper 对所有节点都喂 `forward_inputs`(漏 `i==0`) ⇒ 张量形状不符 ⇒ 下游 GEMM 按错误 extent 读。对照实验: 缺陷版 **3/3 确定性崩**, 修复版累计 **0/13**(含 MallocScribble/GuardEdges 堆扰动)。**无潜伏 UB 残留**; 教训见「Cross-Project Memory」(STATUS 新)
 
 **当前性能基线** (M3 Pro / 数值受热降频与背景负载影响):
 > ⚠️ **2026-09-10 复核(§4.90): 以下旧基线未在干净环境确认, 部分复现失败**。
@@ -228,6 +231,13 @@ append 到 `/Users/ghostface/.minimax/agents/mavis/memory/MEMORY.md` 的 CTorch 
 - **2026-08-13**: "MiniMax Code 必须通过 launchd plist 拉起, 否则 CDP 9341 没人 listen"
 - **2026-09-05**: "PEL 候选 prompt 生成必须 cross-check user/agent memory 硬约束"
 - **2026-09-05**: "PEL 启动前必须先 cross-check 种子 prompt 本身"
+- **2026-09-13**: "间歇性 SIGBUS/EXC_BAD_ACCESS 且「改几字节代码就崩/不崩」时, 默认假设是**越界访存撞上分配布局**,
+  不是代码形态玄学: 先读 `~/Library/Logs/DiagnosticReports/*.ips` 的 `vmRegionInfo`, 若故障地址落在
+  `commpage (reserved)` / 紧邻某 malloc 区末尾 ⇒ 读越过缓冲区末端(相邻页恰好映射时表现为静默错值)。
+  比反复调代码形态快一个数量级; CTorch 实例见 STATUS §4.110b"
+- **2026-09-13**: "改'取用哪个张量'这类喂入逻辑, 必须逐节点区分 firing 与树内节点: 喂错张量不会立刻报错,
+  而是让下游 GEMM 按错误 extent 读 ⇒ 确定性崩溃或静默垃圾值(MNIST 同时出现 2.35e36 级 max_diff)。
+  抽取前后应保留「原条件逐条复刻」的对照实验, 否则会把自身缺陷误判为潜伏 UB"
 
 ## 报告路径 (PEL25 阶段产物)
 

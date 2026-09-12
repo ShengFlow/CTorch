@@ -3217,3 +3217,56 @@ cacheKey 语义 / MIMO 退场 / 环境守卫 / dot 反向 / RC2 / tanh 反向图
   注意力类显式转置场景; A1/A2 性能量化待安静窗口
 - 审查剩余项(未做): A3 MatMul tile 写死 32 且 AutoTuner 默认关 / A4 分支 DAG 元素链
   回退标量 / Transpose 非 0-1 轴分支为恒等拷贝(占位)
+
+
+## 4.110 2026-09-13 通用树识别器抽为纯函数(FCIS 层次1) + FFN SIGBUS 根因闭环
+
+- 触发: 「何为函数式内核/命令式外壳, 我们能不能用」→ 先做零风险的那一层:
+  把 C3 backward 里唯一可纯化的决策核心(通用树识别器)从「判定+生效」混合物中抽出
+- **层次1 落地**: `buildGenericChainMatch(node, grad) const` 纯识别器(判定逻辑逐行搬移,
+  行为零变化); 产物 `GenericChainMatch{值语义 spec, BFS 序只读 Node* 视图}`:
+  spec 可跨线程传编译(零 Node* 引用), nodes 供执行段取 live tensor。
+  `tryExecuteGenericChainMIMO` 退化为「调识别器 + 命令式外壳」(registry/喂入/slot/
+  pending/统计/miss 编译仍在外壳)。边界取「决策 vs 生效」而非「代码 vs 数据」
+- 品味清理(同批): ① 三处喂入(Tanh/Sigmoid 的 y 语义)统一为 `fwdFeedTensorFor()`,
+  消除重复判断 + 修掉「树内非 firing 节点漏判」; ② 编译线程 5 处「放弃编译」统一走
+  `bail_compile()` 后置清理(§4.97 批C 同类漏一处即 pending 残留); ③ 删 ad-hoc 调试
+  钩子 `C3_GEN_FEED_DUMP`(全库无他引用)
+- **新增守卫**: 编译线程生成 fwd_plan 后自校验 (链节点索引, 输入索引) 必须落在
+  `spec.input_descs` 声明内, 越界即放弃编译(不装 kernel) → 执行侧「计划缺失即透传」
+  安全回退。合法路径行为不变
+
+### FFN SIGBUS 根因闭环(排查过程的硬结论)
+
+- 现象: `bench_llama_ffn_train 128 4096 11008 2` 间歇 SIGBUS(exit 138), 一度疑为
+  「helper 抽取引入的潜伏 UB」, 且「prefer 表达式写法不同 → 崩/不崩」看似代码形态玄学
+- **证据链(全部落盘可复核)**:
+  1. macOS 崩溃报告 7 份(`~/Library/Logs/DiagnosticReports/bench_llama_ffn_train-*.ips`)
+     签名完全一致: `EXC_BAD_ACCESS/SIGBUS/KERN_PROTECTION_FAILURE`, 崩在
+     `cblas_sgemm` ← JIT kernel ← `OrchestratedKernel::execute` ←
+     `tryExecuteGenericChainMIMO` ← ... ← `ComputeCore::backward`
+  2. `vmRegionInfo` 显示故障地址**恒为 `commpage (reserved)` 区起始字节**
+     (`---/--- SM=NUL reserved VM address space (unallocated)`), 且紧邻一块
+     4MB `Malloc Small` 区间末尾 ⇒ 不是野指针写入, 而是**读越过缓冲区末端**,
+     撞进未映射页才崩(相邻页恰好映射时即静默错值)
+  3. 对照实验: 复原 helper 第一版(对所有节点都喂 `forward_inputs`, 漏 `i==0` 限制)
+     → **3/3 确定性 SIGBUS**; 修复版(A2/A3/内联三种写法) 累计 **0/13 通过**, 且加
+     `MallocScribble/MallocGuardEdges` 堆扰动仍 0/6
+- **结论**: 崩溃是**中途那版 helper 自身缺陷**所致 —— 对树内非 firing 节点喂
+  调用方的 `forward_inputs` ⇒ 张量形状不符 ⇒ 下游 GEMM 按错误 extent 读 ⇒ 越界。
+  与同时观测到的 MNIST 垃圾值(`max_diff=2.35e36`、loss 2.3014/acc 11.2280%)同源。
+  **代码形态"敏感"是假象**: 改动几字节改变了 malloc 布局, 决定越界页恰好映射与否,
+  于是表现为时崩时不崩。**无潜伏 UB 残留**
+- 沉淀: 长尾教训 —— 「间歇崩溃 + 形态敏感」的默认假设应是**越界访存撞上布局**, 查
+  `vmRegionInfo` 比反复调代码形态有效得多; `.ips` 里的 `commpage (reserved)`
+  是 macOS 对「读越过已分配区末端」的高辨识度签名
+
+### 验证(build-release, Release+ninja)
+
+- `test_c3_graph` 123 PASS; `test_c3_backward` max_diff=0 且**新增 Test 15 黄金用例
+  fail=0**(15 断言); `test_sum_mean_grad` ALL PASS; `test_autograd_v2` 172/0(CPU+MPS)
+- MNIST `loss 0.0985 / acc 97.1421%` 逐位一致; FFN 2 步 exit=0(step0 loss=1390.0156)
+- 新增 Test 15 覆盖: A relu(x@w) 命中(节点数/BFS 序/firing 身份/父子关系/key 前缀/
+  nodes 与 types 对齐/确定性)、B 单 MatMul→nullopt、C Exp→nullopt(入口守卫)、
+  D relu(x@w+b) 3 节点 + `input_descs=[1,2,2]`(计划自校验依赖的形状契约)
+- commit: c3 `9cc1a94`(识别器抽取 + 品味清理 + 计划自校验) / 主仓 `7c4f9ca`(黄金用例)
