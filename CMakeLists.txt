@@ -163,7 +163,11 @@ set(CT-Core
 #
 # ---- 无条件 C3 核心源文件 ----
 # [2026-08-17] C3 已拆分为独立 submodule（挂在 c3/），源文件位于 c3/src/C3/
+# ⚠️ 注意: 本列表与 c3/CMakeLists.txt 的 C3-Core-Sources 是**两份平行维护**的源表
+#    (本仓未用 add_subdirectory(c3))。新增/删除 c3 源文件必须同时改两处,
+#    否则会出现「本地能编、另一个入口编不过」或本次 §4.114 遇到的未定义符号。
 set(CT-C3-Core
+        c3/src/C3/C3Error.cpp
         c3/src/C3/Graph.cpp
         c3/src/C3/C3Engine.cpp
         c3/src/C3/GraphMerger.cpp

@@ -19,6 +19,8 @@
 #include <map>
 #include <thread>
 #include <vector>
+#include <stdexcept>
+#include <type_traits>
 
 #include "Tensor.h"
 #include "CtorchScheduler.h"
@@ -28,6 +30,7 @@
 #include "C3/FusionPlanner.h"
 #include "C3/Tracer.h"
 #include "C3/C3KernelRegistry.h"
+#include "C3/C3Error.h"
 #include "C3/PGOManager.h"
 #include "C3/C3Cleanup.h"
 #include "Ctools.h"
@@ -4453,3 +4456,46 @@ TEST(GraphMerger, GraphEquivalence_ThreeLayers) {
 }
 
 #endif // CT_ENABLE_MLIR
+
+// ======================= §4.114 C3 统一错误出口契约 =======================
+// throwCompileError / throwExecError 把 c3 各处裸 `throw std::runtime_error` 收敛到
+// 框架错误出口(CtorchError::throwException)。契约是「**只加日志, 不改异常语义**」:
+// 抛出类型与裸 throw 完全一致, 故所有既有 catch 与 what() 判断逐字不变。
+// 下面把这条契约钉死 —— 若将来有人把出口改成自定义异常类型, 这些用例会立刻转红。
+TEST(C3Error, ExitContractIsTransparent) {
+    const std::string msg = "c3 error probe: 逐字保持的消息";
+
+    // ① 编译级出口: 可被 std::runtime_error 接住, what() 逐字一致
+    {
+        bool caught = false;
+        try {
+            ct::c3::throwCompileError(msg);
+            FAIL() << "throwCompileError 未抛出";
+        } catch (const std::runtime_error& e) {
+            caught = true;
+            EXPECT_STREQ(e.what(), msg.c_str());
+        } catch (...) {
+            FAIL() << "throwCompileError 抛出类型不是 std::runtime_error";
+        }
+        EXPECT_TRUE(caught);
+    }
+
+    // ② 引擎/内核级出口: 同上
+    {
+        bool caught = false;
+        try {
+            ct::c3::throwExecError(msg);
+            FAIL() << "throwExecError 未抛出";
+        } catch (const std::runtime_error& e) {
+            caught = true;
+            EXPECT_STREQ(e.what(), msg.c_str());
+        } catch (...) {
+            FAIL() << "throwExecError 抛出类型不是 std::runtime_error";
+        }
+        EXPECT_TRUE(caught);
+    }
+
+    // ③ 出口是 [[noreturn]]: 调用点之后的代码不可达, 编译器据此免去假性返回路径告警
+    static_assert(std::is_same_v<decltype(ct::c3::throwCompileError(msg)), void>,
+                  "throwCompileError 应为 [[noreturn]] void");
+}

@@ -3367,3 +3367,69 @@ cacheKey 语义 / MIMO 退场 / 环境守卫 / dot 反向 / RC2 / tanh 反向图
 - 审查剩余未做项(风险分级见报告 §7): c3 错误处理契约统一(需 HITL 定方向) /
   重构 compileFFNMIMOBackwardAsync 的 14 参数签名(应删除而非重构) /
   `(void)` 压制(集中在测试, 优先级低)
+
+
+## 4.114 2026-09-13 c3 错误出口统一(可观测性) + 双份源表隐患修复
+
+承 §4.113 审查剩余项 A("错误处理契约统一, 需 HITL 定方向")。**动手前的核查推翻了原判断**。
+
+### A. 勘误: 原「异常类型分裂」判断不成立
+
+- 读 `CtorchError::throwException` 实现(include/CtorchError.h:592)发现:
+  它内部就是 `log(...); throw std::runtime_error(msg);` —— **抛出类型与裸 throw 完全相同**,
+  不存在 catch 漏接, 也不存在 `catch (const CtorchError&)` 这种边界(CtorchError 是纯工具类,
+  非异常基类)。§4.113 报告中「调用方无法用统一类型捕获框架错误」的表述**有误**, 已订正
+  (报告 §9 勘误段)
+- 核查顺序的价值: 若按错误前提动手, 会去做「统一异常基类」(无必要且动 ABI) 或
+  「c3 侧异常转换层」(无意义) —— 先把被指控 API 的实现读完, 避免了一次真实的重构浪费
+- 修正后的性质: 不是异常类型分裂, 而是**可观测性缺口** —— c3 的 88 处裸 throw
+  完全绕过框架错误日志(无平台/类型/错误码)。定级 P1 → P2
+
+### B. c3 统一错误出口(新增 C3Error.h/.cpp)
+
+- `c3/include/C3/C3Error.h`(仅依赖 <string>, 不引宿主头) + `c3/src/C3/C3Error.cpp`
+  (宿主头只出现在实现里), 两个语义化出口:
+  - `throwCompileError(msg)` → (kGENERAL, UNKNOWN): 图结构/MLIR 校验/lowering/算子不支持
+  - `throwExecError(msg)`    → (kGENERAL, KERNEL_LAUNCH): ExecutionEngine 创建/kernel 查找/invokePacked
+- **88 处迁移**(13 个文件): compile 75 + exec 13。迁移用「注释/字符串掩码 + 括号配平」
+  脚本完成 —— 其中 **42 处是跨行 throw**, 朴素 sed 会改坏; 掩码同时排除了 Doxygen
+  `@throw std::runtime_error` 文档行与注释里的同名文本
+- 语义**零变化**: 类型与 `what()` 文本逐字不变(仅多一条框架日志);
+  `[[noreturn]]` 契约经 `__builtin_unreachable()` 补齐(宿主 `throwException` 未标 noreturn)
+- 新增契约单测 `TEST(C3Error, ExitContractIsTransparent)`: 钉住「可被 std::runtime_error
+  接住 + what() 逐字一致 + 返回类型 void」—— 将来若有人把出口改成自定义异常类型即刻转红
+- 正向证据(这次是真的): 运行 test_c3_graph 出现两条 **ERROR 级**框架日志
+  `[ERROR_CODE:0x5000400][PLATFORM:GENERAL][TYPE:UNKNOWN]` 与
+  `[ERROR_CODE:0x5050400][TYPE:KERNEL_LAUNCH]`, 消息逐字一致; 改造前 c3 裸 throw 无任何日志
+  - 取证过程中的自我纠错: 首轮误把 test_c3_compile_error 输出里的 5 条
+    `[PLATFORM:GENERAL]` 当作证据, 查 HEAD 发现 c3 原本就有 `CtorchError::log(...)` 调用
+    (但级别是 WARN/DEBUG/INFO) —— 于是改用**日志级别**作判别依据才成立
+
+### C. 双份源表隐患(本次踩到)
+
+- 现象: 往 `c3/CMakeLists.txt` 的 `C3-Core-Sources` 加了 C3Error.cpp, cmake 正常重新生成,
+  但链接报 `undefined ct::c3::throwExecError/throwCompileError`
+- 根因: **主仓 CMakeLists.txt 的 `set(CT-C3-Core ...)` 是与 c3 子模块平行维护的第二份源表**,
+  实际生效的是它; 主仓**没有** `add_subdirectory(c3)`(c3/CMakeLists.txt 里那句
+  "CTorch 通过 add_subdirectory(c3)" 是过时注释)
+- 处置: 两份都补 C3Error.cpp; 并在主仓列表上方加警示注释(新增/删除 c3 源文件必须同时改两处)
+
+### 验证(build-release, Release+ninja)
+
+| target | exit | 证据 |
+|--------|------|------|
+| test_c3_graph | 0 | **124 PASSED**(原 123 + 新契约单测) |
+| test_c3_backward | 0 | overall_max_diff=0 |
+| test_sum_mean_grad | 0 | ALL PASS |
+| test_mlir_to_llvm_ir | 0 | PASS 21 / FAIL 0 |
+| test_linalg_elementwise / test_one_shot_bufferization | 0 | 通过 |
+| test_c3_matmul_blas | 0 | 判定全部正确 |
+| test_h2_matmul_precision | 0 | 5 形状, 失败 0 |
+| test_c3_compile_error | 0 | 11 passed, 0 failed |
+| test_c3_pgo_deopt | 0 | 7 passed, 0 failed |
+| test_fusion_planner | 0 | 通过 |
+| test_autograd_v2 | 0 | 172 / 0 |
+| test_c3_mnist_train | 0 | acc 97.1421% + 门槛 PASS |
+| bench_llama_ffn_train | 0 | step0 loss=1390.0156(逐位不变) |
+
+- 注: 迁移前逐位基线为 MNIST 0.0985/97.1421%、FFN 1390.0156、backward max_diff=0 —— 全部不变
