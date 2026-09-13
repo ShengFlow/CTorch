@@ -678,6 +678,15 @@ int main() {
     std::cout << "  平均/batch: " << std::setprecision(3)
               << (avg_time / num_batches) << "ms" << std::endl;
 
+    // [§4.111] 回归门槛: 本测试此前只打印指标并恒以 0 退出, acc 退化为任意值都不会失败
+    // (喂入缺陷曾使 acc 落到 11.23% 而测试仍"通过")。此处加粗粒度门槛, 使旗舰基线可被 CI 拦住。
+    // 门槛刻意留足余量(观测值 C3 97.1421% / eager 对照 97.1838%), 只拦结构性退化, 不拦环境波动。
+    constexpr double kAccFloor = 0.95;   // 低于此必为链路缺陷(随机猜测为 10%)
+    constexpr double kLossCeil = 0.15;   // 高于此必为训练未收敛
+    const bool metric_ok = (accs.back() >= kAccFloor) && (losses.back() <= kLossCeil);
+    std::cout << "  [REGRESSION] 门槛 acc>=" << kAccFloor << " && loss<=" << kLossCeil
+              << " → " << (metric_ok ? "PASS ✅" : "FAIL ❌") << std::endl;
+
     // [方案2 探针] C3_CBLAS_PROBE=1 时打印 cblas 分桶耗时
     report_cblas_probe();
 
@@ -688,5 +697,6 @@ int main() {
     fprintf(stderr, "[CLEANUP] done, exiting instantly via std::_Exit to bypass LLVM JIT static destructor bugs\n");
 #endif
 
-    std::_Exit(0);
+    // [§4.111] 把回归门槛接到退出码(此前恒为 0)
+    std::_Exit(metric_ok ? 0 : 1);
 }

@@ -46,3 +46,6 @@ __pycache__/
 
 # deploy-time machine fingerprint (machine-specific, not committed)
 c3.fingerprint
+
+# Trae IDE 本地技能/缓存目录(非项目内容)
+.trae/

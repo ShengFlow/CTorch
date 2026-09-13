@@ -3270,3 +3270,29 @@ cacheKey 语义 / MIMO 退场 / 环境守卫 / dot 反向 / RC2 / tanh 反向图
   nodes 与 types 对齐/确定性)、B 单 MatMul→nullopt、C Exp→nullopt(入口守卫)、
   D relu(x@w+b) 3 节点 + `input_descs=[1,2,2]`(计划自校验依赖的形状契约)
 - commit: c3 `9cc1a94`(识别器抽取 + 品味清理 + 计划自校验) / 主仓 `7c4f9ca`(黄金用例)
+
+
+## 4.111 2026-09-13 代码质量专项审计 + 旗舰回归门槛修复
+
+- 触发: 「再找找有没有代码质量很差的地方」→ 按 CODE REVIEW 协议 §10.3(可维护性)/§10.7(JIT 管道)
+  做量化扫描(269 个非测试源文件), 报告落盘
+  `/Users/ghostface/skills/reports/2026-09-13/code-review-code-quality-audit.md`
+- **实测结论(含三条自我否定的初始假设)**:
+  - 跨文件代码重复**仅 14 处 8 行窗口**, 全部集中在 MLIR pass 流水线样板;
+    逐条比对三个生成器(LinalgElementwise/Fused/OneShot)的 lowering 尾段**完全一致未漂移**
+    ⇒ 属可维护性隐患而非缺陷(§10.7 关注的 ReconcileUnrealizedCasts 缺失未发生)
+  - 数值常量规范度**好**: tile/trans 已具名(kDefaultTileM/N、kMatMulNoTrans), 裸魔数极少
+  - 注释掉的死代码**未见**: 127 处正则命中抽样全为数学公式/文档注释
+  - `invokePacked` 返回值**已检查**(LinalgOneShotGen/LinalgFusedGen 均 throw) ⇒ §10.7 该项通过
+  - 真问题两条: ① **错误处理契约跨子模块分裂**(c3 58 处 `throw std::runtime_error`,
+    主仓 `src/` 走 `CtorchError::throwException`, 契约在 c3 侧系统性不满足, 方向变更需 HITL);
+    ② **6 个 `test_*` 无法失败**(旗舰 `test_c3_mnist_train` 只打印指标 + 无条件 `_Exit(0)`)
+  - 另发现 1 处陈旧注释与代码相反(白名单称 Tanh/Sigmoid 未纳入, 实际已纳入) → 已修(c3 ecf35f8)
+- **本次已修(零风险项)**:
+  - `test_c3_mnist_train` 加回归门槛 `acc>=0.95 && loss<=0.15` 并接到退出码
+    (此前恒 0 退出 ⇒ acc 掉到 11.23% 仍"通过"; 门槛留 2.1pp 余量, 观测 C3 97.1421% / eager 97.1838%)
+  - **阴性对照**: 门槛临时提到 0.999(不可达) → 实测退出码 1, 证明门槛生效后恢复
+- 待办(未做, 风险分级见报告 §7): c3 错误处理契约统一(需 HITL) / 抽 `appendLLVMLoweringTail()`
+  / 其余 5 个无失败信号测试补断言或改名 / 澄清 `test_c3_mnist_train:686` 关于 shutdownAll 的过时断言
+- 验证: MNIST 0.0985/97.1421% + exit 0(带门槛) / test_c3_graph 123 PASS /
+  test_c3_backward max_diff=0 / FFN 2 步 exit=0
