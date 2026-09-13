@@ -166,7 +166,7 @@ cd /Users/ghostface/CTorch-optimize-AutoDiff
 - `C3_REGION_MERGE_ALLOW=1` **ADR-0002 方案 C**: 跨分量默认合并 + 规模保护(替代相对收益门槛); 默认关=Strict
 - `C3_PARTITION_AB=1` **[实测] A/B: 整图 1 内核 vs 按 planner 切分多内核**(交错 30 轮配对, 需配合 `C3_PLANNER_DIAG=1`)
 - `C3_MIMO_GENERIC` **[通用树式识别器, 默认开 §4.107]**: FC/FFN 反向默认路径(真实拓扑走树+通用构建器+planner/G3 接管); 设 `=0` 关闭回退手写识别器
-- `C3_MIMO_LEGACY` **[手写 MIMO pattern, 默认关 §4.107]**: 已退场; 设 `=1` 恢复手写执行段(诊断/回退)。**§4.115: 该路径为「待删除」状态** —— 回退通道实测有效(generic=0+legacy=1 跑 MNIST 与默认逐位一致), 删除判据(soak ≥2 周/用户指示/共享基础设施需改动)与九项删除清单见 §4.115 与 `c3/src/C3/C3BackwardCapture.cpp` 闸门注释;**删除属 HITL, 勿自行删**
+- `C3_MIMO_LEGACY` **[手写 MIMO pattern, 默认关 §4.107]**: 已退场; 设 `=1` 恢复手写执行段(诊断/回退)。**§4.115: 该路径为「待删除」状态, 且删除方案已获用户确认(2026-09-13)** —— 回退通道实测有效(generic=0+legacy=1 跑 MNIST 与默认逐位一致); 删除判据(① 退场满 2 周即 2026-09-26 后无回退需求且跨机器验证过默认路径 / ② 用户指示立即删 / ③ 通用识别器需改共享基础设施)与九项删除清单见 §4.115 与 `c3/src/C3/C3BackwardCapture.cpp` 闸门注释。删/不删按判据自行裁决, 但**执行删除前须一句话告知用户**(不可逆操作)
 - `C3_G3_TAKEOVER` **[G3 接管, 默认开 §4.88]**: planner 判定参与 MIMO backward 执行决策(判拆则切分编排执行, 判并/编译失败回退整图); 设 `=0` 关闭回退到整图单内核
 - `C3_SEPARATOR_MERGE` **[分隔符归属, 默认开 §4.87]**: 分隔符按工作集上界决定并入 region / 独立成内核; 设 `=0` 关闭(回到一律独立)。阈值可 `C3_SEPARATOR_MERGE_WS=<bytes>` 覆盖(默认 1MB)
 - `C3_FINGERPRINT=<path>` 覆盖机器指纹配置路径(默认 ./c3.fingerprint); 由 `c3ctl calibrate` 生成
@@ -311,3 +311,19 @@ cd /Users/ghostface/CTorch-optimize-AutoDiff
   新默认全矩阵逐位不变, 回退通道(旧默认组合)验证完好
 - **④ 完整闭环: 手写 MIMO pattern 正式退场, 通用树式识别器为 FC/FFN 反向默认路径**
   (手写代码保留, C3_MIMO_GENERIC=0 + C3_MIMO_LEGACY=1 可回退)
+- **⑤ 退场代码的归宿 = 删除(非重构); 用户已确认按 soak 判据执行**(2026-09-13, 洛锦):
+  - 决策要点: 不把 `compileFFNMIMOBackwardAsync`(14 参数)/`compileUnifiedMIMOBackwardAsync`
+    (7 参数)重构为参数对象 —— 为即将删除的代码做接口美化是纯浪费;
+    也不在退场仅 1 天时删除 —— 它当前是默认路径的**唯一**回退通道
+  - 用户同意(原话「我同意你的说法」), 即**等待 soak, 不立即删除**; 删除时不必再回头确认判据,
+    但**删除动作本身仍是不可逆操作**, 执行前需一句话告知(见下)
+  - 删除判据(满足任一): ① 退场满 2 周(即 2026-09-26 之后)无回退需求, 且期间跨机器
+    (含 x86/AVX-512 / DCU)验证过默认路径; ② 用户明确指示立即删除;
+    ③ 通用树式识别器需改动其共享基础设施(喂入/slot/pending 语义)时
+  - 删除清单(九项, 勿漏): `C3BackwardCapture.cpp` 手写执行段 +
+    `compileUnifiedMIMOBackwardAsync` + `compileFFNMIMOBackwardAsync` + 配套 `build*BackwardGraph`
+    + `mimoLegacyEnabled()` 与闸门 + `C3_MIMO_LEGACY` 开关 + 头文件对应声明 +
+    本节纪事与开关条目 + `probe_fused_bw_debt2`(DEBT-2 脚手架同批)
+  - 回退通道有效性(soak 的前提, §4.114 实测): generic=0 + legacy=1 跑 MNIST 得
+    0.0985 / 97.1421%, 与默认路径**逐位一致**且门槛 PASS ⇒ 名义保留 ≠ 实际可用, 已被验证
+  - 详细记录: STATUS_CONTEXT.md §4.115; 代码内说明块见 `mimoLegacyEnabled()` 闸门处
