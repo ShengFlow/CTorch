@@ -166,7 +166,7 @@ cd /Users/ghostface/CTorch-optimize-AutoDiff
 - `C3_REGION_MERGE_ALLOW=1` **ADR-0002 方案 C**: 跨分量默认合并 + 规模保护(替代相对收益门槛); 默认关=Strict
 - `C3_PARTITION_AB=1` **[实测] A/B: 整图 1 内核 vs 按 planner 切分多内核**(交错 30 轮配对, 需配合 `C3_PLANNER_DIAG=1`)
 - `C3_MIMO_GENERIC` **[通用树式识别器, 默认开 §4.107]**: FC/FFN 反向默认路径(真实拓扑走树+通用构建器+planner/G3 接管); 设 `=0` 关闭回退手写识别器
-- `C3_MIMO_LEGACY` **[手写 MIMO pattern, 默认关 §4.107]**: 已退场; 设 `=1` 恢复手写执行段(诊断/回退)
+- `C3_MIMO_LEGACY` **[手写 MIMO pattern, 默认关 §4.107]**: 已退场; 设 `=1` 恢复手写执行段(诊断/回退)。**§4.115: 该路径为「待删除」状态** —— 回退通道实测有效(generic=0+legacy=1 跑 MNIST 与默认逐位一致), 删除判据(soak ≥2 周/用户指示/共享基础设施需改动)与九项删除清单见 §4.115 与 `c3/src/C3/C3BackwardCapture.cpp` 闸门注释;**删除属 HITL, 勿自行删**
 - `C3_G3_TAKEOVER` **[G3 接管, 默认开 §4.88]**: planner 判定参与 MIMO backward 执行决策(判拆则切分编排执行, 判并/编译失败回退整图); 设 `=0` 关闭回退到整图单内核
 - `C3_SEPARATOR_MERGE` **[分隔符归属, 默认开 §4.87]**: 分隔符按工作集上界决定并入 region / 独立成内核; 设 `=0` 关闭(回到一律独立)。阈值可 `C3_SEPARATOR_MERGE_WS=<bytes>` 覆盖(默认 1MB)
 - `C3_FINGERPRINT=<path>` 覆盖机器指纹配置路径(默认 ./c3.fingerprint); 由 `c3ctl calibrate` 生成

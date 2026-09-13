@@ -3433,3 +3433,27 @@ cacheKey 语义 / MIMO 退场 / 环境守卫 / dot 反向 / RC2 / tanh 反向图
 | bench_llama_ffn_train | 0 | step0 loss=1390.0156(逐位不变) |
 
 - 注: 迁移前逐位基线为 MNIST 0.0985/97.1421%、FFN 1390.0156、backward max_diff=0 —— 全部不变
+
+
+## 4.115 2026-09-13 手写 MIMO 退场状态显式化(不删除, 附判据与清单)
+
+- 触发: 审查剩余项 B ——「`compileFFNMIMOBackwardAsync` 14 参数是否重构」
+- **结论: 不重构、也不现在删除**, 而是把「待删除」状态在代码里定死
+- 为什么不重构: 该函数在 `mimoLegacyEnabled()` 门后, 默认不可达(§4.107 起退场)。
+  为即将删除的代码做参数对象化是纯浪费 —— 已在头文件 @note 里写明这条判断
+- 为什么不现在删: **退场提交 c3 4543e23 = 2026-09-12, 距今仅 1 天, 不构成 soak**;
+  且它当前是默认路径的**唯一**回退通道。删除需用户确认(HITL 决策门)
+- 先做的验证(证明回退通道确实有效, 而非名义保留):
+  `C3_MIMO_GENERIC=0 C3_MIMO_LEGACY=1` 跑 MNIST → **0.0985 / 97.1421%**,
+  与默认路径**逐位一致**且门槛 PASS ⇒ 回退通道可依赖
+- 落地内容(c3 b39e189):
+  - `C3BackwardCapture.cpp` 闸门处增退场说明块: 状态 / 回退通道实测结论 /
+    **删除判据**(① soak ≥2 周无回退需求且跨机器(含 x86/DCU)验证过默认路径;
+    ② 用户指示立即删; ③ 通用识别器需改动共享基础设施(喂入/slot/pending)时) /
+    **删除清单**(两处手写执行段 + `compileUnifiedMIMOBackwardAsync`(7 参数) +
+    `compileFFNMIMOBackwardAsync`(14 参数) + 配套 `build*BackwardGraph` +
+    `mimoLegacyEnabled()` + `C3_MIMO_LEGACY` 开关 + 头文件声明 +
+    AGENTS.md 条目与退场纪事 + `probe_fused_bw_debt2` 同批)
+  - 头文件两个 legacy 声明加 `@note`
+  - 修正 c3/CMakeLists.txt 过时注释(原称主仓用 add_subdirectory 集成, 实为双份源表)
+- 验证: test_c3_graph 124 PASSED / MNIST 0.0985+97.1421% / FFN step0 1390.0156(逐位不变)
