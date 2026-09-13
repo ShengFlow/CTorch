@@ -283,14 +283,14 @@ cd /Users/ghostface/CTorch-optimize-AutoDiff
 | C3 graph + Benchmark 全量 | `test_c3_graph`(build-release) | 118 断言含 MLP/MLIR + SiLU JIT 执行 + MatMul+SiLU epilogue + OrchestratedKernel 编排, 必过 |
 | **sum/mean 梯度回归** | `test_sum_mean_grad`(build-release) | 18 断言(sum/mean/dim/dims/DotNode 断链回归) |
 | 反向正确性 | `test_c3_backward` | max_diff=0 |
-| MNIST 端到端训练 | `test_c3_mnist_train`(根目录) | acc 97.1421% 基线 |
+| MNIST 端到端训练 | `test_c3_mnist_train`(根目录) | acc 97.1421% 基线; **§4.111 起带失败门槛** `acc>=0.95 && loss<=0.15` 并接到退出码(此前恒 0 退出) |
 | LLaMA FFN MIMO | `bench_llama_ffn_train`(128 4096 11008) | build-release vs build-eager 对照 |
 | SwiGLU/SiLU (Stage 5) | `test_swiglu` | 3208 断言 |
 | GELU (dispatch 模式) | `test_gelu` | if constexpr 改动必跑 |
 | Autograd 通用 | `test_autograd_issues` `test_autograd_v2` | dispatch 模板改动必跑 |
 | C3 region fusion | `test_graph_merger` | 改动 LinalgFusedGen/checkPattern 必跑 |
 | C3 compile pipeline | `test_c3_compile_merged` `test_c3_compile_merged_pgo` | 10/11 断言 |
-| 反向 fusion/DEBT | `test_fused_bw_debt2` | fused BW 默认 off, sanity |
+| ~~反向 fusion/DEBT~~ | `probe_fused_bw_debt2` | **§4.113 移出矩阵**: 原 `test_fused_bw_debt2` 实为无判定的脚手架(正文只打印解析解与计划) → 改名 `probe_*`。DEBT-2 已被 MIMO 取代, 不复活 |
 | pgo/错误路径(已修绿) | `test_c3_pgo_deopt` `test_c3_compile_error` | bad_weak_ptr 已修 |
 | 泛化判据层 | `test_fusion_planner` | 29 断言(Default/RegionKernel/代价门/强制合并/ADR-0002 策略/partitionGraph 切分 + 子图边界契约(Const 外部输入 / 分隔符切出 / 跨子图依赖) + **分隔符归属(并入/独立)** + SiLU 归类) |
 | **MIMO 缓冲池清理** | `test_c3_flatout_pool` | §4.93+§4.94: 池被使用 → drain 清空 → 幂等 → 恢复缓存 → drain 后迟到析构安全 + **执行×drain 并发交错压力** |

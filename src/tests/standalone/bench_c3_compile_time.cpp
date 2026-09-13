@@ -1,8 +1,13 @@
 /**
- * @file test_c3_compile_time.cpp
- * @brief C3 JIT 编译耗时统计
+ * @file bench_c3_compile_time.cpp
+ * @brief [bench, 非回归测试] C3 JIT 编译耗时统计
  * @details 测量 C3 编译流程各阶段耗时，包括图优化、kernel 生成、底层编译等。
  *          为后续编译延迟优化提供基线数据。
+ *          **[§4.113 改名与澄清]** 原名 test_c3_compile_time。经审查: 本文件是
+ *          测量工具, 只打印耗时, main 末尾无条件 return 0 —— 无判定、无法失败。
+ *          测量类工具不应占 test_* 命名(会给「Test 矩阵」造成已覆盖的错觉),
+ *          故更名为 bench_*。编译耗时结论的提交口径见 STATUS §4.90
+ *          (须附测量环境与同配置离散度)。
  * @date 2026/8/2
  */
 

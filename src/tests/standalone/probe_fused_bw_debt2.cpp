@@ -1,31 +1,27 @@
 /**
- * @file test_fused_bw_debt2.cpp
- * @brief DEBT-2 数值回归测试 — ReLU→Sigmoid / ReLU→ReLU 链 backward
+ * @file probe_fused_bw_debt2.cpp
+ * @brief [probe, 非回归测试] DEBT-2 脚手架 — ReLU→Sigmoid / ReLU→ReLU 链 backward 对照基准
  * @details
+ *   **[§4.113 改名与澄清]** 原名 test_fused_bw_debt2。经审查: 本文件正文只打印
+ *   环境状态与解析解, **不含任何判定**, main 末尾无条件 return 0 —— 它无法失败,
+ *   故从 test_* 更名为 probe_*, 不再计入「Test 矩阵」的回归保障范围。
+ *   同时修正原 header 的过度承诺: 原写「数值回归测试」并列了
+ *   「3. 梯度数值 vs 解析解」「4. C3 fused 路径 vs eager」「5. max_diff < 1e-5 严格阈值」
+ *   三项, 但正文**从未做这三项比较**(Test 1/2 只算解析解, Test 3 只打印计划)。
+ *
  *   目标: 修 DEBT-2 (C3 fused backward chain 错误 grad) 时用作对照基准。
+ *   注: DEBT-2 已由 MIMO 取代且不复活(AGENTS.md / STATUS §4.54), 本脚手架仅作历史
+ *   对照保留; 若后续决定清理 DEBT-2 相关代码, 本文件可一并删除。
  *
  *   用法:
- *     ./build/test_fused_bw_debt2
- *     C3_FUSED_BW=0 ./build/test_fused_bw_debt2   # 默认,期望 C3 fused 路径 disable
- *     C3_FUSED_BW=1 ./build/test_fused_bw_debt2   # 尝试 re-enable,本次仍 disable
+ *     ./build-release/probe_fused_bw_debt2
+ *     C3_FUSED_BW=0 ./build-release/probe_fused_bw_debt2   # 默认,期望 C3 fused 路径 disable
+ *     C3_FUSED_BW=1 ./build-release/probe_fused_bw_debt2   # 尝试 re-enable,本次仍 disable
  *
  *   当前状态 (PEL25):
  *     - tryExecuteFusedBackward 仍返回 nullopt (P0-3 fix)
  *     - C3_FUSED_BW=1 仅打印 diagnostic log,实际不 re-enable
  *     - 所有反向走单节点 backward C3 + 必要处 eager fallback
- *
- *   修 DEBT-2 后 (PEL26+):
- *     - 改 tryExecuteFusedBackward 实现:链 forward + 链 backward 一段式
- *     - 这个测试跑通 (C3 fused grad ≈ eager grad, max_diff < 1e-5)
- *     - C3_FUSED_BW=1 真正生效,re-enable chain fusion
- *
- *   测什么:
- *     1. ReLU→Sigmoid 链 forward+backward
- *     2. ReLU→ReLU 链 forward+backward
- *     3. 梯度数值 vs 解析解 (∂ReLU/∂x = 1 if x>0 else 0;
- *                          ∂Sigmoid/∂x = σ(x)(1-σ(x)))
- *     4. C3 fused 路径 (目前 nullopt fallback) vs eager 路径
- *     5. max_diff < 1e-5 严格阈值
  *
  * @date 2026-09-05 (PEL25 mitigation phase)
  */

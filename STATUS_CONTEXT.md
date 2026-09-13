@@ -3296,3 +3296,74 @@ cacheKey 语义 / MIMO 退场 / 环境守卫 / dot 反向 / RC2 / tanh 反向图
   / 其余 5 个无失败信号测试补断言或改名 / 澄清 `test_c3_mnist_train:686` 关于 shutdownAll 的过时断言
 - 验证: MNIST 0.0985/97.1421% + exit 0(带门槛) / test_c3_graph 123 PASS /
   test_c3_backward max_diff=0 / FFN 2 步 exit=0
+
+
+## 4.113 2026-09-13 代码质量修复第三批: pass 流水线统一 + 测试失败信号补齐
+
+承 §4.111/§4.112 的审查清单落地("都做了")。三块工作, 全部带阴性对照或逐位证据。
+
+### A. appendLLVMLoweringTail(): 三处 lowering 尾段收成单一入口(c3 9bec3e0 + c0b9c92)
+
+- 抽取: LinalgElementwiseGen / LinalgFusedGen / LinalgOneShotGen 各内联一份逐字相同的
+  9 个 pass 尾段 → 统一为 `appendLLVMLoweringTail(mlir::PassManager&)`
+  (声明 MLIRKernelGen.h, 实现在 C3DialectLowering.cpp, 与 applyLoweringPipeline 同 TU)。
+  只 addPass, 不创建/运行 PassManager ⇒ 调用方保留分阶段 PM 与「哪一段失败」的错误定位
+- **过程中发现真正的漂移(上一轮审查漏了)**: 三处副本的 ArithToLLVM↔MathToLLVM 顺序与
+  项目自身 canonical 流水线(applyLoweringPipeline)相反。§4.112 只做了三个生成器之间的
+  组内比对 —— 这正是复制粘贴的典型盲区。判据: math.* 的 lower 可能产出 arith.* op,
+  ArithToLLVM 先跑会留下未转换的 arith op(残留即 unrealized_conversion_cast)
+- 顺序对齐实验(两条独立证据, 均判中性后才采纳):
+  1. lowering 后 IR 比对: `C3_LINALG_EW_TRACE=1` 跑 test_linalg_elementwise, 取 10 段
+     lowering 后 module dump, 排序后(抗多线程 stderr 交错)逐行 diff → **520 行零差异**
+  2. 逐位数值矩阵: 全绿且数值不变(见下 §验证)
+  - 诚实边界: IR 级证据仅覆盖 elementwise 路径; LinalgFused / LinalgOneShot 的 dump 钩子
+    在本轮负载(FFN / test_c3_graph)未触发(0 段), 二者仅有数值级证据
+- 顺带修正 MLIRKernelGen.h 中 applyLoweringPipeline 的陈旧文档(漏记 MathToLLVM 与
+  runC3Combine/runC3Lowering 两个高层阶段)
+
+### B. 补齐测试失败信号(主仓)
+
+审查(§4.112)发现 6 个 test_* 无法失败。逐一处置:
+
+| 文件 | 原状 | 处置 |
+|------|------|------|
+| test_c3_matmul_blas | 有 allClose 判定与阈值, 但只打印「正确/错误」, 恒 `_Exit(0)` | **接退出码**: allClose 改记录型(自动覆盖所有调用点) + 3 处编译失败 + 3 处常量折叠判定计数 |
+| test_h2_matmul_precision | 测了 max_diff/nan 却无判定 | **加三道门槛**: ① 必须真命中 C3 kernel(否则测量无效, 即文件头所指的假阳性) ② 无 NaN ③ max_diff ≤ 1e-5 |
+| test_fused_bw_debt2 | 自称「数值回归测试」, 正文只打印解析解与计划, 三项比较从未实现 | **改名 probe_fused_bw_debt2** + 澄清 header 的过度承诺 + 移出 Test 矩阵(DEBT-2 已被 MIMO 取代, 不复活) |
+| test_c3_compile_time | 纯耗时测量工具, 无判定 | **改名 bench_c3_compile_time**(测量工具不应占 test_* 命名) |
+| test_ce | 无判定 + **未列入 CMake(从未构建)** + 硬编码 MPS | **改名 probe_ce_mps** 并注明未接入构建 |
+| (前一提交 §4.111) test_c3_mnist_train | 只打印指标, 恒 0 退出 | 已加 `acc>=0.95 && loss<=0.15` 门槛 |
+
+阴性对照(证明门槛真的会拦):
+- matmul_blas: 反转记账条件 → 实测 exit=1 并打印「存在 29 项判定失败」; 恢复后 exit=0
+- mnist_train: 门槛临时设 0.999(不可达) → exit=1; 恢复 0.95 → exit=0
+
+### C. 证伪一条陈旧断言: shutdownAll() 并不崩
+
+- `test_c3_mnist_train` 原注释称「注释掉 c3::shutdownAll() 以避免其内部触发 LLVM JIT
+  析构引起的已知 crash」。实测: 打开后**连续 3 次 exit=0 / acc 97.1421%** ⇒ 该说法不复现
+- 原注释混淆了两件事: ① shutdownAll() 自身崩溃(已证伪 → 恢复调用, 同时也覆盖 §4.93
+  的池 drain 路径); ② 退出时 LLVM JIT 静态析构问题(与 `std::_Exit` 有关, 本次实验未触及,
+  仍按既有惯例用 _Exit 跳过静态析构)。注释已按此改写
+
+### 验证(build-release, Release+ninja)
+
+| target | exit | 证据 |
+|--------|------|------|
+| test_c3_graph | 0 | 123 PASSED |
+| test_c3_backward | 0 | overall_max_diff=0 |
+| test_sum_mean_grad | 0 | ALL PASS |
+| test_mlir_to_llvm_ir | 0 | PASS 21 / FAIL 0 |
+| test_linalg_elementwise | 0 | 管线测试通过 |
+| test_one_shot_bufferization | 0 | PASSED |
+| test_c3_matmul_blas | 0 | 判定全部正确(34 项) |
+| test_h2_matmul_precision | 0 | 5 形状检查, 失败 0(hit_delta 全为 1) |
+| test_autograd_v2 | 0 | 172 / 0 |
+| test_c3_mnist_train | 0 | acc 97.1421% + 门槛 PASS(含 shutdownAll) |
+| bench_llama_ffn_train | 0 | step0 loss=1390.0156(逐位不变) |
+| probe_fused_bw_debt2 / bench_c3_compile_time | 0 | 非测试, 无判定(改名后如实标注) |
+
+- commit: c3 `9bec3e0`(尾段去重) / c3 `c0b9c92`(顺序对齐) / 主仓本次提交
+- 审查剩余未做项(风险分级见报告 §7): c3 错误处理契约统一(需 HITL 定方向) /
+  重构 compileFFNMIMOBackwardAsync 的 14 参数签名(应删除而非重构) /
+  `(void)` 压制(集中在测试, 优先级低)

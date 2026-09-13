@@ -692,8 +692,13 @@ int main() {
 
 #ifndef CT_DISABLE_C3
     fprintf(stderr, "[CLEANUP] begin shutdown\n");
-    // [Safe exit] 注释掉 c3::shutdownAll() 以避免其内部触发 LLVM JIT 析构引起的已知 crash（非本模块引入）
-    // c3::shutdownAll();
+    // [§4.113] 澄清历史注释: 此处原注释称「注释掉 c3::shutdownAll() 以避免其内部触发
+    // LLVM JIT 析构引起的已知 crash」, 但该说法经实测**不复现**(打开后连续 3 次
+    // exit=0 / acc 97.1421%)。原注释把两件不同的事混为一谈:
+    //   ① shutdownAll() 自身崩溃 —— 已证伪, 故恢复调用(同时也覆盖 §4.93 的池 drain);
+    //   ② 退出时 LLVM JIT 静态析构问题 —— 与下面 std::_Exit 有关, 本次实验未触及,
+    //      仍按既有惯例以 _Exit 跳过静态析构。
+    c3::shutdownAll();
     fprintf(stderr, "[CLEANUP] done, exiting instantly via std::_Exit to bypass LLVM JIT static destructor bugs\n");
 #endif
 

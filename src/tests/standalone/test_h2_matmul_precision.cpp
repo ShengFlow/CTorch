@@ -25,6 +25,13 @@
 using namespace ct;
 
 #ifndef CT_DISABLE_C3
+// [§4.113] 判定失败计数(本文件此前只打印 max_diff, 恒以 0 退出, 测不出退化)。
+static int g_failures = 0;
+
+/// 本测试自身的可信度门槛: 必须真的命中 C3 kernel, 否则测量无意义
+/// (文件头已指出 "编译未完成" 会造成假阳性)。
+static size_t g_shapes_checked = 0;
+
 static void xavierInit(Tensor& t, size_t fan_in, size_t fan_out) {
     static ctQALS::rng::Xoshiro256PlusPlus rng(42);
     float std = std::sqrt(2.0f / (float)(fan_in + fan_out));
@@ -96,6 +103,23 @@ static void compareShape(size_t M, size_t K, size_t N, const char* name) {
 
     fprintf(stderr, "[H2] shape=%s (%zux%zux%zu) hit_delta=%zu max_diff=%.6e nonbit_diff=%zu/%zu over1e-5=%zu over1e-4=%zu over1e-3=%zu nan=%zu\n",
             name, M, K, N, hit_delta, max_diff, diff_cnt, out_numel, over_1e5, over_1e4, over_1e3, nan_cnt);
+
+    // [§4.113] 判定: ① 必须真命中 C3 kernel(否则本次测量无效, 是假阳性);
+    //             ② 不得出现 NaN; ③ 位级差异不超过 1e-5(本文件自身关心的量级)。
+    // 现测值: 5 个形状全部 max_diff=0 / nonbit_diff=0 / hit_delta=1 ⇒ 门槛余量充足。
+    ++g_shapes_checked;
+    if (hit_delta == 0) {
+        fprintf(stderr, "[H2] ❌ FAIL: %s 未命中 C3 kernel(测量无效)\n", name);
+        ++g_failures;
+    }
+    if (nan_cnt != 0) {
+        fprintf(stderr, "[H2] ❌ FAIL: %s 出现 %zu 个 NaN\n", name, nan_cnt);
+        ++g_failures;
+    }
+    if (max_diff > 1e-5) {
+        fprintf(stderr, "[H2] ❌ FAIL: %s max_diff=%.6e 超过 1e-5\n", name, max_diff);
+        ++g_failures;
+    }
 }
 #endif
 
@@ -110,9 +134,10 @@ int main() {
     compareShape(128, 10, 128,  "{128,10,10,128}  bwd-grad");
     compareShape(128, 128, 128, "{128,128,128,128} neut");
     c3::shutdownAll();
-    fprintf(stderr, "=== done ===\n");
+    fprintf(stderr, "=== done: %zu 形状检查, 失败 %d ===\n", g_shapes_checked, g_failures);
+    return g_failures == 0 ? 0 : 1;
 #else
     fprintf(stderr, "CT_DISABLE_C3 定义，跳过 C3 测试\n");
-#endif
     return 0;
+#endif
 }

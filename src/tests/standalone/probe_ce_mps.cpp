@@ -1,3 +1,14 @@
+/**
+ * @file probe_ce_mps.cpp
+ * @brief [probe, 非回归测试] MPS 上 CrossEntropy 的小规模调试脚本
+ * @details
+ *   **[§4.113 改名与澄清]** 原名 test_ce。经审查:
+ *     - 无任何判定, main 末尾无条件 return 0(无法失败);
+ *     - **未列入 CMakeLists.txt**, 即从未被构建(属就地 scratch 脚本);
+ *     - 张量硬编码为 DeviceType::kMPS, 无 MPS 的环境无法运行。
+ *   故更名为 probe_ce_mps, 从 test_* 命名空间移出。若要长期保留其排查能力,
+ *   应另行补判定并接入构建; 否则可删除。
+ */
 #include "AutoGrad.h"
 #include "Tensor.h"
 #include "CtorchError.h"

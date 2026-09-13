@@ -21,7 +21,13 @@
 using namespace ct;
 using namespace ct::c3;
 
-static bool allClose(const Tensor& a, const Tensor& b, float rtol = 1e-4f, float atol = 1e-5f) {
+// [§4.113] 判定失败计数。
+// 本测试此前只打印「正确 / 错误」「FAIL」等字样, 却从不影响退出码 ——
+// 后端数值错误、编译失败都会被静默放过(与 test_c3_mnist_train 同类的测试失效)。
+// 各判定点累加到此, main 末尾据此决定退出码。
+static int g_failures = 0;
+
+static bool allCloseImpl(const Tensor& a, const Tensor& b, float rtol, float atol) {
     if (a.shape() != b.shape()) return false;
     const float* pa = a.data_read<float>();
     const float* pb = b.data_read<float>();
@@ -35,6 +41,13 @@ static bool allClose(const Tensor& a, const Tensor& b, float rtol = 1e-4f, float
         }
     }
     return true;
+}
+
+/// 记录型比较: 不一致即计入 g_failures(所有调用点自动覆盖)。
+static bool allClose(const Tensor& a, const Tensor& b, float rtol = 1e-4f, float atol = 1e-5f) {
+    const bool ok = allCloseImpl(a, b, rtol, atol);
+    if (!ok) ++g_failures;
+    return ok;
 }
 
 static Tensor makeRandomTensor(const std::vector<size_t>& shape, unsigned seed = 42) {
@@ -112,6 +125,7 @@ int main() {
             auto kernel = C3Engine::getInstance().compile(g, opts);
             if (!kernel) {
                 std::cerr << "  C3 Handwritten: 编译失败!" << std::endl;
+                ++g_failures;
                 continue;
             }
 
@@ -149,6 +163,7 @@ int main() {
             auto kernel = C3Engine::getInstance().compile(g, opts);
             if (!kernel) {
                 std::cerr << "  C3 MLIR:        编译失败!" << std::endl;
+                ++g_failures;
                 continue;
             }
 
@@ -212,6 +227,7 @@ int main() {
                 auto kernel = C3Engine::getInstance().compile(g, opts);
                 if (!kernel) {
                     std::cerr << "  C3 " << backend_name << ": 编译失败!" << std::endl;
+                    ++g_failures;
                     return;
                 }
 
@@ -263,6 +279,7 @@ int main() {
         auto opt = g.canonicalize().eliminateDeadCode();
         std::cout << "  [ConstFold] Add(3,4): " << opt.toString();
         bool ok = opt.nodeCount() == 1 && opt.outputCount() == 1;
+        if (!ok) ++g_failures;
         std::cout << "  Result: " << (ok ? "PASS" : "FAIL") << "\n" << std::endl;
     }
 
@@ -277,6 +294,7 @@ int main() {
         auto opt = g.canonicalize().eliminateDeadCode();
         std::cout << "  [ConstFold] Mul(2.5,4): " << opt.toString();
         bool ok = opt.nodeCount() == 1 && opt.outputCount() == 1;
+        if (!ok) ++g_failures;
         std::cout << "  Result: " << (ok ? "PASS" : "FAIL") << "\n" << std::endl;
     }
 
@@ -363,13 +381,19 @@ int main() {
         std::cout << "  [ConstFold] Add(Add(1,2),3): " << opt.toString();
         // 嵌套折叠：inner 先折叠为 Const(3.0)，outer 再折叠为 Const(6.0)
         bool ok = opt.nodeCount() == 1 && opt.outputCount() == 1;
+        if (!ok) ++g_failures;
         std::cout << "  Result: " << (ok ? "PASS" : "FAIL") << "\n" << std::endl;
     }
 
     // LLVM ExecutionEngine 的全局析构顺序在 macOS 上可能访问已析构 mutex。
     // 与其他 C3 standalone 测试保持一致：先显式清理，再绕过第三方静态析构。
     ct::c3::shutdownAll();
+    // [§4.113] 把判定接到退出码(此前恒为 0)
+    std::cout << (g_failures == 0
+                      ? "\n\u2705 PASS: C3 后端结果全部正确"
+                      : "\n\u274c FAIL: 存在 " + std::to_string(g_failures) + " 项判定失败")
+              << std::endl;
     std::cout.flush();
     std::cerr.flush();
-    std::_Exit(0);
+    std::_Exit(g_failures == 0 ? 0 : 1);
 }
