@@ -982,7 +982,14 @@ Tensor Tensor::operator/(float scalar) const {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::TENSOR_STATE,
                                     "除零错误：标量除法中除数为零");
     }
-    return scalarOpImpl(*this, scalar, [](auto &val, auto s) { val /= s; });
+    // [Fix 2026-09-16] 与 operator+ / - / * 的标量版本保持一致，改走
+    // binaryOpImpl -> AutoGrad::dispatch。旧实现走 scalarOpImpl（copy-and-mutate，
+    // 不注册 grad_fn），导致 x / 标量 的反向传播静默失效：结果张量因拷贝构造
+    // 继承了源张量的 autograd 元数据，看起来 requires_grad=true 且有 node，
+    // 但实际上没有 DivNode 挂接，梯度恒为零且不报错。
+    Tensor scalar_tensor(scalar, _device);
+    scalar_tensor = scalar_tensor.to(_dtype);
+    return binaryOpImpl<op::Div>(*this, scalar_tensor);
 }
 
 // ======================= 比较操作符实现 =======================
