@@ -10,6 +10,7 @@
 #include "kernels/kernels.h"
 #include "../include/AutoGrad.h"
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
+#include "../include/AutoGrad/Nodes/TransposeNode.h"
 #include "../include/AutoGrad/Nodes/SumNode.h"
 #include "../include/AutoGrad/Nodes/MeanNode.h"
 #include "../include/AutoGrad/Nodes/DimReduceNode.h"
@@ -341,7 +342,7 @@ Tensor Tensor::to(DType dtype) const {
 }
 
 // 转置张量
-Tensor Tensor::transpose(int dim0, int dim1) const {
+Tensor Tensor::transposeNoGrad(int dim0, int dim1) const {
     // 检查维度索引是否有效
     if (dim0 < 0 || dim0 >= static_cast<int>(_shape.size()) || dim1 < 0 ||
         dim1 >= static_cast<int>(_shape.size())) {
@@ -352,6 +353,48 @@ Tensor Tensor::transpose(int dim0, int dim1) const {
     Tensor result(*this);
     std::swap(result._shape[dim0], result._shape[dim1]);
     std::swap(result._strides[dim0], result._strides[dim1]);
+    return result;
+}
+
+Tensor Tensor::transpose(int dim0, int dim1) const {
+    Tensor result = transposeNoGrad(dim0, dim1);
+
+    // [Fix 2026-09-16] 补上 autograd 节点注册。
+    //
+    // 旧实现只有上面那三行（拷贝构造 + 交换 shape/strides）：拷贝构造会把副本的
+    // autograd 节点替换为新建的 GradAccumulator（见 Tensor(const Tensor&)），
+    // 副本与上游就此断开 —— 任何转置之后的梯度恒为零，且不报错。
+    // 与之配套的是：AutoGrad/Nodes 下也一直没有 TransposeNode。
+    //
+    // 转置前向是纯元数据操作（只换 shape/strides），不需要调度器参与，
+    // 因此这里不走 AutoGrad::dispatch<op::...>，只补一个反向节点。
+    // 这样也避免了新增 op 枚举项 —— 那会触及 op 顺序与 kCount 静态断言两条红线。
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+
+        Arena &arena = Arena::getInstance();
+        if (getRelatedNode() == nullptr) {
+            setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
+        } else {
+            getRelatedNode()->increase();
+        }
+
+        std::vector<std::shared_ptr<Node>> upStream;
+        upStream.push_back(getRelatedNode());
+        std::vector<Tensor> inputs;
+        inputs.push_back(*this);
+
+        const auto node = arena.invoke<TransposeNode>(dim0, dim1, std::move(upStream),
+                                                      std::move(inputs), result_weak);
+        if (node && result_ptr) {
+            result.setRelatedNode(node);
+            node->setResultOwner(result_ptr);
+        }
+    }
+
     return result;
 }
 

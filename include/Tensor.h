@@ -800,6 +800,17 @@ class Tensor {
     Tensor transpose(int dim0, int dim1) const;
 
     /**
+     * @brief 沿 dim0 / dim1 交换两个维度，**不注册 autograd 节点**
+     * @param dim0 第一个维度
+     * @param dim1 第二个维度
+     * @return 转置后的张量（共享存储的元数据视图）
+     *
+     * @note 供 TransposeNode::backward 使用：反向过程中不应继续建图，
+     *       否则每轮 backward 都会往计算图上再接一段，图逐轮膨胀。
+     */
+    Tensor transposeNoGrad(int dim0, int dim1) const;
+
+    /**
      * @brief [§4.95 P1-10] 是否行优先连续(步长 == 紧凑布局)
      * @details 视图操作(transpose/slice)会产生非连续 strides; 若干内核
      *          (Softmax/CrossEntropy) 此前忽略 strides 线性寻址 → 错读。
