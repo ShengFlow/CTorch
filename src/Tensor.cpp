@@ -1599,22 +1599,32 @@ Tensor Tensor::mean(const std::vector<int> &dims, bool keepdim) const {
 }
 
 Tensor Tensor::clamp(float min_val, float max_val) const {
-    Tensor result(*this);
-    result._storage = _storage.clone();
-
-    if (_dtype == DType::kFloat) {
-        float *data = result.data_write<float>();
-        for (size_t i = 0; i < numel(); ++i) {
-            float val = data[i];
-            if (val < min_val)
-                val = min_val;
-            if (val > max_val)
-                val = max_val;
-            data[i] = val;
-        }
+    // [Fix 2026-09-16] 改用逐元素 max / min 算子组合，保证梯度可回传。
+    //
+    // 旧实现是「拷贝构造 + clone 存储 + 直接改数据」：
+    //   1) `Tensor result(*this)` 的拷贝构造会把副本的 autograd 节点替换为新建的
+    //      GradAccumulator（见 Tensor(const Tensor&) 中的 createGradAccumulator），
+    //      副本随即与上游断开；
+    //   2) 改写数据指针不注册任何 grad_fn。
+    // 两者叠加使 clamp 的梯度链彻底断裂 —— 表现为 clamp 之后所有梯度恒为零，
+    // 且不报错。与 operator/(float) 属同一类缺陷。
+    //
+    // clamp(x, lo, hi) ≡ min(max(x, lo), hi)，分别走 MaxNode / MinNode，
+    // 梯度语义一致（区间内导数为 1，越界处置零）。
+    //
+    // 上下界按自身形状显式构造：调度器的逐元素二元算子要求两个操作数形状严格
+    // 一致，此处不做隐式广播（标量对 [1,N] 也不接受）。对标量输入即构造 0 维
+    // 同形张量，因此标量 clamp 同样可微。
+    Tensor lower(ShapeTag{}, _shape, _dtype, _device);
+    Tensor upper(ShapeTag{}, _shape, _dtype, _device);
+    const std::size_t n = numel();
+    float *lp = lower.data_write<float>();
+    float *up = upper.data_write<float>();
+    for (std::size_t i = 0; i < n; ++i) {
+        lp[i] = min_val;
+        up[i] = max_val;
     }
-
-    return result;
+    return this->max(lower).min(upper);
 }
 
 Tensor Tensor::detach() const {

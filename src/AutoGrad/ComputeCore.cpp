@@ -52,6 +52,21 @@ ssize_t GradBucket::find(const std::shared_ptr<Node> &target, int idx) {
 void GradBucket::add(std::vector<GradPack>&& newPacks) {
     std::scoped_lock lock(_mtx);
     for (auto&& pack : newPacks) {
+        // [Fix 2026-09-16] 丢弃目标节点为空的梯度包。
+        //
+        // DataCore::registerNode 对「不需要梯度」的输入会在 upStreamNodes 中填 nullptr，
+        // 而 AddNode / MulNode 等节点仍会为**每一个**输入返回 GradPack，于是产生
+        // _targetNode == nullptr 的包。旧实现在这里直接用 find(pack._targetNode) 归并
+        // 同目标梯度，导致所有 nullptr 包被视作同一个节点：形状互不相同的梯度被
+        // 相加（第 61 行），触发 Add_Kernel 的 shape 断言 —— 表现为 SIGABRT，
+        // 现场报 "CPU-SIMD Add_Kernel: Tensor形状不兼容"。
+        //
+        // 这类包本就没有接收者（对应输入不参与求导），直接丢弃即可。
+        // 主循环中收集 ready_nodes 的那处（同文件 backward() 内）已有 nullptr 判空，
+        // 此处是唯一遗漏点。
+        if (!pack._targetNode) {
+            continue;
+        }
         const ssize_t idx = find(pack._targetNode);
         if (idx != -1) {
             for (size_t i = 0; i < pack._grad.size(); ++i) {
