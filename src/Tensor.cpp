@@ -12,6 +12,7 @@
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/AutoGrad/Nodes/TransposeNode.h"
 #include "../include/AutoGrad/Nodes/SliceNode.h"
+#include "../include/AutoGrad/Nodes/ReshapeNode.h"
 #include "../include/AutoGrad/Nodes/SumNode.h"
 #include "../include/AutoGrad/Nodes/MeanNode.h"
 #include "../include/AutoGrad/Nodes/DimReduceNode.h"
@@ -456,8 +457,8 @@ Tensor Tensor::reshape(std::initializer_list<size_t> new_shape) const {
     return reshape(std::vector<size_t>(new_shape));
 }
 
-// 重塑张量形状
-Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
+// 重塑张量形状（零拷贝视图，不注册 autograd 节点）
+Tensor Tensor::reshapeNoGrad(const std::vector<size_t> &new_shape) const {
     size_t new_numel = 1;
     for (size_t dim : new_shape) {
         new_numel =
@@ -469,43 +470,36 @@ Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
                                     "新形状元素数量不同");
     }
 
+    // [Fix 2026-09-17] 拒绝非连续输入。
+    //
+    // 旧实现只做「拷贝构造 + 改 _shape + computeStrides()」：computeStrides 按紧凑
+    // 布局重算步长，而若非连续视图（切片 / 转置的结果）其存储布局与紧凑布局不一致，
+    // 得到的张量形状正确、但按新步长读取会拿到错乱数据，且不报错。
+    // 这里改为显式拒绝，由调用方决定是否先做 contiguous()。
+    if (!is_contiguous()) {
+        CtorchError::throwException(
+            ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+            "reshape: 输入非连续（步长与紧凑布局不符）。请先调用 contiguous() 再重塑。");
+    }
+
     Tensor result(*this);
     result._shape = new_shape;
     result.computeStrides();
     return result;
 }
 
-// 沿第0维切片（零拷贝视图，不注册 autograd 节点）
-Tensor Tensor::slice_dim0NoGrad(size_t start, size_t size) const {
-    if (_shape.empty()) {
-        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
-                                    "slice_dim0: 标量张量无法切片");
-    }
-    if (start + size > _shape[0]) {
-        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
-                                    "slice_dim0: 索引越界");
-    }
-    Tensor result(*this);
-    result._shape[0] = size;
-    result.computeStrides();
-    size_t stride0 = _strides.empty() ? 1 : _strides[0];
-    result._storage_offset = _storage_offset + start * stride0;
-    return result;
-}
-
-Tensor Tensor::slice_dim0(size_t start, size_t size) const {
-    Tensor result = slice_dim0NoGrad(start, size);
+Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
+    Tensor result = reshapeNoGrad(new_shape);
 
     // [Fix 2026-09-17] 补上 autograd 节点注册。
     //
-    // 旧实现只有 slice_dim0NoGrad 那几行（拷贝构造 + 改 shape/strides/offset）：
-    // 拷贝构造会把副本的 autograd 节点替换为新建的 GradAccumulator
-    // （见 Tensor(const Tensor&)），副本与上游就此断开 —— 任何切片之后的梯度
-    // 恒为零，且不报错。与之配套的是：AutoGrad/Nodes 下也一直没有 SliceNode。
+    // 与 slice_dim0 同类：旧实现只有 reshapeNoGrad 那几行（拷贝构造 + 改元数据），
+    // 拷贝构造会把副本的 autograd 节点替换为新建的 GradAccumulator，副本与上游
+    // 就此断开 —— 重塑之后梯度恒为零且不报错。AutoGrad/Nodes 下也一直没有
+    // ReshapeNode。
     //
-    // 切片前向是纯元数据操作（只改 shape / strides / storage_offset），不需要
-    // 调度器参与，因此这里不走 AutoGrad::dispatch<op::...>，只补一个反向节点。
-    // 这样也避免了新增 op 枚举项 —— 那会触及 op 顺序与 kCount 静态断言两条红线。
+    // 重塑前向是纯元数据操作，不需要调度器参与，因此不走 AutoGrad::dispatch，
+    // 只补一个反向节点；这样也避免新增 op 枚举项。
     if (AutoGrad::EnableGrad && requires_grad()) {
         result.requires_grad(true);
 
@@ -524,7 +518,80 @@ Tensor Tensor::slice_dim0(size_t start, size_t size) const {
         std::vector<Tensor> inputs;
         inputs.push_back(*this);
 
-        const auto node = arena.invoke<SliceNode>(start, size, std::move(upStream),
+        const auto node = arena.invoke<ReshapeNode>(sizes(), std::move(upStream),
+                                                    std::move(inputs), result_weak);
+        if (node && result_ptr) {
+            result.setRelatedNode(node);
+            node->setResultOwner(result_ptr);
+        }
+    }
+
+    return result;
+}
+
+// 沿任意维切片（零拷贝视图，不注册 autograd 节点）
+Tensor Tensor::sliceNoGrad(int dim, size_t start, size_t size) const {
+    if (_shape.empty()) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "slice: 标量张量无法切片");
+    }
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "slice: 维度越界");
+    }
+    const auto d = static_cast<size_t>(dim);
+    if (start + size > _shape[d]) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "slice: 索引越界");
+    }
+
+    Tensor result(*this);
+    result._shape[d] = size;
+    // 关键：strides 保持不变（不像 reshape 那样重算）。
+    // 切片不改变各维之间的排布方式，只截取其中一个维度的区间，
+    // 因此对非连续输入同样正确，也无需 compact 布局假设。
+    const size_t stride_d = _strides.empty() ? 1 : _strides[d];
+    result._storage_offset = _storage_offset + start * stride_d;
+    return result;
+}
+
+Tensor Tensor::slice_dim0NoGrad(size_t start, size_t size) const {
+    return sliceNoGrad(0, start, size);
+}
+
+Tensor Tensor::slice(int dim, size_t start, size_t size) const {
+    Tensor result = sliceNoGrad(dim, start, size);
+
+    // [Fix 2026-09-17] 补上 autograd 节点注册。
+    //
+    // 旧实现只有「拷贝构造 + 改 shape/strides/offset」：拷贝构造会把副本的
+    // autograd 节点替换为新建的 GradAccumulator（见 Tensor(const Tensor&)），
+    // 副本与上游就此断开 —— 任何切片之后的梯度恒为零，且不报错。
+    // 与之配套的是：AutoGrad/Nodes 下也一直没有 SliceNode。
+    //
+    // 切片前向是纯元数据操作（只改 shape 与该维存储偏移、不重算 strides），
+    // 不需要调度器参与，因此这里不走 AutoGrad::dispatch<op::...>，只补一个反向
+    // 节点。这样也避免了新增 op 枚举项 —— 那会触及 op 顺序与 kCount 静态断言
+    // 两条红线。
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+
+        Arena &arena = Arena::getInstance();
+        if (getRelatedNode() == nullptr) {
+            setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
+        } else {
+            getRelatedNode()->increase();
+        }
+
+        std::vector<std::shared_ptr<Node>> upStream;
+        upStream.push_back(getRelatedNode());
+        std::vector<Tensor> inputs;
+        inputs.push_back(*this);
+
+        const auto node = arena.invoke<SliceNode>(dim, start, size, std::move(upStream),
                                                   std::move(inputs), result_weak);
         if (node && result_ptr) {
             result.setRelatedNode(node);
@@ -533,6 +600,10 @@ Tensor Tensor::slice_dim0(size_t start, size_t size) const {
     }
 
     return result;
+}
+
+Tensor Tensor::slice_dim0(size_t start, size_t size) const {
+    return slice(0, start, size);
 }
 
 /**
@@ -909,7 +980,14 @@ Tensor Tensor::sum() const {
         return result;
     }
     const size_t N = numel();
-    Tensor flat_this = reshape({N});
+    // [Fix 2026-09-17] 展平前先连续化。
+    //
+    // 旧实现直接 reshape({N})：reshape 只改元数据、不移动数据，对非连续输入
+    // （切片 / 转置的结果）会按紧凑布局重算 strides，dot 随后按错误布局读取，
+    // 得到静默错乱的结果。reshapeNoGrad 现已显式拒绝非连续输入，故此处需先
+    // 物化一份连续副本；仅在非连续时才产生一次 O(numel) 拷贝。
+    const Tensor flat_src = is_contiguous() ? *this : contiguous();
+    Tensor flat_this = flat_src.reshapeNoGrad({N});
     Tensor ones_1d(ShapeTag{}, {N}, _dtype, _device);
     ones_1d.ones();
     Tensor result = flat_this.dot(ones_1d);  // 前向数值: Σ a_i
@@ -1550,7 +1628,9 @@ Tensor Tensor::mean() const {
     }
     const size_t N = numel();
     const float inv_n = 1.0f / static_cast<float>(N);
-    Tensor flat_this = reshape({N});
+    // 同 sum()：展平前先连续化，避免对非连续输入按错乱布局读取
+    const Tensor flat_src = is_contiguous() ? *this : contiguous();
+    Tensor flat_this = flat_src.reshapeNoGrad({N});
     Tensor ones_1d(ShapeTag{}, {N}, _dtype, _device);
     ones_1d.ones();
     Tensor result = flat_this.dot(ones_1d) * inv_n;  // 前向数值: Σ a_i / n

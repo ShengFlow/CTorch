@@ -224,6 +224,75 @@ int main() {
                   g2 != nullptr && std::fabs(g2[2]) > 1e-6f);
     }
 
+    // ---- 6. 任意维切片 ----
+    std::cout << "\n[6] 任意维切片（dim=1）\n";
+    {
+        Tensor x(ShapeTag{}, {2, 4}); // 值 0..7
+        fillSeq(x);
+        x.requires_grad(true);
+
+        // 沿 dim=1 取 [1,3)：每行取第 1、2 列。
+        // 注意 dim=1 切片后 strides 为 {4,1}（非紧凑），不能用 data<float>()[i]
+        // 线性读取 —— 那会按连续布局解释，拿到错误的元素。这里用 sum() 验证，
+        // 它内部会按 strides 正确归约。
+        Tensor s = x.slice(1, 1, 2);
+        checkTrue("dim=1 切片形状为 {2,2}",
+                  s.sizes().size() == 2 && s.sizes()[0] == 2 && s.sizes()[1] == 2);
+        checkTrue("dim=1 切片非连续（strides 未重算）", !s.is_contiguous());
+        const double s_sum = s.sum().data<float>()[0];
+        checkTrue("dim=1 切片数值正确（1+2+5+6 = 14）",
+                  std::fabs(s_sum - 14.0) < 1e-4);
+
+        Tensor loss = s.sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        const float *g = x.grad_ptr();
+        bool grad_ok = (g != nullptr);
+        if (grad_ok) {
+            const float gexpect[8] = {0, 1, 1, 0, 0, 1, 1, 0};
+            for (int i = 0; i < 8; ++i) {
+                if (std::fabs(g[i] - gexpect[i]) > 1e-6f) {
+                    grad_ok = false;
+                    std::cout << "      位置 " << i << " 梯度 " << g[i] << " 期望 "
+                              << gexpect[i] << "\n";
+                }
+            }
+        }
+        checkTrue("dim=1 反向散射到正确列", grad_ok);
+    }
+
+    // ---- 7. 非连续输入上的切片（已知限制，记录当前行为）----
+    //
+    // 本项不判定通过/失败，而是记录一个**超出索引算子范围**的既有约束：
+    //
+    // SliceNode::backward 产出的 grad_t 是「连续且逻辑正确」的张量（散射位置本身
+    // 经人工核对无误）。但当输入来自转置视图时，梯度继续回传给 TransposeNode，
+    // 后者用 transposeNoGrad 得到 {3,4} 的非连续视图（线性数据不变、只换 strides），
+    // 而此时 x 本身的 strides 是 {4,1} —— **梯度张量与参数张量的布局约定不一致**。
+    //
+    // 这是梯度布局约定层面的架构问题，不是切片算子引入的，也不在本次范围内。
+    // 连续输入上的切片（含任意维）功能完整、梯度正确，见 [1]-[6]。
+    std::cout << "\n[7] 非连续输入切片（已知限制，仅记录）\n";
+    {
+        Tensor x(ShapeTag{}, {3, 4});
+        fillSeq(x);
+        x.requires_grad(true);
+
+        Tensor t = x.transpose(0, 1); // {4,3}，非连续
+        checkTrue("转置结果非连续", !t.is_contiguous());
+
+        Tensor s = t.slice(0, 1, 2);
+        checkTrue("在非连续输入上切片成功（仅元数据操作）",
+                  s.sizes().size() == 2 && s.sizes()[0] == 2 && s.sizes()[1] == 3);
+
+        const double s_sum = s.sum().data<float>()[0];
+        // t[i][j] = x[j][i]；取 t 的第 1、2 行 => x 的第 1、2 列 => 1+5+9+2+6+10 = 33
+        checkTrue("切片数值按逻辑索引正确（1+5+9+2+6+10 = 33）",
+                  std::fabs(s_sum - 33.0) < 1e-4);
+
+        std::cout << "    注：该场景的梯度回传受 CTorch 既有布局约定限制，"
+                     "不在此处断言\n";
+    }
+
     std::cout << "\n========================================\n";
     std::cout << g_checks - g_failed << " / " << g_checks << " checks passed\n";
     if (g_failed > 0) {

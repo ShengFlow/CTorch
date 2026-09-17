@@ -48,7 +48,7 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
         grad1 = grad1.sum(reduce_dims1);
     }
     if (grad1.sizes() != numerator.sizes()) {
-        grad1 = grad1.reshape(numerator.sizes());
+        grad1 = grad1.reshapeNoGrad(numerator.sizes());
     }
 
     ret.push_back(GradPack{
@@ -63,7 +63,7 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
         grad2 = grad2.sum(reduce_dims2);
     }
     if (grad2.sizes() != denominator.sizes()) {
-        grad2 = grad2.reshape(denominator.sizes());
+        grad2 = grad2.reshapeNoGrad(denominator.sizes());
     }
     
     ret.push_back(GradPack{

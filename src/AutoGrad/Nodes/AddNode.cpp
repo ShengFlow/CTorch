@@ -43,7 +43,7 @@ std::vector<GradPack> AddNode::backward(const std::vector<Tensor>& downStreamGra
         }
 
         if (grad_input.sizes() != input.sizes()) {
-            grad_input = grad_input.reshape(input.sizes());
+            grad_input = grad_input.reshapeNoGrad(input.sizes());
         }
 
         ret.push_back(GradPack{

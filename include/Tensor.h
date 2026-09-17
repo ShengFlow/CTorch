@@ -837,18 +837,65 @@ class Tensor {
     Tensor reshape(std::initializer_list<size_t> new_shape) const;
 
     /**
-     * @brief 重塑张量形状
-     * @param new_shape 新的形状
+     * @brief 重塑张量形状的零拷贝视图，**不注册 autograd 节点**
+     * @param new_shape 新的形状（元素总数须与当前一致）
      * @return 重塑后的张量
+     *
+     * @note 供 ReshapeNode::backward 以及各二元算子反向中的形状还原使用：
+     *       反向过程中不应继续建图，否则每轮 backward 都会往计算图上再接一段，
+     *       图逐轮膨胀。
+     *
+     * @warning 要求输入**连续**（步长等于紧凑布局）。非连续输入（例如切片、转置
+     *          的结果）会抛异常 —— 旧实现只改 shape 再重算 strides，对非连续输入
+     *          会静默返回布局与实际存储不符的张量，读取到错乱数据。这里改为
+     *          显式拒绝，由调用方决定是否先做 contiguous()。
+     */
+    Tensor reshapeNoGrad(const std::vector<size_t> &new_shape) const;
+
+    /**
+     * @brief 重塑张量形状，并注册 autograd 节点
+     * @param new_shape 新的形状（元素总数须与当前一致）
+     * @return 重塑后的张量
+     *
+     * 与 transpose / slice 同理，重塑只改 shape / strides，是纯元数据操作、
+     * 不需要调度器参与，因此不走 AutoGrad::dispatch，只补一个反向节点；
+     * 这样也避免新增 op 枚举项（那会触及 op 顺序与 kCount 静态断言两条红线）。
      */
     Tensor reshape(const std::vector<size_t> &new_shape) const;
+
+    /**
+     * @brief 沿任意维切片的零拷贝视图，**不注册 autograd 节点**
+     * @param dim   切片维度
+     * @param start 起始索引
+     * @param size  切片大小
+     * @note 供 SliceNode::backward 使用：反向过程中不应继续建图，
+     *       否则每轮 backward 都会往计算图上再接一段，图逐轮膨胀。
+     */
+    Tensor sliceNoGrad(int dim, size_t start, size_t size) const;
+
+    /**
+     * @brief 沿任意维切片，并注册 autograd 节点
+     * @param dim   切片维度
+     * @param start 起始索引
+     * @param size  切片大小
+     * @return 切片张量（零拷贝视图）
+     *
+     * 切片只改 shape 与该维的存储偏移、**不重算 strides**，因此对非连续输入
+     * （切片 / 转置的结果）同样正确 —— 这一点与 reshape 不同，后者必须重算
+     * strides 因而要求输入连续。
+     *
+     * 与 transpose 同理不走 AutoGrad::dispatch，只补一个反向节点，避免新增
+     * op 枚举项（那会触及 op 顺序与 kCount 静态断言两条红线）。
+     *
+     * @note 调用方需自行保证 `start + size <= shape[dim]`，越界会抛异常。
+     */
+    Tensor slice(int dim, size_t start, size_t size) const;
 
     /**
      * @brief 沿第 0 维切片的零拷贝视图，**不注册 autograd 节点**
      * @param start 起始索引
      * @param size 切片大小
-     * @note 供 SliceNode::backward 使用：反向过程中不应继续建图，
-     *       否则每轮 backward 都会往计算图上再接一段，图逐轮膨胀。
+     * @note 等价于 sliceNoGrad(0, start, size)，保留独立名称以兼容既有调用点。
      */
     Tensor slice_dim0NoGrad(size_t start, size_t size) const;
 
