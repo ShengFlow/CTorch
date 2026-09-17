@@ -250,15 +250,30 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
             return !(e && std::string(e) == "1");
         }();
         if (active_reset_enabled) {
+        // [Fix 2026-09-17] 递归 DFS 改为显式栈迭代。
+        //
+        // 原实现用 std::function 递归遍历，递归深度等于图的**最长链长度**。
+        // 训练常见的宽而浅图（MNIST/FFN，深度十余层）毫无问题，但深链图会耗尽
+        // 线程栈：可微仿真（一条轨迹每步展开数十个算子）构造的图动辄上万层，
+        // 实测 10 万层稳定 SIGSEGV（8 MB 主线程栈，每帧约百字节）。
+        // 迭代版与递归版收集同一个可达集合，仅遍历顺序不同 —— 此处只用来统计
+        // 节点集合，顺序不影响结果。
         std::unordered_set<Node*> active;
-        std::function<void(Node*)> dfs = [&](Node* n) {
-            if (!n || active.count(n)) return;
+        active.reserve(1024);
+        std::vector<Node*> pending;
+        pending.reserve(1024);
+        pending.push_back(root.get());
+        while (!pending.empty()) {
+            Node* n = pending.back();
+            pending.pop_back();
+            if (!n || active.count(n) != 0) {
+                continue;
+            }
             active.insert(n);
             for (const auto& up : n->getUpStreamNodes()) {
-                if (up) dfs(up.get());
+                if (up) pending.push_back(up.get());
             }
-        };
-        dfs(root.get());
+        }
         for (Node* n : active) n->setCount(0);
         for (Node* n : active) {
             for (const auto& up : n->getUpStreamNodes()) {
@@ -398,10 +413,10 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
     
     if (retainGraph) {
         std::unordered_set<Node *> restored;
-        { BwSegGuard _g(BwSeg::CLEAR); root->restoreRecursive(restored); }
+        { BwSegGuard _g(BwSeg::CLEAR); root->restoreGraph(root, restored); }
     } else {
         std::unordered_set<Node *> cleared;
-        { BwSegGuard _g(BwSeg::CLEAR); root->clearRecursive(cleared); }
+        { BwSegGuard _g(BwSeg::CLEAR); root->clearGraph(root, cleared); }
         root.reset();
     }
 

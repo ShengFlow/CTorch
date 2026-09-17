@@ -94,25 +94,61 @@ bool Node::requireAccelerate() const { return _requireAccelerate; }
 
 void Node::set_requireAccelerate(bool requireAccelerate) {_requireAccelerate = requireAccelerate;}
 
-void Node::restoreRecursive(std::unordered_set<Node *>& visited) {
-    if (!visited.count(this)) {
-        visited.insert(this);
-        restore();
-        for (auto &node : _upStreamNodes)
-            if (node) node->restoreRecursive(visited);
+// [Fix 2026-09-17] restore / clear 由递归改为显式栈迭代。
+//
+// 递归实现的调用深度等于计算图的**最长链长度**。CTorch 原有训练图宽而浅
+// （MNIST 的 FC、LLaMA 的 FFN 深度十余层），因此长期未暴露；而深链图 —— 例如
+// 可微仿真把一条轨迹的每个时间步展开成数十个算子 —— 深度可达上万乃至十万层，
+// 直接把线程栈耗尽：实测 10 万层稳定 SIGSEGV（主线程 8 MB 栈，每帧约百字节）。
+//
+// 传入 self（而非隐式的 this）是因为迭代遍历需要在容器里持有 shared_ptr 来
+// 维持节点在清理过程中的存活；裸 this 无法承担这一职责。
+void Node::restoreGraph(const std::shared_ptr<Node> &self,
+                        std::unordered_set<Node *> &visited) {
+    std::vector<std::shared_ptr<Node>> pending;
+    pending.push_back(self);
+    while (!pending.empty()) {
+        std::shared_ptr<Node> n = std::move(pending.back());
+        pending.pop_back();
+        if (!n || visited.count(n.get()) != 0) {
+            continue;
+        }
+        visited.insert(n.get());
+        n->restore();
+        for (const auto &up : n->getUpStreamNodes()) {
+            if (up) {
+                pending.push_back(up);
+            }
+        }
     }
 }
 
-void Node::clearRecursive(std::unordered_set<Node *>& visited) {
-    if (!visited.count(this)) {
-        visited.insert(this);
-        clearResultOwner();
-        auto upstream_copy = _upStreamNodes;
-        auto result_copy = _result.lock();
-        for (auto &node : upstream_copy)
-            if (node) node->clearRecursive(visited);
-        _upStreamNodes.clear();
-        _inputs.clear();
+void Node::clearGraph(const std::shared_ptr<Node> &self,
+                      std::unordered_set<Node *> &visited) {
+    std::vector<std::shared_ptr<Node>> order;   // 父先于子；同时持有强引用
+    std::vector<std::shared_ptr<Node>> pending;
+    pending.push_back(self);
+    while (!pending.empty()) {
+        std::shared_ptr<Node> n = std::move(pending.back());
+        pending.pop_back();
+        if (!n || visited.count(n.get()) != 0) {
+            continue;
+        }
+        visited.insert(n.get());
+        order.push_back(n);
+        for (const auto &up : n->getUpStreamNodes()) {
+            if (up) {
+                pending.push_back(up);
+            }
+        }
+    }
+    // 逆序 = 子先于父，等价于原递归实现的后序清理
+    for (auto it = order.rbegin(); it != order.rend(); ++it) {
+        Node *n = it->get();
+        n->clearResultOwner();
+        auto result_copy = n->_result.lock();
+        n->_upStreamNodes.clear();
+        n->_inputs.clear();
         if (result_copy) {
             result_copy->detach_autograd();
         }

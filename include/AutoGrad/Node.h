@@ -146,15 +146,28 @@ public:
      */
     virtual std::vector<GradPack> backward(const std::vector<Tensor>& downStreamGrads) = 0;
 
-    /** @brief 递归恢复依赖计数
+    /**
+     * @brief 恢复图内所有节点的依赖计数（迭代实现）
+     * @param self    起点节点（需为 shared_ptr：遍历中用强引用维持节点存活）
      * @param visited 已访问节点集合，防止重复访问
+     *
+     * @note [Fix 2026-09-17] 由递归改为显式栈迭代。递归深度等于图的最长链长度，
+     *       深链图（可微仿真一条轨迹展开上万层算子）会耗尽线程栈。restore 是幂等的
+     *       （_count 直接由 _dependencies 重置），遍历顺序无关。
      */
-    void restoreRecursive(std::unordered_set<Node*>& visited);
+    void restoreGraph(const std::shared_ptr<Node>& self, std::unordered_set<Node*>& visited);
 
-    /** @brief 递归清理节点引用，打破循环引用
+    /**
+     * @brief 断开图内所有节点的引用，打破循环引用（迭代实现，后序）
+     * @param self    起点节点（需为 shared_ptr）
      * @param visited 已访问节点集合，防止重复访问
+     *
+     * @note [Fix 2026-09-17] 与 restoreGraph 同因由递归改为迭代。清理必须保持
+     *       **后序**（先断开上游、再断开自己），否则上游会在仍被引用时提前释放。
+     *       迭代版先按「父先于子」收集节点并用 vector 持有强引用，再逆序处理，
+     *       与递归后序等价。
      */
-    void clearRecursive(std::unordered_set<Node*>& visited);
+    void clearGraph(const std::shared_ptr<Node>& self, std::unordered_set<Node*>& visited);
 
     /** @brief 获取该节点对应的输出张量（可能为nullptr如果已被释放） */
     [[nodiscard]] std::shared_ptr<Tensor> getResult() const {
