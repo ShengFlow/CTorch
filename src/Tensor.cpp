@@ -11,6 +11,7 @@
 #include "../include/AutoGrad.h"
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/AutoGrad/Nodes/TransposeNode.h"
+#include "../include/AutoGrad/Nodes/SliceNode.h"
 #include "../include/AutoGrad/Nodes/SumNode.h"
 #include "../include/AutoGrad/Nodes/MeanNode.h"
 #include "../include/AutoGrad/Nodes/DimReduceNode.h"
@@ -474,8 +475,8 @@ Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
     return result;
 }
 
-// 沿第0维切片（零拷贝视图）
-Tensor Tensor::slice_dim0(size_t start, size_t size) const {
+// 沿第0维切片（零拷贝视图，不注册 autograd 节点）
+Tensor Tensor::slice_dim0NoGrad(size_t start, size_t size) const {
     if (_shape.empty()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                                     "slice_dim0: 标量张量无法切片");
@@ -489,6 +490,48 @@ Tensor Tensor::slice_dim0(size_t start, size_t size) const {
     result.computeStrides();
     size_t stride0 = _strides.empty() ? 1 : _strides[0];
     result._storage_offset = _storage_offset + start * stride0;
+    return result;
+}
+
+Tensor Tensor::slice_dim0(size_t start, size_t size) const {
+    Tensor result = slice_dim0NoGrad(start, size);
+
+    // [Fix 2026-09-17] 补上 autograd 节点注册。
+    //
+    // 旧实现只有 slice_dim0NoGrad 那几行（拷贝构造 + 改 shape/strides/offset）：
+    // 拷贝构造会把副本的 autograd 节点替换为新建的 GradAccumulator
+    // （见 Tensor(const Tensor&)），副本与上游就此断开 —— 任何切片之后的梯度
+    // 恒为零，且不报错。与之配套的是：AutoGrad/Nodes 下也一直没有 SliceNode。
+    //
+    // 切片前向是纯元数据操作（只改 shape / strides / storage_offset），不需要
+    // 调度器参与，因此这里不走 AutoGrad::dispatch<op::...>，只补一个反向节点。
+    // 这样也避免了新增 op 枚举项 —— 那会触及 op 顺序与 kCount 静态断言两条红线。
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+
+        Arena &arena = Arena::getInstance();
+        if (getRelatedNode() == nullptr) {
+            setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
+        } else {
+            getRelatedNode()->increase();
+        }
+
+        std::vector<std::shared_ptr<Node>> upStream;
+        upStream.push_back(getRelatedNode());
+        std::vector<Tensor> inputs;
+        inputs.push_back(*this);
+
+        const auto node = arena.invoke<SliceNode>(start, size, std::move(upStream),
+                                                  std::move(inputs), result_weak);
+        if (node && result_ptr) {
+            result.setRelatedNode(node);
+            node->setResultOwner(result_ptr);
+        }
+    }
+
     return result;
 }
 

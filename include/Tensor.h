@@ -844,10 +844,25 @@ class Tensor {
     Tensor reshape(const std::vector<size_t> &new_shape) const;
 
     /**
-     * @brief 沿第0维切片（零拷贝视图）
+     * @brief 沿第 0 维切片的零拷贝视图，**不注册 autograd 节点**
      * @param start 起始索引
      * @param size 切片大小
-     * @return 切片后的零拷贝张量
+     * @note 供 SliceNode::backward 使用：反向过程中不应继续建图，
+     *       否则每轮 backward 都会往计算图上再接一段，图逐轮膨胀。
+     */
+    Tensor slice_dim0NoGrad(size_t start, size_t size) const;
+
+    /**
+     * @brief 沿第 0 维切片，并注册 autograd 节点
+     * @param start 起始索引
+     * @param size 切片大小
+     * @return 切片张量（零拷贝视图）
+     *
+     * 与 transpose 同理，切片只改 shape / strides / storage_offset，是纯元数据
+     * 操作、不需要调度器参与，因此不走 AutoGrad::dispatch，只补一个反向节点；
+     * 这样也避免新增 op 枚举项（那会触及 op 顺序与 kCount 静态断言两条红线）。
+     *
+     * @note 调用方需自行保证 `start + size <= shape[0]`，越界会抛异常。
      */
     Tensor slice_dim0(size_t start, size_t size) const;
 

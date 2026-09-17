@@ -307,6 +307,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/DivNode.h
         include/AutoGrad/Nodes/NegNode.h
         include/AutoGrad/Nodes/TransposeNode.h
+        include/AutoGrad/Nodes/SliceNode.h
         include/AutoGrad/Nodes/SinNode.h
         include/AutoGrad/Nodes/CosNode.h
         include/AutoGrad/Nodes/TanhNode.h
@@ -338,6 +339,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/DivNode.cpp
         src/AutoGrad/Nodes/NegNode.cpp
         src/AutoGrad/Nodes/TransposeNode.cpp
+        src/AutoGrad/Nodes/SliceNode.cpp
         src/AutoGrad/Nodes/SinNode.cpp
         src/AutoGrad/Nodes/CosNode.cpp
         src/AutoGrad/Nodes/TanhNode.cpp
