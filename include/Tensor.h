@@ -914,6 +914,30 @@ class Tensor {
     Tensor slice_dim0(size_t start, size_t size) const;
 
     /**
+     * @brief 沿 dim 维与另一张量首尾拼接，**不注册 autograd 节点**
+     * @param other 另一张量，除 dim 维外形状必须与本张量一致
+     * @param dim   拼接维度
+     * @return 拼接结果（新分配存储，形状为 dim 维长度之和）
+     *
+     * @note 前向是纯数据搬运，不经过调度器：拼接需要 dim 参数，而调度器的双输入
+     *       kernel 签名固定为 (a, b)，无法携带该参数。非连续的输入会先物化为连续
+     *       副本（见 contiguous），否则按块拷贝会读到错乱布局。
+     */
+    Tensor concatNoGrad(const Tensor &other, int dim) const;
+
+    /**
+     * @brief 沿 dim 维与另一张量首尾拼接，并注册 autograd 节点
+     * @param other 另一张量，除 dim 维外形状必须与本张量一致
+     * @param dim   拼接维度
+     * @return 拼接结果
+     *
+     * 拼接与切片互为伴随：切片的前向取子区间、反向散射补零，拼接的前向首尾相接、
+     * 反向切回两段。前向不需要 kernel（见 concatNoGrad），故只补一个反向节点
+     * （ConcatNode），不走 AutoGrad::dispatch，也不新增 op 枚举项。
+     */
+    Tensor concat(const Tensor &other, int dim) const;
+
+    /**
      * @brief 广播张量到指定形状
      * @param shape 目标形状
      * @return 广播后的张量

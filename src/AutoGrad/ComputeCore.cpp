@@ -151,6 +151,18 @@ void ComputeCore::addReadyNode(std::shared_ptr<Node> node) {
 }
 
 void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
+    // [Fix 2026-09-17] 反向起点判空守卫。
+    // 传 nullptr 是调用方错误，典型场景是对不需要梯度的张量调用
+    // backward(t.getRelatedNode()) —— 此时 t 没有 autograd 节点（例如
+    // concatNoGrad / sliceNoGrad / detach 之后未重新建图）。
+    // 旧实现直接进入编排循环，在 bucket/weak_ptr::lock 处 SIGSEGV；
+    // 改为抛出带语义的错误，避免以段错误形式暴露调用方缺陷。
+    if (!root) {
+        CtorchError::throwException(
+            ErrorPlatform::kAutoDiff, ErrorType::TENSOR_STATE,
+            "backward: 反向起点节点为空（该张量不需要梯度，或前向期间未参与建图）");
+    }
+
     // DEBT-NEW-7 H2 修复:在 backward 期间标记 in_backward=true，
     // 调度器的 inAutogradScope guard 借此识别反向传播路径（其 matmul 输入
     // 通常 requires_grad=false,如 x.T @ grad），跳过 c3 单 kernel 注入。

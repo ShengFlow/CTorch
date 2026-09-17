@@ -13,6 +13,7 @@
 #include "../include/AutoGrad/Nodes/TransposeNode.h"
 #include "../include/AutoGrad/Nodes/SliceNode.h"
 #include "../include/AutoGrad/Nodes/ReshapeNode.h"
+#include "../include/AutoGrad/Nodes/ConcatNode.h"
 #include "../include/AutoGrad/Nodes/SumNode.h"
 #include "../include/AutoGrad/Nodes/MeanNode.h"
 #include "../include/AutoGrad/Nodes/DimReduceNode.h"
@@ -380,9 +381,14 @@ Tensor Tensor::transpose(int dim0, int dim1) const {
         Arena &arena = Arena::getInstance();
         if (getRelatedNode() == nullptr) {
             setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
-        } else {
-            getRelatedNode()->increase();
         }
+        // [Fix 2026-09-17] 对齐 DataCore::registerNode：无条件 increase 一次。
+        // requires_grad(true) 会预先建好 GradAccumulator，而该节点的
+        // _count/_dependencies 均从 0 起算，引用计数必须由这里补上，
+        // 否则 restore() 之后计数偏低、二次 backward 时被提前摘出队列。
+        // 写成无条件形式（而非「仅在复用已有节点时 increase」）是为了与框架
+        // 主路径保持同一语义，避免两条分支随演化漂移。
+        getRelatedNode()->increase();
 
         std::vector<std::shared_ptr<Node>> upStream;
         upStream.push_back(getRelatedNode());
@@ -509,9 +515,14 @@ Tensor Tensor::reshape(const std::vector<size_t> &new_shape) const {
         Arena &arena = Arena::getInstance();
         if (getRelatedNode() == nullptr) {
             setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
-        } else {
-            getRelatedNode()->increase();
         }
+        // [Fix 2026-09-17] 对齐 DataCore::registerNode：无条件 increase 一次。
+        // requires_grad(true) 会预先建好 GradAccumulator，而该节点的
+        // _count/_dependencies 均从 0 起算，引用计数必须由这里补上，
+        // 否则 restore() 之后计数偏低、二次 backward 时被提前摘出队列。
+        // 写成无条件形式（而非「仅在复用已有节点时 increase」）是为了与框架
+        // 主路径保持同一语义，避免两条分支随演化漂移。
+        getRelatedNode()->increase();
 
         std::vector<std::shared_ptr<Node>> upStream;
         upStream.push_back(getRelatedNode());
@@ -582,9 +593,14 @@ Tensor Tensor::slice(int dim, size_t start, size_t size) const {
         Arena &arena = Arena::getInstance();
         if (getRelatedNode() == nullptr) {
             setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
-        } else {
-            getRelatedNode()->increase();
         }
+        // [Fix 2026-09-17] 对齐 DataCore::registerNode：无条件 increase 一次。
+        // requires_grad(true) 会预先建好 GradAccumulator，而该节点的
+        // _count/_dependencies 均从 0 起算，引用计数必须由这里补上，
+        // 否则 restore() 之后计数偏低、二次 backward 时被提前摘出队列。
+        // 写成无条件形式（而非「仅在复用已有节点时 increase」）是为了与框架
+        // 主路径保持同一语义，避免两条分支随演化漂移。
+        getRelatedNode()->increase();
 
         std::vector<std::shared_ptr<Node>> upStream;
         upStream.push_back(getRelatedNode());
@@ -604,6 +620,142 @@ Tensor Tensor::slice(int dim, size_t start, size_t size) const {
 
 Tensor Tensor::slice_dim0(size_t start, size_t size) const {
     return slice(0, start, size);
+}
+
+Tensor Tensor::concatNoGrad(const Tensor &other, int dim) const {
+    if (_shape.empty() || other._shape.empty()) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "concat: 标量张量无法拼接");
+    }
+    if (_shape.size() != other._shape.size()) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "concat: 两个张量的维度数不一致");
+    }
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                    "concat: 维度越界");
+    }
+    const auto d = static_cast<size_t>(dim);
+    for (size_t i = 0; i < _shape.size(); ++i) {
+        if (i != d && _shape[i] != other._shape[i]) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                        "concat: 除拼接维外形状不一致");
+        }
+    }
+    if (_dtype != other._dtype) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
+                                    "concat: dtype 不一致");
+    }
+    if (_device != other._device) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DEVICE_COMPAT,
+                                    "concat: device 不一致");
+    }
+
+    std::vector<size_t> out_shape = _shape;
+    out_shape[d] = _shape[d] + other._shape[d];
+    Tensor result(ShapeTag{}, out_shape, _dtype, _device, false);
+
+    const size_t a_len = _shape[d];
+    const size_t b_len = other._shape[d];
+    if (result.numel() == 0) {
+        return result;
+    }
+
+    // 拼接可视作「外层 x dim 维 x 内层」的三段块结构（与切片同构）：
+    //   outer = Π shape[0..dim)       —— 该维之前的维度乘积
+    //   inner = Π shape[dim+1..end)   —— 该维之后的维度乘积
+    // 每个外层块在输出中占据 (a_len + b_len) * inner 个连续元素，
+    // 其中前 a_len * inner 个来自 a、其后 b_len * inner 个来自 b。
+    size_t outer = 1;
+    for (size_t i = 0; i < d; ++i) {
+        outer *= _shape[i];
+    }
+    size_t inner = 1;
+    for (size_t i = d + 1; i < _shape.size(); ++i) {
+        inner *= _shape[i];
+    }
+
+    // 非连续输入先物化：块拷贝假设每个外层块在内存中连续，
+    // 只有连续张量满足该假设（contiguous 对已连续张量直接返回自身副本）。
+    const Tensor a_buf = is_contiguous() ? Tensor() : contiguous();
+    const Tensor b_buf = other.is_contiguous() ? Tensor() : other.contiguous();
+    const Tensor &a = is_contiguous() ? *this : a_buf;
+    const Tensor &b = other.is_contiguous() ? other : b_buf;
+
+    const size_t a_block = a_len * inner;
+    const size_t b_block = b_len * inner;
+    const size_t out_block = a_block + b_block;
+
+    auto copy_blocks = [&](auto *dst, const auto *src_a, const auto *src_b) {
+        for (size_t o = 0; o < outer; ++o) {
+            auto *base = dst + o * out_block;
+            std::copy(src_a + o * a_block, src_a + o * a_block + a_block, base);
+            std::copy(src_b + o * b_block, src_b + o * b_block + b_block, base + a_block);
+        }
+    };
+
+    if (_dtype == DType::kDouble) {
+        copy_blocks(result.data_write<double>(), a.data<double>(), b.data<double>());
+    } else {
+        copy_blocks(result.data_write<float>(), a.data<float>(), b.data<float>());
+    }
+
+    return result;
+}
+
+Tensor Tensor::concat(const Tensor &other, int dim) const {
+    Tensor result = concatNoGrad(other, dim);
+
+    // [Fix 2026-09-17] 与 slice / reshape 同属纯元数据之外的「数据搬运」算子：
+    // 前向需要 dim 参数，而 AutoGrad::dispatch 的双输入 kernel 签名固定为 (a, b)，
+    // 无法携带；数据搬运本身也无需调度器参与。因此这里只补一个反向节点
+    // （ConcatNode 的反向 = 沿 dim 把梯度切回两段），不新增 op 枚举项 ——
+    // 那会触及 op 顺序与 kCount 静态断言两条红线。
+    if (AutoGrad::EnableGrad && (requires_grad() || other.requires_grad())) {
+        result.requires_grad(true);
+
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+
+        Arena &arena = Arena::getInstance();
+
+        // 两个上游各自补齐 GradAccumulator 并各自 increase 一次引用计数 ——
+        // 与 DataCore::registerNode 的双输入处理同一语义（引用计数从 0 起算，
+        // 必须由注册侧补上）。不需要梯度的上游在 upStreamNodes 中占位 nullptr，
+        // 反向遍历端会跳过。
+        std::vector<std::shared_ptr<Node>> upStream;
+        upStream.reserve(2);
+        for (const Tensor *in : {this, &other}) {
+            if (in->requires_grad()) {
+                if (in->getRelatedNode() == nullptr) {
+                    in->setRelatedNode(arena.invoke<GradAccumulator>(in->getWeakPtr()));
+                }
+                upStream.push_back(in->getRelatedNode());
+            } else {
+                upStream.push_back(nullptr);
+            }
+        }
+
+        for (auto &up : upStream) {
+            if (up != nullptr) {
+                up->increase();
+            }
+        }
+
+        std::vector<Tensor> inputs;
+        inputs.push_back(*this);
+        inputs.push_back(other);
+
+        const auto node = arena.invoke<ConcatNode>(dim, _shape[static_cast<size_t>(dim)],
+                                                   std::move(upStream), std::move(inputs),
+                                                   result_weak);
+        if (node && result_ptr) {
+            result.setRelatedNode(node);
+            node->setResultOwner(result_ptr);
+        }
+    }
+
+    return result;
 }
 
 /**
