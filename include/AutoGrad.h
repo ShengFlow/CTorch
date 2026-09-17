@@ -37,6 +37,7 @@ class Node;
 #include "AutoGrad/Nodes/GradAccumulator.h"
 #include "AutoGrad/Nodes/LogNode.h"
 #include "AutoGrad/Nodes/ExpNode.h"
+#include "AutoGrad/Nodes/SqrtNode.h"
 #include "AutoGrad/Nodes/AbsNode.h"
 #include "AutoGrad/Nodes/MinNode.h"
 #include "AutoGrad/Nodes/MaxNode.h"
@@ -183,6 +184,9 @@ namespace AutoGrad {
             case op::GELU:
                 registerNode<GELUNode>(a, result_weak);
                 break;
+            case op::Sqrt:  // 2026/9/17 新增
+                registerNode<SqrtNode>(a, result_weak);
+                break;
             default:
                 break;
             }
@@ -227,6 +231,8 @@ namespace AutoGrad {
                 registerNode<AbsNode>(a, result_weak);
             } else if constexpr (OpType == op::SiLU) {  // PEL25 Stage 5.1: SiLU dispatch
                 registerNode<SiLUNode>(a, result_weak);
+            } else if constexpr (OpType == op::Sqrt) {  // 2026/9/17 新增
+                registerNode<SqrtNode>(a, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());

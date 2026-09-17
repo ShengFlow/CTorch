@@ -229,8 +229,8 @@ private:
     // 以下硬编码数字是 ABI 变更的强制检查点。新增枚举值时必须同步更新此处，
     // 否则编译失败，防止调度表维度与注册逻辑错位。
     // 详见 ABI_POLICY.md 第 3.2 节“新增算子 ABI 检查清单”。
-    static_assert(static_cast<size_t>(op::kCount) == 30,
-                  "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md) — PEL25 #6: 28→30 (SiLU + SwiGLU)");
+    static_assert(static_cast<size_t>(op::kCount) == 31,
+                  "op::kCount changed. Update this assert and all backend kernel registrations (see ABI_POLICY.md) — PEL25 #6: 28→30 (SiLU + SwiGLU); 2026/9/17: 30→31 (Sqrt)");
     // [Dev] v0.5.2 DCU 接入: kDCU = 7 加到 DeviceType 后, kCount 改 8
     // 注: DeviceType 跟 ABI_POLICY 一起看, DCU 节点 activation 后重新 review
     static_assert(static_cast<size_t>(DeviceType::kCount) == 8,

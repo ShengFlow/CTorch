@@ -101,6 +101,7 @@ void CtorchScheduler::initKernels() {
     set_unary(op::LReLU, DeviceType::kCPU, LReLU_BASIC_kernel);
     set_unary(op::Log, DeviceType::kCPU, Log_BASIC_kernel);
     set_unary(op::Exp, DeviceType::kCPU, Exp_BASIC_kernel);
+    set_unary(op::Sqrt, DeviceType::kCPU, Sqrt_BASIC_kernel);
     set_unary(op::Abs, DeviceType::kCPU, Abs_BASIC_kernel);
 
     // CPU in-place unary kernels (BASIC fallback)
@@ -137,6 +138,7 @@ void CtorchScheduler::initKernels() {
     set_bin(op::SwiGLU, DeviceType::kSIMD, SwiGLU_SIMD_kernel);  // PEL25 Stage 3.4 (双输入)
     set_unary(op::Log, DeviceType::kSIMD, Log_SIMD_kernel);
     set_unary(op::Exp, DeviceType::kSIMD, Exp_SIMD_kernel);
+    set_unary(op::Sqrt, DeviceType::kSIMD, Sqrt_SIMD_kernel);
     set_unary(op::Abs, DeviceType::kSIMD, Abs_SIMD_kernel);
 
     set_bin(op::Min, DeviceType::kSIMD, Min_SIMD_kernel);
@@ -990,7 +992,8 @@ std::vector<size_t> CtorchScheduler::computeOutputShape(
         | (1ull << static_cast<size_t>(op::Abs))
         | (1ull << static_cast<size_t>(op::GELU))
         | (1ull << static_cast<size_t>(op::Softmax))
-        | (1ull << static_cast<size_t>(op::SiLU));  // PEL25 #6: SiLU 是单输入 unary, 加进 bitmask
+        | (1ull << static_cast<size_t>(op::SiLU))   // PEL25 #6: SiLU 是单输入 unary, 加进 bitmask
+        | (1ull << static_cast<size_t>(op::Sqrt));  // 2026/9/17: Sqrt 同为单输入 unary
     auto isUnary = [](op t) {
         return (kUnaryOpMask >> static_cast<size_t>(t)) & 1ull;
     };

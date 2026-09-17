@@ -320,6 +320,10 @@ Tensor Exp_CUDA_kernel(const Tensor& a);
 Tensor Exp_AMX_kernel(const Tensor& a);
 Tensor Exp_MPS_kernel(const Tensor& a);
 
+// 2026/9/17 新增：平方根
+Tensor Sqrt_BASIC_kernel(const Tensor& a);
+Tensor Sqrt_SIMD_kernel(const Tensor& a);
+
 /**
  * @brief 基本Abs算子实现
  * @details 执行张量的绝对值操作

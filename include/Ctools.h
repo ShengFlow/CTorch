@@ -220,7 +220,10 @@ enum class op{
    SiLU,       ///< SiLU (Sigmoid Linear Unit) 激活函数, silu(x) = x * sigmoid(x)
    SwiGLU,     ///< SwiGLU 激活函数 (双输入), swiglu(x, gate) = silu(x) * gate
 
-   kCount,     ///< 算子数量（哨兵值，不参与运算，PEL25 #6: 28→30）
+   Sqrt,       ///< 平方根。2026/9/17 新增 —— 必须加在末尾：
+               ///< C3 dispatch 表按 op 索引，插入中间会使既有索引全部错位。
+
+   kCount,     ///< 算子数量（哨兵值，不参与运算，PEL25 #6: 28→30; 9/17: 30→31）
 };
 
 /**

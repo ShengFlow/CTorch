@@ -309,6 +309,7 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/TransposeNode.h
         include/AutoGrad/Nodes/SliceNode.h
         include/AutoGrad/Nodes/ReshapeNode.h
+        include/AutoGrad/Nodes/SqrtNode.h
         include/AutoGrad/Nodes/SinNode.h
         include/AutoGrad/Nodes/CosNode.h
         include/AutoGrad/Nodes/TanhNode.h
@@ -342,6 +343,7 @@ set(CT-Nodes
         src/AutoGrad/Nodes/TransposeNode.cpp
         src/AutoGrad/Nodes/SliceNode.cpp
         src/AutoGrad/Nodes/ReshapeNode.cpp
+        src/AutoGrad/Nodes/SqrtNode.cpp
         src/AutoGrad/Nodes/SinNode.cpp
         src/AutoGrad/Nodes/CosNode.cpp
         src/AutoGrad/Nodes/TanhNode.cpp
@@ -385,6 +387,7 @@ set(CT-CPU-BASIC-OPs
         src/kernels/CPU-BASIC/MAE_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Log_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Exp_BASIC_kernel.cpp
+        src/kernels/CPU-BASIC/Sqrt_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Abs_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Min_BASIC_kernel.cpp
         src/kernels/CPU-BASIC/Max_BASIC_kernel.cpp
@@ -453,6 +456,7 @@ set(CT-CPU-SIMD-OPs
         src/kernels/CPU-SIMD/SGD_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Log_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Exp_SIMD_kernel.cpp
+        src/kernels/CPU-SIMD/Sqrt_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Abs_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Min_SIMD_kernel.cpp
         src/kernels/CPU-SIMD/Max_SIMD_kernel.cpp

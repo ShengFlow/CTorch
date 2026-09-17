@@ -1595,6 +1595,9 @@ Tensor &Tensor::log_() {
 
 Tensor Tensor::exp() const { return AutoGrad::dispatch<op::Exp>(*this); }
 
+// 2026/9/17: 补上实现。此前 Tensor.h 只声明了 sqrt() 而没有定义（悬空声明）。
+Tensor Tensor::sqrt() const { return AutoGrad::dispatch<op::Sqrt>(*this); }
+
 Tensor &Tensor::exp_() {
     check_inplace_safe_("exp_");
     CtorchScheduler::getInstance().dispatch_inplace(*this, op::Exp);
