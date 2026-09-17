@@ -110,8 +110,24 @@ public:
      * @return Arena的引用
      */
     static Arena& getInstance() {
-        static auto instance = Arena();
-        return instance;
+        // [Fix 2026-09-17] 改为进程生命周期单例，不参与静态析构。
+        //
+        // 原实现是 Meyers 单例（`static auto instance = Arena();`）。进程退出时它
+        // 会被析构，析构里调用 reset() 去执行池中残留对象的销毁函数；那些对象的
+        // 析构又会触碰其他**已完成析构**的静态对象（存储池、日志、C3 单例），
+        // 于是退化成对已失效内存的访问。
+        //
+        // 实测（AddressSanitizer，OpenInspire3 可微动力学测试）：100% 稳定地在
+        // exit() 的 __cxa_finalize_ranges 段 SIGSEGV，栈顶为
+        // `Tensor::~Tensor() <- Arena::reset() <- Arena::~Arena()`。因为发生在
+        // 退出阶段，表现为「测试全部通过但进程以 138/139 退出」，且时崩时不崩，
+        // 极易被误判成运算过程中的内存破坏。
+        //
+        // 池本身是进程级缓存，退出时交给操作系统回收是正确做法；这与
+        // C3KernelRegistry（同样改为 new 分配）和 FlatOutPool（§4.93「释放数据、
+        // 保留结构」）的处理保持一致。运行期的 reset() 语义不变。
+        static Arena* instance = new Arena();
+        return *instance;
     }
 
     /** @brief 析构函数，释放所有内存块 */
