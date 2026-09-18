@@ -70,25 +70,55 @@ int main(int argc, char **argv) {
               << "，合计 " << total << " 次创建\n";
     std::cout << "========================================\n";
 
+    // ---- 预热 ----
+    // 性能测量必须先预热：首次分配要向内核申请新页，若让被测项 A 冷启动、被测项 B
+    // 复用 A 释放的内存，会得到「A 比 B 慢数倍」的假象（本基准早期版本即如此，
+    // 顺序一换结论就翻转）。这里对两条路径各跑一轮不计时的负载。
+    {
+        std::vector<std::shared_ptr<DummyNode>> warm;
+        warm.reserve(per_round);
+        for (int i = 0; i < per_round; ++i) {
+            warm.push_back(Arena::getInstance().invoke<DummyNode>());
+        }
+        warm.clear();
+        Arena::getInstance().reset();
+
+        std::vector<std::shared_ptr<DummyNode>> warm2;
+        warm2.reserve(per_round);
+        for (int i = 0; i < per_round; ++i) {
+            warm2.push_back(std::make_shared<DummyNode>());
+        }
+        warm2.clear();
+    }
+
     // ---- A. Arena::invoke ----
     double arena_alloc_ms = 0.0;
     double arena_reset_ms = 0.0;
     {
-        auto t_all = Clock::now();
         for (int r = 0; r < rounds; ++r) {
+            // 与对照项保持同样的持有模式：创建后持有到本轮结束再统一释放。
+            // （早期版本在这里每次创建后立即释放，malloc/free 交错会让本段显得
+            //  慢 4 倍 —— 那是分配器行为的差异，不是 invoke 的开销。）
             auto t0 = Clock::now();
+            std::vector<std::shared_ptr<DummyNode>> keep;
+            keep.reserve(per_round);
             for (int i = 0; i < per_round; ++i) {
                 auto p = Arena::getInstance().invoke<DummyNode>();
                 if (!p) {
                     std::cout << "分配失败，提前结束\n";
                     return 1;
                 }
+                keep.push_back(std::move(p));
             }
             arena_alloc_ms += msSince(t0);
 
             auto t1 = Clock::now();
             Arena::getInstance().reset();
             arena_reset_ms += msSince(t1);
+
+            auto t2 = Clock::now();
+            keep.clear();
+            arena_reset_ms += msSince(t2);
         }
         std::cout << "\n[A] Arena::invoke  创建 " << total << " 个对象: " << arena_alloc_ms
                   << " ms  (" << (arena_alloc_ms * 1000.0 / total) << " ns/个)\n";
@@ -116,16 +146,39 @@ int main(int argc, char **argv) {
                   << " ms  (" << (shared_ms * 1000.0 / total) << " ns/个)\n";
     }
 
+    // ---- A2. 缓存 Arena 引用后的 invoke（分离 getInstance() 的开销）----
+    double cached_ms = 0.0;
+    {
+        Arena &ar = Arena::getInstance();
+        for (int r = 0; r < rounds; ++r) {
+            auto t0 = Clock::now();
+            std::vector<std::shared_ptr<DummyNode>> keep;
+            keep.reserve(per_round);
+            for (int i = 0; i < per_round; ++i) {
+                keep.push_back(ar.invoke<DummyNode>());
+            }
+            cached_ms += msSince(t0);
+            keep.clear();
+            ar.reset();
+        }
+        std::cout << "\n[A2] 缓存引用后的 invoke  创建 " << total << " 个对象: " << cached_ms
+                  << " ms\n";
+        std::cout << "     与 [A] 之差（= getInstance() 的每次调用开销）: "
+                  << (arena_alloc_ms - cached_ms) << " ms\n";
+    }
+
     // ---- C. 细分：相同负载下分别测「分配+锁」「非平凡析构记录」「纯字节分配」----
     double pod_ms = 0.0;
     {
         for (int r = 0; r < rounds; ++r) {
             auto t0 = Clock::now();
+            std::vector<std::shared_ptr<PodObject>> keep;
+            keep.reserve(per_round);
             for (int i = 0; i < per_round; ++i) {
-                auto p = Arena::getInstance().invoke<PodObject>();
-                (void)p;
+                keep.push_back(Arena::getInstance().invoke<PodObject>());
             }
             pod_ms += msSince(t0);
+            keep.clear();
             Arena::getInstance().reset();
         }
         std::cout << "\n[C] invoke<平凡类型>  创建 " << total << " 个对象: " << pod_ms

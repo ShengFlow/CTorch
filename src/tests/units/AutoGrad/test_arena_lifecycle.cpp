@@ -3,17 +3,19 @@
  * @author 苏璃珞
  * @brief Arena 生命周期与水位回落回归测试
  *
- * @details Arena 是自动微分图节点的内存池。它有两个容易出问题的性质：
+ * @details Arena 提供两类能力，二者的生命周期语义**不同**，本文件分别覆盖：
  *
- *  1. **对象析构由池负责**（shared_ptr 用空删除器），因此 reset() 必须真的把
- *     池中对象析构掉，否则每轮迭代都会泄漏构造资源；
- *  2. **块不归还操作系统**，所以必须按水位回落 —— 否则一次内存尖峰之后进程
- *     长期占住那份内存（池只会涨、不会落）。
+ *  1. **字节级池**（allocBytes / allocShared / reset / clear）：块不归还操作系统，
+ *     因此必须按水位回落 —— 否则一次内存尖峰之后进程长期占住那份内存。
+ *  2. **对象构造**（invoke）：自 2026-09-18 起改用标准堆分配，返回**拥有所有权**的
+ *     shared_ptr，对象在引用归零时析构。此前的「空删除器 + reset() 强杀 + 地址复用」
+ *     会让跨 reset 存活的 Tensor::_node 悬垂并指向复用后的新对象（类型混淆），
+ *     多轮建图-反传稳定崩溃（见 test_multi_epoch_backward）。
  *
  * 覆盖：
- *  A. 常规分配/复位：多轮迭代后块数稳定，不随轮数增长
+ *  A. 字节池：多轮分配/复位后块数稳定，不随轮数增长
  *  B. 尖峰回落：一次超大需求把池撑大后，reset() 应把块数回落到保留水位
- *  C. reset() 确实析构了池中对象（用可观测副作用的类型验证）
+ *  C. invoke 的所有权语义：持有期间不析构、引用归零时析构且只析构一次
  *  D. clear() 释放全部块
  *
  * @date 2026/9/17
@@ -73,8 +75,8 @@ int main() {
         size_t blocks_after_round1 = 0;
         for (int round = 0; round < 20; ++round) {
             for (int i = 0; i < 500; ++i) {
-                auto p = arena.invoke<TrackedNode>();
-                if (!p) {
+                char *p = arena.allocBytes(256);
+                if (p == nullptr) {
                     checkTrue("分配成功", false);
                     return 1;
                 }
@@ -118,18 +120,36 @@ int main() {
         checkTrue("回落确实释放了块", after < peak);
     }
 
-    // ---- C. reset() 析构池中对象 ----
-    std::cout << "\n[C] reset() 的对象析构语义\n";
+    // ---- C. invoke 的所有权语义 ----
+    std::cout << "\n[C] invoke 的所有权语义\n";
     {
         g_destroyCount = 0;
-        for (int i = 0; i < 100; ++i) {
-            auto p = arena.invoke<TrackedNode>();
-            (void)p;
+        {
+            std::vector<std::shared_ptr<TrackedNode>> keep;
+            keep.reserve(100);
+            for (int i = 0; i < 100; ++i) {
+                auto p = arena.invoke<TrackedNode>();
+                if (!p) {
+                    checkTrue("invoke 分配成功", false);
+                    break;
+                }
+                keep.push_back(p);
+            }
+            std::cout << "    持有 100 个引用期间析构次数 = " << g_destroyCount
+                      << "（期望 0）\n";
+            checkTrue("持有期间对象不被析构", g_destroyCount == 0);
+
+            keep.clear();
+            std::cout << "    释放全部引用后析构次数 = " << g_destroyCount << "（期望 100）\n";
+            checkTrue("引用归零时全部析构", g_destroyCount == 100);
         }
-        checkTrue("创建阶段尚未析构", g_destroyCount == 0);
-        arena.reset();
-        std::cout << "    reset 后析构次数 = " << g_destroyCount << "（期望 100）\n";
-        checkTrue("reset() 析构了全部池中对象", g_destroyCount == 100);
+        // 再取一次，确认不会被重复析构
+        const int before = g_destroyCount;
+        auto p = arena.invoke<TrackedNode>();
+        p.reset();
+        std::cout << "    二次分配后析构增量 = " << (g_destroyCount - before)
+                  << "（期望 1）\n";
+        checkTrue("每次分配只析构一次", g_destroyCount - before == 1);
     }
 
     // ---- D. clear() 释放全部块 ----

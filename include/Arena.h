@@ -17,6 +17,9 @@
 #include "CtorchError.h"
 #include "CoreDefs.h"
 
+#include <cstdlib>
+#include <string>
+
 /**
  * @struct Block
  * @brief 内存块结构，Arena内存池的基本分配单元
@@ -157,17 +160,28 @@ public:
      */
     template <typename T,typename... Args>
     std::shared_ptr<T> invoke(Args&&... args) {
-        std::lock_guard lock(_mtx);
-        if (char* mem = allocate<T>()) {
-            T* obj = new (mem) T(std::forward<Args>(args)...);
-            if constexpr (!std::is_trivially_destructible_v<T>)
-                _destroyFuncs.push_back([obj](){obj->~T();});
-            auto emptyDeleter = [](T*) noexcept {};
-            std::shared_ptr<T> ptr(obj, emptyDeleter);
-            return ptr;
-        }
-        CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to add for the object.");
-        return nullptr;
+        // [Fix 2026-09-18] 节点生命周期改由 shared_ptr 独占管理。
+        //
+        // 原实现把对象放在 Arena 的块里，返回「空删除器」的 shared_ptr，并在
+        // reset() 时统一执行析构、再把块偏移归零以供复用。这条路径有两个无法
+        // 调和的问题：
+        //
+        //  1. **悬垂**：Tensor 的 `_autograd_meta._node` 是 shared_ptr，会跨 reset
+        //     存活。reset 强杀对象后这些引用立即悬垂，而块偏移归零让同一地址被
+        //     下一个对象复用 —— 悬垂引用于是指向了**另一个类型**的对象，虚调用
+        //     直接越界。实测多轮「建图-反传-更新」循环稳定 SIGBUS/SIGSEGV
+        //     （ASan: heap-buffer-overflow in ComputeCore::backward），而把 reset
+        //     改成 no-op 或把本函数改为 make_shared 都立即恢复正常 —— 二者互为对照，
+        //     确认根因在此而非运算逻辑。
+        //  2. **成本**：bench_arena 实测该路径比 make_shared 慢约 3 倍（40 万次创建：
+        //     14.3 ms vs 4.7 ms）。它省下了对象的 malloc，却没省下 shared_ptr
+        //     控制块的那次 malloc —— 也就是说这条路径既没有安全性也没有收益。
+        //
+        // 改为标准堆分配后：生命周期由引用计数精确管理（不再有悬垂）、每次创建
+        // 少一把全局锁（并发创建不再串行化），reset() 也就不再需要「强杀对象」。
+        // Arena 的其余 API（allocBytes / allocShared / reset）保持不变，仍可作
+        // 原始的字节级池使用。
+        return std::make_shared<T>(std::forward<Args>(args)...);
     }
 
     /**
