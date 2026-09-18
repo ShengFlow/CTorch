@@ -54,14 +54,22 @@ class Arena {
     /** @brief 互斥锁，保证线程安全 */
     mutable std::mutex _mtx;
 
-    /** @brief 保留的内存块数量 */
-    static constexpr size_t KEEP_BLOCKS = 10;
-
     /**
      * @brief 添加一个新的内存块
      * @param size 内存块大小，默认1MB
      */
     void addBlock(size_t size = 1024*1024);
+
+    /**
+     * @brief 在指定块内按对齐要求切出一段内存
+     * @param block 目标块
+     * @param align 对齐要求
+     * @param size  需要的字节数
+     * @return 切出的地址；该块剩余空间不足时返回 nullptr
+     *
+     * @note 此前这段逻辑在 allocate() 与 allocBytes() 里各写了一份，容易漂移。
+     */
+    static char* allocateFromBlock(Block& block, size_t align, size_t size);
 
     /**
      * @brief 分配指定类型大小的内存
@@ -70,14 +78,8 @@ class Arena {
      */
     template <typename T>
     char* allocate() {
-        auto allocateFrom = [](std::unique_ptr<Block>& block,size_t align,size_t size)-> char* {
-            void* ptr = block->_base + block->_offset;
-            size_t space = block->_maxOffset - block->_offset;
-            if (std::align(align,size,ptr,space)) {
-                block->_offset = static_cast<char*>(ptr) + size - block->_base;
-                return static_cast<char*>(ptr);
-            }
-            return nullptr;
+        auto allocateFrom = [](std::unique_ptr<Block>& block, size_t align, size_t size) {
+            return allocateFromBlock(*block, align, size);
         };
 
         if (_blocks.empty()) {
@@ -105,6 +107,14 @@ class Arena {
     /** @brief 私有构造函数，防止外部实例化 */
     Arena();
 public:
+    /**
+     * @brief reset() 后保留的内存块数量
+     *
+     * 超过该水位的块会在 reset() 时真正释放 —— 池按峰值增长、峰值过后回落。
+     * （该常量此前已声明但未被使用，reset() 保留全部块，导致内存只增不减。）
+     */
+    static constexpr size_t KEEP_BLOCKS = 10;
+
     /**
      * @brief 获取单例实例
      * @return Arena的引用
@@ -176,8 +186,11 @@ public:
      */
     std::shared_ptr<char> allocShared(size_t bytes, size_t align = alignof(std::max_align_t));
 
-    /** @brief 重置内存池，释放所有分配的内存 */
+    /** @brief 重置内存池：析构池中对象，并把块回落到保留水位 */
     void reset();
+
+    /** @brief 当前池中的内存块数量（诊断用，非热路径） */
+    [[nodiscard]] size_t blockCount() const;
 
     /** @brief 清理内存池，释放所有内存块 */
     void clear();
