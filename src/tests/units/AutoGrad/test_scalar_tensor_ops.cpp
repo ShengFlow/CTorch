@@ -16,28 +16,30 @@
  *     concat），梯度正确 —— 这是 OpenInspire3 可微六自由度动力学采用的写法。
  *  E. 反复构建-反向-释放（200 轮）的稳定性
  *
- * @par 已知框架缺陷（形状不同的广播除法反向）
+ * @par 回归覆盖：形状不同的广播除法反向（曾静默错值，已修）
  *
- * `{N} / 标量` 与 `标量 / {N}` 的**反向**会给出错误梯度：分母（分子）侧的梯度
- * 只累加了被广播张量的**第一个元素**，而不是全部元素之和。例如
- * `loss = Σ(c_j / Σc²)` 的解析梯度是 `1/S − 2c_i·Σc_j/S²`（S = Σc²），实测得到
- * 的是 `1/S − 2c_i/S²` —— `Σc_j` 这一段贡献丢失。
+ * 历史缺陷：`{N} / 标量` 与 `标量 / {N}` 的反向只累加被广播张量的**第一个元素**
+ * 而非其和。例如 `loss = Σ(c_j/Σc²)` 的解析梯度是 `1/S − 2c_i·Σc_j/S²`（S = Σc²），
+ * 当时实测得到 `1/S − 2c_i/S²`，`Σc_j` 这段贡献整体丢失；前向数值完全正常，
+ * 只有梯度错且不报错。
  *
- * 根因已定位在 C3 反向融合路径，**不在 eager**：
- *  - eager 的 `DivNode::backward` 逐段手工复刻后数值正确；
- *  - 但反向期间 **`DivNode::backward` 从未被调用**（已用函数入口日志确认零次进入），
- *    梯度由 `C3BackwardCapture::tryExecuteBackward` 的融合 kernel 直接给出；
- *  - 该入口只对**单输入**节点做「非白名单短路」（`_n == 1 && !supportsNodeType`），
- *    双输入节点（Div/Mul/Add/Sub）不经过任何形状合法性校验就进入融合路径，
- *    而融合 kernel 不处理广播归约。
+ * 根因与修法（2026-09-17）：
+ *  - 症状在 C3 反向融合路径 —— eager 的 `DivNode::backward` 逐段复刻数值正确，
+ *    但反向期间它**从未被调用**（函数入口日志确认零次进入）；
+ *  - 入口 `tryExecuteBackward` 的白名单短路写成 `_n == 1 && !supportsNodeType`，
+ *    只拦单输入节点；而 `supportsNodeType` 的名单本就是单输入 unary element-wise
+ *    类型集合，其注释也写明「多输入节点仍按注释回退 eager」—— 设计意图是多输入
+ *    一律回退，入口却放行了它们，于是多输入节点命中按同形状假设的 element-wise
+ *    反向 kernel，遇到广播即出错；
+ *  - 修法：判据对齐设计意图，名单之外无论几个输入都不进入 C3 反向路径（与 §4.98
+ *    leaky_relu 同源，那次同样只覆盖了单输入）。
  *
- * 影响范围：任何「以归约结果为分母/分子」的写法，例如按 batch 归一化的 loss、
- * 四元数归一化 `q / ‖q‖`。前向数值完全正常，只有梯度静默错值。
+ * 打开这条 eager 路径后又暴露出第二处缺陷：`compute_broadcast_reduce_dims` 把
+ * 「input 维度数多于 grad」一律判为非法广播对，而 CTorch 内部存在两种标量形状 ——
+ * `sum()`/`dot()` 返回 0 维 `{}`，标量运算路径常构造 `{1}` —— 混用时就会命中该分支
+ * 并抛异常中断反向。已修为：input 多出的**前导维度全为 1** 时视为等价标量，不归约。
  *
- * 规避方式：改用逐分量运算（见 [D]），避免形状不同的广播参与反向。
- *
- * 复现：`CT_KNOWN_BUG_REPRO=1 ./test_scalar_tensor_ops`（默认跳过，以免该缺陷
- * 未修复前污染回归矩阵；修复后应把 [F] 段提升为常规断言）。
+ * 本文件 [F] 段是该场景的常规回归（判据为与解析解一致）。
  *
  * @date 2026/9/17
  **/
@@ -276,30 +278,58 @@ int main() {
         checkTrue("200 轮反复反向全部梯度正确", bad < 0);
     }
 
-    // ---- F. 已知缺陷复现（默认跳过）----
-    if (std::getenv("CT_KNOWN_BUG_REPRO") != nullptr) {
-        std::cout << "\n[F] 已知缺陷复现：形状不同的广播除法反向\n";
-        {
-            Tensor d(ShapeTag{}, {3});
-            fillSeq(d, 1.0f); // 1,2,3
-            d.requires_grad(true);
-            Tensor s0(ShapeTag{}, {1});
-            s0.data_write<float>()[0] = 14.0f;
-            s0.requires_grad(true);
+    // ---- F. 形状不同的广播除法反向（曾静默错值，见文件头）----
+    std::cout << "\n[F] 形状不同的广播除法反向\n";
+    {
+        // 分母侧：loss = Σ(d_j / s) ⇒ ∂loss/∂s = -Σd_j / s²
+        Tensor d(ShapeTag{}, {3});
+        fillSeq(d, 1.0f); // 1,2,3
+        d.requires_grad(true);
+        Tensor s0(ShapeTag{}, {1});
+        s0.data_write<float>()[0] = 14.0f;
+        s0.requires_grad(true);
 
-            Tensor loss = (d / s0).sum();
-            AutoGrad::backward(loss.getRelatedNode(), false);
+        Tensor loss = (d / s0).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
 
-            const double want = -6.0 / (14.0 * 14.0); // -Σd_j / s²
-            const float *gs = s0.grad_ptr();
-            const double got = (gs == nullptr) ? 0.0 : static_cast<double>(gs[0]);
-            std::cout << "      ∂loss/∂(0 维分母)：实得 " << got << "，解析解 " << want
-                      << "\n";
-            std::cout << "      比值 = " << (want != 0.0 ? got / want : 0.0)
-                      << "（=1 正确；实测为 1/Σd_j，即只累加了第一个元素）\n";
+        const double want_s = -6.0 / (14.0 * 14.0); // -Σd_j / s²
+        const float *gs = s0.grad_ptr();
+        checkNear("∂loss/∂(标量分母) = -Σd/s²",
+                  (gs == nullptr) ? 0.0 : static_cast<double>(gs[0]), want_s, 1e-5);
+    }
+    {
+        // 分子侧：loss = Σ(s / d_j) ⇒ ∂loss/∂s = Σ 1/d_j
+        Tensor d(ShapeTag{}, {3});
+        fillSeq(d, 1.0f); // 1,2,3
+        d.requires_grad(true);
+        Tensor s0(ShapeTag{}, {1});
+        s0.data_write<float>()[0] = 2.0f;
+        s0.requires_grad(true);
+
+        Tensor loss = (s0 / d).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+
+        const double want_s = 1.0 + 1.0 / 2.0 + 1.0 / 3.0;
+        const float *gs = s0.grad_ptr();
+        checkNear("∂loss/∂(标量分子) = Σ1/d",
+                  (gs == nullptr) ? 0.0 : static_cast<double>(gs[0]), want_s, 1e-5);
+    }
+    {
+        // 高维侧：loss = Σ(c_j / Σc²) ⇒ ∂loss/∂c_i = 1/S − 2c_i·Σc_j/S²
+        Tensor c(ShapeTag{}, {3});
+        fillSeq(c, 1.0f); // 1,2,3
+        c.requires_grad(true);
+
+        Tensor n = (c * c).sum(); // {0 维} = 14
+        Tensor loss = (c / n).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+
+        const double S = 14.0, T = 6.0;
+        std::vector<double> want;
+        for (int i = 0; i < 3; ++i) {
+            want.push_back(1.0 / S - 2.0 * (1.0 + i) * T / (S * S));
         }
-    } else {
-        std::cout << "\n[F] 已知缺陷复现段跳过（CT_KNOWN_BUG_REPRO=1 可运行）\n";
+        checkGrad("∂(Σ c/Σc²)/∂c 与解析解一致", gradOf(c), want, 1e-4);
     }
 
     std::cout << "\n========================================\n";

@@ -33,10 +33,23 @@ inline std::vector<int> compute_broadcast_reduce_dims(
     const std::vector<size_t>& input_shape,
     const std::vector<size_t>& grad_shape) {
     // 前置条件：合法的 PyTorch/NumPy 广播要求 input 维度数不超过 grad 维度数。
-    // 若 input 维度更多，后续 reshape 会失败；这里提前给出明确错误信息。
+    //
+    // [Fix 2026-09-17] 例外：input 多出来的**前导维度若全为 1**，等价于标量，
+    // 不构成非法广播对。这类情形来自 CTorch 内部两种标量形状的混用 ——
+    // `sum()` / `dot()` 等全归约返回的是 **0 维张量**（`{}`），而标量运算路径
+    // 常构造 **`{1}`**；两者语义相同但维度数不同。混用时（例如 `标量 * 0.5`
+    // 之后再与 0 维张量相加）就会走到这里，若直接判非法会抛异常中断反向。
+    //
+    // 这类输入不需要归约（多余维度长度为 1，梯度与输入本就一一对应），
+    // 返回空列表即可；调用方随后会按 input_shape 做 reshape 对齐。
     if (input_shape.size() > grad_shape.size()) {
-        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
-            "BroadcastUtils: input 维度数大于 grad 维度数，不是合法广播对");
+        for (std::size_t d = 0; d + grad_shape.size() < input_shape.size(); ++d) {
+            if (input_shape[d] != 1) {
+                CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                    "BroadcastUtils: input 维度数大于 grad 维度数，不是合法广播对");
+            }
+        }
+        return {};
     }
 
     std::vector<int> reduce_dims;
