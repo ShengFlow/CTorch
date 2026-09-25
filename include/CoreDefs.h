@@ -158,9 +158,69 @@ namespace ct {
 
 /**
  * Float types
+ *
+ * @par 为什么 bfloat16/float16 需要条件定义
+ *
+ * `__bf16` 与 `_Float16` 不是可移植类型：
+ *   - aarch64（Apple Silicon / ARMv8）：GCC 与 Clang 均原生提供；
+ *   - x86-64：Clang 原生提供，**GCC 需 13+**（GCC 12 在 x86 上完全没有 `__bf16`）。
+ *
+ * 因此「macOS 能编、Linux x86 GCC 12 挂掉」不是环境配置问题，而是这两个别名
+ * 原先无条件依赖了非可移植类型。本处按（架构, 编译器, 版本）判定可用性，
+ * 不可用时回退到语义等价的位容器 —— 见下方 CT_HAS_NATIVE_BF16。
+ *
+ * @par 回退类型为何安全
+ *
+ * bf16 在本库中**只作 2 字节位容器**：ScalarConvert 的 Bf16ToBits/BitsToBf16/
+ * Bf16ToFloat/FloatToBf16 全部通过 uint16_t 位模式实现（Bf16ToFloat 即左移 16
+ * 再 BitCast），所有算术都在 float 域完成。故用「内部存 uint16_t + 显式转换」的
+ * 最小包装替换，行为与原生类型逐位一致；**不可回退为裸 uint16_t** —— 那会让
+ * `static_cast<bfloat16_t>(bits)` 静默失去浮点语义。
  */
-using bfloat16_t = __bf16;
-using float16_t = _Float16;
+#if defined(__aarch64__) || defined(__ARM_ARCH) || defined(_M_ARM64) ||        \
+    defined(COMPILER_CLANG) || (defined(COMPILER_GCC) && __GNUC__ >= 13)
+  #define CT_HAS_NATIVE_BF16 1
+#else
+  #define CT_HAS_NATIVE_BF16 0
+#endif
+
+#if CT_HAS_NATIVE_BF16
+  using bfloat16_t = __bf16;
+#else
+  /// x86 + GCC < 13 的回退：bf16 位模式的等价容器（sizeof == 2）
+  struct bfloat16_t {
+      uint16_t bits = 0;
+      constexpr bfloat16_t() = default;
+      constexpr explicit bfloat16_t(uint16_t b) : bits(b) {}
+      constexpr explicit bfloat16_t(float f)
+          : bits(static_cast<uint16_t>(__builtin_bit_cast(uint32_t, f) >> 16)) {}
+      constexpr operator uint16_t() const { return bits; }
+      constexpr operator float() const {
+          return __builtin_bit_cast(float, static_cast<uint32_t>(bits) << 16);
+      }
+  };
+  static_assert(sizeof(bfloat16_t) == 2, "bfloat16_t must be 2 bytes");
+#endif
+
+#if defined(__aarch64__) || defined(__ARM_ARCH) || defined(_M_ARM64) ||        \
+    defined(COMPILER_CLANG) || (defined(COMPILER_GCC) && __GNUC__ >= 12)
+  #define CT_HAS_NATIVE_F16 1
+#else
+  #define CT_HAS_NATIVE_F16 0
+#endif
+
+#if CT_HAS_NATIVE_F16
+  using float16_t = _Float16;
+#else
+  /// x86 + GCC < 12 的回退：float16 位模式的等价容器（sizeof == 2）
+  struct float16_t {
+      uint16_t bits = 0;
+      constexpr float16_t() = default;
+      constexpr explicit float16_t(uint16_t b) : bits(b) {}
+      constexpr operator uint16_t() const { return bits; }
+  };
+  static_assert(sizeof(float16_t) == 2, "float16_t must be 2 bytes");
+#endif
 using float32_t = float;
 using float64_t = double;
 /**

@@ -187,11 +187,23 @@ set(CT-C3-Core
 #     L106 这里只 list APPEND MetalDevice.mm + MPSAllocator.mm (单独 set)
 
 # MLIR kernel 生成器：仅在 CT_ENABLE_MLIR 时编译（归入 C3Core 库）
-set(CT-C3-MLIR-Core
-        c3/src/C3/MLIRKernelGen.cpp
-        c3/src/C3/JITCache.cpp
-        c3/src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
+#
+# [Linux/GCC 首次构建修复] 原先 MLIRKernelGen.cpp / JITCache.cpp / MLIRToLLVMIR.cpp
+# 三者在 if(CT_ENABLE_MLIR) **之外**无条件编译，与上方注释「仅在 MLIR 时编译」自相矛盾。
+# 这三个源文件均无条件 include MLIR/LLVM 头：
+#   - MLIRKernelGen.cpp : mlir/Transforms/GreedyPatternRewriteDriver.h 等
+#   - JITCache.cpp      : llvm/IR/{Module,LLVMContext}.h + Bitcode 读写等 7 个
+#   - MLIRToLLVMIR.cpp  : 20+ 个 mlir/* 与 llvm/* 头
+# 而 LLVM/MLIR 的 find_package 与 include 目录只在 if(CT_ENABLE_MLIR) 块内设置，
+# 故 MLIR=OFF 时这三个文件找不到头，构建必然失败。macOS 默认 MLIR=ON 故从未暴露。
+#
+# 安全性：JITCache 的唯一外部引用者是 LinalgOneShotGen.cpp，后者已在 if 块内；
+# MLIRKernelGen/MLIRToLLVMIR 无块外调用者。故整体移入不会造成符号断链。
+set(CT-C3-MLIR-Core "")
 if(CT_ENABLE_MLIR)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/MLIRKernelGen.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/JITCache.cpp)
+    list(APPEND CT-C3-MLIR-Core c3/src/C3/MLIRToLLVMIR.cpp)  # [Dev] v0.5 DCU 接入: MLIR → LLVM IR helper
     list(APPEND CT-C3-MLIR-Core c3/src/C3/C3Dialect.cpp)
     list(APPEND CT-C3-MLIR-Core c3/src/C3/C3DialectLowering.cpp)
     # [2026-08-15] linalg.generic 声明式逐元素 kernel（JIT 2.0 路线 A 移植，STATUS_CONTEXT 4.9/4.7-2）
@@ -268,6 +280,24 @@ target_include_directories(C3Core
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/c3/include
     ${CMAKE_CURRENT_SOURCE_DIR}/c3/src
+)
+
+# [Linux/GCC 首次构建修复] 强制包含 GeneratedKernel.h
+#
+# C3Engine.cpp 使用 GeneratedKernel 的三处成员（FusedCompiledKernel 的构造参数
+# std::function<GeneratedKernel::SingleNodeExecutor>、func_any_ 成员声明、
+# 以及一处局部类型使用），但此前并未直接包含其定义头 —— 而是靠
+# MLIRKernelGen.h 间接带入，后者位于 #ifdef CT_ENABLE_MLIR 块内。
+#
+# 于是 CT_ENABLE_MLIR=OFF 时这三处全部变成 undeclared identifier，构建失败。
+# macOS 默认 CT_ENABLE_MLIR=ON，故该缺陷自引入以来从未暴露；Linux x86 GCC 12
+# 且 MLIR=OFF 的配置下首次构建即失败。
+#
+# GeneratedKernel.h 是纯头文件（仅依赖 <cstddef>/<functional>/<vector> 与
+# C3KernelRegistry.h），不依赖 MLIR/LLVM，任何配置下均可安全包含。
+# 用 -include 在编译单元入口强制引入，避免逐个 .cpp 补 include 造成遗漏。
+target_compile_options(C3Core PRIVATE
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/c3/include/C3/GeneratedKernel.h
 )
 
 if(CT_ENABLE_MLIR)
@@ -709,9 +739,14 @@ add_executable(test_relu_backward src/tests/standalone/test_relu_backward.cpp)
 target_link_libraries(test_relu_backward PRIVATE CTorch)
 target_include_directories(test_relu_backward PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
-target_link_libraries(test_mnist_perf PRIVATE CTorch)
-target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该测试引用 JITCache / MLIR 相关符号，
+# 而 JITCache.cpp 与 MLIR 生成器仅在 CT_ENABLE_MLIR 时编译。
+# 原先无条件注册 ⇒ MLIR=OFF 时链接阶段 undefined symbol。
+if(CT_ENABLE_MLIR)
+    add_executable(test_mnist_perf src/tests/standalone/test_mnist_perf.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+    target_link_libraries(test_mnist_perf PRIVATE CTorch)
+    target_include_directories(test_mnist_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 add_executable(exp_mnist_cold_start src/tests/standalone/exp_mnist_cold_start.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
 target_link_libraries(exp_mnist_cold_start PRIVATE CTorch)
@@ -741,9 +776,14 @@ add_executable(diag_mini_train src/tests/standalone/diag_mini_train.cpp)
 target_link_libraries(diag_mini_train PRIVATE CTorch)
 target_include_directories(diag_mini_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_c3_mnist_train src/tests/standalone/test_c3_mnist_train.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
-target_link_libraries(test_c3_mnist_train PRIVATE CTorch)
-target_include_directories(test_c3_mnist_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该测试引用 JITCache / MLIR 相关符号，
+# 而 JITCache.cpp 与 MLIR 生成器仅在 CT_ENABLE_MLIR 时编译。
+# 原先无条件注册 ⇒ MLIR=OFF 时链接阶段 undefined symbol。
+if(CT_ENABLE_MLIR)
+    add_executable(test_c3_mnist_train src/tests/standalone/test_c3_mnist_train.cpp mnist/mnist_loader.cpp mnist/mnist_loader.h)
+    target_link_libraries(test_c3_mnist_train PRIVATE CTorch)
+    target_include_directories(test_c3_mnist_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 add_executable(test_c3_compile_and_inject src/tests/standalone/test_c3_compile_and_inject.cpp)
 target_link_libraries(test_c3_compile_and_inject PRIVATE CTorch)
@@ -782,9 +822,14 @@ add_executable(test_mlir_simd_integration src/tests/standalone/test_mlir_simd_in
 target_link_libraries(test_mlir_simd_integration PRIVATE CTorch)
 target_include_directories(test_mlir_simd_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_one_shot_bufferization src/tests/standalone/test_one_shot_bufferization.cpp)
-target_link_libraries(test_one_shot_bufferization PRIVATE CTorch)
-target_include_directories(test_one_shot_bufferization PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该测试引用 JITCache / MLIR 相关符号，
+# 而 JITCache.cpp 与 MLIR 生成器仅在 CT_ENABLE_MLIR 时编译。
+# 原先无条件注册 ⇒ MLIR=OFF 时链接阶段 undefined symbol。
+if(CT_ENABLE_MLIR)
+    add_executable(test_one_shot_bufferization src/tests/standalone/test_one_shot_bufferization.cpp)
+    target_link_libraries(test_one_shot_bufferization PRIVATE CTorch)
+    target_include_directories(test_one_shot_bufferization PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 # -rdynamic 导出主程序符号到动态符号表，MLIR JIT 通过 dlsym 查找
 # 自定义 SIMD 函数（ct_simd_vsigmoid 等）需要被 JIT 可见
 target_link_options(test_mlir_simd_integration PRIVATE -rdynamic)
@@ -820,13 +865,22 @@ if(CT_ENABLE_MLIR)
 endif()
 
 # [JIT 2.0 2026-08-15] LinalgElementwiseGen 组件端到端正确性测试 + 性能对比（链接 CTorch 主库）
-add_executable(test_linalg_elementwise src/tests/standalone/test_linalg_elementwise.cpp)
-target_link_libraries(test_linalg_elementwise PRIVATE CTorch)
-target_include_directories(test_linalg_elementwise PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该测试引用 JITCache / MLIR 相关符号，
+# 而 JITCache.cpp 与 MLIR 生成器仅在 CT_ENABLE_MLIR 时编译。
+# 原先无条件注册 ⇒ MLIR=OFF 时链接阶段 undefined symbol。
+if(CT_ENABLE_MLIR)
+    add_executable(test_linalg_elementwise src/tests/standalone/test_linalg_elementwise.cpp)
+    target_link_libraries(test_linalg_elementwise PRIVATE CTorch)
+    target_include_directories(test_linalg_elementwise PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
-add_executable(bench_linalg_vs_handwritten src/tests/standalone/bench_linalg_vs_handwritten.cpp)
-target_link_libraries(bench_linalg_vs_handwritten PRIVATE CTorch)
-target_include_directories(bench_linalg_vs_handwritten PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该 benchmark 直接 include C3/LinalgElementwiseGen.h
+# （MLIR 路径头），MLIR=OFF 时该头不参与构建 ⇒ 链接失败。
+if(CT_ENABLE_MLIR)
+    add_executable(bench_linalg_vs_handwritten src/tests/standalone/bench_linalg_vs_handwritten.cpp)
+    target_link_libraries(bench_linalg_vs_handwritten PRIVATE CTorch)
+    target_include_directories(bench_linalg_vs_handwritten PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 add_executable(bench_subgraph_roi src/tests/standalone/bench_subgraph_roi.cpp)
 target_link_libraries(bench_subgraph_roi PRIVATE CTorch)
@@ -840,9 +894,14 @@ add_executable(test_fusion_dispatch src/tests/standalone/test_fusion_dispatch.cp
 target_link_libraries(test_fusion_dispatch PRIVATE CTorch)
 target_include_directories(test_fusion_dispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_region_fusion src/tests/standalone/test_region_fusion.cpp)
-target_link_libraries(test_region_fusion PRIVATE CTorch)
-target_include_directories(test_region_fusion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# [Linux/GCC 首次构建修复] 该测试引用 JITCache / MLIR 相关符号，
+# 而 JITCache.cpp 与 MLIR 生成器仅在 CT_ENABLE_MLIR 时编译。
+# 原先无条件注册 ⇒ MLIR=OFF 时链接阶段 undefined symbol。
+if(CT_ENABLE_MLIR)
+    add_executable(test_region_fusion src/tests/standalone/test_region_fusion.cpp)
+    target_link_libraries(test_region_fusion PRIVATE CTorch)
+    target_include_directories(test_region_fusion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 # C3_DISPATCH_TIMING disabled: per-dispatch fprintf overhead (~20-50us) skews perf measurements
 
 add_executable(test_region_fusion_auto src/tests/standalone/test_region_fusion_auto.cpp)

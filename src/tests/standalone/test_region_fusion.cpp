@@ -169,15 +169,18 @@ int main() {
         region_reg.install(hash, region_ops, fake_kernel, {32, 32, 32, 32, 32, 32});
 
         // 查找
-        auto* found = region_reg.find(hash);
-        bool found_match = (found != nullptr && found->active && found->len == 3);
+        // [构建修复] RegionFusionRegistry::find 已从「返回指针」改为
+        // 「返回 std::optional<RegionEntry>」（见 c3/include/C3/RegionFusion.h:78），
+        // 本测试仍以 auto* 承接，类型不兼容导致编译失败。
+        auto found = region_reg.find(hash);
+        bool found_match = (found.has_value() && found->active && found->len == 3);
         std::cout << "  通过 hash 查找到 region: " << (found_match ? "✅" : "❌") << std::endl;
         total++;
 
-        // 验证不存在的 hash 返回 nullptr
-        auto* not_found = region_reg.find(0xDEADBEEF);
-        bool no_match = (not_found == nullptr);
-        std::cout << "  不存在的 hash 返回 nullptr: " << (no_match ? "✅" : "❌") << std::endl;
+        // 验证不存在的 hash 返回空 optional
+        auto not_found = region_reg.find(0xDEADBEEF);
+        bool no_match = (!not_found.has_value());
+        std::cout << "  不存在的 hash 返回空 optional: " << (no_match ? "✅" : "❌") << std::endl;
         total++;
 
         if (found_match && no_match) passed += 2;
