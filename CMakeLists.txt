@@ -1082,10 +1082,13 @@ ${_CT_IMPORTS}")
     endforeach()
 endfunction()
 
-# tl-ArrayTest
-add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
-target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
-gtest_discover_tests(tl-ArrayTest)
+# tl-ArrayTest：与 CTorch 其他 gtest 测试组受同一开关控制。
+# OpenInspire3 顶层 CMake 默认设置 TEST_ENABLED=OFF，避免强制依赖 GTest。
+if(TEST_ENABLED)
+    add_executable(tl-ArrayTest src/tests/tl/ArrayTest.cpp)
+    target_link_libraries(tl-ArrayTest PRIVATE CTorch gtest gtest_main)  # Note: build with CT_DEBUG defined
+    gtest_discover_tests(tl-ArrayTest)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "amd64")
     # tl-VecBaseTest
