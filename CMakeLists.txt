@@ -132,6 +132,10 @@ else()
         set(TEST_ENABLED OFF CACHE BOOL "Disable tests due to missing gtest" FORCE)
     endif()
 endif()
+if(APPLE AND EXISTS /opt/homebrew/include/gtest/gtest.h)
+    include_directories(/opt/homebrew/include)
+    link_directories(/opt/homebrew/lib)
+endif()
 include(GoogleTest)
 
 set(CT-Core
@@ -1031,6 +1035,13 @@ target_include_directories(test_gen2_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(bench_gen2 src/tests/standalone/bench_gen2.cpp)
 target_link_libraries(bench_gen2 PRIVATE CTorch)
 target_include_directories(bench_gen2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# C3 JIT Pipeline & Lock-Free FastDispatchTable
+if(NOT TEST_ENABLED)
+    add_executable(test_c3_pipeline src/tests/units/C3/test_c3_pipeline.cpp)
+    target_link_libraries(test_c3_pipeline PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_c3_pipeline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
 
 add_compile_options(-Wno-ignored-attributes)
 
