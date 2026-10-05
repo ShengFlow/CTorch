@@ -18,9 +18,9 @@
 #include "Storage.h"
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h> // 使用Apple的BLAS实现
+#endif
 extern "C" void MPS_flush_wait(bool wait);
 extern "C" void MPS_markBufferModified(void* ptr, size_t bytes);
-#endif
 
 #include <initializer_list>
 #include <iostream>
