@@ -1041,6 +1041,14 @@ if(NOT TEST_ENABLED)
     add_executable(test_c3_pipeline src/tests/units/C3/test_c3_pipeline.cpp)
     target_link_libraries(test_c3_pipeline PRIVATE CTorch gtest gtest_main)
     target_include_directories(test_c3_pipeline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_c3_memory_planner src/tests/units/C3/test_c3_memory_planner.cpp)
+    target_link_libraries(test_c3_memory_planner PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_c3_memory_planner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_c3_graph_fusion_clusterer src/tests/units/C3/test_c3_graph_fusion_clusterer.cpp)
+    target_link_libraries(test_c3_graph_fusion_clusterer PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_c3_graph_fusion_clusterer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_compile_options(-Wno-ignored-attributes)
