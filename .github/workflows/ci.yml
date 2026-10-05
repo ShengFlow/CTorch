@@ -54,6 +54,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCT_ENABLE_LTO=OFF \
+            -DCT_ENABLE_MLIR=OFF \
             -DFETCH_GOOGLETEST=ON \
             -DCT_TARGET_SIMD=AUTO \
             -DTEST_ENABLED=ON
@@ -64,6 +65,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCT_ENABLE_LTO=OFF \
+            -DCT_ENABLE_MLIR=OFF \
             -DFETCH_GOOGLETEST=ON \
             -DOpenMP_ROOT="${OPENMP_ROOT}" \
             -DTEST_ENABLED=ON
