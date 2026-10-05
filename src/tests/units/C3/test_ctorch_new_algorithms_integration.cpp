@@ -14,6 +14,9 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <vector>
+#include <array>
+#include <thread>
+#include <atomic>
 #include <iomanip>
 #include <chrono>
 
@@ -312,3 +315,161 @@ TEST(CTorchNewAlgorithmsTest, Phase4HubDispatcherExecution) {
         }
     }
 }
+
+// ==============================================================================
+// 6. Hardening Regression Tests: P1/P2 Defenses Verification
+// ==============================================================================
+
+TEST(CTorchNewAlgorithmsTest, IntegratedCompilerLockFreeDispatchConcurrentStress) {
+    LockFreeDispatchTable<float> table;
+    std::string keyA = "kernel_key_alpha";
+    std::string keyB = "kernel_key_beta";
+
+    auto dummy_fn = [](const float* const*, float* const*, size_t) noexcept {};
+    IntegratedCompiledKernel<float> kA(keyA, 1024, {0}, {0}, {1}, dummy_fn);
+    IntegratedCompiledKernel<float> kB(keyB, 1024, {0}, {0}, {1}, dummy_fn);
+
+    std::atomic<bool> stop_flag{false};
+    std::atomic<size_t> wrong_kernel_reads{0};
+    std::atomic<size_t> valid_reads{0};
+
+    std::thread writer([&]() {
+        for (int i = 0; i < 50000; ++i) {
+            table.install(keyA, &kA);
+            table.install(keyB, &kB);
+        }
+        stop_flag.store(true, std::memory_order_release);
+    });
+
+    std::vector<std::thread> readers;
+    for (int r = 0; r < 4; ++r) {
+        readers.emplace_back([&]() {
+            while (!stop_flag.load(std::memory_order_acquire)) {
+                const auto* ptr = table.lookup(keyA);
+                if (ptr != nullptr) {
+                    if (ptr == &kB || ptr->cacheKey() != keyA) {
+                        wrong_kernel_reads.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        valid_reads.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        });
+    }
+
+    writer.join();
+    for (auto& t : readers) {
+        t.join();
+    }
+
+    EXPECT_EQ(wrong_kernel_reads.load(), 0u) << "Concurrent reader observed torn read or mismatched kernel pointer!";
+    EXPECT_GT(valid_reads.load(), 0u);
+}
+
+TEST(CTorchNewAlgorithmsTest, IntegratedCompiledKernelZeroAllocationExecuteInto) {
+    auto add_fn = [](const float* const* ins, float* const* outs, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            outs[0][i] = ins[0][i] + ins[1][i];
+        }
+    };
+
+    IntegratedCompiledKernel<float> kernel(
+        "add_kernel",
+        1024,
+        {0, 64}, // input offsets
+        {128},   // output offsets
+        {16},    // output element counts
+        add_fn
+    );
+
+    std::array<float, 16> in0, in1, out;
+    in0.fill(1.5f);
+    in1.fill(2.5f);
+    out.fill(0.0f);
+
+    const float* in_ptrs[2] = {in0.data(), in1.data()};
+    float* out_ptrs[1] = {out.data()};
+
+    EXPECT_NO_THROW(kernel.execute_into(
+        std::span<const float* const>(in_ptrs, 2),
+        std::span<float*>(out_ptrs, 1)
+    ));
+
+    for (size_t i = 0; i < 16; ++i) {
+        EXPECT_FLOAT_EQ(out[i], 4.0f);
+    }
+
+    // Invalid span size checks
+    EXPECT_THROW(kernel.execute_into(
+        std::span<const float* const>(in_ptrs, 1),
+        std::span<float*>(out_ptrs, 1)
+    ), std::invalid_argument);
+}
+
+TEST(CTorchNewAlgorithmsTest, RamAdCurvatureCallerWorkspaceAndBounds) {
+    RamAdCurvatureEngine<double>::CurvatureConfig cfg{
+        .B = 4,
+        .Din = 16,
+        .Dout = 8
+    };
+
+    std::vector<double> X(4 * 16, 0.5);
+    std::vector<double> W(16 * 8, 0.2);
+    std::vector<double> dY(4 * 8, 0.1);
+    std::vector<double> V(16 * 8, 0.3);
+    std::vector<double> out_Y(4 * 8, 0.0);
+    std::vector<double> out_dW(16 * 8, 0.0);
+    std::vector<double> out_A(16 * 16, 0.0);
+    std::vector<double> out_S(8 * 8, 0.0);
+    std::vector<double> out_FVP(16 * 8, 0.0);
+
+    // 1. Caller-supplied workspace execution
+    std::vector<double> caller_ws(16 * 8, 0.0);
+    EXPECT_NO_THROW(RamAdCurvatureEngine<double>::execute_curvature_kfac(
+        X, W, dY, V, out_Y, out_dW, out_A, out_S, out_FVP, cfg, caller_ws
+    ));
+
+    for (double y : out_Y) EXPECT_FALSE(std::isnan(y));
+    for (double fvp : out_FVP) EXPECT_FALSE(std::isnan(fvp));
+
+    // 2. Undersized workspace throws
+    std::vector<double> small_ws(5, 0.0);
+    EXPECT_THROW(RamAdCurvatureEngine<double>::execute_curvature_kfac(
+        X, W, dY, V, out_Y, out_dW, out_A, out_S, out_FVP, cfg, small_ws
+    ), std::invalid_argument);
+
+    // 3. Invalid config dimensions throw
+    RamAdCurvatureEngine<double>::CurvatureConfig bad_cfg{ .B = 0, .Din = 16, .Dout = 8 };
+    EXPECT_THROW(RamAdCurvatureEngine<double>::execute_curvature_kfac(
+        X, W, dY, V, out_Y, out_dW, out_A, out_S, out_FVP, bad_cfg
+    ), std::invalid_argument);
+}
+
+TEST(CTorchNewAlgorithmsTest, AmxClusterMpGemmDefensiveBoundsGuards) {
+    AmxClusterMpGemmEngine::MpGemmConfig cfg{
+        .M = 4,
+        .D = 8,
+        .D_ffn = 10000, // Exceeds 8192 static scratchpad bound
+        .num_threads = 2
+    };
+
+    std::vector<float> X(4 * 8, 1.0f);
+    std::vector<float> Wg(8 * 10000, 1.0f);
+    std::vector<float> Wu(8 * 10000, 1.0f);
+    std::vector<float> Wd(10000 * 8, 1.0f);
+    std::vector<float> R(4 * 8, 0.0f);
+    std::vector<float> Y(4 * 8, 99.0f);
+
+    EXPECT_NO_FATAL_FAILURE(AmxClusterMpGemmEngine::execute_cluster_mpgemm(
+        X, Wg, Wu, Wd, R, Y, cfg
+    ));
+    EXPECT_FLOAT_EQ(Y[0], 99.0f); // Early return preserves output buffer
+
+    // Undersized buffer guard
+    cfg.D_ffn = 16;
+    std::vector<float> short_X(2);
+    EXPECT_NO_FATAL_FAILURE(AmxClusterMpGemmEngine::execute_cluster_mpgemm(
+        short_X, Wg, Wu, Wd, R, Y, cfg
+    ));
+}
+

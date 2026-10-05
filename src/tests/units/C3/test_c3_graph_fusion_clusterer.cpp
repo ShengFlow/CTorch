@@ -263,7 +263,21 @@ TEST(C3GraphFusionClustererTest, MonteCarlo500RandomDagVerification) {
               << " - Acyclicity Assertion   : 100% Passed (Zero cycles across all 500 graphs)\n"
               << " - Average DRAM Savings   : " << std::fixed << std::setprecision(2) << avg_savings * 100.0 << "%\n";
 
-    EXPECT_GT(avg_savings, 0.20);
+    // Following P1-05 hardening, sequential GEMM->GEMM vertical merging is disallowed,
+    // resulting in ~17.16% average DRAM savings across pseudo-random DAGs with 25% Barrier nodes.
+    EXPECT_GT(avg_savings, 0.15);
+}
+
+TEST(C3GraphFusionClustererTest, DisallowSequentialGemmVerticalFusion) {
+    ComputationGraph g;
+    g.add_node(0, "GEMM_1", OpKind::GEMM, {});
+    g.add_node(1, "GEMM_2", OpKind::GEMM, {0}); // Direct edge GEMM_1 -> GEMM_2
+
+    C3GraphFusionClusterer clusterer(g);
+    clusterer.run_greedy_clustering();
+
+    // Sequential producer-consumer GEMMs must remain 2 separate clusters
+    EXPECT_EQ(clusterer.clusters().size(), 2);
 }
 
 // ==============================================================================

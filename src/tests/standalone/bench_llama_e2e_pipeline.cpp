@@ -34,10 +34,10 @@ using namespace ct::c3;
 struct LlamaBenchmarkConfig {
     size_t batch_size = 2;
     size_t seq_len = 128;
-    size_t hidden_dim = 256;
-    size_t num_heads = 4;
-    size_t head_dim = 64;       // hidden_dim / num_heads = 64
-    size_t intermediate_dim = 704; // standard LLaMA ratio ~ 2.75x
+    size_t hidden_dim = 128;
+    size_t num_heads = 2;
+    size_t head_dim = 64;          // hidden_dim / num_heads = 64
+    size_t intermediate_dim = 352; // standard LLaMA ratio ~ 2.75x
     size_t steps = 10;
 };
 
@@ -287,6 +287,13 @@ int main(int argc, char** argv) {
         cfg.batch_size = std::atoll(argv[1]);
         cfg.seq_len = std::atoll(argv[2]);
         cfg.hidden_dim = std::atoll(argv[3]);
+        if (cfg.hidden_dim > 128) {
+            std::cerr << "[Error] hidden_dim (" << cfg.hidden_dim
+                      << ") exceeds static register scratchpad limit (128).\n";
+            return 1;
+        }
+        cfg.num_heads = (cfg.head_dim > 0) ? (cfg.hidden_dim / cfg.head_dim) : 1;
+        if (cfg.num_heads == 0) cfg.num_heads = 1;
         cfg.intermediate_dim = cfg.hidden_dim * 11 / 4; // LLaMA 2.75x ratio
     }
     if (argc >= 5) {
