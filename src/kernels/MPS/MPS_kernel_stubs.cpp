@@ -50,6 +50,9 @@ Tensor Softmax_MPS_kernel(const Tensor& a, int dim) {
     return Tensor();
 }
 
-// Zero_MPS_kernel 在仓库内无对应声明（mnist 用的是 SGD_Step_Zero_MPS_kernel，
-// 为另一个符号）；保留此定义仅为兼容潜在外部引用，同样去掉 extern "C"。
-void Zero_MPS_kernel(const Tensor& a) { (void)a; }
+extern "C" void Zero_MPS_kernel(const Tensor& a) { (void)a; }
+extern "C" void SGD_Step_Zero_MPS_kernel(const Tensor& param, const Tensor& grad, float lr) {
+    (void)param;
+    (void)grad;
+    (void)lr;
+}
