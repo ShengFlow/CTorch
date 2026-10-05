@@ -2,9 +2,9 @@ name: CTorch CI
 
 on:
   push:
-    branches: [ main, master, feature-DCU, develop ]
+    branches: [ main, master, feature-DCU, feature-c3-pipeline, develop ]
   pull_request:
-    branches: [ main, master, feature-DCU, develop ]
+    branches: [ main, master, feature-DCU, feature-c3-pipeline, develop ]
 
 jobs:
   build-and-test:
@@ -70,9 +70,14 @@ jobs:
             -DOpenMP_ROOT="${OPENMP_ROOT}" \
             -DTEST_ENABLED=ON
 
-      - name: Build Core Test Targets
+      - name: Build Test Targets
         run: |
-          cmake --build build --target test_core_semantics test_unary_inplace test_autograd_v2 MnistTest -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+          cmake --build build --target test_core_semantics test_unary_inplace test_autograd_v2 MnistTest \
+            test_c3_pipeline test_c3_memory_planner test_c3_graph_fusion_clusterer \
+            test_ram_ad_multi_output test_ctorch_new_algorithms_integration test_mnist_c3_replacement \
+            test_amx_flash_attention test_flash_attention_3_fp8 test_amx_cluster_mpgemm \
+            bench_llama_e2e_pipeline \
+            -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
       - name: Run Core Regression & Semantics Tests
         run: |
@@ -84,3 +89,29 @@ jobs:
           ./build/test_autograd_v2
           echo "=== Running MnistTest ==="
           CTORCH_DEVICE=cpu ./build/MnistTest
+
+      - name: Run C3 JIT, Pipeline, RAM-AD & Micro-Kernel Tests
+        run: |
+          echo "=== Running test_c3_pipeline ==="
+          ./build/test_c3_pipeline
+          echo "=== Running test_c3_memory_planner ==="
+          ./build/test_c3_memory_planner
+          echo "=== Running test_c3_graph_fusion_clusterer ==="
+          ./build/test_c3_graph_fusion_clusterer
+          echo "=== Running test_ram_ad_multi_output ==="
+          ./build/test_ram_ad_multi_output
+          echo "=== Running test_ctorch_new_algorithms_integration ==="
+          ./build/test_ctorch_new_algorithms_integration
+          echo "=== Running test_mnist_c3_replacement ==="
+          ./build/test_mnist_c3_replacement
+          echo "=== Running test_amx_flash_attention ==="
+          ./build/test_amx_flash_attention
+          echo "=== Running test_flash_attention_3_fp8 ==="
+          ./build/test_flash_attention_3_fp8
+          echo "=== Running test_amx_cluster_mpgemm ==="
+          ./build/test_amx_cluster_mpgemm
+
+      - name: Run LLaMA E2E Pipeline Benchmark
+        run: |
+          echo "=== Running bench_llama_e2e_pipeline ==="
+          ./build/bench_llama_e2e_pipeline

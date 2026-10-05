@@ -735,6 +735,11 @@ target_link_libraries(bench_llama_ffn_train PRIVATE CTorch)
 target_include_directories(bench_llama_ffn_train PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_options(bench_llama_ffn_train PRIVATE -rdynamic)
 
+add_executable(bench_llama_e2e_pipeline src/tests/standalone/bench_llama_e2e_pipeline.cpp)
+target_link_libraries(bench_llama_e2e_pipeline PRIVATE CTorch)
+target_include_directories(bench_llama_e2e_pipeline PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_options(bench_llama_e2e_pipeline PRIVATE -rdynamic)
+
 # c3ctl: C3 部署校准 CLI(deploy-time 机器指纹: c3ctl calibrate / show)
 add_executable(c3ctl tools/c3ctl.cpp)
 target_link_libraries(c3ctl PRIVATE CTorch)
