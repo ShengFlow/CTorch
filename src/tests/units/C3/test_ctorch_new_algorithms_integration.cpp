@@ -26,24 +26,36 @@ using namespace ct::c3;
 
 TEST(CTorchNewAlgorithmsTest, AlgorithmRegistryAndConnectivity) {
     auto algos = CTorchNewAlgorithmsHub::get_registered_algorithms();
-    EXPECT_GE(algos.size(), 5);
+    EXPECT_GE(algos.size(), 9);
 
     bool has_curvature = false;
     bool has_ragged = false;
     bool has_numa = false;
     bool has_tro = false;
+    bool has_amx_fa = false;
+    bool has_amx_gemm = false;
+    bool has_amx_dequant = false;
+    bool has_fa3_fp8 = false;
 
     for (const auto& algo : algos) {
         if (algo.find("CurvatureKFAC") != std::string::npos) has_curvature = true;
         if (algo.find("DynamicRagged") != std::string::npos) has_ragged = true;
         if (algo.find("NUMA-SMP") != std::string::npos) has_numa = true;
         if (algo.find("TRO-SMP") != std::string::npos) has_tro = true;
+        if (algo.find("AMX::FlashAttention") != std::string::npos) has_amx_fa = true;
+        if (algo.find("AMX::ClusterMpGEMM") != std::string::npos) has_amx_gemm = true;
+        if (algo.find("AMX::DequantFusion") != std::string::npos) has_amx_dequant = true;
+        if (algo.find("FlashAttention3::FP8") != std::string::npos) has_fa3_fp8 = true;
     }
 
     EXPECT_TRUE(has_curvature);
     EXPECT_TRUE(has_ragged);
     EXPECT_TRUE(has_numa);
     EXPECT_TRUE(has_tro);
+    EXPECT_TRUE(has_amx_fa);
+    EXPECT_TRUE(has_amx_gemm);
+    EXPECT_TRUE(has_amx_dequant);
+    EXPECT_TRUE(has_fa3_fp8);
 }
 
 // ==============================================================================
@@ -203,4 +215,100 @@ TEST(CTorchNewAlgorithmsTest, MnistFullSpeedComparison) {
 
     EXPECT_GT(total_ms, 0.0);
     EXPECT_LT(epoch_last_loss, epoch_1_loss);
+}
+
+// ==============================================================================
+// 6. Phase 4 Micro-Kernel Hub Dispatchers Execution Verification
+// ==============================================================================
+
+TEST(CTorchNewAlgorithmsTest, Phase4HubDispatcherExecution) {
+    // 1. Amx FlashAttention Dispatcher
+    {
+        AmxFlashAttentionEngine::FlashAttentionConfig cfg{
+            .seq_len = 32,
+            .head_dim = 16,
+            .tile_br = 16,
+            .tile_bc = 16,
+            .is_causal = true,
+            .scale_factor = 0.25f
+        };
+        std::vector<float> Q(32 * 16, 0.1f);
+        std::vector<float> K(32 * 16, 0.1f);
+        std::vector<float> V(32 * 16, 0.1f);
+        std::vector<float> O(32 * 16, 0.0f);
+
+        CTorchNewAlgorithmsHub::execute_amx_flash_attention(Q, K, V, O, cfg);
+        for (float v : O) {
+            EXPECT_FALSE(std::isnan(v));
+            EXPECT_GT(v, 0.0f);
+        }
+    }
+
+    // 2. Amx Cluster MpGEMM Dispatcher
+    {
+        AmxClusterMpGemmEngine::MpGemmConfig cfg{
+            .M = 16,
+            .D = 32,
+            .D_ffn = 64,
+            .num_threads = 2
+        };
+        std::vector<float> X(16 * 32, 0.05f);
+        std::vector<float> Wg(32 * 64, 0.02f);
+        std::vector<float> Wu(32 * 64, 0.02f);
+        std::vector<float> Wd(64 * 32, 0.02f);
+        std::vector<float> R(16 * 32, 0.1f);
+        std::vector<float> Y(16 * 32, 0.0f);
+
+        CTorchNewAlgorithmsHub::execute_amx_cluster_mpgemm(X, Wg, Wu, Wd, R, Y, cfg);
+        for (float v : Y) {
+            EXPECT_FALSE(std::isnan(v));
+        }
+    }
+
+    // 3. Amx Dequant Fusion Dispatcher
+    {
+        AmxDequantFusionEngine::DequantConfig cfg{
+            .M = 8,
+            .D = 16,
+            .D_ffn = 32
+        };
+        std::vector<float> X(8 * 16, 0.1f);
+        std::vector<uint8_t> Wg_packed(16 * 16, 0x88);
+        std::vector<float> scale_g(32, 0.02f);
+        std::vector<float> zp_g(32, 8.0f);
+        std::vector<uint8_t> Wu_packed(16 * 16, 0x99);
+        std::vector<float> scale_u(32, 0.02f);
+        std::vector<float> zp_u(32, 8.0f);
+        std::vector<float> Wd(32 * 16, 0.01f);
+        std::vector<float> R(8 * 16, 0.5f);
+        std::vector<float> Y(8 * 16, 0.0f);
+
+        CTorchNewAlgorithmsHub::execute_amx_dequant_fused(
+            X, Wg_packed, scale_g, zp_g, Wu_packed, scale_u, zp_u, Wd, R, Y, cfg);
+        for (float v : Y) {
+            EXPECT_NEAR(v, 0.5f, 1e-5f);
+        }
+    }
+
+    // 4. FlashAttention-3 FP8 Dispatcher
+    {
+        FlashAttention3Config cfg{
+            .seq_len = 64,
+            .head_dim = 32,
+            .tile_br = 32,
+            .tile_bc = 32,
+            .is_causal = true,
+            .scale_factor = 1.0f / std::sqrt(32.0f)
+        };
+        std::vector<float> Q(64 * 32, 0.05f);
+        std::vector<float> K(64 * 32, 0.05f);
+        std::vector<float> V(64 * 32, 0.05f);
+        std::vector<float> O(64 * 32, 0.0f);
+
+        CTorchNewAlgorithmsHub::execute_flash_attention_3_fp8(Q, K, V, O, cfg);
+        for (float v : O) {
+            EXPECT_FALSE(std::isnan(v));
+            EXPECT_GT(v, 0.0f);
+        }
+    }
 }

@@ -1061,6 +1061,18 @@ if(NOT TEST_ENABLED)
     add_executable(test_mnist_c3_replacement src/tests/units/C3/test_mnist_c3_replacement.cpp)
     target_link_libraries(test_mnist_c3_replacement PRIVATE CTorch gtest gtest_main)
     target_include_directories(test_mnist_c3_replacement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_amx_flash_attention src/tests/units/C3/test_amx_flash_attention.cpp)
+    target_link_libraries(test_amx_flash_attention PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_amx_flash_attention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_flash_attention_3_fp8 src/tests/units/C3/test_flash_attention_3_fp8.cpp)
+    target_link_libraries(test_flash_attention_3_fp8 PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_flash_attention_3_fp8 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_amx_cluster_mpgemm src/tests/units/C3/test_amx_cluster_mpgemm.cpp)
+    target_link_libraries(test_amx_cluster_mpgemm PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_amx_cluster_mpgemm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_compile_options(-Wno-ignored-attributes)
