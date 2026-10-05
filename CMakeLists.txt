@@ -1133,7 +1133,9 @@ endif()
 # target_link_libraries(ActivationLossTest PRIVATE CTorch)
 # target_link_libraries(TensorGradTest PRIVATE CTorch)
 target_link_libraries(MnistTest PRIVATE CTorch)
-target_link_libraries(MnistTest PRIVATE "-framework Accelerate")
+if(APPLE)
+    target_link_libraries(MnistTest PRIVATE "-framework Accelerate")
+endif()
 
 # 添加编译选项
 target_compile_options(CTorch PRIVATE
