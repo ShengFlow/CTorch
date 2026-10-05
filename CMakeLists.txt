@@ -1049,6 +1049,18 @@ if(NOT TEST_ENABLED)
     add_executable(test_c3_graph_fusion_clusterer src/tests/units/C3/test_c3_graph_fusion_clusterer.cpp)
     target_link_libraries(test_c3_graph_fusion_clusterer PRIVATE CTorch gtest gtest_main)
     target_include_directories(test_c3_graph_fusion_clusterer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_ram_ad_multi_output src/tests/units/C3/test_ram_ad_multi_output.cpp)
+    target_link_libraries(test_ram_ad_multi_output PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_ram_ad_multi_output PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_ctorch_new_algorithms_integration src/tests/units/C3/test_ctorch_new_algorithms_integration.cpp)
+    target_link_libraries(test_ctorch_new_algorithms_integration PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_ctorch_new_algorithms_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_mnist_c3_replacement src/tests/units/C3/test_mnist_c3_replacement.cpp)
+    target_link_libraries(test_mnist_c3_replacement PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_mnist_c3_replacement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_compile_options(-Wno-ignored-attributes)
