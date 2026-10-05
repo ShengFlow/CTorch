@@ -539,9 +539,12 @@ set(CT-Distributed
         src/Distributed/CheckpointManager.cpp
         src/Distributed/Transport.cpp
         src/Distributed/CPUBackend.cpp
-        src/Distributed/MPSBackend.mm
         src/Distributed/DistributedTrainer.cpp
 )
+
+if(APPLE)
+    list(APPEND CT-Distributed src/Distributed/MPSBackend.mm)
+endif()
 
 set(ctQALS
         include/ctQALS/ctQALS.h
