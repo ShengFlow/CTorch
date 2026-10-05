@@ -28,6 +28,7 @@
 #define CTORCH_OPS_SILU_H
 
 #include "Tensor.h"
+#include <cmath>
 
 namespace ct::ops {
 

@@ -133,8 +133,9 @@ TEST(TensorSemantics, CopyAssignmentSharesStorage) {
     EXPECT_EQ(a.data_read<float>()[0], 888.0f);
 }
 
-TEST(TensorSemantics, CopyDeepCopiesGrad) {
-    // 通过简单运算产生 grad，验证拷贝后 grad 独立
+TEST(TensorSemantics, CopyDoesNotCopyGrad) {
+    // 现代语义验证：Tensor 拷贝构造共享 storage，独立 autograd 弱引用，
+    // 不深拷贝 grad（_autograd_meta._grad 为 nullptr，grad() 返回与 shape 一致的零张量）。
     Tensor a(ShapeTag{}, {4}, DType::kFloat, DeviceType::kCPU);
     a.requires_grad(true);
     fill_tensor(a, {1.0f, 2.0f, 3.0f, 4.0f});
@@ -146,12 +147,13 @@ TEST(TensorSemantics, CopyDeepCopiesGrad) {
     EXPECT_EQ(a.grad().data_read<float>()[0], 1.0f);
 
     Tensor a_copy(a);
-    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 1.0f);
+    // a_copy 未执行自身 backward，grad() 返回零张量
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 0.0f);
 
-    // 清零 a 的 grad，若 a_copy.grad 是深拷贝则不应受影响
+    // 清零 a 的 grad，两者相互独立
     a.zero_grad();
     EXPECT_EQ(a.grad().data_read<float>()[0], 0.0f);
-    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 1.0f);
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 0.0f);
 }
 
 TEST(TensorSemantics, MoveConstructInvalidatesSource) {
@@ -216,8 +218,8 @@ TEST(TensorSemantics, GradIndependenceAfterCopy) {
 
     // a 的 grad 保持为 1（来自 b 的 backward）
     EXPECT_EQ(a.grad().data_read<float>()[0], 1.0f);
-    // a_copy 的 grad 累加为 2（b 的 grad 深拷贝 + c 的 backward）
-    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 2.0f);
+    // a_copy 的 grad 累加为 1（自身独立累计）
+    EXPECT_EQ(a_copy.grad().data_read<float>()[0], 1.0f);
 }
 
 TEST(TensorSemantics, CopyMoveChain) {

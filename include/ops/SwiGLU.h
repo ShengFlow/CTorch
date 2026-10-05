@@ -16,6 +16,7 @@
 
 #include "Tensor.h"
 #include "ops/SiLU.h"
+#include <cmath>
 
 namespace ct::ops {
 
