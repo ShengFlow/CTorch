@@ -10,12 +10,22 @@
 #include <chrono>
 
 static ctQALS::rng::Xoshiro256PlusPlus g_mnist_rng(42);
+static DeviceType get_default_mnist_device() {
+    const char* env_dev = std::getenv("CTORCH_DEVICE");
+    if (env_dev && std::string(env_dev) == "cpu") {
+        return DeviceType::kCPU;
+    }
 #ifdef __APPLE__
-static DeviceType g_device = DeviceType::kMPS;
+    if (std::getenv("CI")) {
+        return DeviceType::kCPU;
+    }
+    return DeviceType::kMPS;
 #else
-// MPS is a macOS-only backend; use the CPU path on Linux/DCU builds.
-static DeviceType g_device = DeviceType::kCPU;
+    // MPS is a macOS-only backend; use the CPU path on Linux/DCU builds.
+    return DeviceType::kCPU;
 #endif
+}
+static DeviceType g_device = get_default_mnist_device();
 
 // 两隐藏层 MLP: 784 -> 256(ReLU) -> 128(ReLU) -> 10
 class NeuralNetwork {

@@ -8,6 +8,11 @@
 #include "../include/AutoGrad/Nodes/GradAccumulator.h"
 #include "../include/Tensor.h"
 #include "../../../src/kernels/kernels.h"
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 GradAccumulator::GradAccumulator(std::weak_ptr<Tensor> tensor) : _tensor(std::move(tensor)) {
     _upStreamNodes = std::vector<std::shared_ptr<Node>>();

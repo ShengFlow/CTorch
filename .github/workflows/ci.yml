@@ -83,4 +83,4 @@ jobs:
           echo "=== Running test_autograd_v2 ==="
           ./build/test_autograd_v2
           echo "=== Running MnistTest ==="
-          ./build/MnistTest
+          CTORCH_DEVICE=cpu ./build/MnistTest
