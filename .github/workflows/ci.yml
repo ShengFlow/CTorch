@@ -51,20 +51,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            /opt/homebrew/opt/llvm
-            /opt/homebrew/Cellar/llvm
-          key: ${{ runner.os }}-homebrew-llvm-v18
+            /opt/homebrew/opt/llvm@18
+            /opt/homebrew/Cellar/llvm@18
+          key: ${{ runner.os }}-homebrew-llvm18-v1
 
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
         run: |
           brew install libomp
           echo "OPENMP_ROOT=$(brew --prefix libomp)" >> $GITHUB_ENV
-          if [ ! -d "/opt/homebrew/opt/llvm" ]; then
-            brew install llvm
+          if [ ! -d "/opt/homebrew/opt/llvm@18" ]; then
+            brew install llvm@18
           fi
-          echo "LLVM_DIR=$(brew --prefix llvm)/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "MLIR_DIR=$(brew --prefix llvm)/lib/cmake/mlir" >> $GITHUB_ENV
+          echo "LLVM_DIR=$(brew --prefix llvm@18)/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "MLIR_DIR=$(brew --prefix llvm@18)/lib/cmake/mlir" >> $GITHUB_ENV
 
       - name: Configure CMake (Linux)
         if: runner.os == 'Linux'

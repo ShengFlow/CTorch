@@ -624,17 +624,21 @@ if(CT_ENABLE_MLIR)
     target_include_directories(CTorch SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
     target_include_directories(CTorch SYSTEM PUBLIC ${MLIR_INCLUDE_DIRS})
     target_compile_definitions(CTorch PUBLIC CT_ENABLE_MLIR=1)
-    llvm_map_components_to_libnames(llvm_libs
-        Core
-        Support
-        ExecutionEngine
-        OrcJIT
-        Analysis
-        TransformUtils
-        native
-    )
+    if(TARGET LLVM)
+        target_link_libraries(CTorch PUBLIC LLVM)
+    else()
+        llvm_map_components_to_libnames(llvm_libs
+            Core
+            Support
+            ExecutionEngine
+            OrcJIT
+            Analysis
+            TransformUtils
+            native
+        )
+        target_link_libraries(CTorch PUBLIC ${llvm_libs})
+    endif()
     target_link_libraries(CTorch PUBLIC
-        ${llvm_libs}
         ${LLVM_SYSTEM_LIBS}
         MLIRIR
         MLIRPass
