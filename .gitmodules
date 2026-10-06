@@ -1,4 +1,4 @@
 [submodule "c3"]
 	path = c3
-	url = git@github.com:ShengFlow/C3.git
+	url = https://github.com/ShengFlow/C3.git
 	branch = main
