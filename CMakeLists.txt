@@ -145,7 +145,7 @@ enable_testing()
 if(FETCH_GOOGLETEST)
     FetchContent_Declare(
             googletest
-            GIT_REPOSITORY https://gh-proxy.org/https://github.com/google/googletest.git
+            GIT_REPOSITORY https://github.com/google/googletest.git
             GIT_TAG        v1.17.0
     )
     FetchContent_MakeAvailable(googletest)
@@ -619,10 +619,23 @@ target_include_directories(CTorch
 
 # MLIR/LLVM 头文件与链接
 if(CT_ENABLE_MLIR)
+    target_include_directories(CTorch PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+    target_include_directories(C3Core PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
     target_include_directories(CTorch SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
     target_include_directories(CTorch SYSTEM PUBLIC ${MLIR_INCLUDE_DIRS})
     target_compile_definitions(CTorch PUBLIC CT_ENABLE_MLIR=1)
+    llvm_map_components_to_libnames(llvm_libs
+        Core
+        Support
+        ExecutionEngine
+        OrcJIT
+        Analysis
+        TransformUtils
+        native
+    )
     target_link_libraries(CTorch PUBLIC
+        ${llvm_libs}
+        ${LLVM_SYSTEM_LIBS}
         MLIRIR
         MLIRPass
         MLIRTransforms
