@@ -2331,6 +2331,7 @@ TEST(Benchmark, JITvsEagerMatMul) {
     std::cout << "--- MatMul (256x256) ---" << std::endl;
     bench("JIT    ", 20, [&]() { auto r = kernel->execute({a, b}); });
     bench("Eager  ", 20, [&]() { auto r = matMul(a, b); });
+    ct::c3::C3HotPathManager::instance().waitForPendingCompiles();
 }
 
 TEST(Benchmark, JITvsEagerSmallVec) {
@@ -2443,6 +2444,7 @@ TEST(Benchmark, MLIRvsEagerMatMul) {
     bench("Handwritten JIT", 20, [&]() { auto r = hw_kernel->execute({a, b}); });
     bench("MLIR JIT       ", 20, [&]() { auto r = mlir_kernel->execute({a, b}); });
     bench("Eager          ", 20, [&]() { auto r = matMul(a, b); });
+    ct::c3::C3HotPathManager::instance().waitForPendingCompiles();
 }
 
 TEST(Benchmark, MLIRFusedVsNonFused) {
