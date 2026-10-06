@@ -25,20 +25,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python & CMake 3.31+
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install modern CMake & Ninja
-        run: |
-          pip install --upgrade pip cmake ninja
-
       - name: Install Linux Dependencies (LLVM/MLIR & GCC-13)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-13 gcc-13 libomp-dev llvm-18-dev libmlir-18-dev mlir-18-tools zlib1g-dev libzstd-dev libopenblas-dev
+          sudo apt-get install -y cmake ninja-build g++-13 gcc-13 libomp-dev llvm-18-dev libmlir-18-dev mlir-18-tools zlib1g-dev libzstd-dev libopenblas-dev
           echo "CC=gcc-13" >> $GITHUB_ENV
           echo "CXX=g++-13" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
@@ -58,7 +49,7 @@ jobs:
       - name: Install macOS Dependencies
         if: runner.os == 'macOS'
         run: |
-          brew install libomp
+          brew install cmake ninja libomp || true
           echo "OPENMP_ROOT=$(brew --prefix libomp)" >> $GITHUB_ENV
           if [ ! -d "/opt/homebrew/opt/llvm@18" ]; then
             brew install llvm@18

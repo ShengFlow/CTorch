@@ -33,6 +33,7 @@
 #include "C3/C3Error.h"
 #include "C3/PGOManager.h"
 #include "C3/C3Cleanup.h"
+#include "C3/C3HotPathManager.h"
 #include "Ctools.h"
 #include "kernels/kernels.h"
 
@@ -2274,7 +2275,23 @@ TEST(MLIRBackend, Disabled_SkipCompile) {
 
 // ======================= Benchmark 测试 =======================
 
+namespace {
+struct ScopedBenchmarkHotPathDisable {
+    ct::c3::HotPathConfig old_cfg;
+    ScopedBenchmarkHotPathDisable() {
+        old_cfg = ct::c3::C3HotPathManager::instance().getConfig();
+        ct::c3::HotPathConfig dis_cfg = old_cfg;
+        dis_cfg.hot_threshold = 1000000;
+        ct::c3::C3HotPathManager::instance().configure(dis_cfg);
+    }
+    ~ScopedBenchmarkHotPathDisable() {
+        ct::c3::C3HotPathManager::instance().configure(old_cfg);
+    }
+};
+} // namespace
+
 static void bench(const std::string& name, int iters, std::function<void()> fn) {
+    ScopedBenchmarkHotPathDisable disable_hotpath;
     auto start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iters; ++i) fn();
     auto end = std::chrono::high_resolution_clock::now();
