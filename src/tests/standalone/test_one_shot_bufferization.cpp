@@ -17,9 +17,11 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/BuiltinTypes.h>
+#include <llvm/Config/llvm-config.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/OwningOpRef.h>
 #include <mlir/IR/Verifier.h>
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Support/LogicalResult.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
@@ -198,7 +200,7 @@ struct ReLUTensorOpLowering : public OpRewritePattern<c3::ReLUTensorOp> {
             indexingMaps,
             iterTypes,
             [&](OpBuilder& b, Location regionLoc, ValueRange args) {
-                Value zero = b.create<arith::ConstantFloatOp>(regionLoc, f32, llvm::APFloat(0.0f));
+                Value zero = b.create<arith::ConstantOp>(regionLoc, b.getF32FloatAttr(0.0f));
                 Value res = b.create<arith::MaxNumFOp>(regionLoc, args[0], zero);
                 b.create<linalg::YieldOp>(regionLoc, ValueRange{res});
             });
@@ -271,7 +273,9 @@ static void applyUnifiedTransformPipeline(ModuleOp module) {
     {
         PassManager pm(module.getContext());
         pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
+#if LLVM_VERSION_MAJOR >= 20
         pm.addPass(mlir::createLinalgFoldIntoElementwisePass());
+#endif
         pm.addPass(mlir::createLinalgFoldUnitExtentDimsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createCSEPass());
@@ -303,9 +307,13 @@ static void applyUnifiedTransformPipeline(ModuleOp module) {
         }
 
         PassManager pm(module.getContext());
+#if LLVM_VERSION_MAJOR >= 20
         bufferization::OneShotBufferizePassOptions options;
         options.bufferizeFunctionBoundaries = true; // 自动将 tensor 函数签名转换为 memref 签名！
         pm.addPass(bufferization::createOneShotBufferizePass(options));
+#else
+        pm.addPass(bufferization::createOneShotBufferizePass());
+#endif
         if (failed(pm.run(module))) {
             throw std::runtime_error("One-Shot Bufferization failed");
         }
@@ -343,7 +351,11 @@ static void applyUnifiedTransformPipeline(ModuleOp module) {
     runPass(module, mlir::createConvertLinalgToLoopsPass());
 
     // 4. SCF to ControlFlow, Arith/Math to LLVM, MemRef to LLVM
+#if LLVM_VERSION_MAJOR >= 20
     runPass(module, mlir::createSCFToControlFlowPass());
+#else
+    runPass(module, mlir::createConvertSCFToCFPass());
+#endif
     runPass(module, mlir::createArithToLLVMConversionPass());
     runPass(module, mlir::createConvertMathToLLVMPass());
     runPass(module, mlir::createConvertControlFlowToLLVMPass());

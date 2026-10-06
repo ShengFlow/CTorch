@@ -650,8 +650,15 @@ if(CT_ENABLE_MLIR)
         MLIRMemRefDialect
         MLIRLLVMDialect
         MLIRMathDialect
+        MLIRMathTransforms
         MLIRLinalgDialect
         MLIRLinalgTransforms
+        MLIRBufferizationDialect
+        MLIRBufferizationTransforms
+        MLIROpenMPDialect
+        MLIRSCFToOpenMP
+        MLIROpenMPToLLVM
+        MLIROpenMPToLLVMIRTranslation
         MLIRArithToLLVM
         MLIRArithAttrToLLVMConversion
         MLIRMathToLLVM
@@ -690,6 +697,19 @@ if(APPLE)
 else()
     # [DCU Fix] Linux MPS stubs and HSA include
     target_sources(CTorch PRIVATE src/kernels/MPS/MPS_kernel_stubs.cpp)
+    find_package(BLAS)
+    if(BLAS_FOUND)
+        target_link_libraries(CTorch PUBLIC ${BLAS_LIBRARIES})
+    else()
+        find_library(OPENBLAS_LIB NAMES openblas PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib)
+        if(OPENBLAS_LIB)
+            target_link_libraries(CTorch PUBLIC ${OPENBLAS_LIB})
+        endif()
+    endif()
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(CTorch PUBLIC OpenMP::OpenMP_CXX)
+    endif()
 endif()
 
 # [Fix] v0.5.2 Linux build: <filesystem> 在 libstdc++ 早期版本 (12.3 之前) 需要
@@ -744,7 +764,11 @@ add_executable(test_cross_entropy src/tests/standalone/test_cross_entropy.cpp)
 target_link_libraries(test_cross_entropy PRIVATE CTorch)
 target_include_directories(test_cross_entropy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(test_grad_accum src/tests/standalone/test_grad_accum.cpp src/tests/standalone/test_mps_flush.mm)
+if(APPLE)
+    add_executable(test_grad_accum src/tests/standalone/test_grad_accum.cpp src/tests/standalone/test_mps_flush.mm)
+else()
+    add_executable(test_grad_accum src/tests/standalone/test_grad_accum.cpp)
+endif()
 target_link_libraries(test_grad_accum PRIVATE CTorch)
 target_include_directories(test_grad_accum PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

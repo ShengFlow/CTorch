@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <llvm/Config/llvm-config.h>
 
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/BuiltinTypes.h>
@@ -208,7 +209,7 @@ static bool testLinalgGenericReLU(size_t n) {
             // args[0] = input element, args[1] = output element (输出不需要读取)
             Value in_val = args[0];
             // ReLU: max(in, 0)
-            Value zero = b.create<arith::ConstantFloatOp>(loc, f32Type, llvm::APFloat(0.0f));
+            Value zero = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(0.0f));
             Value cmp = b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT, in_val, zero);
             Value result = b.create<arith::SelectOp>(loc, cmp, in_val, zero);
             b.create<linalg::YieldOp>(loc, ValueRange{result});
@@ -229,7 +230,11 @@ static bool testLinalgGenericReLU(size_t n) {
     // 使用标准的 linalg → loops → SCF → LLVM 降低路径
     PassManager pm(&context);
     pm.addPass(createConvertLinalgToLoopsPass());
+#if LLVM_VERSION_MAJOR >= 20
     pm.addPass(createSCFToControlFlowPass());
+#else
+    pm.addPass(createConvertSCFToCFPass());
+#endif
     pm.addPass(createArithToLLVMConversionPass());
     pm.addPass(createConvertMathToLLVMPass());
     pm.addPass(createConvertControlFlowToLLVMPass());
@@ -398,7 +403,11 @@ static bool testLinalgGenericAdd(size_t n) {
     // Lowering pipeline
     PassManager pm(&context);
     pm.addPass(createConvertLinalgToLoopsPass());
+#if LLVM_VERSION_MAJOR >= 20
     pm.addPass(createSCFToControlFlowPass());
+#else
+    pm.addPass(createConvertSCFToCFPass());
+#endif
     pm.addPass(createArithToLLVMConversionPass());
     pm.addPass(createConvertMathToLLVMPass());
     pm.addPass(createConvertControlFlowToLLVMPass());
@@ -522,7 +531,7 @@ static bool testLinalgGenericSigmoid(size_t n) {
             Value x = args[0];
             Value neg_x = b.create<arith::NegFOp>(loc, x);
             Value exp_neg_x = b.create<math::ExpOp>(loc, neg_x);
-            Value one = b.create<arith::ConstantFloatOp>(loc, f32Type, llvm::APFloat(1.0f));
+            Value one = b.create<arith::ConstantOp>(loc, b.getF32FloatAttr(1.0f));
             Value denom = b.create<arith::AddFOp>(loc, one, exp_neg_x);
             Value result = b.create<arith::DivFOp>(loc, one, denom);
             b.create<linalg::YieldOp>(loc, ValueRange{result});
@@ -539,7 +548,11 @@ static bool testLinalgGenericSigmoid(size_t n) {
 
     PassManager pm(&context);
     pm.addPass(createConvertLinalgToLoopsPass());
+#if LLVM_VERSION_MAJOR >= 20
     pm.addPass(createSCFToControlFlowPass());
+#else
+    pm.addPass(createConvertSCFToCFPass());
+#endif
     pm.addPass(createArithToLLVMConversionPass());
     pm.addPass(createConvertMathToLLVMPass());
     pm.addPass(createConvertControlFlowToLLVMPass());
