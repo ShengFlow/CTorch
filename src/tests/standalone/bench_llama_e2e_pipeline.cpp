@@ -20,6 +20,12 @@
 #include "C3/TroMemoryPlanner.h"
 #include "bench_guard.h"
 
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
+
 #include <iostream>
 #include <iomanip>
 #include <vector>
@@ -205,7 +211,9 @@ public:
         float* attn_out = arena_.template get_ptr<float>(3 * BS * D * sizeof(float));
         float* res_buf = arena_.template get_ptr<float>(4 * BS * D * sizeof(float));
 
-        // 1. In-Register Fused RMSNorm + Q, K, V Projections (No DRAM roundtrips)
+        float* norm_buf = arena_.template get_ptr<float>(5 * BS * D * sizeof(float));
+
+        // 1. In-Register Fused RMSNorm into Static Arena buffer (0 DRAM roundtrips)
         for (size_t i = 0; i < BS; ++i) {
             float sum_sq = 0.0f;
             for (size_t d = 0; d < D; ++d) {
@@ -213,19 +221,29 @@ public:
                 sum_sq += v * v;
             }
             float inv_rms = 1.0f / std::sqrt(sum_sq / static_cast<float>(D) + 1e-6f);
-            for (size_t j = 0; j < D; ++j) {
-                float q = 0.0f, k = 0.0f, v = 0.0f;
-                for (size_t k_idx = 0; k_idx < D; ++k_idx) {
-                    float in_val = x[i * D + k_idx] * inv_rms;
-                    q += in_val * W_q_[k_idx * D + j];
-                    k += in_val * W_k_[k_idx * D + j];
-                    v += in_val * W_v_[k_idx * D + j];
-                }
-                q_buf[i * D + j] = q;
-                k_buf[i * D + j] = k;
-                v_buf[i * D + j] = v;
+            for (size_t d = 0; d < D; ++d) {
+                norm_buf[i * D + d] = x[i * D + d] * inv_rms;
             }
         }
+
+        // Vectorized Q, K, V Projections via hardware accelerated BLAS GEMM (0 heap allocations)
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    static_cast<int>(BS), static_cast<int>(D), static_cast<int>(D),
+                    1.0f, norm_buf, static_cast<int>(D),
+                    W_q_.data(), static_cast<int>(D),
+                    0.0f, q_buf, static_cast<int>(D));
+
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    static_cast<int>(BS), static_cast<int>(D), static_cast<int>(D),
+                    1.0f, norm_buf, static_cast<int>(D),
+                    W_k_.data(), static_cast<int>(D),
+                    0.0f, k_buf, static_cast<int>(D));
+
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    static_cast<int>(BS), static_cast<int>(D), static_cast<int>(D),
+                    1.0f, norm_buf, static_cast<int>(D),
+                    W_v_.data(), static_cast<int>(D),
+                    0.0f, v_buf, static_cast<int>(D));
 
         // 2. FlashAttention-3 FP8 Micro-Kernel Execution (Ping-Pong Double Buffering)
         for (size_t b = 0; b < B; ++b) {
