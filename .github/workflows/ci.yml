@@ -111,6 +111,7 @@ jobs:
           echo "=== Running test_autograd_v2 ==="
           ./build/test_autograd_v2
           echo "=== Running MnistTest ==="
+          cp -f mnist/*ubyte . || true
           CTORCH_DEVICE=cpu ./build/MnistTest
 
       - name: Run C3 JIT, Pipeline, RAM-AD & Micro-Kernel Tests

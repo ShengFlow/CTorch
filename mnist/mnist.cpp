@@ -266,8 +266,15 @@ int main() {
         // 设置随机种子（使用 ctQALS Xoshiro256++，种子 42，在全局 g_mnist_rng 中设置）
         
         // 加载MNIST数据
-
-        MNISTLoader loader(".", g_device);
+        std::string mnist_dir = ".";
+        if (!std::filesystem::exists("train-images-idx3-ubyte")) {
+            if (std::filesystem::exists("mnist/train-images-idx3-ubyte")) {
+                mnist_dir = "mnist";
+            } else if (std::filesystem::exists("../mnist/train-images-idx3-ubyte")) {
+                mnist_dir = "../mnist";
+            }
+        }
+        MNISTLoader loader(mnist_dir, g_device);
         Tensor train_images, train_labels;
         Tensor test_images, test_labels;
         loader.load_training_data(train_images, train_labels);

@@ -4,6 +4,7 @@ project(CTorch)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
+set(CMAKE_ENABLE_EXPORTS ON)
 
 # 最激进的编译选项
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math -march=native")
