@@ -37,6 +37,23 @@
 #include "Ctools.h"
 #include "kernels/kernels.h"
 
+namespace {
+class C3TestEnvironment : public ::testing::Environment {
+public:
+    void SetUp() override {
+        ct::c3::HotPathConfig cfg = ct::c3::C3HotPathManager::instance().getConfig();
+        cfg.hot_threshold = 1000000;
+        ct::c3::C3HotPathManager::instance().configure(cfg);
+    }
+    void TearDown() override {
+        ct::c3::shutdownAll();
+    }
+};
+
+::testing::Environment* const g_c3_env =
+    ::testing::AddGlobalTestEnvironment(new C3TestEnvironment());
+} // namespace
+
 // ======================= 辅助函数 =======================
 
 /// 填充张量
