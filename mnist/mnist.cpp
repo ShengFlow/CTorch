@@ -4,6 +4,7 @@
 #include "Ctools.h"
 #include "ctQALS/Random.h"
 #include "../src/kernels/kernels.h"
+#include "C3/C3Cleanup.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -341,5 +342,6 @@ int main() {
         return 1;
     }
     
+    ct::c3::shutdownAll();
     return 0;
 }
