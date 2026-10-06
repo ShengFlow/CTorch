@@ -38,7 +38,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-13 gcc-13 libomp-dev llvm-18-dev libmlir-18-dev mlir-18-tools zlib1g-dev libzstd-dev
+          sudo apt-get install -y g++-13 gcc-13 libomp-dev llvm-18-dev libmlir-18-dev mlir-18-tools zlib1g-dev libzstd-dev libopenblas-dev
           echo "CC=gcc-13" >> $GITHUB_ENV
           echo "CXX=g++-13" >> $GITHUB_ENV
           echo "/usr/lib/llvm-18/bin" >> $GITHUB_PATH
