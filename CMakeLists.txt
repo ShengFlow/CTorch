@@ -1148,6 +1148,10 @@ if(NOT TEST_ENABLED)
     add_executable(test_amx_cluster_mpgemm src/tests/units/C3/test_amx_cluster_mpgemm.cpp)
     target_link_libraries(test_amx_cluster_mpgemm PRIVATE CTorch gtest gtest_main)
     target_include_directories(test_amx_cluster_mpgemm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(test_c3_jitcache_and_combine src/tests/units/C3/test_c3_jitcache_and_combine.cpp)
+    target_link_libraries(test_c3_jitcache_and_combine PRIVATE CTorch gtest gtest_main)
+    target_include_directories(test_c3_jitcache_and_combine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 add_compile_options(-Wno-ignored-attributes)
