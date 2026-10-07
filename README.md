@@ -1,235 +1,167 @@
-# Ctorch - 一个轻量级 C++ 深度学习框架
+<div align="center">
 
 <picture>
   <source srcset="images/logo-dark.png" media="(prefers-color-scheme: dark)">
-  <img src="images/logo.png" alt="Ctorch Logo">
+  <img src="images/logo.png" alt="CTorch Logo" width="360">
 </picture>
+
+# CTorch
+
+**一个现代 C++ 原生深度学习与张量计算框架**  
+*A Modern C++ Deep Learning and Tensor Computation Framework*
+
+[![CTorch CI](https://github.com/ShengFlow/CTorch/actions/workflows/ci.yml/badge.svg)](https://github.com/ShengFlow/CTorch/actions/workflows/ci.yml)
+[![Standard](https://img.shields.io/badge/C%2B%2B-20%20%2F%2023-blue.svg?logo=c%2B%2B)](https://en.wikipedia.org/wiki/C%2B%2B20)
+[![LLVM/MLIR](https://img.shields.io/badge/LLVM%2FMLIR-18%2B%20%7C%2022-red.svg?logo=llvm)](https://mlir.llvm.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+[项目简介](#项目简介) • [核心特性](#核心特性) • [系统架构](#系统架构) • [快速开始](#快速开始) • [构建与测试](#构建与测试) • [贡献与交流](#贡献与交流)
+
+</div>
+
+---
 
 ## 项目简介
 
-Ctorch 是一个轻量级 C++ 深度学习框架，用现代 C++ 实现。项目由**笙歌@ShengFlow团队**开发，目标是创建一个类似 PyTorch 的接口，让 C++ 开发者也能享受简单直观的深度学习体验。目前项目处于 RC1 版本开发阶段，已实现核心架构和基础功能。
+**Ctorch** 是一个轻量级 C++ 深度学习框架，使用现代 C++（C++20/C++23）实现。项目由 **笙歌@ShengFlow 团队** 开发，目标是提供一个简洁直观、接口风格贴近直觉的 C++ 张量计算与自动微分环境。
+
+目前项目已具备完整的张量体系与动态计算图自动微分功能，并引入了 **C3（MLIR/LLVM JIT）** 编译后端、拓扑静态内存规划（TRO-SMP）以及现代硬件微内核支持，兼顾易用性与计算效率。
+
+---
+
+## 核心特性
+
+- ✅ **多维张量（Tensor）**：支持多维张量创建、切片、视图变换及广播机制
+- ✅ **自动微分（AutoGrad）**：基于动态图的反向模式自动微分，支持复杂计算图反向求导
+- ✅ **C3 编译优化（MLIR / LLVM）**：支持 Linalg 算子单遍缓冲化与垂直/水平融合 JIT
+- ✅ **JITCache 缓存机制**：持久化字节码缓存与 Seqlock 无锁分发表，大幅减少热点路径重复编译开销
+- ✅ **TRO-SMP 内存规划**：通过 DAG 拓扑重排复用静态内存空间，有效降低运行期内存峰值
+- ✅ **高性能微内核加速**：集成 FlashAttention-3 FP8、AMX / NEON 融合矩阵乘法等现代计算算子
+- ✅ **统一调度器（Scheduler）**：统一管理底层计算设备与后备 CPU/BLAS 算子执行
+
+---
+
+## 系统架构
+
+```mermaid
+flowchart TD
+    subgraph Frontend ["前端接口 (C++20 / C++23)"]
+        Tensor["ct::Tensor"]
+        AutoGradAPI["AutoGrad 自动微分系统"]
+    end
+
+    subgraph Scheduler ["调度与优化层"]
+        CtorchSched["CtorchScheduler (算子调度)"]
+        C3Engine["C3 编译优化器"]
+        DRR["TableGen DRR 图改写"]
+        MemoryPlanner["TRO-SMP 内存规划器"]
+    end
+
+    subgraph JITPipeline ["C3 JIT 编译流水线"]
+        MLIRLowering["MLIR Linalg Lowering"]
+        LLVMOrc["LLVM Orc JIT"]
+        JITCache["JITCache (磁盘持久化)"]
+        FastDispatch["Lock-Free FastDispatchTable"]
+    end
+
+    subgraph Backend ["执行运行时与微内核"]
+        CPUBack["CPU / Accelerate / OpenBLAS"]
+        MicroKernels["FlashAttention-3 FP8 / AMX GEMM"]
+    end
+
+    Frontend --> Scheduler
+    C3Engine --> DRR
+    DRR --> MLIRLowering
+    MLIRLowering --> LLVMOrc
+    LLVMOrc --> JITCache
+    JITCache --> FastDispatch
+    Scheduler --> Backend
+    FastDispatch --> Backend
+```
+
+---
+
+## 快速开始
+
+### 基础张量计算与自动微分
+
+以下代码演示了如何创建张量、建立计算图并使用 `AutoGrad` 进行反向求导：
 
 ```cpp
-// 简单示例：创建张量和自动微分
 #include "Tensor.h"
+#include "AutoGrad.h"
+#include <iostream>
 
 int main() {
-    // 创建张量
-    Tensor a({1.0, 2.0, 3.0});
-    Tensor b({4.0, 5.0, 6.0});
+    // 1. 创建张量
+    Tensor a({1.0f, 2.0f, 3.0f});
+    Tensor b({4.0f, 5.0f, 6.0f});
 
-    // 自动微分计算
+    // 2. 开启自动微分追踪
     a.requires_grad(true);
     b.requires_grad(true);
-    
-    Tensor c = a * b;
-    Tensor d = c.sum();
-    d.backward();
 
+    // 3. 构建计算图并前向运算
+    Tensor c = a * b;
+    Tensor loss = c.sum();
+
+    // 4. 反向传播计算梯度
+    AutoGrad::backward(loss.getRelatedNode(), /*retain_graph=*/false);
+
+    // 5. 输出结果与梯度
     std::cout << "a: " << a << std::endl;
-    std::cout << "b: " << b << std::endl;
+    std::cout << "loss: " << loss << std::endl;
+    std::cout << "a.grad: " << a.grad() << std::endl;
+    std::cout << "b.grad: " << b.grad() << std::endl;
+
     return 0;
 }
 ```
 
-## 为什么选择 Ctorch？
+---
 
-作为一个轻量级深度学习框架，Ctorch 具有以下优势：
+## 构建与测试
 
-- **简洁易用**：提供类似 PyTorch 的直观接口，降低 C++ 深度学习开发的门槛
-- **高效灵活**：核心计算优化，支持多设备扩展
-- **模块化设计**：清晰的代码结构，易于理解和扩展
-- **自动微分**：完整的自动微分系统，支持复杂计算图
-- **现代 C++**：使用现代 C++ 特性，代码风格简洁优雅
+### 环境依赖
+* **编译器**: 支持 C++20 及以上的现代编译器（GCC 13+、Clang 17+ 或 Apple Clang）
+* **构建工具**: CMake 3.20+ 与 Ninja
+* **编译器后端（可选，开启 C3 时需要）**: LLVM / MLIR 18+
+* **基础数学库**: OpenBLAS 或 macOS Accelerate Framework
 
-## 已实现功能
-
-### 核心特性
-
-✅ 多维张量（Tensor）支持  
-✅ 自动微分（Autograd）系统  
-✅ 算子调度器（Scheduler）  
-✅ 多设备支持接口（预留）  
-✅ 统一的算子注册和调用机制
-
-### 基础算子
-
-✅ 加法（Add）  
-✅ 减法（Sub）  
-✅ 乘法（Mul）  
-✅ 除法（Div）  
-✅ 矩阵乘法（MatMul）  
-✅ 一元负号（Neg）
-
-### 张量运算示例
-
-```cpp
-// 基本运算
-Tensor t(1.0);             // 创建标量张量
-Tensor t1({1.0, 2.0, 3.0}); // 创建 1D 张量
-Tensor t2(ShapeTag{}, {2, 2}); // 创建 2x2 张量（默认零初始化）
-
-// 算术运算
-Tensor t3 = t1 + 5;         // 广播加法
-Tensor t4 = t1 * t1;        // 元素级乘法
-Tensor t5 = t2.matmul(t2);  // 矩阵乘法
-
-// 激活函数
-Tensor t6 = t5.relu();      // ReLU 激活
-
-// 自动微分完整流程
-Tensor x({1.0, 2.0, 3.0});
-x.requires_grad(true);       // 开启自动微分
-
-Tensor y = x * x;
-Tensor z = y.sum();
-
-z.backward();                // 反向传播
-
-// 此时 x 已包含梯度信息
-```
-
-## 安装与使用
-
-### 依赖项
-
-- C++17 或更高版本
-- CMake 3.12+
-
-### 构建步骤
+### 编译步骤
 
 ```bash
-git clone https://github.com/ShengFlow/CTorch.git
+# 1. 克隆仓库及子模块
+git clone --recursive https://github.com/ShengFlow/CTorch.git
 cd CTorch
-mkdir build
-cd build
-cmake ..
-make
+
+# 2. 配置 CMake
+cmake -B build-release -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCT_ENABLE_MLIR=ON
+
+# 3. 编译构建
+ninja -C build-release
+
+# 4. 运行回归测试套件
+ctest --test-dir build-release --output-on-failure
 ```
-
-### 运行测试
-
-```bash
-./Ctorch_test
-```
-
-### 集成到自己的项目
-
-1. 将 Ctorch 的头文件和库文件添加到你的项目中
-2. 在 CMakeLists.txt 中添加依赖
-3. 包含必要的头文件并使用 Ctorch API
-
-## 项目结构
-
-```
-Ctorch
-├── CMakeLists.txt
-├── CONTRIBUTING.md
-├── Dev_log.md
-├── Inspirations.md
-├── LICENSE
-├── README.md
-├── images   # 图片资源
-│   ├── logo-dark.png
-│   ├── logo-light.png
-│   ├── logo.jpg
-│   └── logo.png
-├── include  # 头文件
-│   ├── AutoDiff.h
-│   ├── Ctools.h
-│   ├── Ctorch_Error.h
-│   ├── Ctorch_Scheduler.h
-│   ├── Storage.h
-│   └── Tensor.h
-├── mnist    # mnist测试
-│   ├── mnist.cpp
-│   ├── mnist_loader.cpp
-│   ├── mnist_loader.h
-│   ├── t10k-images-idx3-ubyte
-│   ├── t10k-labels-idx1-ubyte
-│   ├── train-images-idx3-ubyte
-│   └── train-labels-idx1-ubyte
-└── src
-    ├── AutoDiff.cpp
-    ├── Ctools.cpp
-    ├── Storage.cpp
-    ├── Tensor.cpp
-    ├── kernels # 算子实现
-    │   ├── CPU-BASIC  # CPU 基础实现
-    │   │   ├── Add_BASIC_kernel.cpp
-    │   │   ├── Cos_BASIC_kernel.cpp
-    │   │   ├── CrossEntropy_BASIC_kernel.cpp
-    │   │   ├── Div_BASIC_kernel.cpp
-    │   │   ├── Dot_BASIC_kernel.cpp
-    │   │   ├── MAE_BASIC_kernel.cpp
-    │   │   ├── MSE_BASIC_kernel.cpp
-    │   │   ├── MatMul_BASIC_kernel.cpp
-    │   │   ├── Mul_BASIC_kernel.cpp
-    │   │   ├── Neg_BASIC_kernel.cpp
-    │   │   ├── ReLU_BASIC_kernel.cpp
-    │   │   ├── Sigmoid_BASIC_kernel.cpp
-    │   │   ├── Sin_BASIC_kernel.cpp
-    │   │   ├── Softmax_BASIC_kernel.cpp
-    │   │   ├── Sub_BASIC_kernel.cpp
-    │   │   └── Tanh_BASIC_kernel.cpp
-    │   └── kernels.h
-    └── tests
-        ├── performance_test.cpp
-        ├── test.cpp
-        ├── test_activation_loss.cpp
-        └── test_tensor_grad.cpp
-```
-
-## 未来计划
-
-### 短期目标（RC1 到正式版）
-
-- [ ] 完善常用激活函数（Sigmoid、Tanh、Softmax 等）
-- [ ] 实现基础损失函数（MSE、CrossEntropy 等）
-- [ ] 完善自动微分系统的正确性验证
-- [ ] 建立完整的测试框架
-- [ ] 优化核心算子的性能
-
-### 中期目标
-
-- [ ] 实现神经网络模块（Linear、Conv2d 等）
-- [ ] 支持 CUDA 设备加速
-- [ ] 实现优化器（SGD、Adam 等）
-- [ ] 提供数据加载和预处理工具
-
-### 长期目标
-
-- [ ] 支持 ONNX 模型导入/导出
-- [ ] 实现分布式训练支持
-- [ ] 移动端部署优化
-- [ ] 构建完整的深度学习生态系统
-
-## 贡献指南
-
-我们欢迎任何形式的贡献！如果你想参与 Ctorch 的开发：
-
-1. **报告问题**：在 GitHub 上提交 Issue，描述你遇到的问题
-2. **代码贡献**：Fork 仓库，修改代码，然后提交 Pull Request
-3. **文档完善**：帮助改进文档和示例
-4. **功能建议**：提出新功能或改进建议
-
-请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详细的贡献流程。
-
-## 许可证
-
-本项目采用 **MIT 许可证** - 详情见 [LICENSE](LICENSE) 文件。
-
-## 联系方式
-
-如果你有任何问题或建议，欢迎联系我们：
-- QQ:1113109729,2713906889
-- 提交issue
-- 邮件：ctorch1024@163.com
 
 ---
 
-> "遇事不决，可问春风，春风不语，即随本心."
->
-> —— 烽火戏诸侯《剑来》
+## 贡献与交流
 
-[![GitHub Stars](https://img.shields.io/github/stars/Beapoe/CTorch?style=social)](https://github.com/Beapoe/CTorch)
+欢迎任何形式的代码贡献、Issue 反馈和功能建议！
+
+- **代码仓库**: [ShengFlow/CTorch](https://github.com/ShengFlow/CTorch)
+- **联系邮箱**: `ctorch1024@163.com`
+- **QQ**: 1113109729, 2713906889
+
+---
+
+<div align="center">
+
+> *"遇事不决，可问春风，春风不语，即随本心."*  
+> *—— 烽火戏诸侯《剑来》*
+
+</div>
