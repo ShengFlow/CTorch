@@ -2,9 +2,9 @@ name: CTorch CI
 
 on:
   push:
-    branches: [ main, master, feature-DCU, feature-c3-pipeline, develop ]
+    branches: [ main, master, feature-DCU, feature-c3-pipeline, feature-C3, develop ]
   pull_request:
-    branches: [ main, master, feature-DCU, feature-c3-pipeline, develop ]
+    branches: [ main, master, feature-DCU, feature-c3-pipeline, feature-C3, develop ]
 
 jobs:
   build-and-test:
