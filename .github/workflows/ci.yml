@@ -108,28 +108,21 @@ jobs:
 
       - name: Run C3 JIT, Pipeline, RAM-AD & Micro-Kernel Tests
         run: |
-          echo "=== Running test_c3_graph (MLIR JIT Graph Compiler) ==="
-          ./build/test_c3_graph
-          echo "=== Running test_c3_pipeline ==="
-          ./build/test_c3_pipeline
-          echo "=== Running test_c3_memory_planner ==="
-          ./build/test_c3_memory_planner
-          echo "=== Running test_c3_graph_fusion_clusterer ==="
-          ./build/test_c3_graph_fusion_clusterer
-          echo "=== Running test_ram_ad_multi_output ==="
-          ./build/test_ram_ad_multi_output
-          echo "=== Running test_ctorch_new_algorithms_integration ==="
-          ./build/test_ctorch_new_algorithms_integration
-          echo "=== Running test_mnist_c3_replacement ==="
-          ./build/test_mnist_c3_replacement
-          echo "=== Running test_amx_flash_attention ==="
-          ./build/test_amx_flash_attention
-          echo "=== Running test_flash_attention_3_fp8 ==="
-          ./build/test_flash_attention_3_fp8
-          echo "=== Running test_amx_cluster_mpgemm ==="
-          ./build/test_amx_cluster_mpgemm
-          echo "=== Running test_c3_jitcache_and_combine ==="
-          ./build/test_c3_jitcache_and_combine
+          for test_bin in \
+            test_c3_graph \
+            test_c3_pipeline \
+            test_c3_memory_planner \
+            test_c3_graph_fusion_clusterer \
+            test_ram_ad_multi_output \
+            test_ctorch_new_algorithms_integration \
+            test_mnist_c3_replacement \
+            test_amx_flash_attention \
+            test_flash_attention_3_fp8 \
+            test_amx_cluster_mpgemm \
+            test_c3_jitcache_and_combine; do
+              echo "=== Running ./build/$test_bin ==="
+              ./build/$test_bin || { echo "::error title=Test Failure::$test_bin failed!"; exit 1; }
+          done
 
       - name: Run LLaMA E2E Pipeline Benchmark
         run: |
