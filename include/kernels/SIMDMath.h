@@ -201,6 +201,11 @@ float32x4_t silu_neon_f32(float32x4_t x);
  */
 float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate);
 
+/**
+ * @brief 向量化 1/sqrtf (4-wide NEON)
+ */
+float32x4_t rsqrt_neon_f32(float32x4_t x);
+
 #endif // __aarch64__
 
 // ======================= 跨平台 wrapper =======================
@@ -245,6 +250,46 @@ void vsilu(const float* in, float* out, size_t n);
  * @param out   输出 (= silu(x) * gate)
  */
 void vswiglu(const float* x_in, const float* g_in, float* out, size_t n);
+
+/**
+ * @brief 跨平台向量化 1/sqrt(x)
+ */
+void vrsqrt(const float* in, float* out, size_t n);
+
+/**
+ * @brief 跨平台向量化 SiLU backward: grad_input = grad_output * silu_derivative(input)
+ */
+void vsilu_backward(const float* grad_output, const float* in, float* grad_in, size_t n);
+
+/**
+ * @brief 跨平台向量化 SwiGLU backward: 双输入梯度
+ * @param grad_output 上游梯度
+ * @param x_in 原始主输入
+ * @param g_in 原始门控输入
+ * @param grad_x 输出主输入梯度 (= grad_output * gate * silu_derivative(x))
+ * @param grad_gate 输出门控输入梯度 (= grad_output * (x * sigmoid(x)))
+ * @param n 元素数
+ */
+void vswiglu_backward(const float* grad_output, const float* x_in, const float* g_in,
+                      float* grad_x, float* grad_gate, size_t n);
+
+/**
+ * @brief 跨平台向量化 RMSNorm (Root Mean Square Normalization)
+ * @details out[t, d] = (in[t, d] / sqrt(mean(in[t]^2) + eps)) * (weight ? weight[d] : 1.0)
+ * @param in 输入矩阵 [num_tokens, hidden_dim]
+ * @param weight 可选可学习缩放参数 [hidden_dim], 可为 nullptr
+ * @param out 输出矩阵 [num_tokens, hidden_dim]
+ * @param num_tokens token 序列数 (batch_size * seq_len)
+ * @param hidden_dim 隐藏层维度
+ * @param eps 数值稳定因子, 默认 1e-6f
+ */
+void vrmsnorm(const float* in, const float* weight, float* out,
+              size_t num_tokens, size_t hidden_dim, float eps = 1e-6f);
+
+/**
+ * @brief 跨平台向量化向量加法 out = a + b
+ */
+void vadd(const float* a, const float* b, float* out, size_t n);
 
 }  // namespace simd
 }  // namespace kernels

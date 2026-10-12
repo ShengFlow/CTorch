@@ -536,6 +536,14 @@ float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate) {
     return vmulq_f32(silu, gate);
 }
 
+float32x4_t rsqrt_neon_f32(float32x4_t x) {
+    float32x4_t est = vrsqrteq_f32(x);
+    // Newton-Raphson 2 轮迭代: 精确度达到全单精度 (< 1 ULP)
+    est = vmulq_f32(est, vrsqrtsq_f32(vmulq_f32(x, est), est));
+    est = vmulq_f32(est, vrsqrtsq_f32(vmulq_f32(x, est), est));
+    return est;
+}
+
 #endif  // __aarch64__
 
 // ======================= 跨平台 wrapper =======================
@@ -755,6 +763,290 @@ void vswiglu(const float* x_in, const float* g_in, float* out, size_t n) {
         float sig = 1.0f / (1.0f + std::exp(-x_in[i]));
         out[i] = x_in[i] * sig * g_in[i];
     }
+#endif
+}
+
+void vrsqrt(const float* in, float* out, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        _mm512_storeu_ps(&out[i], rsqrt512_ps(x));
+    }
+    for (; i < n; ++i) out[i] = 1.0f / std::sqrt(in[i]);
+#elif defined(__AVX__)
+    size_t i = 0;
+    for (; i + 7 < n; i += 8) {
+        __m256 x = _mm256_loadu_ps(&in[i]);
+        _mm256_storeu_ps(&out[i], rsqrt256_ps(x));
+    }
+    for (; i < n; ++i) out[i] = 1.0f / std::sqrt(in[i]);
+#elif defined(__aarch64__)
+    size_t i = 0;
+    for (; i + 3 < n; i += 4) {
+        float32x4_t x = vld1q_f32(&in[i]);
+        vst1q_f32(&out[i], rsqrt_neon_f32(x));
+    }
+    for (; i < n; ++i) out[i] = 1.0f / std::sqrt(in[i]);
+#else
+    for (size_t i = 0; i < n; ++i) out[i] = 1.0f / std::sqrt(in[i]);
+#endif
+}
+
+namespace {
+inline float silu_deriv_scalar_fast(float x) {
+    float s = 1.0f / (1.0f + std::exp(-x));
+    return s + x * s * (1.0f - s);
+}
+}  // namespace
+
+void vsilu_backward(const float* grad_output, const float* in, float* grad_in, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    const __m512 one512 = _mm512_set1_ps(1.0f);
+    for (; i + 15 < n; i += 16) {
+        __m512 go = _mm512_loadu_ps(&grad_output[i]);
+        __m512 x = _mm512_loadu_ps(&in[i]);
+        __m512 s = sigmoid512_ps(x);
+        __m512 one_minus_s = _mm512_sub_ps(one512, s);
+        __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one512);
+        __m512 silu_d = _mm512_mul_ps(s, inner);
+        _mm512_storeu_ps(&grad_in[i], _mm512_mul_ps(go, silu_d));
+    }
+    for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
+#elif defined(__AVX__)
+    size_t i = 0;
+    const __m256 one256 = _mm256_set1_ps(1.0f);
+    for (; i + 7 < n; i += 8) {
+        __m256 go = _mm256_loadu_ps(&grad_output[i]);
+        __m256 x = _mm256_loadu_ps(&in[i]);
+        __m256 s = sigmoid256_ps(x);
+        __m256 one_minus_s = _mm256_sub_ps(one256, s);
+        __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one256);
+        __m256 silu_d = _mm256_mul_ps(s, inner);
+        _mm256_storeu_ps(&grad_in[i], _mm256_mul_ps(go, silu_d));
+    }
+    for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
+#elif defined(__aarch64__)
+    size_t i = 0;
+    const float32x4_t one_neon = vdupq_n_f32(1.0f);
+    for (; i + 3 < n; i += 4) {
+        float32x4_t go = vld1q_f32(&grad_output[i]);
+        float32x4_t x = vld1q_f32(&in[i]);
+        float32x4_t s = sigmoid_neon_f32(x);
+        float32x4_t one_minus_s = vsubq_f32(one_neon, s);
+        float32x4_t inner = vfmaq_f32(one_neon, x, one_minus_s);
+        float32x4_t silu_d = vmulq_f32(s, inner);
+        vst1q_f32(&grad_in[i], vmulq_f32(go, silu_d));
+    }
+    for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
+#else
+    for (size_t i = 0; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
+#endif
+}
+
+namespace {
+inline void swiglu_backward_scalar_fast(float go, float x, float g, float& gx, float& gg) {
+    float s = 1.0f / (1.0f + std::exp(-x));
+    float silu_d = s + x * s * (1.0f - s);
+    gx = go * g * silu_d;
+    gg = go * (x * s);
+}
+}  // namespace
+
+void vswiglu_backward(const float* grad_output, const float* x_in, const float* g_in,
+                      float* grad_x, float* grad_gate, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    const __m512 one512 = _mm512_set1_ps(1.0f);
+    for (; i + 15 < n; i += 16) {
+        __m512 go = _mm512_loadu_ps(&grad_output[i]);
+        __m512 x = _mm512_loadu_ps(&x_in[i]);
+        __m512 g = _mm512_loadu_ps(&g_in[i]);
+        __m512 s = sigmoid512_ps(x);
+        __m512 one_minus_s = _mm512_sub_ps(one512, s);
+        __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one512);
+        __m512 silu_d = _mm512_mul_ps(s, inner);
+        _mm512_storeu_ps(&grad_x[i], _mm512_mul_ps(_mm512_mul_ps(go, g), silu_d));
+        __m512 silu_x = _mm512_mul_ps(x, s);
+        _mm512_storeu_ps(&grad_gate[i], _mm512_mul_ps(go, silu_x));
+    }
+    for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
+#elif defined(__AVX__)
+    size_t i = 0;
+    const __m256 one256 = _mm256_set1_ps(1.0f);
+    for (; i + 7 < n; i += 8) {
+        __m256 go = _mm256_loadu_ps(&grad_output[i]);
+        __m256 x = _mm256_loadu_ps(&x_in[i]);
+        __m256 g = _mm256_loadu_ps(&g_in[i]);
+        __m256 s = sigmoid256_ps(x);
+        __m256 one_minus_s = _mm256_sub_ps(one256, s);
+        __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one256);
+        __m256 silu_d = _mm256_mul_ps(s, inner);
+        _mm256_storeu_ps(&grad_x[i], _mm256_mul_ps(_mm256_mul_ps(go, g), silu_d));
+        __m256 silu_x = _mm256_mul_ps(x, s);
+        _mm256_storeu_ps(&grad_gate[i], _mm256_mul_ps(go, silu_x));
+    }
+    for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
+#elif defined(__aarch64__)
+    size_t i = 0;
+    const float32x4_t one_neon = vdupq_n_f32(1.0f);
+    for (; i + 3 < n; i += 4) {
+        float32x4_t go = vld1q_f32(&grad_output[i]);
+        float32x4_t x = vld1q_f32(&x_in[i]);
+        float32x4_t g = vld1q_f32(&g_in[i]);
+        float32x4_t s = sigmoid_neon_f32(x);
+        float32x4_t one_minus_s = vsubq_f32(one_neon, s);
+        float32x4_t inner = vfmaq_f32(one_neon, x, one_minus_s);
+        float32x4_t silu_d = vmulq_f32(s, inner);
+        vst1q_f32(&grad_x[i], vmulq_f32(vmulq_f32(go, g), silu_d));
+        float32x4_t silu_x = vmulq_f32(x, s);
+        vst1q_f32(&grad_gate[i], vmulq_f32(go, silu_x));
+    }
+    for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
+#else
+    for (size_t i = 0; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
+#endif
+}
+
+void vrmsnorm(const float* in, const float* weight, float* out,
+              size_t num_tokens, size_t hidden_dim, float eps) {
+    if (num_tokens == 0 || hidden_dim == 0) return;
+    const float inv_dim = 1.0f / static_cast<float>(hidden_dim);
+
+    for (size_t t = 0; t < num_tokens; ++t) {
+        const float* x = in + t * hidden_dim;
+        float* y = out + t * hidden_dim;
+
+        float sum_sq = 0.0f;
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+        size_t d = 0;
+        __m512 sum_vec512 = _mm512_setzero_ps();
+        for (; d + 15 < hidden_dim; d += 16) {
+            __m512 vx = _mm512_loadu_ps(&x[d]);
+            sum_vec512 = _mm512_fmadd_ps(vx, vx, sum_vec512);
+        }
+        sum_sq = _mm512_reduce_add_ps(sum_vec512);
+        for (; d < hidden_dim; ++d) sum_sq += x[d] * x[d];
+#elif defined(__AVX__)
+        size_t d = 0;
+        __m256 sum_vec256 = _mm256_setzero_ps();
+        for (; d + 7 < hidden_dim; d += 8) {
+            __m256 vx = _mm256_loadu_ps(&x[d]);
+            sum_vec256 = _mm256_fmadd_ps(vx, vx, sum_vec256);
+        }
+        __m128 lo = _mm256_castps256_ps128(sum_vec256);
+        __m128 hi = _mm256_extractf128_ps(sum_vec256, 1);
+        __m128 s128 = _mm_add_ps(lo, hi);
+        s128 = _mm_hadd_ps(s128, s128);
+        s128 = _mm_hadd_ps(s128, s128);
+        sum_sq = _mm_cvtss_f32(s128);
+        for (; d < hidden_dim; ++d) sum_sq += x[d] * x[d];
+#elif defined(__aarch64__)
+        size_t d = 0;
+        float32x4_t sum_vec = vdupq_n_f32(0.0f);
+        for (; d + 3 < hidden_dim; d += 4) {
+            float32x4_t vx = vld1q_f32(&x[d]);
+            sum_vec = vfmaq_f32(sum_vec, vx, vx);
+        }
+        sum_sq = vaddvq_f32(sum_vec);
+        for (; d < hidden_dim; ++d) sum_sq += x[d] * x[d];
+#else
+        for (size_t d = 0; d < hidden_dim; ++d) sum_sq += x[d] * x[d];
+#endif
+
+        const float inv_rms = 1.0f / std::sqrt(sum_sq * inv_dim + eps);
+
+        if (weight != nullptr) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+            size_t i = 0;
+            const __m512 vscale = _mm512_set1_ps(inv_rms);
+            for (; i + 15 < hidden_dim; i += 16) {
+                __m512 vx = _mm512_loadu_ps(&x[i]);
+                __m512 vw = _mm512_loadu_ps(&weight[i]);
+                _mm512_storeu_ps(&y[i], _mm512_mul_ps(_mm512_mul_ps(vx, vscale), vw));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms * weight[i];
+#elif defined(__AVX__)
+            size_t i = 0;
+            const __m256 vscale = _mm256_set1_ps(inv_rms);
+            for (; i + 7 < hidden_dim; i += 8) {
+                __m256 vx = _mm256_loadu_ps(&x[i]);
+                __m256 vw = _mm256_loadu_ps(&weight[i]);
+                _mm256_storeu_ps(&y[i], _mm256_mul_ps(_mm256_mul_ps(vx, vscale), vw));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms * weight[i];
+#elif defined(__aarch64__)
+            size_t i = 0;
+            const float32x4_t vscale = vdupq_n_f32(inv_rms);
+            for (; i + 3 < hidden_dim; i += 4) {
+                float32x4_t vx = vld1q_f32(&x[i]);
+                float32x4_t vw = vld1q_f32(&weight[i]);
+                vst1q_f32(&y[i], vmulq_f32(vmulq_f32(vx, vscale), vw));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms * weight[i];
+#else
+            for (size_t i = 0; i < hidden_dim; ++i) y[i] = x[i] * inv_rms * weight[i];
+#endif
+        } else {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+            size_t i = 0;
+            const __m512 vscale = _mm512_set1_ps(inv_rms);
+            for (; i + 15 < hidden_dim; i += 16) {
+                __m512 vx = _mm512_loadu_ps(&x[i]);
+                _mm512_storeu_ps(&y[i], _mm512_mul_ps(vx, vscale));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms;
+#elif defined(__AVX__)
+            size_t i = 0;
+            const __m256 vscale = _mm256_set1_ps(inv_rms);
+            for (; i + 7 < hidden_dim; i += 8) {
+                __m256 vx = _mm256_loadu_ps(&x[i]);
+                _mm256_storeu_ps(&y[i], _mm256_mul_ps(vx, vscale));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms;
+#elif defined(__aarch64__)
+            size_t i = 0;
+            const float32x4_t vscale = vdupq_n_f32(inv_rms);
+            for (; i + 3 < hidden_dim; i += 4) {
+                float32x4_t vx = vld1q_f32(&x[i]);
+                vst1q_f32(&y[i], vmulq_f32(vx, vscale));
+            }
+            for (; i < hidden_dim; ++i) y[i] = x[i] * inv_rms;
+#else
+            for (size_t i = 0; i < hidden_dim; ++i) y[i] = x[i] * inv_rms;
+#endif
+        }
+    }
+}
+
+void vadd(const float* a, const float* b, float* out, size_t n) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    size_t i = 0;
+    for (; i + 15 < n; i += 16) {
+        __m512 va = _mm512_loadu_ps(&a[i]);
+        __m512 vb = _mm512_loadu_ps(&b[i]);
+        _mm512_storeu_ps(&out[i], _mm512_add_ps(va, vb));
+    }
+    for (; i < n; ++i) out[i] = a[i] + b[i];
+#elif defined(__AVX__)
+    size_t i = 0;
+    for (; i + 7 < n; i += 8) {
+        __m256 va = _mm256_loadu_ps(&a[i]);
+        __m256 vb = _mm256_loadu_ps(&b[i]);
+        _mm256_storeu_ps(&out[i], _mm256_add_ps(va, vb));
+    }
+    for (; i < n; ++i) out[i] = a[i] + b[i];
+#elif defined(__aarch64__)
+    size_t i = 0;
+    for (; i + 3 < n; i += 4) {
+        float32x4_t va = vld1q_f32(&a[i]);
+        float32x4_t vb = vld1q_f32(&b[i]);
+        vst1q_f32(&out[i], vaddq_f32(va, vb));
+    }
+    for (; i < n; ++i) out[i] = a[i] + b[i];
+#else
+    for (size_t i = 0; i < n; ++i) out[i] = a[i] + b[i];
 #endif
 }
 

@@ -413,6 +413,118 @@ static void test_wrapper_consistency() {
     }
     ++g_passed;
     std::cout << "  vgelu OK\n";
+
+    // vsilu
+    ct::kernels::simd::vsilu(in.data(), out.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float ref = in[i] / (1.0f + std::exp(-in[i]));
+        if (std::abs(ref - out[i]) > 1e-4f) {
+            ++g_failed;
+            std::cout << "  FAIL: vsilu mismatch at " << i << " ref=" << ref << " got=" << out[i] << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vsilu OK\n";
+
+    // vswiglu
+    std::vector<float> gate(N);
+    for (int i = 0; i < N; ++i) gate[i] = dist(rng);
+    ct::kernels::simd::vswiglu(in.data(), gate.data(), out.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float ref = (in[i] / (1.0f + std::exp(-in[i]))) * gate[i];
+        if (std::abs(ref - out[i]) > 1e-4f) {
+            ++g_failed;
+            std::cout << "  FAIL: vswiglu mismatch at " << i << " ref=" << ref << " got=" << out[i] << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vswiglu OK\n";
+
+    // vrsqrt (x > 0)
+    std::vector<float> pos_in(N);
+    for (int i = 0; i < N; ++i) pos_in[i] = std::abs(in[i]) + 0.01f;
+    ct::kernels::simd::vrsqrt(pos_in.data(), out.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float ref = 1.0f / std::sqrt(pos_in[i]);
+        if (std::abs(ref - out[i]) / ref > 1e-3f) {
+            ++g_failed;
+            std::cout << "  FAIL: vrsqrt mismatch at " << i << " ref=" << ref << " got=" << out[i] << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vrsqrt OK\n";
+
+    // vsilu_backward
+    std::vector<float> grad_out(N), grad_in(N);
+    for (int i = 0; i < N; ++i) grad_out[i] = dist(rng);
+    ct::kernels::simd::vsilu_backward(grad_out.data(), in.data(), grad_in.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float s = 1.0f / (1.0f + std::exp(-in[i]));
+        float ref_d = s + in[i] * s * (1.0f - s);
+        float ref = grad_out[i] * ref_d;
+        if (std::abs(ref - grad_in[i]) > 1e-4f) {
+            ++g_failed;
+            std::cout << "  FAIL: vsilu_backward mismatch at " << i << " ref=" << ref << " got=" << grad_in[i] << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vsilu_backward OK\n";
+
+    // vswiglu_backward
+    std::vector<float> gx(N), gg(N);
+    ct::kernels::simd::vswiglu_backward(grad_out.data(), in.data(), gate.data(), gx.data(), gg.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float s = 1.0f / (1.0f + std::exp(-in[i]));
+        float silu_d = s + in[i] * s * (1.0f - s);
+        float ref_gx = grad_out[i] * gate[i] * silu_d;
+        float ref_gg = grad_out[i] * (in[i] * s);
+        if (std::abs(ref_gx - gx[i]) > 1e-4f || std::abs(ref_gg - gg[i]) > 1e-4f) {
+            ++g_failed;
+            std::cout << "  FAIL: vswiglu_backward mismatch at " << i << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vswiglu_backward OK\n";
+
+    // vrmsnorm
+    const size_t num_tokens = 8;
+    const size_t hidden_dim = 128;
+    std::vector<float> rms_in(num_tokens * hidden_dim), rms_out(num_tokens * hidden_dim);
+    for (size_t i = 0; i < rms_in.size(); ++i) rms_in[i] = dist(rng);
+    ct::kernels::simd::vrmsnorm(rms_in.data(), nullptr, rms_out.data(), num_tokens, hidden_dim, 1e-6f);
+    for (size_t t = 0; t < num_tokens; ++t) {
+        float sum_sq = 0.0f;
+        for (size_t d = 0; d < hidden_dim; ++d) sum_sq += rms_in[t * hidden_dim + d] * rms_in[t * hidden_dim + d];
+        float inv_rms = 1.0f / std::sqrt(sum_sq / static_cast<float>(hidden_dim) + 1e-6f);
+        for (size_t d = 0; d < hidden_dim; ++d) {
+            float ref = rms_in[t * hidden_dim + d] * inv_rms;
+            if (std::abs(ref - rms_out[t * hidden_dim + d]) > 1e-4f) {
+                ++g_failed;
+                std::cout << "  FAIL: vrmsnorm mismatch at token " << t << " d=" << d << "\n";
+                return;
+            }
+        }
+    }
+    ++g_passed;
+    std::cout << "  vrmsnorm OK\n";
+
+    // vadd
+    ct::kernels::simd::vadd(in.data(), gate.data(), out.data(), N);
+    for (int i = 0; i < N; ++i) {
+        float ref = in[i] + gate[i];
+        if (std::abs(ref - out[i]) > 1e-6f) {
+            ++g_failed;
+            std::cout << "  FAIL: vadd mismatch at " << i << "\n";
+            return;
+        }
+    }
+    ++g_passed;
+    std::cout << "  vadd OK\n";
 }
 
 // ======================= 性能测试 =======================

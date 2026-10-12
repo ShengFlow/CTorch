@@ -8,6 +8,7 @@
 
 #include "ops/SwiGLU.h"
 #include "CtorchError.h"
+#include "kernels/SIMDMath.h"
 
 #include <cmath>
 
@@ -123,14 +124,7 @@ Tensor swiglu_forward(const Tensor& x, const Tensor& gate) {
     const float* g_ptr = gate.data_read<float>();
     float* y_ptr = output.data_write<float>();
 
-#if defined(__AVX2__)
-    swiglu_avx2(x_ptr, g_ptr, y_ptr, n);
-#else
-    for (size_t i = 0; i < n; ++i) {
-        float s = 1.0f / (1.0f + std::exp(-x_ptr[i]));
-        y_ptr[i] = x_ptr[i] * s * g_ptr[i];
-    }
-#endif
+    ct::kernels::simd::vswiglu(x_ptr, g_ptr, y_ptr, n);
 
     return output;
 }
@@ -156,15 +150,7 @@ std::pair<Tensor, Tensor> swiglu_backward(const Tensor& grad_output, const Tenso
     float* gx_ptr = grad_x.data_write<float>();
     float* gg_ptr = grad_gate.data_write<float>();
 
-#if defined(__AVX2__)
-    swiglu_backward_avx2(go_ptr, x_ptr, g_ptr, gx_ptr, gg_ptr, n);
-#else
-    for (size_t i = 0; i < n; ++i) {
-        auto [gx, gg] = swiglu_backward_scalar_impl(go_ptr[i], x_ptr[i], g_ptr[i]);
-        gx_ptr[i] = gx;
-        gg_ptr[i] = gg;
-    }
-#endif
+    ct::kernels::simd::vswiglu_backward(go_ptr, x_ptr, g_ptr, gx_ptr, gg_ptr, n);
 
     return {grad_x, grad_gate};
 }

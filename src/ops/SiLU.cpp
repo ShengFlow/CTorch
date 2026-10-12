@@ -130,24 +130,7 @@ Tensor silu_forward(const Tensor& input) {
     const float* in_ptr = input.data_read<float>();
     float* out_ptr = output.data_write<float>();
 
-#if defined(__AVX2__)
-    // SIMD 主路径: 8-wide 处理, 标量 tail
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        __m256 vx = _mm256_loadu_ps(in_ptr + i);
-        __m256 vy = silu_avx2(vx);
-        _mm256_storeu_ps(out_ptr + i, vy);
-    }
-    // tail
-    for (; i < n; ++i) {
-        out_ptr[i] = silu_scalar_impl(in_ptr[i]);
-    }
-#else
-    // 标量 fallback
-    for (size_t i = 0; i < n; ++i) {
-        out_ptr[i] = silu_scalar_impl(in_ptr[i]);
-    }
-#endif
+    ct::kernels::simd::vsilu(in_ptr, out_ptr, n);
 
     return output;
 }
@@ -173,23 +156,7 @@ Tensor silu_backward(const Tensor& grad_output, const Tensor& input) {
     const float* in_ptr = input.data_read<float>();
     float* gi_ptr = grad_input.data_write<float>();
 
-#if defined(__AVX2__)
-    size_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        __m256 vgo = _mm256_loadu_ps(go_ptr + i);
-        __m256 vx = _mm256_loadu_ps(in_ptr + i);
-        __m256 vd = silu_derivative_avx2(vx);
-        __m256 vgi = _mm256_mul_ps(vgo, vd);
-        _mm256_storeu_ps(gi_ptr + i, vgi);
-    }
-    for (; i < n; ++i) {
-        gi_ptr[i] = go_ptr[i] * silu_derivative_scalar_impl(in_ptr[i]);
-    }
-#else
-    for (size_t i = 0; i < n; ++i) {
-        gi_ptr[i] = go_ptr[i] * silu_derivative_scalar_impl(in_ptr[i]);
-    }
-#endif
+    ct::kernels::simd::vsilu_backward(go_ptr, in_ptr, gi_ptr, n);
 
     return grad_input;
 }

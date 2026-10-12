@@ -18,6 +18,7 @@
 #include "C3/RamAdMultiOutputEngine.h"
 #include "C3/C3IntegratedCompiler.h"
 #include "C3/TroMemoryPlanner.h"
+#include "kernels/SIMDMath.h"
 #include "bench_guard.h"
 
 #ifdef __APPLE__
@@ -215,18 +216,8 @@ public:
 
         float* norm_buf = arena_.template get_ptr<float>(5 * BS * D * sizeof(float));
 
-        // 1. In-Register Fused RMSNorm into Static Arena buffer (0 DRAM roundtrips)
-        for (size_t i = 0; i < BS; ++i) {
-            float sum_sq = 0.0f;
-            for (size_t d = 0; d < D; ++d) {
-                float v = x[i * D + d];
-                sum_sq += v * v;
-            }
-            float inv_rms = 1.0f / std::sqrt(sum_sq / static_cast<float>(D) + 1e-6f);
-            for (size_t d = 0; d < D; ++d) {
-                norm_buf[i * D + d] = x[i * D + d] * inv_rms;
-            }
-        }
+        // 1. In-Register Fused RMSNorm into Static Arena buffer (Vectorized SIMD, 0 DRAM roundtrips)
+        ct::kernels::simd::vrmsnorm(x.data(), nullptr, norm_buf, BS, D);
 
         // Vectorized Q, K, V Projections via hardware accelerated BLAS GEMM (0 heap allocations)
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
@@ -258,10 +249,8 @@ public:
                 amx_attn_cfg_);
         }
 
-        // 3. First Residual in-register vector stream
-        for (size_t i = 0; i < BS * D; ++i) {
-            res_buf[i] = x[i] + attn_out[i];
-        }
+        // 3. First Residual in-register vector stream (Vectorized SIMD)
+        ct::kernels::simd::vadd(x.data(), attn_out, res_buf, BS * D);
 
         // 4. RAM-AD In-Register Fused SwiGLU FFN Kernel Execution with Fused Residual Add
         AmxClusterMpGemmEngine::MpGemmConfig ffn_cfg{

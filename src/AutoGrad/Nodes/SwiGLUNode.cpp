@@ -7,6 +7,7 @@
 
 #include "AutoGrad/Nodes/SwiGLUNode.h"
 #include "../../../include/Tensor.h"
+#include "../../../include/ops/SwiGLU.h"
 
 SwiGLUNode::SwiGLUNode(const std::vector<std::shared_ptr<Node>>& upStreamNodes, const std::vector<Tensor>& inputs)
     : Node(upStreamNodes, inputs) {
@@ -33,14 +34,20 @@ std::vector<GradPack> SwiGLUNode::backward(const std::vector<Tensor>& downStream
     Tensor gate = _inputs[1];
     Tensor grad_y = downStreamGrads[0];
 
-    // ∂silu/∂x = sigmoid + x * sigmoid * (1 - sigmoid)
+    if (x.device() == DeviceType::kCPU && gate.device() == DeviceType::kCPU &&
+        grad_y.device() == DeviceType::kCPU) {
+        auto [grad_x, grad_gate] = ct::ops::swiglu_backward(grad_y, x, gate);
+        ret.push_back(GradPack{_upStreamNodes[0], std::vector({grad_x}), 0});
+        ret.push_back(GradPack{_upStreamNodes[1], std::vector({grad_gate}), 1});
+        return ret;
+    }
+
+    // Fallback for non-CPU devices
     Tensor sigmoid_x = x.sigmoid();
     Tensor one = sigmoid_x * 0.0f + 1.0f;
     Tensor silu_d = sigmoid_x + x * sigmoid_x * (one - sigmoid_x);
 
-    // ∂L/∂x = ∂L/∂y * gate * silu_derivative(x)
     Tensor grad_x = grad_y * gate * silu_d;
-    // ∂L/∂gate = ∂L/∂y * silu(x) = ∂L/∂y * x * sigmoid(x)
     Tensor grad_gate = grad_y * (x * sigmoid_x);
 
     ret.push_back(GradPack{_upStreamNodes[0], std::vector({grad_x}), 0});
