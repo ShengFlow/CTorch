@@ -101,19 +101,23 @@ __m256 silu256_ps(__m256 x);
 __m256 swiglu256_ps(__m256 x, __m256 gate);
 
 /**
- * @brief 向量化 GELU（16-wide AVX-512）
+ * @brief 向量化 SiLU backward (8-wide AVX2)
+ * @param grad_output 上游梯度
+ * @param x 原始输入
+ * @return grad_input = grad_output * silu_derivative(x)
  */
-__m512 gelu512_ps(__m512 x);
+__m256 silu_backward256_ps(__m256 grad_output, __m256 x);
 
 /**
- * @brief 向量化 SiLU (16-wide AVX-512) — PEL25 Stage 4.1
+ * @brief 向量化 SwiGLU backward (8-wide AVX2, 双输出 fused)
+ * @param grad_output 上游梯度
+ * @param x 原始主输入
+ * @param gate 原始门控输入
+ * @param[out] grad_x 输出主输入梯度
+ * @param[out] grad_gate 输出门控输入梯度
  */
-__m512 silu512_ps(__m512 x);
-
-/**
- * @brief 向量化 SwiGLU (16-wide AVX-512, 双输入 fused) — PEL25 Stage 4.2
- */
-__m512 swiglu512_ps(__m512 x, __m512 gate);
+void swiglu_backward256_ps(__m256 grad_output, __m256 x, __m256 gate,
+                           __m256& grad_x, __m256& grad_gate);
 
 /**
  * @brief 向量化 1/sqrtf（8-wide AVX2）
@@ -154,6 +158,27 @@ __m512 sigmoid512_ps(__m512 x);
  * @brief 向量化 GELU（16-wide AVX-512）
  */
 __m512 gelu512_ps(__m512 x);
+
+/**
+ * @brief 向量化 SiLU (16-wide AVX-512) — PEL25 Stage 4.1
+ */
+__m512 silu512_ps(__m512 x);
+
+/**
+ * @brief 向量化 SwiGLU (16-wide AVX-512, 双输入 fused) — PEL25 Stage 4.2
+ */
+__m512 swiglu512_ps(__m512 x, __m512 gate);
+
+/**
+ * @brief 向量化 SiLU backward (16-wide AVX-512)
+ */
+__m512 silu_backward512_ps(__m512 grad_output, __m512 x);
+
+/**
+ * @brief 向量化 SwiGLU backward (16-wide AVX-512, 双输出 fused)
+ */
+void swiglu_backward512_ps(__m512 grad_output, __m512 x, __m512 gate,
+                           __m512& grad_x, __m512& grad_gate);
 
 /**
  * @brief 向量化 1/sqrtf（16-wide AVX-512）
@@ -200,6 +225,17 @@ float32x4_t silu_neon_f32(float32x4_t x);
  * @brief 向量化 SwiGLU (4-wide NEON, 双输入 fused) — PEL25 Stage 4.2
  */
 float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate);
+
+/**
+ * @brief 向量化 SiLU backward (4-wide NEON)
+ */
+float32x4_t silu_backward_neon_f32(float32x4_t grad_output, float32x4_t x);
+
+/**
+ * @brief 向量化 SwiGLU backward (4-wide NEON, 双输出 fused)
+ */
+void swiglu_backward_neon_f32(float32x4_t grad_output, float32x4_t x, float32x4_t gate,
+                              float32x4_t& grad_x, float32x4_t& grad_gate);
 
 /**
  * @brief 向量化 1/sqrtf (4-wide NEON)

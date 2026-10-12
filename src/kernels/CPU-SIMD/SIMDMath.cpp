@@ -202,6 +202,26 @@ __m256 swiglu256_ps(__m256 x, __m256 gate) {
     return _mm256_mul_ps(silu, gate);     // silu(x) * gate
 }
 
+__m256 silu_backward256_ps(__m256 go, __m256 x) {
+    const __m256 one = _mm256_set1_ps(1.0f);
+    __m256 s = sigmoid256_ps(x);
+    __m256 one_minus_s = _mm256_sub_ps(one, s);
+    __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one);
+    __m256 silu_d = _mm256_mul_ps(s, inner);
+    return _mm256_mul_ps(go, silu_d);
+}
+
+void swiglu_backward256_ps(__m256 go, __m256 x, __m256 gate,
+                           __m256& grad_x, __m256& grad_gate) {
+    const __m256 one = _mm256_set1_ps(1.0f);
+    __m256 s = sigmoid256_ps(x);
+    __m256 one_minus_s = _mm256_sub_ps(one, s);
+    __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one);
+    __m256 silu_d = _mm256_mul_ps(s, inner);
+    grad_x = _mm256_mul_ps(_mm256_mul_ps(go, gate), silu_d);
+    grad_gate = _mm256_mul_ps(go, _mm256_mul_ps(x, s));
+}
+
 __m256 rsqrt256_ps(__m256 x) {
     // 单次 _mm256_rsqrt_ps 精度约 12 bit；加 1 次 Newton-Raphson 迭代达到 ~23 bit
     __m256 approx = _mm256_rsqrt_ps(x);
@@ -353,13 +373,35 @@ __m512 swiglu512_ps(__m512 x, __m512 gate) {
     return _mm512_mul_ps(silu, gate);
 }
 
+__m512 silu_backward512_ps(__m512 go, __m512 x) {
+    const __m512 one = _mm512_set1_ps(1.0f);
+    __m512 s = sigmoid512_ps(x);
+    __m512 one_minus_s = _mm512_sub_ps(one, s);
+    __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one);
+    __m512 silu_d = _mm512_mul_ps(s, inner);
+    return _mm512_mul_ps(go, silu_d);
+}
+
+void swiglu_backward512_ps(__m512 go, __m512 x, __m512 gate,
+                           __m512& grad_x, __m512& grad_gate) {
+    const __m512 one = _mm512_set1_ps(1.0f);
+    __m512 s = sigmoid512_ps(x);
+    __m512 one_minus_s = _mm512_sub_ps(one, s);
+    __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one);
+    __m512 silu_d = _mm512_mul_ps(s, inner);
+    grad_x = _mm512_mul_ps(_mm512_mul_ps(go, gate), silu_d);
+    grad_gate = _mm512_mul_ps(go, _mm512_mul_ps(x, s));
+}
+
 __m512 rsqrt512_ps(__m512 x) {
-    // AVX-512 无原生 512-bit 倒数平方根近似；用除法 + Newton-Raphson 保持精度
-    __m512 approx = _mm512_div_ps(_mm512_set1_ps(1.0f), _mm512_sqrt_ps(x));
+    // AVX-512 原生 _mm512_rsqrt14_ps 约 14 bit；加 1 次 Newton-Raphson 迭代达到 >28 bit 精度
+    __m512 approx = _mm512_rsqrt14_ps(x);
+    __m512 half = _mm512_set1_ps(0.5f);
+    __m512 three = _mm512_set1_ps(3.0f);
     // Newton-Raphson: y' = y * (3 - x*y^2) / 2
     __m512 xy2 = _mm512_mul_ps(_mm512_mul_ps(x, approx), approx);
     __m512 nr = _mm512_mul_ps(approx,
-        _mm512_mul_ps(_mm512_set1_ps(0.5f), _mm512_sub_ps(_mm512_set1_ps(3.0f), xy2)));
+        _mm512_mul_ps(half, _mm512_sub_ps(three, xy2)));
     return nr;
 }
 
@@ -534,6 +576,26 @@ float32x4_t swiglu_neon_f32(float32x4_t x, float32x4_t gate) {
     float32x4_t sig = sigmoid_neon_f32(x);
     float32x4_t silu = vmulq_f32(x, sig);
     return vmulq_f32(silu, gate);
+}
+
+float32x4_t silu_backward_neon_f32(float32x4_t go, float32x4_t x) {
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    float32x4_t s = sigmoid_neon_f32(x);
+    float32x4_t one_minus_s = vsubq_f32(one, s);
+    float32x4_t inner = vfmaq_f32(one, x, one_minus_s);
+    float32x4_t silu_d = vmulq_f32(s, inner);
+    return vmulq_f32(go, silu_d);
+}
+
+void swiglu_backward_neon_f32(float32x4_t go, float32x4_t x, float32x4_t gate,
+                              float32x4_t& grad_x, float32x4_t& grad_gate) {
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    float32x4_t s = sigmoid_neon_f32(x);
+    float32x4_t one_minus_s = vsubq_f32(one, s);
+    float32x4_t inner = vfmaq_f32(one, x, one_minus_s);
+    float32x4_t silu_d = vmulq_f32(s, inner);
+    grad_x = vmulq_f32(vmulq_f32(go, gate), silu_d);
+    grad_gate = vmulq_f32(go, vmulq_f32(x, s));
 }
 
 float32x4_t rsqrt_neon_f32(float32x4_t x) {
@@ -803,41 +865,26 @@ inline float silu_deriv_scalar_fast(float x) {
 void vsilu_backward(const float* grad_output, const float* in, float* grad_in, size_t n) {
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
     size_t i = 0;
-    const __m512 one512 = _mm512_set1_ps(1.0f);
     for (; i + 15 < n; i += 16) {
         __m512 go = _mm512_loadu_ps(&grad_output[i]);
         __m512 x = _mm512_loadu_ps(&in[i]);
-        __m512 s = sigmoid512_ps(x);
-        __m512 one_minus_s = _mm512_sub_ps(one512, s);
-        __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one512);
-        __m512 silu_d = _mm512_mul_ps(s, inner);
-        _mm512_storeu_ps(&grad_in[i], _mm512_mul_ps(go, silu_d));
+        _mm512_storeu_ps(&grad_in[i], silu_backward512_ps(go, x));
     }
     for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
 #elif defined(__AVX__)
     size_t i = 0;
-    const __m256 one256 = _mm256_set1_ps(1.0f);
     for (; i + 7 < n; i += 8) {
         __m256 go = _mm256_loadu_ps(&grad_output[i]);
         __m256 x = _mm256_loadu_ps(&in[i]);
-        __m256 s = sigmoid256_ps(x);
-        __m256 one_minus_s = _mm256_sub_ps(one256, s);
-        __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one256);
-        __m256 silu_d = _mm256_mul_ps(s, inner);
-        _mm256_storeu_ps(&grad_in[i], _mm256_mul_ps(go, silu_d));
+        _mm256_storeu_ps(&grad_in[i], silu_backward256_ps(go, x));
     }
     for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
 #elif defined(__aarch64__)
     size_t i = 0;
-    const float32x4_t one_neon = vdupq_n_f32(1.0f);
     for (; i + 3 < n; i += 4) {
         float32x4_t go = vld1q_f32(&grad_output[i]);
         float32x4_t x = vld1q_f32(&in[i]);
-        float32x4_t s = sigmoid_neon_f32(x);
-        float32x4_t one_minus_s = vsubq_f32(one_neon, s);
-        float32x4_t inner = vfmaq_f32(one_neon, x, one_minus_s);
-        float32x4_t silu_d = vmulq_f32(s, inner);
-        vst1q_f32(&grad_in[i], vmulq_f32(go, silu_d));
+        vst1q_f32(&grad_in[i], silu_backward_neon_f32(go, x));
     }
     for (; i < n; ++i) grad_in[i] = grad_output[i] * silu_deriv_scalar_fast(in[i]);
 #else
@@ -858,50 +905,38 @@ void vswiglu_backward(const float* grad_output, const float* x_in, const float* 
                       float* grad_x, float* grad_gate, size_t n) {
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
     size_t i = 0;
-    const __m512 one512 = _mm512_set1_ps(1.0f);
     for (; i + 15 < n; i += 16) {
         __m512 go = _mm512_loadu_ps(&grad_output[i]);
         __m512 x = _mm512_loadu_ps(&x_in[i]);
         __m512 g = _mm512_loadu_ps(&g_in[i]);
-        __m512 s = sigmoid512_ps(x);
-        __m512 one_minus_s = _mm512_sub_ps(one512, s);
-        __m512 inner = _mm512_fmadd_ps(x, one_minus_s, one512);
-        __m512 silu_d = _mm512_mul_ps(s, inner);
-        _mm512_storeu_ps(&grad_x[i], _mm512_mul_ps(_mm512_mul_ps(go, g), silu_d));
-        __m512 silu_x = _mm512_mul_ps(x, s);
-        _mm512_storeu_ps(&grad_gate[i], _mm512_mul_ps(go, silu_x));
+        __m512 gx, gg;
+        swiglu_backward512_ps(go, x, g, gx, gg);
+        _mm512_storeu_ps(&grad_x[i], gx);
+        _mm512_storeu_ps(&grad_gate[i], gg);
     }
     for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
 #elif defined(__AVX__)
     size_t i = 0;
-    const __m256 one256 = _mm256_set1_ps(1.0f);
     for (; i + 7 < n; i += 8) {
         __m256 go = _mm256_loadu_ps(&grad_output[i]);
         __m256 x = _mm256_loadu_ps(&x_in[i]);
         __m256 g = _mm256_loadu_ps(&g_in[i]);
-        __m256 s = sigmoid256_ps(x);
-        __m256 one_minus_s = _mm256_sub_ps(one256, s);
-        __m256 inner = _mm256_fmadd_ps(x, one_minus_s, one256);
-        __m256 silu_d = _mm256_mul_ps(s, inner);
-        _mm256_storeu_ps(&grad_x[i], _mm256_mul_ps(_mm256_mul_ps(go, g), silu_d));
-        __m256 silu_x = _mm256_mul_ps(x, s);
-        _mm256_storeu_ps(&grad_gate[i], _mm256_mul_ps(go, silu_x));
+        __m256 gx, gg;
+        swiglu_backward256_ps(go, x, g, gx, gg);
+        _mm256_storeu_ps(&grad_x[i], gx);
+        _mm256_storeu_ps(&grad_gate[i], gg);
     }
     for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
 #elif defined(__aarch64__)
     size_t i = 0;
-    const float32x4_t one_neon = vdupq_n_f32(1.0f);
     for (; i + 3 < n; i += 4) {
         float32x4_t go = vld1q_f32(&grad_output[i]);
         float32x4_t x = vld1q_f32(&x_in[i]);
         float32x4_t g = vld1q_f32(&g_in[i]);
-        float32x4_t s = sigmoid_neon_f32(x);
-        float32x4_t one_minus_s = vsubq_f32(one_neon, s);
-        float32x4_t inner = vfmaq_f32(one_neon, x, one_minus_s);
-        float32x4_t silu_d = vmulq_f32(s, inner);
-        vst1q_f32(&grad_x[i], vmulq_f32(vmulq_f32(go, g), silu_d));
-        float32x4_t silu_x = vmulq_f32(x, s);
-        vst1q_f32(&grad_gate[i], vmulq_f32(go, silu_x));
+        float32x4_t gx, gg;
+        swiglu_backward_neon_f32(go, x, g, gx, gg);
+        vst1q_f32(&grad_x[i], gx);
+        vst1q_f32(&grad_gate[i], gg);
     }
     for (; i < n; ++i) swiglu_backward_scalar_fast(grad_output[i], x_in[i], g_in[i], grad_x[i], grad_gate[i]);
 #else

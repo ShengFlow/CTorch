@@ -25,7 +25,7 @@ SiLUNode::SiLUNode(std::vector<std::shared_ptr<Node>>&& upStreamNodes, std::vect
 
 std::vector<GradPack> SiLUNode::backward(const std::vector<Tensor>& downStreamGrads) {
     std::vector<GradPack> ret;
-    if (_inputs.empty() || downStreamGrads.empty()) return ret;
+    if (_inputs.empty() || downStreamGrads.empty() || _upStreamNodes.empty()) return ret;
 
     Tensor grad;
     if (_inputs[0].device() == DeviceType::kCPU && downStreamGrads[0].device() == DeviceType::kCPU) {

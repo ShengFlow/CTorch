@@ -474,6 +474,78 @@ static void test_wrapper_consistency() {
     ++g_passed;
     std::cout << "  vsilu_backward OK\n";
 
+#if defined(__aarch64__)
+    {
+        float32x4_t vx = vld1q_f32(in.data());
+        float32x4_t vgo = vld1q_f32(grad_out.data());
+        float32x4_t vgi = ct::kernels::simd::silu_backward_neon_f32(vgo, vx);
+        float gi_test[4];
+        vst1q_f32(gi_test, vgi);
+        for (int i = 0; i < 4; ++i) {
+            float s = 1.0f / (1.0f + std::exp(-in[i]));
+            float ref = grad_out[i] * (s + in[i] * s * (1.0f - s));
+            if (std::abs(ref - gi_test[i]) > 1e-4f) {
+                ++g_failed;
+                std::cout << "  FAIL: silu_backward_neon_f32 mismatch at " << i << "\n";
+                return;
+            }
+        }
+        float32x4_t vg = vld1q_f32(gate.data());
+        float32x4_t vgx, vgg;
+        ct::kernels::simd::swiglu_backward_neon_f32(vgo, vx, vg, vgx, vgg);
+        float gx_test[4], gg_test[4];
+        vst1q_f32(gx_test, vgx);
+        vst1q_f32(gg_test, vgg);
+        for (int i = 0; i < 4; ++i) {
+            float s = 1.0f / (1.0f + std::exp(-in[i]));
+            float ref_gx = grad_out[i] * gate[i] * (s + in[i] * s * (1.0f - s));
+            float ref_gg = grad_out[i] * in[i] * s;
+            if (std::abs(ref_gx - gx_test[i]) > 1e-4f || std::abs(ref_gg - gg_test[i]) > 1e-4f) {
+                ++g_failed;
+                std::cout << "  FAIL: swiglu_backward_neon_f32 mismatch at " << i << "\n";
+                return;
+            }
+        }
+        ++g_passed;
+        std::cout << "  silu/swiglu_backward_neon_f32 OK\n";
+    }
+#elif defined(__AVX__)
+    {
+        __m256 vx = _mm256_loadu_ps(in.data());
+        __m256 vgo = _mm256_loadu_ps(grad_out.data());
+        __m256 vgi = ct::kernels::simd::silu_backward256_ps(vgo, vx);
+        float gi_test[8];
+        _mm256_storeu_ps(gi_test, vgi);
+        for (int i = 0; i < 8; ++i) {
+            float s = 1.0f / (1.0f + std::exp(-in[i]));
+            float ref = grad_out[i] * (s + in[i] * s * (1.0f - s));
+            if (std::abs(ref - gi_test[i]) > 1e-4f) {
+                ++g_failed;
+                std::cout << "  FAIL: silu_backward256_ps mismatch at " << i << "\n";
+                return;
+            }
+        }
+        __m256 vg = _mm256_loadu_ps(gate.data());
+        __m256 vgx, vgg;
+        ct::kernels::simd::swiglu_backward256_ps(vgo, vx, vg, vgx, vgg);
+        float gx_test[8], gg_test[8];
+        _mm256_storeu_ps(gx_test, vgx);
+        _mm256_storeu_ps(gg_test, vgg);
+        for (int i = 0; i < 8; ++i) {
+            float s = 1.0f / (1.0f + std::exp(-in[i]));
+            float ref_gx = grad_out[i] * gate[i] * (s + in[i] * s * (1.0f - s));
+            float ref_gg = grad_out[i] * in[i] * s;
+            if (std::abs(ref_gx - gx_test[i]) > 1e-4f || std::abs(ref_gg - gg_test[i]) > 1e-4f) {
+                ++g_failed;
+                std::cout << "  FAIL: swiglu_backward256_ps mismatch at " << i << "\n";
+                return;
+            }
+        }
+        ++g_passed;
+        std::cout << "  silu/swiglu_backward256_ps OK\n";
+    }
+#endif
+
     // vswiglu_backward
     std::vector<float> gx(N), gg(N);
     ct::kernels::simd::vswiglu_backward(grad_out.data(), in.data(), gate.data(), gx.data(), gg.data(), N);
