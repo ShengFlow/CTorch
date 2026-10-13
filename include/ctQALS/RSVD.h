@@ -441,11 +441,18 @@ private:
         // small_svd.U() 是 l_ × l_, V() 是 n_ × l_, S() 是 l_ 个
         // （compute 内部已按 S 降序排过）
 
-        // 6) 构造 Ũ[:, :k] (l_ × k) Tensor
+        // 6) 构造 Ũ[:, :k] (l_ × k) Tensor：从 l_sz × l_sz 按行切取前 k 列
         Tensor U_tilde(ShapeTag{}, {l_sz, static_cast<std::size_t>(k_)},
                        DType::kFloat, DeviceType::kCPU, /*zero=*/false);
-        std::memcpy(U_tilde.data_write<float>(), small_svd.U(),
-                    l_sz * k_ * sizeof(float));
+        {
+            float* Utp = U_tilde.data_write<float>();
+            const float* small_U = small_svd.U();
+            for (std::size_t i = 0; i < l_sz; ++i) {
+                for (int r = 0; r < k_; ++r) {
+                    Utp[i * k_ + r] = small_U[i * l_sz + r];
+                }
+            }
+        }
 
         // U = Q * Ũ[:, :k]  (m × k)  ← Tensor::matmul (BLAS)
         Ut_ = Y.matmul(U_tilde);

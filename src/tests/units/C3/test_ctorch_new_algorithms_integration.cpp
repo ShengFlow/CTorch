@@ -330,20 +330,14 @@ TEST(CTorchNewAlgorithmsTest, IntegratedCompilerLockFreeDispatchConcurrentStress
     IntegratedCompiledKernel<float> kB(keyB, 1024, {0}, {0}, {1}, dummy_fn);
 
     std::atomic<bool> stop_flag{false};
+    std::atomic<int> ready_readers{0};
     std::atomic<size_t> wrong_kernel_reads{0};
     std::atomic<size_t> valid_reads{0};
-
-    std::thread writer([&]() {
-        for (int i = 0; i < 50000; ++i) {
-            table.install(keyA, &kA);
-            table.install(keyB, &kB);
-        }
-        stop_flag.store(true, std::memory_order_release);
-    });
 
     std::vector<std::thread> readers;
     for (int r = 0; r < 4; ++r) {
         readers.emplace_back([&]() {
+            ready_readers.fetch_add(1, std::memory_order_release);
             while (!stop_flag.load(std::memory_order_acquire)) {
                 const auto* ptr = table.lookup(keyA);
                 if (ptr != nullptr) {
@@ -354,8 +348,28 @@ TEST(CTorchNewAlgorithmsTest, IntegratedCompilerLockFreeDispatchConcurrentStress
                     }
                 }
             }
+            // Final check after writer stops
+            const auto* ptr = table.lookup(keyA);
+            if (ptr != nullptr) {
+                if (ptr == &kB || ptr->cacheKey() != keyA) {
+                    wrong_kernel_reads.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    valid_reads.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
         });
     }
+
+    std::thread writer([&]() {
+        while (ready_readers.load(std::memory_order_acquire) < 4) {
+            std::this_thread::yield();
+        }
+        for (int i = 0; i < 50000; ++i) {
+            table.install(keyA, &kA);
+            table.install(keyB, &kB);
+        }
+        stop_flag.store(true, std::memory_order_release);
+    });
 
     writer.join();
     for (auto& t : readers) {

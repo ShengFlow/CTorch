@@ -31,6 +31,7 @@ static float relerr_F(const float* a, const float* b, int n) {
 }
 
 int main() {
+    int n_failed = 0;
     // 测试 1: 128×256 B 路径 SVD 重建 + 数值检查
     {
         std::printf("\n=== Test 1: JacobiSVD (B 路径) 128x256 精度 (m <= n) ===\n");
@@ -98,6 +99,10 @@ int main() {
         }
         verr = std::sqrt(verr);
         std::printf("  ||V^T V - I_M||_F = %.3e  (期望 < 1e-5)\n", verr);
+        if (svd_recon_err > 1e-4f || uerr > 1e-4f || verr > 1e-4f) {
+            std::printf("  [FAIL] Test 1 精度不达标\n");
+            n_failed++;
+        }
 
         std::printf("  S[0..7] = %.3e %.3e %.3e %.3e %.3e %.3e %.3e %.3e\n",
                     S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7]);
@@ -154,6 +159,10 @@ int main() {
         std::printf("  S[0..4] = %.3e %.3e %.3e %.3e %.3e\n", S[0], S[1], S[2], S[3], S[4]);
         std::printf("  S[%d..%d] (尾部) = %.3e %.3e\n", M-2, M-1, S[M-2], S[M-1]);
         std::printf("  JacobiSVD 1024² time: %.1f ms\n", t1 - t0);
+        if (svd_recon_err > 1e-4f) {
+            std::printf("  [FAIL] Test 2 精度不达标\n");
+            n_failed++;
+        }
     }
 
     // 测试 3: RSVD 低秩恢复 1024×1024 true rank 8
@@ -197,6 +206,7 @@ int main() {
             std::printf("  [WARN] 精度可用（err < 0.1）\n");
         } else {
             std::printf("  [FAIL] 精度不足（err >= 0.1）\n");
+            n_failed++;
         }
     }
 
@@ -230,7 +240,11 @@ int main() {
         const float err = rsvd.reconstruction_error(W_buf.data());
         std::printf("  RSVD 重建误差 = %.3e  (期望 < 0.01)\n", err);
         std::printf("  RSVD 1024x1024 time: %.1f ms\n", t1 - t0);
+        if (err >= 0.05f) {
+            std::printf("  [FAIL] Test 4 精度不达标\n");
+            n_failed++;
+        }
     }
 
-    return 0;
+    return n_failed ? 1 : 0;
 }

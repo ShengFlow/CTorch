@@ -474,8 +474,33 @@ CheckpointMetadata CheckpointManager::load(
     }
 
     // 反序列化参数
-    params.clear();
-    deserializeParams(param_data, params);
+    if (params.empty()) {
+        deserializeParams(param_data, params);
+    } else {
+        // [P0-3 修复] 如果调用者已持有模型参数指针，原地深拷贝数据，保留指针生命周期与优化器关联
+        std::vector<Tensor*> loaded_params;
+        deserializeParams(param_data, loaded_params);
+        if (loaded_params.size() != params.size()) {
+            for (auto* t : loaded_params) delete t;
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                         "检查点参数数量不匹配: 期望 " +
+                                         std::to_string(params.size()) + "，实际 " +
+                                         std::to_string(loaded_params.size()));
+        }
+        for (size_t i = 0; i < params.size(); ++i) {
+            if (params[i] && loaded_params[i]) {
+                if (params[i]->shape() != loaded_params[i]->shape()) {
+                    for (auto* t : loaded_params) delete t;
+                    CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
+                                                 "检查点参数 [" + std::to_string(i) + "] 形状不匹配");
+                }
+                std::memcpy(params[i]->data_write<float>(),
+                            loaded_params[i]->data_read<float>(),
+                            params[i]->numel() * sizeof(float));
+            }
+            delete loaded_params[i];
+        }
+    }
 
     auto end_time = std::chrono::steady_clock::now();
     double elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
