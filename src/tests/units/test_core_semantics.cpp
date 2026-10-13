@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include "Tensor.h"
 #include "Storage.h"
@@ -1006,7 +1007,7 @@ TEST(P2DefectRemediation, CtorchStatsThreadSafety) {
         threads.emplace_back([]() {
             auto& stats = Ctorch_Stats::getInstance();
             stats.level = PrintLevel::MINIUM;
-            EXPECT_EQ(stats.level, PrintLevel::MINIUM);
+            EXPECT_EQ(stats.level.load(), PrintLevel::MINIUM);
             stats.level = PrintLevel::FULL;
         });
     }
