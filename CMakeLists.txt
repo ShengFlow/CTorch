@@ -388,6 +388,8 @@ set(CT-Nodes-Headers
         include/AutoGrad/Nodes/AbsNode.h
         include/AutoGrad/Nodes/MinNode.h
         include/AutoGrad/Nodes/MaxNode.h
+        include/AutoGrad/Nodes/MSENode.h
+        include/AutoGrad/Nodes/MAENode.h
 )
 
 set(CT-Nodes
@@ -424,6 +426,8 @@ set(CT-Nodes
         src/AutoGrad/Nodes/AbsNode.cpp
         src/AutoGrad/Nodes/MinNode.cpp
         src/AutoGrad/Nodes/MaxNode.cpp
+        src/AutoGrad/Nodes/MSENode.cpp
+        src/AutoGrad/Nodes/MAENode.cpp
 )
 
 set(CT-CPU-BASIC-OPs

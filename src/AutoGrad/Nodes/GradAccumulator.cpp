@@ -115,7 +115,8 @@ std::vector<GradPack> GradAccumulator::backward(const std::vector<Tensor>& downS
                     tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
                 }
             } else {
-                tensor->setGrad(std::make_shared<Tensor>(std::move(accumulated)));
+                // [E1 修复] 必须深拷贝 clone，避免同形多叶（如 loss = a + b）共享同一底层梯度 buffer
+                tensor->setGrad(std::make_shared<Tensor>(accumulated.clone()));
             }
         }
     }

@@ -21,6 +21,7 @@
 #include "ctQALS/JacobiSVD.h"
 
 #include "Tensor.h"
+#include "C3/C3Cleanup.h"
 
 #include <algorithm>
 #include <chrono>
@@ -368,5 +369,6 @@ int main() {
     } else {
         std::printf("[SOME FAIL] rc = %d\n", rc);
     }
+    ct::c3::shutdownAll();
     return rc;
 }

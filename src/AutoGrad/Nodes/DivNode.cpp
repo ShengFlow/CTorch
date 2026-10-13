@@ -35,8 +35,7 @@ std::vector<GradPack> DivNode::backward(const std::vector<Tensor>& downStreamGra
     const float* denom_data = denominator.data_read<float>();
     for (size_t i = 0; i < denominator.numel(); ++i) {
         if (denom_data[i] == 0.0f) {
-            CtorchError::error(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "DivNode: 分母为零");
-            return ret;
+            CtorchError::throwException(ErrorPlatform::kAutoDiff, ErrorType::UNKNOWN, "DivNode: 分母为零");
         }
     }
 

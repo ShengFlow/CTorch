@@ -17,6 +17,7 @@
 #include "C3/Graph.h"
 #include "C3/JITCache.h"
 #include "kernels/kernels.h"
+#include "ThreadPool.h"
 
 static std::vector<float> make_values(size_t n) {
     std::vector<float> v(n);
@@ -667,6 +668,204 @@ TEST(C3GraphSerialization, AttributeAndDTypeKeyDifferentiation) {
 
     EXPECT_NE(g_fl.toString(), g_db.toString());
     EXPECT_NE(JITCache::makeKey(g_fl.toString(), 2), JITCache::makeKey(g_db.toString(), 2));
+}
+
+// ======================= P1 回归测试套件 =======================
+
+// 1. D1: 非紧凑/非零 offset 视图上的 in-place 与 zero/ones/rand 不会静默污染相邻内存
+TEST(TensorViewSemantics, InplaceUnaryAndZeroOnStridedView) {
+    Tensor t(ShapeTag{}, {4, 4}, DType::kFloat, DeviceType::kCPU);
+    float* p = t.data_write<float>();
+    for (int i = 0; i < 16; ++i) p[i] = static_cast<float>(i + 1);
+
+    Tensor sub = t.slice(0, 1, 2).slice(1, 1, 2);
+    EXPECT_FALSE(sub.is_contiguous());
+    EXPECT_EQ(sub.storage_offset(), 5u);
+
+    sub.zero();
+
+    Tensor sub_contig = sub.contiguous();
+    const float* sc_p = sub_contig.data_read<float>();
+    EXPECT_FLOAT_EQ(sc_p[0], 0.0f);
+    EXPECT_FLOAT_EQ(sc_p[1], 0.0f);
+    EXPECT_FLOAT_EQ(sc_p[2], 0.0f);
+    EXPECT_FLOAT_EQ(sc_p[3], 0.0f);
+
+    const float* tp = t.data_read<float>();
+    EXPECT_FLOAT_EQ(tp[0], 1.0f);   // (0,0) 未破坏
+    EXPECT_FLOAT_EQ(tp[4], 5.0f);   // (1,0) 未破坏
+    EXPECT_FLOAT_EQ(tp[5], 0.0f);   // (1,1) 被修改
+    EXPECT_FLOAT_EQ(tp[6], 0.0f);   // (1,2) 被修改
+    EXPECT_FLOAT_EQ(tp[7], 8.0f);   // (1,3) 未破坏
+    EXPECT_FLOAT_EQ(tp[8], 9.0f);   // (2,0) 未破坏
+    EXPECT_FLOAT_EQ(tp[9], 0.0f);   // (2,1) 被修改
+    EXPECT_FLOAT_EQ(tp[10], 0.0f);  // (2,2) 被修改
+    EXPECT_FLOAT_EQ(tp[11], 12.0f); // (2,3) 未破坏
+    EXPECT_FLOAT_EQ(tp[15], 16.0f); // (3,3) 未破坏
+
+    Tensor tr = t.transpose(0, 1);
+    tr.neg_();
+    EXPECT_FLOAT_EQ(t.data_read<float>()[0], -1.0f);
+    EXPECT_FLOAT_EQ(t.data_read<float>()[7], -8.0f);
+}
+
+// 2. D2: operator[] 生成的 view 正确注册 autograd 节点
+TEST(TensorViewSemantics, OperatorIndexAutograd) {
+    Tensor x(ShapeTag{}, {4}, DType::kFloat, DeviceType::kCPU);
+    x.requires_grad(true);
+    float* p = x.data_write<float>();
+    for (int i = 0; i < 4; ++i) p[i] = 1.0f;
+
+    Tensor elem = x[1];
+    EXPECT_TRUE(elem.requires_grad());
+
+    Tensor loss = elem + 0.0f;
+    AutoGrad::backward(loss.getRelatedNode(), false);
+
+    const float* gp = x.grad().data_read<float>();
+    EXPECT_FLOAT_EQ(gp[0], 0.0f);
+    EXPECT_FLOAT_EQ(gp[1], 1.0f);
+    EXPECT_FLOAT_EQ(gp[2], 0.0f);
+    EXPECT_FLOAT_EQ(gp[3], 0.0f);
+}
+
+// 3. D3: detach() 保留 strides 与 storage_offset
+TEST(TensorViewSemantics, DetachPreservesMetadata) {
+    Tensor x(ShapeTag{}, {4, 4}, DType::kFloat, DeviceType::kCPU);
+    x.requires_grad(true);
+    Tensor sl = x.slice(0, 1, 2).slice(1, 1, 2);
+    Tensor d = sl.detach();
+
+    EXPECT_FALSE(d.requires_grad());
+    EXPECT_EQ(d.shape(), sl.shape());
+    EXPECT_EQ(d.strides(), sl.strides());
+    EXPECT_EQ(d.storage_offset(), sl.storage_offset());
+}
+
+// 4. D4: broadcast_to 对非紧凑视图安全物化
+TEST(TensorViewSemantics, BroadcastToFromView) {
+    Tensor x(ShapeTag{}, {4, 4}, DType::kFloat, DeviceType::kCPU);
+    float* p = x.data_write<float>();
+    for (int i = 0; i < 16; ++i) p[i] = static_cast<float>(i);
+
+    Tensor col = x.slice(1, 2, 1);
+    Tensor b = col.broadcast_to({4, 3});
+    EXPECT_EQ(b.shape(), (std::vector<size_t>{4, 3}));
+    const float* bp = b.data_read<float>();
+    for (size_t r = 0; r < 4; ++r) {
+        float expected = static_cast<float>(r * 4 + 2);
+        for (size_t c = 0; c < 3; ++c) {
+            EXPECT_FLOAT_EQ(bp[r * 3 + c], expected);
+        }
+    }
+}
+
+// 5. D5: to(DType) 与 to(DeviceType) 从非紧凑/带 offset 视图正确规范化拷贝
+TEST(TensorViewSemantics, ToDeviceFromStridedView) {
+    Tensor x(ShapeTag{}, {3, 3}, DType::kFloat, DeviceType::kCPU);
+    float* p = x.data_write<float>();
+    for (int i = 0; i < 9; ++i) p[i] = static_cast<float>(i + 1);
+
+    Tensor tr = x.transpose(0, 1);
+    Tensor tr_double = tr.to(DType::kDouble);
+
+    EXPECT_TRUE(tr_double.is_contiguous());
+    EXPECT_EQ(tr_double.storage_offset(), 0u);
+    const double* dp = tr_double.data_read<double>();
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 3; ++j) {
+            EXPECT_DOUBLE_EQ(dp[i * 3 + j], static_cast<double>(j * 3 + i + 1));
+        }
+    }
+
+    if (CtorchScheduler::isDeviceAvailable(DeviceType::kMPS)) {
+        Tensor tr_mps = tr.to(DeviceType::kMPS);
+        Tensor tr_back = tr_mps.to(DeviceType::kCPU);
+        EXPECT_TRUE(tr_back.is_contiguous());
+        const float* fbp = tr_back.data_read<float>();
+        for (size_t i = 0; i < 3; ++i) {
+            for (size_t j = 0; j < 3; ++j) {
+                EXPECT_FLOAT_EQ(fbp[i * 3 + j], static_cast<float>(j * 3 + i + 1));
+            }
+        }
+    }
+}
+
+// 6. E1: 多叶共享恒等梯度不发生别名双写
+TEST(AutoGradCorrectness, MultiLeafSharedGradIndependent) {
+    Tensor a(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    a.requires_grad(true);
+    b.requires_grad(true);
+    for (int i = 0; i < 4; ++i) {
+        a.data_write<float>()[i] = 1.0f;
+        b.data_write<float>()[i] = 2.0f;
+    }
+
+    Tensor c = a + b;
+    Tensor loss = c.sum();
+    AutoGrad::backward(loss.getRelatedNode(), false);
+
+    EXPECT_NE(a.grad().data_read<float>(), b.grad().data_read<float>());
+
+    a.grad().data_write<float>()[0] = 999.0f;
+    EXPECT_FLOAT_EQ(b.grad().data_read<float>()[0], 1.0f);
+}
+
+// 7. E2: MSE 与 MAE loss autograd 正确性
+TEST(AutoGradCorrectness, MseMaeLossBackward) {
+    Tensor pred(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    Tensor target(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    pred.requires_grad(true);
+    float p_init[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float t_init[4] = {2.0f, 2.0f, 1.0f, 6.0f};
+    for (int i = 0; i < 4; ++i) {
+        pred.data_write<float>()[i] = p_init[i];
+        target.data_write<float>()[i] = t_init[i];
+    }
+
+    Tensor mse = pred.mse_loss(target);
+    AutoGrad::backward(mse.getRelatedNode(), false);
+
+    const float* gp = pred.grad().data_read<float>();
+    for (int i = 0; i < 4; ++i) {
+        float expected_grad = 2.0f / 4.0f * (p_init[i] - t_init[i]);
+        EXPECT_NEAR(gp[i], expected_grad, 1e-5f);
+    }
+
+    Tensor pred2(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    pred2.requires_grad(true);
+    for (int i = 0; i < 4; ++i) pred2.data_write<float>()[i] = p_init[i];
+    Tensor mae = pred2.mae_loss(target);
+    AutoGrad::backward(mae.getRelatedNode(), false);
+
+    const float* gp2 = pred2.grad().data_read<float>();
+    for (int i = 0; i < 4; ++i) {
+        float diff = p_init[i] - t_init[i];
+        float sgn = (diff > 0.0f) ? 1.0f : ((diff < 0.0f) ? -1.0f : 0.0f);
+        float expected_grad = sgn / 4.0f;
+        EXPECT_NEAR(gp2[i], expected_grad, 1e-5f);
+    }
+}
+
+// 8. E3: DivNode 遇分母为 0 抛出异常而非静默返回空梯度
+TEST(AutoGradCorrectness, DivNodeThrowsOnZero) {
+    Tensor a(ShapeTag{}, {2}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {2}, DType::kFloat, DeviceType::kCPU);
+    a.requires_grad(true);
+    b.requires_grad(true);
+    a.data_write<float>()[0] = 1.0f; a.data_write<float>()[1] = 1.0f;
+    b.data_write<float>()[0] = 0.0f; b.data_write<float>()[1] = 1.0f;
+
+    Tensor c = a / b;
+    EXPECT_THROW(AutoGrad::backward(c.getRelatedNode(), false), std::runtime_error);
+}
+
+// 9. F1: ThreadPool 线程安全提交与单例执行
+TEST(ConcurrencySafety, ThreadPoolSingletonExecution) {
+    auto& pool = ThreadPool::getInstance();
+    auto f = pool.addTask([](int val) { return val * 2; }, 21);
+    EXPECT_EQ(f.get(), 42);
 }
 
 int main(int argc, char** argv) {

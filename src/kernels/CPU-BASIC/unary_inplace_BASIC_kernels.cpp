@@ -24,115 +24,84 @@ inline void check_cpu(const Tensor& a, const char* name) {
     }
 }
 
+template <typename F>
+inline void for_each_inplace(Tensor& a, const char* name, F&& func) {
+    check_cpu(a, name);
+    size_t count = a.numel();
+    if (count == 0) return;
+    float* data = a.data_write<float>();
+    if (!data) return;
+
+    if (a.is_contiguous()) {
+        for (size_t i = 0; i < count; ++i) {
+            data[i] = func(data[i]);
+        }
+    } else {
+        const auto& shape = a.shape();
+        const auto& strides = a.strides();
+        std::vector<size_t> coord(shape.size(), 0);
+        for (size_t lin = 0; lin < count; ++lin) {
+            size_t off = 0;
+            for (size_t d = 0; d < coord.size(); ++d) off += coord[d] * strides[d];
+            data[off] = func(data[off]);
+            for (int d = static_cast<int>(coord.size()) - 1; d >= 0; --d) {
+                if (++coord[d] < shape[d]) break;
+                coord[d] = 0;
+            }
+        }
+    }
+}
+
 } // namespace
 
 void Neg_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Neg");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = -data[i];
-    }
+    for_each_inplace(a, "Neg", [](float x) { return -x; });
 }
 
 void Cos_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Cos");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::cos(data[i]);
-    }
+    for_each_inplace(a, "Cos", [](float x) { return std::cos(x); });
 }
 
 void Sin_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Sin");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::sin(data[i]);
-    }
+    for_each_inplace(a, "Sin", [](float x) { return std::sin(x); });
 }
 
 void ReLU_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "ReLU");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::max(0.0f, data[i]);
-    }
+    for_each_inplace(a, "ReLU", [](float x) { return std::max(0.0f, x); });
 }
 
 void Tanh_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Tanh");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::tanh(data[i]);
-    }
+    for_each_inplace(a, "Tanh", [](float x) { return std::tanh(x); });
 }
 
 void Sigmoid_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Sigmoid");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = 1.0f / (1.0f + std::exp(-data[i]));
-    }
+    for_each_inplace(a, "Sigmoid", [](float x) { return 1.0f / (1.0f + std::exp(-x)); });
 }
 
 void GELU_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "GELU");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        float x = data[i];
+    for_each_inplace(a, "GELU", [](float x) {
         float v = 0.7978845608f * (x + 0.044715f * x * x * x);
-        data[i] = 0.5f * x * (1.0f + std::tanh(v));
-    }
+        return 0.5f * x * (1.0f + std::tanh(v));
+    });
 }
 
 // [PEL25 Stage 3.1] SiLU inplace: silu(x) = x * sigmoid(x) = x / (1 + exp(-x))
 void SiLU_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "SiLU");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = data[i] / (1.0f + std::exp(-data[i]));
-    }
+    for_each_inplace(a, "SiLU", [](float x) { return x / (1.0f + std::exp(-x)); });
 }
 
 void LReLU_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "LReLU");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = data[i] > 0.0f ? data[i] : data[i] * 0.01f;
-    }
+    for_each_inplace(a, "LReLU", [](float x) { return x > 0.0f ? x : x * 0.01f; });
 }
 
 void Log_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Log");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::log(data[i]);
-    }
+    for_each_inplace(a, "Log", [](float x) { return std::log(x); });
 }
 
 void Exp_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Exp");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::exp(data[i]);
-    }
+    for_each_inplace(a, "Exp", [](float x) { return std::exp(x); });
 }
 
 void Abs_BASIC_inplace(Tensor& a) {
-    check_cpu(a, "Abs");
-    size_t count = a.numel();
-    float* data = a.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        data[i] = std::fabs(data[i]);
-    }
+    for_each_inplace(a, "Abs", [](float x) { return std::fabs(x); });
 }

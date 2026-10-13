@@ -41,6 +41,8 @@ class Node;
 #include "AutoGrad/Nodes/AbsNode.h"
 #include "AutoGrad/Nodes/MinNode.h"
 #include "AutoGrad/Nodes/MaxNode.h"
+#include "AutoGrad/Nodes/MSENode.h"
+#include "AutoGrad/Nodes/MAENode.h"
 #include "Arena.h"
 
 namespace AutoGrad {
@@ -142,6 +144,10 @@ namespace AutoGrad {
                 registerNode<SwiGLUNode>(a, b, result_weak);
             } else if constexpr (OpType == op::Dot) {  // [§4.97 ⑥] dot 反向断链修复
                 registerNode<DotNode>(a, b, result_weak);
+            } else if constexpr (OpType == op::MSE) {
+                registerNode<MSENode>(a, b, result_weak);
+            } else if constexpr (OpType == op::MAE) {
+                registerNode<MAENode>(a, b, result_weak);
             }
             if (result_ptr->getRelatedNode()) {
                 result.setRelatedNode(result_ptr->getRelatedNode());

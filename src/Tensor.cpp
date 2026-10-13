@@ -262,6 +262,30 @@ Tensor Tensor::operator[](size_t index) const {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
                                     "view storage offset 超出存储范围");
     }
+
+    if (AutoGrad::EnableGrad && requires_grad()) {
+        result.requires_grad(true);
+
+        auto result_ptr = std::make_shared<Tensor>(result);
+        std::weak_ptr<Tensor> result_weak = result_ptr;
+
+        Arena &arena = Arena::getInstance();
+        if (getRelatedNode() == nullptr) {
+            setRelatedNode(arena.invoke<GradAccumulator>(getWeakPtr()));
+        }
+        getRelatedNode()->increase();
+        std::vector<std::shared_ptr<Node>> upStream;
+        upStream.push_back(getRelatedNode());
+        std::vector<Tensor> inputs;
+        inputs.push_back(*this);
+        const auto node = arena.invoke<SliceNode>(0, index, 1, std::move(upStream),
+                                                  std::move(inputs), result_weak);
+        if (node != nullptr && result_ptr) {
+            result.setRelatedNode(node);
+            node->setResultOwner(result_ptr);
+        }
+    }
+
     return result;
 }
 
@@ -275,6 +299,9 @@ Tensor Tensor::clone() const {
 Tensor Tensor::to(DType dtype) const {
     if (_dtype == dtype) {
         return *this;
+    }
+    if (!is_contiguous()) {
+        return contiguous().to(dtype);
     }
 
     Tensor result(ShapeTag{}, _shape, dtype, _device);
@@ -419,16 +446,16 @@ bool Tensor::is_contiguous() const {
 }
 
 Tensor Tensor::contiguous() const {
-    if (is_contiguous()) return *this;
+    if (is_contiguous() && _storage_offset == 0 && !_lazy) return *this;
 
-    // [Fix 2026-09-10 §4.95 P1-10] 按 strides 逐元素物化(含 _storage_offset)。
-    // 仅支持 float/double(Softmax/CE 内核同此限制)。
+    // 按 strides 逐元素物化(含 _storage_offset 并触发 lazy 物化)。
     Tensor result(ShapeTag{}, _shape, _dtype, _device, false);
     const size_t n = numel();
     if (n == 0) return result;
     std::vector<size_t> coord(_shape.size(), 0);
 
     auto materialize = [&](auto* dst, const auto* src) {
+        if (!src) return;
         for (size_t lin = 0; lin < n; ++lin) {
             size_t off = 0;
             for (size_t d = 0; d < coord.size(); ++d) off += coord[d] * _strides[d];
@@ -441,9 +468,9 @@ Tensor Tensor::contiguous() const {
     };
 
     if (_dtype == DType::kDouble) {
-        materialize(result.data_write<double>(), _storage.data<double>() + _storage_offset);
+        materialize(result.data_write<double>(), this->data_read<double>());
     } else {
-        materialize(result.data_write<float>(), _storage.data<float>() + _storage_offset);
+        materialize(result.data_write<float>(), this->data_read<float>());
     }
     return result;
 }
@@ -809,6 +836,10 @@ Tensor Tensor::broadcast_to(const std::vector<size_t> &shape) const {
         }
     }
 
+    if (!is_contiguous() || _storage_offset != 0 || _lazy) {
+        return contiguous().broadcast_to(shape);
+    }
+
     Tensor result(ShapeTag{}, shape, _dtype, _device);
 
     size_t src_numel = numel();
@@ -898,35 +929,62 @@ void Tensor::zero() {
         return;
     }
     size_t count = numel();
+    auto for_each_element = [this, count](auto fn) {
+        if (is_contiguous()) {
+            for (size_t i = 0; i < count; ++i) fn(i);
+        } else {
+            std::vector<size_t> coord(_shape.size(), 0);
+            for (size_t lin = 0; lin < count; ++lin) {
+                size_t off = 0;
+                for (size_t d = 0; d < coord.size(); ++d) off += coord[d] * _strides[d];
+                fn(off);
+                for (int d = static_cast<int>(coord.size()) - 1; d >= 0; --d) {
+                    if (++coord[d] < _shape[d]) break;
+                    coord[d] = 0;
+                }
+            }
+        }
+    };
+
     switch (_dtype) {
     case DType::kFloat: {
         float *ptr = data_write<float>();
-        if (ptr)
-            std::memset(ptr, 0, count * sizeof(float));
+        if (ptr) {
+            if (is_contiguous()) std::memset(ptr, 0, count * sizeof(float));
+            else for_each_element([ptr](size_t off) { ptr[off] = 0.0f; });
+        }
         break;
     }
     case DType::kDouble: {
         double *ptr = data_write<double>();
-        if (ptr)
-            std::memset(ptr, 0, count * sizeof(double));
+        if (ptr) {
+            if (is_contiguous()) std::memset(ptr, 0, count * sizeof(double));
+            else for_each_element([ptr](size_t off) { ptr[off] = 0.0; });
+        }
         break;
     }
     case DType::kInt: {
         int32_t *ptr = data_write<int32_t>();
-        if (ptr)
-            std::memset(ptr, 0, count * sizeof(int32_t));
+        if (ptr) {
+            if (is_contiguous()) std::memset(ptr, 0, count * sizeof(int32_t));
+            else for_each_element([ptr](size_t off) { ptr[off] = 0; });
+        }
         break;
     }
     case DType::kLong: {
         int64_t *ptr = data_write<int64_t>();
-        if (ptr)
-            std::memset(ptr, 0, count * sizeof(int64_t));
+        if (ptr) {
+            if (is_contiguous()) std::memset(ptr, 0, count * sizeof(int64_t));
+            else for_each_element([ptr](size_t off) { ptr[off] = 0; });
+        }
         break;
     }
     case DType::kBool: {
         bool *ptr = data_write<bool>();
-        if (ptr)
-            std::memset(ptr, 0, count * sizeof(bool));
+        if (ptr) {
+            if (is_contiguous()) std::memset(ptr, 0, count * sizeof(bool));
+            else for_each_element([ptr](size_t off) { ptr[off] = false; });
+        }
         break;
     }
     default:
@@ -937,33 +995,39 @@ void Tensor::zero() {
 
 // 一初始化张量
 void Tensor::ones() {
-    // 简单实现，将所有元素设为1
     size_t count = numel();
+    auto for_each_element = [this, count](auto fn) {
+        if (is_contiguous()) {
+            for (size_t i = 0; i < count; ++i) fn(i);
+        } else {
+            std::vector<size_t> coord(_shape.size(), 0);
+            for (size_t lin = 0; lin < count; ++lin) {
+                size_t off = 0;
+                for (size_t d = 0; d < coord.size(); ++d) off += coord[d] * _strides[d];
+                fn(off);
+                for (int d = static_cast<int>(coord.size()) - 1; d >= 0; --d) {
+                    if (++coord[d] < _shape[d]) break;
+                    coord[d] = 0;
+                }
+            }
+        }
+    };
+
     if (_dtype == DType::kFloat) {
         float *data = data_write<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 1.0f;
-        }
+        if (data) for_each_element([data](size_t off) { data[off] = 1.0f; });
     } else if (_dtype == DType::kDouble) {
         double *data = data_write<double>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 1.0;
-        }
+        if (data) for_each_element([data](size_t off) { data[off] = 1.0; });
     } else if (_dtype == DType::kInt) {
         int32_t *data = data_write<int32_t>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 1;
-        }
+        if (data) for_each_element([data](size_t off) { data[off] = 1; });
     } else if (_dtype == DType::kLong) {
         int64_t *data = data_write<int64_t>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = 1;
-        }
+        if (data) for_each_element([data](size_t off) { data[off] = 1; });
     } else if (_dtype == DType::kBool) {
         bool *data = data_write<bool>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = true;
-        }
+        if (data) for_each_element([data](size_t off) { data[off] = true; });
     }
 }
 
@@ -973,26 +1037,35 @@ void Tensor::ones() {
  * @note 仅支持float和double类型的张量
  */
 void Tensor::rand() {
-    // 使用C++11线程安全的随机数生成器
     size_t count = numel();
-
-    // 为每个线程创建独立的随机数生成器
     thread_local std::mt19937 generator(std::random_device{}());
     std::uniform_real_distribution<float> distribution_float(0.0f, 1.0f);
     std::uniform_real_distribution<double> distribution_double(0.0, 1.0);
 
+    auto for_each_element = [this, count](auto fn) {
+        if (is_contiguous()) {
+            for (size_t i = 0; i < count; ++i) fn(i);
+        } else {
+            std::vector<size_t> coord(_shape.size(), 0);
+            for (size_t lin = 0; lin < count; ++lin) {
+                size_t off = 0;
+                for (size_t d = 0; d < coord.size(); ++d) off += coord[d] * _strides[d];
+                fn(off);
+                for (int d = static_cast<int>(coord.size()) - 1; d >= 0; --d) {
+                    if (++coord[d] < _shape[d]) break;
+                    coord[d] = 0;
+                }
+            }
+        }
+    };
+
     if (_dtype == DType::kFloat) {
         float *data = data_write<float>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = distribution_float(generator);
-        }
+        if (data) for_each_element([data, &distribution_float](size_t off) { data[off] = distribution_float(generator); });
     } else if (_dtype == DType::kDouble) {
         double *data = data_write<double>();
-        for (size_t i = 0; i < count; ++i) {
-            data[i] = distribution_double(generator);
-        }
+        if (data) for_each_element([data, &distribution_double](size_t off) { data[off] = distribution_double(generator); });
     }
-    // 其他类型暂不支持
 }
 
 // 矩阵乘法
@@ -1213,10 +1286,11 @@ static Tensor scalarOpImpl(const Tensor &self, float scalar, OpFunc &&op_func) {
 // 比较运算模板: Tensor vs 标量
 template <typename CmpFunc>
 static Tensor cmpScalarOpImpl(const Tensor &self, float scalar, CmpFunc &&cmp) {
-    Tensor result(ShapeTag{}, self.shape(), DType::kFloat, self.device());
-    if (self.dtype() == DType::kFloat) {
-        size_t count       = self.numel();
-        const float *data  = self.data_read<float>();
+    const Tensor self_contig = self.is_contiguous() ? self : self.contiguous();
+    Tensor result(ShapeTag{}, self_contig.shape(), DType::kFloat, self_contig.device());
+    if (self_contig.dtype() == DType::kFloat) {
+        size_t count       = self_contig.numel();
+        const float *data  = self_contig.data_read<float>();
         float *result_data = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(data[i], scalar) ? 1.0f : 0.0f;
@@ -1227,7 +1301,6 @@ static Tensor cmpScalarOpImpl(const Tensor &self, float scalar, CmpFunc &&cmp) {
 // 比较运算模板: Tensor vs Tensor
 template <typename CmpFunc>
 static Tensor cmpTensorOpImpl(const Tensor &self, const Tensor &other, CmpFunc &&cmp) {
-    Tensor result(ShapeTag{}, self.shape(), DType::kFloat, self.device());
     if (self.shape() != other.shape()) {
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION,
                                     "张量形状不匹配");
@@ -1236,10 +1309,13 @@ static Tensor cmpTensorOpImpl(const Tensor &self, const Tensor &other, CmpFunc &
         CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE,
                                     "张量数据类型不匹配");
     }
-    if (self.dtype() == DType::kFloat) {
-        size_t count            = self.numel();
-        const float *data       = self.data_read<float>();
-        const float *other_data = other.data_read<float>();
+    const Tensor self_contig = self.is_contiguous() ? self : self.contiguous();
+    const Tensor other_contig = other.is_contiguous() ? other : other.contiguous();
+    Tensor result(ShapeTag{}, self_contig.shape(), DType::kFloat, self_contig.device());
+    if (self_contig.dtype() == DType::kFloat) {
+        size_t count            = self_contig.numel();
+        const float *data       = self_contig.data_read<float>();
+        const float *other_data = other_contig.data_read<float>();
         float *result_data      = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(data[i], other_data[i]) ? 1.0f : 0.0f;
@@ -1250,10 +1326,11 @@ static Tensor cmpTensorOpImpl(const Tensor &self, const Tensor &other, CmpFunc &
 // 比较运算模板: 标量 vs Tensor (自由函数用)
 template <typename CmpFunc>
 static Tensor cmpScalarTensorOpImpl(float scalar, const Tensor &tensor, CmpFunc &&cmp) {
-    Tensor result(ShapeTag{}, tensor.shape(), DType::kFloat, tensor.device());
-    if (tensor.dtype() == DType::kFloat) {
-        size_t count       = tensor.numel();
-        const float *data  = tensor.data_read<float>();
+    const Tensor tensor_contig = tensor.is_contiguous() ? tensor : tensor.contiguous();
+    Tensor result(ShapeTag{}, tensor_contig.shape(), DType::kFloat, tensor_contig.device());
+    if (tensor_contig.dtype() == DType::kFloat) {
+        size_t count       = tensor_contig.numel();
+        const float *data  = tensor_contig.data_read<float>();
         float *result_data = result.data_write<float>();
         for (size_t i = 0; i < count; ++i)
             result_data[i] = cmp(scalar, data[i]) ? 1.0f : 0.0f;
@@ -1527,14 +1604,15 @@ Tensor Tensor::softmax(int dim) const { return AutoGrad::dispatch_softmax(*this,
 // Max操作
 Tensor Tensor::max() const {
     Tensor result(ShapeTag{}, {}, _dtype, _device);
+    const Tensor src = is_contiguous() ? *this : contiguous();
 
     if (_dtype == DType::kFloat) {
-        const float *data = this->data_read<float>();
-        if (!data || numel() == 0) {
+        const float *data = src.data_read<float>();
+        if (!data || src.numel() == 0) {
             return result;
         }
         float max_val = data[0];
-        for (size_t i = 1; i < numel(); ++i) {
+        for (size_t i = 1; i < src.numel(); ++i) {
             if (data[i] > max_val) {
                 max_val = data[i];
             }
@@ -1552,14 +1630,15 @@ Tensor Tensor::max() const {
 // Min操作
 Tensor Tensor::min() const {
     Tensor result(ShapeTag{}, {}, _dtype, _device);
+    const Tensor src = is_contiguous() ? *this : contiguous();
 
     if (_dtype == DType::kFloat) {
-        const float *data = this->data_read<float>();
-        if (!data || numel() == 0) {
+        const float *data = src.data_read<float>();
+        if (!data || src.numel() == 0) {
             return result;
         }
         float min_val = data[0];
-        for (size_t i = 1; i < numel(); ++i) {
+        for (size_t i = 1; i < src.numel(); ++i) {
             if (data[i] < min_val) {
                 min_val = data[i];
             }
@@ -1951,10 +2030,11 @@ Tensor Tensor::clamp(float min_val, float max_val) const {
 }
 
 Tensor Tensor::detach() const {
-    Tensor result(ShapeTag{}, _shape, _dtype, _device);
+    Tensor result(*this);
     result._storage                      = _storage.clone();
     result._autograd_meta._requires_grad = false;
     result._autograd_meta._node.reset();
+    result._autograd_meta._grad          = nullptr;
 
     return result;
 }
@@ -1977,6 +2057,9 @@ Tensor Tensor::shallow() const {
 Tensor Tensor::to(DeviceType target_device) const {
     if (_device == target_device) {
         return *this;
+    }
+    if (!is_contiguous() || _storage_offset != 0 || _lazy) {
+        return contiguous().to(target_device);
     }
 
     Tensor result(ShapeTag{}, _shape, _dtype, target_device);

@@ -39,7 +39,9 @@ ThreadPool::~ThreadPool(){
 }
 
 ThreadPool& ThreadPool::getInstance(){
-    static ThreadPool instance = ThreadPool(threadAmount != 0?threadAmount:std::thread::hardware_concurrency());
+    size_t default_threads = std::thread::hardware_concurrency();
+    if (default_threads == 0) default_threads = 1;
+    static ThreadPool instance = ThreadPool(threadAmount != 0 ? threadAmount : default_threads);
     return instance;
 }
 

@@ -1,0 +1,66 @@
+/**
+ * @file MSENode.cpp
+ * @author 苏璃珞
+ * @brief 均方误差 (MSE) 损失函数节点实现
+ * @date 2026/10/13
+ */
+
+#include "AutoGrad/Nodes/MSENode.h"
+#include "AutoGrad/Nodes/BroadcastUtils.h"
+#include "Tensor.h"
+
+using ctorch::autograd::compute_broadcast_reduce_dims;
+
+MSENode::MSENode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,
+                 const std::vector<Tensor>& inputs)
+    : Node(upStreamNodes, inputs) {}
+
+MSENode::MSENode(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
+                 std::vector<Tensor>&& inputs)
+    : Node(std::move(upStreamNodes), std::move(inputs)) {}
+
+MSENode::MSENode(const std::vector<std::shared_ptr<Node>>& upStreamNodes,
+                 const std::vector<Tensor>& inputs,
+                 const std::weak_ptr<Tensor>& result)
+    : Node(upStreamNodes, inputs, result) {}
+
+MSENode::MSENode(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
+                 std::vector<Tensor>&& inputs,
+                 const std::weak_ptr<Tensor>& result)
+    : Node(std::move(upStreamNodes), std::move(inputs), result) {}
+
+std::vector<GradPack> MSENode::backward(const std::vector<Tensor>& downStreamGrads) {
+    std::vector<GradPack> ret;
+    if (downStreamGrads.empty() || _inputs.size() < 2) {
+        return ret;
+    }
+    const Tensor& grad = downStreamGrads[0];
+    const Tensor& a = _inputs[0];
+    const Tensor& b = _inputs[1];
+
+    size_t total_elements = a.numel();
+    float scale = (total_elements > 0) ? (2.0f / static_cast<float>(total_elements)) : 1.0f;
+    Tensor diff = (a - b) * scale;
+    Tensor base_grad = diff * grad;
+
+    for (size_t i = 0; i < _inputs.size(); ++i) {
+        const Tensor& input = _inputs[i];
+        Tensor grad_input = (i == 0) ? base_grad : -base_grad;
+
+        std::vector<int> reduce_dims = compute_broadcast_reduce_dims(input.sizes(), grad_input.sizes());
+        if (!reduce_dims.empty()) {
+            grad_input = grad_input.sum(reduce_dims);
+        }
+
+        if (grad_input.sizes() != input.sizes()) {
+            grad_input = grad_input.reshapeNoGrad(input.sizes());
+        }
+
+        ret.push_back(GradPack{
+            _upStreamNodes[i],
+            std::vector({grad_input}),
+            static_cast<int>(i)
+        });
+    }
+    return ret;
+}

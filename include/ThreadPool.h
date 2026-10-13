@@ -61,6 +61,9 @@ auto addTask(Callable&& callable, Args&&... args){
 
         {
             std::lock_guard lock(mtx);
+            if (terminate) {
+                throw std::runtime_error("ThreadPool: attempting to add task after termination");
+            }
             tasks.emplace(std::move(task));
         }
         
