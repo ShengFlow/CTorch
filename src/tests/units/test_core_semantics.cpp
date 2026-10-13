@@ -868,6 +868,154 @@ TEST(ConcurrencySafety, ThreadPoolSingletonExecution) {
     EXPECT_EQ(f.get(), 42);
 }
 
+// 10. P2: Scalar sum and mean forward & backward
+TEST(P2DefectRemediation, ScalarSumAndMean) {
+    Tensor s(3.5f);
+    EXPECT_FLOAT_EQ(s.sum().item<float>(), 3.5f);
+    EXPECT_FLOAT_EQ(s.mean().item<float>(), 3.5f);
+
+    Tensor s1(3.5f);
+    s1.requires_grad(true);
+    Tensor loss1 = s1.sum();
+    AutoGrad::backward(loss1.getRelatedNode(), false);
+    EXPECT_FLOAT_EQ(s1.grad().item<float>(), 1.0f);
+
+    Tensor s2(3.5f);
+    s2.requires_grad(true);
+    Tensor loss2 = s2.mean();
+    AutoGrad::backward(loss2.getRelatedNode(), false);
+    EXPECT_FLOAT_EQ(s2.grad().item<float>(), 1.0f);
+}
+
+// 11. P2: contiguous() 支持多数据类型 (int32, int64, bool)
+TEST(P2DefectRemediation, ContiguousMultiDType) {
+    Tensor t_int(ShapeTag{}, {2, 3}, DType::kInt, DeviceType::kCPU);
+    int32_t* pi = t_int.data_write<int32_t>();
+    for (int i = 0; i < 6; ++i) pi[i] = i + 10;
+    Tensor t_int_t = t_int.transpose(0, 1);
+    EXPECT_FALSE(t_int_t.is_contiguous());
+    Tensor t_int_c = t_int_t.contiguous();
+    EXPECT_TRUE(t_int_c.is_contiguous());
+    const int32_t* pic = t_int_c.data_read<int32_t>();
+    EXPECT_EQ(pic[0], 10);
+    EXPECT_EQ(pic[1], 13);
+    EXPECT_EQ(pic[2], 11);
+    EXPECT_EQ(pic[3], 14);
+
+    Tensor t_long(ShapeTag{}, {2, 3}, DType::kLong, DeviceType::kCPU);
+    int64_t* pl = t_long.data_write<int64_t>();
+    for (int i = 0; i < 6; ++i) pl[i] = i + 1000;
+    Tensor t_long_t = t_long.transpose(0, 1);
+    Tensor t_long_c = t_long_t.contiguous();
+    EXPECT_TRUE(t_long_c.is_contiguous());
+    const int64_t* plc = t_long_c.data_read<int64_t>();
+    EXPECT_EQ(plc[0], 1000);
+    EXPECT_EQ(plc[1], 1003);
+
+    Tensor t_bool(ShapeTag{}, {2, 2}, DType::kBool, DeviceType::kCPU);
+    bool* pb = t_bool.data_write<bool>();
+    pb[0] = true; pb[1] = false; pb[2] = false; pb[3] = true;
+    Tensor t_bool_t = t_bool.transpose(0, 1);
+    Tensor t_bool_c = t_bool_t.contiguous();
+    EXPECT_TRUE(t_bool_c.is_contiguous());
+    const bool* pbc = t_bool_c.data_read<bool>();
+    EXPECT_EQ(pbc[0], true);
+    EXPECT_EQ(pbc[1], false);
+    EXPECT_EQ(pbc[2], false);
+    EXPECT_EQ(pbc[3], true);
+}
+
+// 12. P2: view 与维度归约 (max/min/var/std)
+TEST(P2DefectRemediation, ViewAndReductions) {
+    Tensor t(ShapeTag{}, {2, 3}, DType::kFloat, DeviceType::kCPU);
+    float* p = t.data_write<float>();
+    // [1, 2, 3]
+    // [4, 5, 6]
+    for (int i = 0; i < 6; ++i) p[i] = static_cast<float>(i + 1);
+
+    Tensor v1 = t.view({3, 2});
+    EXPECT_EQ(v1.shape(), (std::vector<size_t>{3, 2}));
+    Tensor v2 = t.view(std::vector<size_t>{6});
+    EXPECT_EQ(v2.shape(), (std::vector<size_t>{6}));
+
+    // max(dim=0): [4, 5, 6]
+    Tensor m0 = t.max(0, false);
+    EXPECT_EQ(m0.numel(), 3u);
+    EXPECT_FLOAT_EQ(m0.data_read<float>()[0], 4.0f);
+    EXPECT_FLOAT_EQ(m0.data_read<float>()[1], 5.0f);
+    EXPECT_FLOAT_EQ(m0.data_read<float>()[2], 6.0f);
+
+    // min(dim=1): [1, 4]
+    Tensor min1 = t.min(1, false);
+    EXPECT_EQ(min1.numel(), 2u);
+    EXPECT_FLOAT_EQ(min1.data_read<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(min1.data_read<float>()[1], 4.0f);
+
+    // var and std
+    Tensor vr = t.var();
+    EXPECT_GT(vr.item<float>(), 0.0f);
+    Tensor st = t.std();
+    EXPECT_NEAR(st.item<float>(), std::sqrt(vr.item<float>()), 1e-5f);
+}
+
+// 13. P2: 拓展数学与统一接口 (tan, asin, acos, atan, sinh, cosh, log_softmax, matmul_unified)
+TEST(P2DefectRemediation, UnaryMathAndUnifiedMatMul) {
+    Tensor t(ShapeTag{}, {2}, DType::kFloat, DeviceType::kCPU);
+    t.data_write<float>()[0] = 0.5f;
+    t.data_write<float>()[1] = -0.5f;
+
+    Tensor tn = t.tan();
+    EXPECT_NEAR(tn.data_read<float>()[0], std::tan(0.5f), 1e-5f);
+
+    Tensor as = t.asin();
+    EXPECT_NEAR(as.data_read<float>()[0], std::asin(0.5f), 1e-5f);
+
+    Tensor ac = t.acos();
+    EXPECT_NEAR(ac.data_read<float>()[0], std::acos(0.5f), 1e-5f);
+
+    Tensor at = t.atan();
+    EXPECT_NEAR(at.data_read<float>()[0], std::atan(0.5f), 1e-5f);
+
+    Tensor sh = t.sinh();
+    EXPECT_NEAR(sh.data_read<float>()[0], std::sinh(0.5f), 1e-5f);
+
+    Tensor ch = t.cosh();
+    EXPECT_NEAR(ch.data_read<float>()[0], std::cosh(0.5f), 1e-5f);
+
+    Tensor ls = t.log_softmax(0);
+    EXPECT_EQ(ls.numel(), 2u);
+
+    Tensor A(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    Tensor B(ShapeTag{}, {2, 2}, DType::kFloat, DeviceType::kCPU);
+    A.data_write<float>()[0] = 1.0f; A.data_write<float>()[1] = 2.0f;
+    A.data_write<float>()[2] = 3.0f; A.data_write<float>()[3] = 4.0f;
+    B.data_write<float>()[0] = 1.0f; B.data_write<float>()[1] = 0.0f;
+    B.data_write<float>()[2] = 0.0f; B.data_write<float>()[3] = 1.0f;
+
+    Tensor C = A.matmul_unified(B);
+    EXPECT_FLOAT_EQ(C.data_read<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(C.data_read<float>()[1], 2.0f);
+    EXPECT_FLOAT_EQ(C.data_read<float>()[2], 3.0f);
+    EXPECT_FLOAT_EQ(C.data_read<float>()[3], 4.0f);
+}
+
+// 14. P2: Ctorch_Stats 线程安全初始化与 level 原子性
+TEST(P2DefectRemediation, CtorchStatsThreadSafety) {
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([]() {
+            auto& stats = Ctorch_Stats::getInstance();
+            stats.level = PrintLevel::MINIUM;
+            EXPECT_EQ(stats.level, PrintLevel::MINIUM);
+            stats.level = PrintLevel::FULL;
+        });
+    }
+    for (auto& th : threads) {
+        th.join();
+    }
+}
+
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

@@ -18,6 +18,7 @@
 #include <inttypes.h>// PRIu32 等格式化宏
 #include <mutex>
 #include <thread>
+#include <atomic>
 #include "Ctools.h"
 #include "CoreDefs.h"
 
@@ -252,23 +253,24 @@ public:
     /**
      * @brief 打印级别
      */
-    PrintLevel level = PrintLevel::FULL;
+    std::atomic<PrintLevel> level{PrintLevel::FULL};
     /**
      * @brief 程序开始时间戳
      */
-    uint64_t start = 0;
+    std::atomic<uint64_t> start{0};
 
     /**
      * @brief 获取单例实例
      * @return Ctorch_Stats的引用
      */
     static Ctorch_Stats& getInstance() {
-        static Ctorch_Stats instance_;  // 这里利用了一个巧妙的C++特性，保证全局只会实例化一个instance_
-        if (instance_.if_first) {
+        static Ctorch_Stats instance_;  // 全局唯一单例
+        static std::once_flag init_flag_;
+        std::call_once(init_flag_, [&]() {
             instance_.welCome();
             instance_.if_first = false;
             instance_.start = getTimestampMs();
-        }
+        });
         return instance_;
     }
     /**

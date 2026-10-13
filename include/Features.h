@@ -5,8 +5,6 @@
 #ifndef CTORCH_FEATURES_H
 #define CTORCH_FEATURES_H
 
-#include "CoreDefs.h"
-
 /**
  * Detect compiler
  */

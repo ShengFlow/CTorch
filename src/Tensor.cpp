@@ -469,6 +469,12 @@ Tensor Tensor::contiguous() const {
 
     if (_dtype == DType::kDouble) {
         materialize(result.data_write<double>(), this->data_read<double>());
+    } else if (_dtype == DType::kInt) {
+        materialize(result.data_write<int32_t>(), this->data_read<int32_t>());
+    } else if (_dtype == DType::kLong) {
+        materialize(result.data_write<int64_t>(), this->data_read<int64_t>());
+    } else if (_dtype == DType::kBool) {
+        materialize(result.data_write<bool>(), this->data_read<bool>());
     } else {
         materialize(result.data_write<float>(), this->data_read<float>());
     }
@@ -1195,12 +1201,25 @@ Tensor Tensor::sum() const {
     // → sum/mean 作 loss 时 backward 静默不填任何梯度。
     // 修复: 前向数值仍用 dot(ones)(走调度 kernel, O(numel)), 反向显式挂 SumNode
     // (全 reduce: ∂L/∂a = dL/dc 广播), 绕过缺失的 DotNode/ReshapeNode。
-    if (_shape.empty()) {
-        // 空 tensor：返回 shape={1}, val=0
+    if (_storage.size() == 0) {
         Tensor result(ShapeTag{}, {1}, _dtype, _device);
         if (_dtype == DType::kFloat) {
             float* rw = result.data_write<float>();
             if (rw) *rw = 0.0f;
+        }
+        return result;
+    }
+    if (_shape.empty()) {
+        Tensor result = *this;
+        if (AutoGrad::EnableGrad && requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            AutoGrad::registerNode<SumNode>(*this, result_weak);
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
+            }
         }
         return result;
     }
@@ -1622,8 +1641,95 @@ Tensor Tensor::max() const {
         if (result_data) {
             *result_data = max_val;
         }
+    } else if (_dtype == DType::kDouble) {
+        const double *data = src.data_read<double>();
+        if (!data || src.numel() == 0) {
+            return result;
+        }
+        double max_val = data[0];
+        for (size_t i = 1; i < src.numel(); ++i) {
+            if (data[i] > max_val) {
+                max_val = data[i];
+            }
+        }
+        result._storage    = Storage(1, _dtype, _device);
+        double *result_data = result.data_write<double>();
+        if (result_data) {
+            *result_data = max_val;
+        }
     }
 
+    return result;
+}
+
+Tensor Tensor::max(int dim, bool keepdim) const {
+    if (dim < 0) dim += static_cast<int>(_shape.size());
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "维度超出范围");
+    }
+    const Tensor src = is_contiguous() ? *this : contiguous();
+    std::vector<size_t> output_shape;
+    for (size_t i = 0; i < src._shape.size(); ++i) {
+        if (i == static_cast<size_t>(dim)) {
+            if (keepdim) output_shape.push_back(1);
+        } else {
+            output_shape.push_back(src._shape[i]);
+        }
+    }
+    if (output_shape.empty()) output_shape = {1};
+    Tensor result(ShapeTag{}, output_shape, _dtype, _device);
+    const size_t dim_size = src._shape[dim];
+    size_t pre_dim_elements = 1;
+    for (int i = 0; i < dim; ++i) pre_dim_elements *= src._shape[i];
+    size_t post_dim_elements = 1;
+    for (size_t i = dim + 1; i < src._shape.size(); ++i) post_dim_elements *= src._shape[i];
+    const size_t stride_dim = post_dim_elements;
+    const size_t pre_dim_stride = dim_size * post_dim_elements;
+
+    if (_dtype == DType::kFloat) {
+        const float *data = src.data_read<float>();
+        float *result_data = result.data_write<float>();
+        if (data && result_data) {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    float m = data[i * pre_dim_stride + k];
+                    for (size_t j = 1; j < dim_size; ++j) {
+                        float v = data[i * pre_dim_stride + j * stride_dim + k];
+                        if (v > m) m = v;
+                    }
+                    result_data[i * post_dim_elements + k] = m;
+                }
+            }
+        }
+    } else if (_dtype == DType::kDouble) {
+        const double *data = src.data_read<double>();
+        double *result_data = result.data_write<double>();
+        if (data && result_data) {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    double m = data[i * pre_dim_stride + k];
+                    for (size_t j = 1; j < dim_size; ++j) {
+                        double v = data[i * pre_dim_stride + j * stride_dim + k];
+                        if (v > m) m = v;
+                    }
+                    result_data[i * post_dim_elements + k] = m;
+                }
+            }
+        }
+    } else {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "max(dim): 不支持的数据类型");
+    }
+    return result;
+}
+
+Tensor Tensor::max(const std::vector<int> &dims, bool keepdim) const {
+    if (dims.empty()) return max();
+    std::vector<int> sorted_dims = dims;
+    std::sort(sorted_dims.begin(), sorted_dims.end(), std::greater<int>());
+    Tensor result = max(sorted_dims[0], keepdim);
+    for (size_t i = 1; i < sorted_dims.size(); ++i) {
+        result = result.max(sorted_dims[i], keepdim);
+    }
     return result;
 }
 
@@ -1648,8 +1754,95 @@ Tensor Tensor::min() const {
         if (result_data) {
             *result_data = min_val;
         }
+    } else if (_dtype == DType::kDouble) {
+        const double *data = src.data_read<double>();
+        if (!data || src.numel() == 0) {
+            return result;
+        }
+        double min_val = data[0];
+        for (size_t i = 1; i < src.numel(); ++i) {
+            if (data[i] < min_val) {
+                min_val = data[i];
+            }
+        }
+        result._storage    = Storage(1, _dtype, _device);
+        double *result_data = result.data_write<double>();
+        if (result_data) {
+            *result_data = min_val;
+        }
     }
 
+    return result;
+}
+
+Tensor Tensor::min(int dim, bool keepdim) const {
+    if (dim < 0) dim += static_cast<int>(_shape.size());
+    if (dim < 0 || dim >= static_cast<int>(_shape.size())) {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DIMENSION, "维度超出范围");
+    }
+    const Tensor src = is_contiguous() ? *this : contiguous();
+    std::vector<size_t> output_shape;
+    for (size_t i = 0; i < src._shape.size(); ++i) {
+        if (i == static_cast<size_t>(dim)) {
+            if (keepdim) output_shape.push_back(1);
+        } else {
+            output_shape.push_back(src._shape[i]);
+        }
+    }
+    if (output_shape.empty()) output_shape = {1};
+    Tensor result(ShapeTag{}, output_shape, _dtype, _device);
+    const size_t dim_size = src._shape[dim];
+    size_t pre_dim_elements = 1;
+    for (int i = 0; i < dim; ++i) pre_dim_elements *= src._shape[i];
+    size_t post_dim_elements = 1;
+    for (size_t i = dim + 1; i < src._shape.size(); ++i) post_dim_elements *= src._shape[i];
+    const size_t stride_dim = post_dim_elements;
+    const size_t pre_dim_stride = dim_size * post_dim_elements;
+
+    if (_dtype == DType::kFloat) {
+        const float *data = src.data_read<float>();
+        float *result_data = result.data_write<float>();
+        if (data && result_data) {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    float m = data[i * pre_dim_stride + k];
+                    for (size_t j = 1; j < dim_size; ++j) {
+                        float v = data[i * pre_dim_stride + j * stride_dim + k];
+                        if (v < m) m = v;
+                    }
+                    result_data[i * post_dim_elements + k] = m;
+                }
+            }
+        }
+    } else if (_dtype == DType::kDouble) {
+        const double *data = src.data_read<double>();
+        double *result_data = result.data_write<double>();
+        if (data && result_data) {
+            for (size_t i = 0; i < pre_dim_elements; ++i) {
+                for (size_t k = 0; k < post_dim_elements; ++k) {
+                    double m = data[i * pre_dim_stride + k];
+                    for (size_t j = 1; j < dim_size; ++j) {
+                        double v = data[i * pre_dim_stride + j * stride_dim + k];
+                        if (v < m) m = v;
+                    }
+                    result_data[i * post_dim_elements + k] = m;
+                }
+            }
+        }
+    } else {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "min(dim): 不支持的数据类型");
+    }
+    return result;
+}
+
+Tensor Tensor::min(const std::vector<int> &dims, bool keepdim) const {
+    if (dims.empty()) return min();
+    std::vector<int> sorted_dims = dims;
+    std::sort(sorted_dims.begin(), sorted_dims.end(), std::greater<int>());
+    Tensor result = min(sorted_dims[0], keepdim);
+    for (size_t i = 1; i < sorted_dims.size(); ++i) {
+        result = result.min(sorted_dims[i], keepdim);
+    }
     return result;
 }
 
@@ -1851,11 +2044,25 @@ Tensor Tensor::mean() const {
     // 旧实现为裸循环求和且完全未挂节点 → backward 静默断链。
     // 修复: 前向 = dot(ones) * (1/n)(走调度 kernel), 反向显式挂 MeanNode
     // (全 reduce: ∂L/∂a = dL/dc / n 广播)。
-    if (numel() == 0) {
+    if (numel() == 0 || _storage.size() == 0) {
         Tensor result(ShapeTag{}, {1}, _dtype, _device);
         if (_dtype == DType::kFloat) {
             float* rw = result.data_write<float>();
             if (rw) *rw = 0.0f;
+        }
+        return result;
+    }
+    if (_shape.empty()) {
+        Tensor result = *this;
+        if (AutoGrad::EnableGrad && requires_grad()) {
+            result.requires_grad(true);
+            auto result_ptr = std::make_shared<Tensor>(result);
+            std::weak_ptr<Tensor> result_weak = result_ptr;
+            AutoGrad::registerNode<MeanNode>(*this, result_weak);
+            if (result_ptr->getRelatedNode()) {
+                result.setRelatedNode(result_ptr->getRelatedNode());
+                result_ptr->getRelatedNode()->setResultOwner(result_ptr);
+            }
         }
         return result;
     }
@@ -2130,3 +2337,86 @@ Tensor::~Tensor() {
     _autograd_meta._self.reset();
     detach_autograd();
 }
+
+Tensor Tensor::var() const {
+    Tensor m = mean();
+    Tensor diff = *this - m;
+    Tensor sq = diff * diff;
+    return sq.mean();
+}
+
+Tensor Tensor::var(int dim, bool keepdim) const {
+    Tensor m = mean(dim, /*keepdim=*/true);
+    Tensor diff = *this - m;
+    Tensor sq = diff * diff;
+    return sq.mean(dim, keepdim);
+}
+
+Tensor Tensor::var(const std::vector<int> &dims, bool keepdim) const {
+    if (dims.empty()) return var();
+    Tensor m = mean(dims, /*keepdim=*/true);
+    Tensor diff = *this - m;
+    Tensor sq = diff * diff;
+    return sq.mean(dims, keepdim);
+}
+
+Tensor Tensor::std() const {
+    return var().sqrt();
+}
+
+Tensor Tensor::std(int dim, bool keepdim) const {
+    return var(dim, keepdim).sqrt();
+}
+
+Tensor Tensor::std(const std::vector<int> &dims, bool keepdim) const {
+    return var(dims, keepdim).sqrt();
+}
+
+Tensor Tensor::view(std::initializer_list<size_t> shape) const {
+    return reshape(std::vector<size_t>(shape));
+}
+
+Tensor Tensor::view(const std::vector<size_t> &shape) const {
+    return reshape(shape);
+}
+
+Tensor Tensor::log_softmax(int dim) const {
+    return softmax(dim).log();
+}
+
+Tensor Tensor::matmul_unified(const Tensor &other) const {
+    return matmul(other);
+}
+
+namespace {
+template <typename F>
+static Tensor apply_unary_cpu_math(const Tensor &self, F &&f) {
+    const Tensor src = self.is_contiguous() ? self : self.contiguous();
+    Tensor result(ShapeTag{}, src.shape(), src.dtype(), src.device());
+    const size_t n = src.numel();
+    if (src.dtype() == DType::kFloat) {
+        const float *in_ptr = src.data_read<float>();
+        float *out_ptr = result.data_write<float>();
+        if (in_ptr && out_ptr) {
+            for (size_t i = 0; i < n; ++i) out_ptr[i] = static_cast<float>(f(in_ptr[i]));
+        }
+    } else if (src.dtype() == DType::kDouble) {
+        const double *in_ptr = src.data_read<double>();
+        double *out_ptr = result.data_write<double>();
+        if (in_ptr && out_ptr) {
+            for (size_t i = 0; i < n; ++i) out_ptr[i] = static_cast<double>(f(in_ptr[i]));
+        }
+    } else {
+        CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::DATATYPE, "不支持的数据类型");
+    }
+    return result;
+}
+} // namespace
+
+Tensor Tensor::tan() const { return apply_unary_cpu_math(*this, [](auto x) { return std::tan(x); }); }
+Tensor Tensor::asin() const { return apply_unary_cpu_math(*this, [](auto x) { return std::asin(x); }); }
+Tensor Tensor::acos() const { return apply_unary_cpu_math(*this, [](auto x) { return std::acos(x); }); }
+Tensor Tensor::atan() const { return apply_unary_cpu_math(*this, [](auto x) { return std::atan(x); }); }
+Tensor Tensor::sinh() const { return apply_unary_cpu_math(*this, [](auto x) { return std::sinh(x); }); }
+Tensor Tensor::cosh() const { return apply_unary_cpu_math(*this, [](auto x) { return std::cosh(x); }); }
+

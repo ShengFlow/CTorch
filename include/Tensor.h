@@ -709,6 +709,14 @@ class Tensor {
 #ifdef CT_PROFILE_ACCESS
         g_data_write_count.fetch_add(1, std::memory_order_relaxed);
 #endif
+        // LazyBox 物化收敛点：占位张量被写入前，按需重算真实中间值并物化。
+        if (_storage.empty() && _lazy) {
+            Tensor& real = materializeLazy_();
+            if (real.storage().empty()) {
+                return nullptr;
+            }
+            return real.data_write<T>();
+        }
         if (_storage.empty()) {
             return nullptr;
         }
@@ -1581,7 +1589,8 @@ class Tensor {
     [[nodiscard]] std::weak_ptr<Tensor> getWeakPtr() const { return _autograd_meta._self; }
 
 
-    Tensor view(std::initializer_list<size_t> shape);
+    Tensor view(std::initializer_list<size_t> shape) const;
+    Tensor view(const std::vector<size_t> &shape) const;
 
     void setGrad(std::shared_ptr<Tensor> grad);
     
