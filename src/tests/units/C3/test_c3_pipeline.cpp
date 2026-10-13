@@ -17,6 +17,10 @@
 #include "C3Engine.h"
 #endif
 
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+
 #include <gtest/gtest.h>
 #include <iostream>
 #include <vector>
@@ -96,7 +100,7 @@ void test_lock_free_dispatch_concurrency() {
     std::cout << " - Average Dispatch Latency: " << avg_ns << " ns / lookup\n";
     std::cout << " - Dispatch Throughput     : " << throughput_mops << " Million lookups / sec\n";
 
-#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+#if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
     constexpr double kMaxDispatchLatencyNs = 1000.0;
 #else
     constexpr double kMaxDispatchLatencyNs = 50.0;
@@ -142,7 +146,7 @@ void test_zero_allocation_execution_context() {
     std::cout << " - Iterations              : " << kIterations << " (Zero heap allocations)\n";
     std::cout << " - Average Indexing Latency: " << avg_ns << " ns / op\n";
 
-#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+#if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
     constexpr double kMaxArenaLatencyNs = 1000.0;
 #else
     constexpr double kMaxArenaLatencyNs = 50.0;

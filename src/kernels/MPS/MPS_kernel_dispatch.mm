@@ -106,13 +106,10 @@ static void computeBroadcastStrides(
         padded_shape[offset + i] = shape[i];
     }
     
-    strides[dims - 1] = (padded_shape[dims - 1] == 1) ? 0 : 1;
-    for (int i = dims - 2; i >= 0; --i) {
-        if (padded_shape[i] == 1) {
-            strides[i] = 0;
-        } else {
-            strides[i] = strides[i + 1] * padded_shape[i + 1];
-        }
+    size_t cur_stride = 1;
+    for (int i = static_cast<int>(dims) - 1; i >= 0; --i) {
+        strides[i] = (padded_shape[i] == 1) ? 0 : cur_stride;
+        cur_stride *= padded_shape[i];
     }
 }
 

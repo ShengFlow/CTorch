@@ -56,6 +56,12 @@ static void tempCrashHandler(int sig) {
 // 计数由 C3_CBLAS_PROBE=1 控制（默认关闭零开销→实际仍多一次转发，仅测量模式启用统计）。
 #ifdef __APPLE__
 #include <dlfcn.h>
+#include <Accelerate/Accelerate.h>
+#elif __has_include(<cblas.h>)
+#include <cblas.h>
+#else
+enum CBLAS_ORDER { CblasRowMajor=101, CblasColMajor=102 };
+enum CBLAS_TRANSPOSE { CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113 };
 #endif
 #include <atomic>
 #include <mutex>

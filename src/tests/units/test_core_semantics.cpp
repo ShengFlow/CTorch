@@ -6,6 +6,8 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <utility>
 #include "Tensor.h"
 #include "Storage.h"
 #include "AutoGrad.h"
@@ -14,6 +16,7 @@
 #include "CtorchScheduler.h"
 #include "C3/Graph.h"
 #include "C3/JITCache.h"
+#include "kernels/kernels.h"
 
 static std::vector<float> make_values(size_t n) {
     std::vector<float> v(n);
@@ -423,6 +426,186 @@ TEST(SIMDBroadcastSemantics, ColumnBroadcastAddMul) {
     const float* c_mul_rev_data = c_mul_rev.data_read<float>();
     for (size_t i = 0; i < M * N; ++i) {
         EXPECT_NEAR(c_mul_rev_data[i], c_mul_data[i], 1e-5f);
+    }
+}
+
+TEST(SIMDBroadcastSemantics, ColumnBroadcastMaxMin) {
+    // 形状 [10, 1] 与 [10, 8] 列广播最大值、最小值
+    const size_t M = 10;
+    const size_t N = 8;
+    Tensor a(ShapeTag{}, {M, 1}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+
+    for (size_t i = 0; i < M; ++i) {
+        a.data_write<float>()[i] = static_cast<float>(i * 5 + 3);
+    }
+    for (size_t i = 0; i < M * N; ++i) {
+        b.data_write<float>()[i] = static_cast<float>(i * 2 + 1);
+    }
+
+    // 1. Max_SIMD_kernel(a, b) 与 Max_SIMD_kernel(b, a)
+    Tensor c_max = Max_SIMD_kernel(a, b);
+    ASSERT_EQ(c_max.shape(), (std::vector<size_t>{M, N}));
+    const float* c_max_data = c_max.data_read<float>();
+    for (size_t i = 0; i < M; ++i) {
+        float a_val = static_cast<float>(i * 5 + 3);
+        for (size_t j = 0; j < N; ++j) {
+            float b_val = static_cast<float>((i * N + j) * 2 + 1);
+            float expected = std::max(a_val, b_val);
+            EXPECT_NEAR(c_max_data[i * N + j], expected, 1e-5f);
+        }
+    }
+
+    Tensor c_max_rev = Max_SIMD_kernel(b, a);
+    ASSERT_EQ(c_max_rev.shape(), (std::vector<size_t>{M, N}));
+    const float* c_max_rev_data = c_max_rev.data_read<float>();
+    for (size_t i = 0; i < M * N; ++i) {
+        EXPECT_NEAR(c_max_rev_data[i], c_max_data[i], 1e-5f);
+    }
+
+    // 2. Min_SIMD_kernel(a, b) 与 Min_SIMD_kernel(b, a)
+    Tensor c_min = Min_SIMD_kernel(a, b);
+    ASSERT_EQ(c_min.shape(), (std::vector<size_t>{M, N}));
+    const float* c_min_data = c_min.data_read<float>();
+    for (size_t i = 0; i < M; ++i) {
+        float a_val = static_cast<float>(i * 5 + 3);
+        for (size_t j = 0; j < N; ++j) {
+            float b_val = static_cast<float>((i * N + j) * 2 + 1);
+            float expected = std::min(a_val, b_val);
+            EXPECT_NEAR(c_min_data[i * N + j], expected, 1e-5f);
+        }
+    }
+
+    Tensor c_min_rev = Min_SIMD_kernel(b, a);
+    ASSERT_EQ(c_min_rev.shape(), (std::vector<size_t>{M, N}));
+    const float* c_min_rev_data = c_min_rev.data_read<float>();
+    for (size_t i = 0; i < M * N; ++i) {
+        EXPECT_NEAR(c_min_rev_data[i], c_min_data[i], 1e-5f);
+    }
+}
+
+TEST(SIMDBroadcastSemantics, OddShapesAndOverReadSafetyASan) {
+    // 非 SIMD lane 整数倍与奇数尺寸 (如 M=7, N=11 和 M=5, N=17)
+    // 专门测试尾行 SIMD splat 防御，确保 ASan 下零越界
+    std::vector<std::pair<size_t, size_t>> test_cases = {
+        {7, 11},
+        {5, 17},
+        {3, 5},
+        {13, 15},
+        {1, 9}
+    };
+
+    for (const auto& [M, N] : test_cases) {
+        Tensor a(ShapeTag{}, {M, 1}, DType::kFloat, DeviceType::kCPU);
+        Tensor b(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+
+        for (size_t i = 0; i < M; ++i) {
+            a.data_write<float>()[i] = static_cast<float>(i + 1) * 1.5f;
+        }
+        for (size_t i = 0; i < M * N; ++i) {
+            b.data_write<float>()[i] = static_cast<float>(i) * 0.5f - 2.0f;
+        }
+
+        // Add: [M, 1] + [M, N] and [M, N] + [M, 1]
+        {
+            Tensor c1 = a + b;
+            Tensor c2 = b + a;
+            const float* c1_ptr = c1.data_read<float>();
+            const float* c2_ptr = c2.data_read<float>();
+            for (size_t i = 0; i < M; ++i) {
+                float a_val = a.data_read<float>()[i];
+                for (size_t j = 0; j < N; ++j) {
+                    float b_val = b.data_read<float>()[i * N + j];
+                    float exp_val = a_val + b_val;
+                    EXPECT_NEAR(c1_ptr[i * N + j], exp_val, 1e-5f);
+                    EXPECT_NEAR(c2_ptr[i * N + j], exp_val, 1e-5f);
+                }
+            }
+        }
+
+        // Mul: [M, 1] * [M, N] and [M, N] * [M, 1]
+        {
+            Tensor c1 = a * b;
+            Tensor c2 = b * a;
+            const float* c1_ptr = c1.data_read<float>();
+            const float* c2_ptr = c2.data_read<float>();
+            for (size_t i = 0; i < M; ++i) {
+                float a_val = a.data_read<float>()[i];
+                for (size_t j = 0; j < N; ++j) {
+                    float b_val = b.data_read<float>()[i * N + j];
+                    float exp_val = a_val * b_val;
+                    EXPECT_NEAR(c1_ptr[i * N + j], exp_val, 1e-5f);
+                    EXPECT_NEAR(c2_ptr[i * N + j], exp_val, 1e-5f);
+                }
+            }
+        }
+
+        // Max: Max_SIMD_kernel([M, 1], [M, N]) and Max_SIMD_kernel([M, N], [M, 1])
+        {
+            Tensor c1 = Max_SIMD_kernel(a, b);
+            Tensor c2 = Max_SIMD_kernel(b, a);
+            const float* c1_ptr = c1.data_read<float>();
+            const float* c2_ptr = c2.data_read<float>();
+            for (size_t i = 0; i < M; ++i) {
+                float a_val = a.data_read<float>()[i];
+                for (size_t j = 0; j < N; ++j) {
+                    float b_val = b.data_read<float>()[i * N + j];
+                    float exp_val = std::max(a_val, b_val);
+                    EXPECT_NEAR(c1_ptr[i * N + j], exp_val, 1e-5f);
+                    EXPECT_NEAR(c2_ptr[i * N + j], exp_val, 1e-5f);
+                }
+            }
+        }
+
+        // Min: Min_SIMD_kernel([M, 1], [M, N]) and Min_SIMD_kernel([M, N], [M, 1])
+        {
+            Tensor c1 = Min_SIMD_kernel(a, b);
+            Tensor c2 = Min_SIMD_kernel(b, a);
+            const float* c1_ptr = c1.data_read<float>();
+            const float* c2_ptr = c2.data_read<float>();
+            for (size_t i = 0; i < M; ++i) {
+                float a_val = a.data_read<float>()[i];
+                for (size_t j = 0; j < N; ++j) {
+                    float b_val = b.data_read<float>()[i * N + j];
+                    float exp_val = std::min(a_val, b_val);
+                    EXPECT_NEAR(c1_ptr[i * N + j], exp_val, 1e-5f);
+                    EXPECT_NEAR(c2_ptr[i * N + j], exp_val, 1e-5f);
+                }
+            }
+        }
+    }
+}
+
+TEST(SIMDBroadcastSemantics, MultiDimDecoupledBroadcastStride) {
+    // 3D 广播 [M, 1, K] 与 [M, N, K] 检验 stride 解耦
+    const size_t M = 3;
+    const size_t N = 4;
+    const size_t K = 5;
+    Tensor a(ShapeTag{}, {M, 1, K}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {M, N, K}, DType::kFloat, DeviceType::kCPU);
+
+    for (size_t i = 0; i < M * 1 * K; ++i) {
+        a.data_write<float>()[i] = static_cast<float>(i + 1);
+    }
+    for (size_t i = 0; i < M * N * K; ++i) {
+        b.data_write<float>()[i] = static_cast<float>(i * 2 + 5);
+    }
+
+    Tensor c = a + b;
+    ASSERT_EQ(c.shape(), (std::vector<size_t>{M, N, K}));
+    const float* c_ptr = c.data_read<float>();
+    const float* a_ptr = a.data_read<float>();
+    const float* b_ptr = b.data_read<float>();
+
+    for (size_t m = 0; m < M; ++m) {
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t k = 0; k < K; ++k) {
+                size_t c_idx = m * (N * K) + n * K + k;
+                size_t a_idx = m * (1 * K) + 0 * K + k;
+                size_t b_idx = m * (N * K) + n * K + k;
+                EXPECT_NEAR(c_ptr[c_idx], a_ptr[a_idx] + b_ptr[b_idx], 1e-5f);
+            }
+        }
     }
 }
 

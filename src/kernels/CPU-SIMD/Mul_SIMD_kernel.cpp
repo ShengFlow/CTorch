@@ -10,7 +10,7 @@
 #include "../../../include/Tensor.h"
 #include "../../../include/CoreDefs.h"
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__i386__) || defined(__AVX2__)
 #include <immintrin.h>
 #elif defined(__aarch64__)
 #include <arm_neon.h>
@@ -33,12 +33,8 @@ static void computeBroadcastStrides(
     // 从最低有效维开始逆向累乘计算物理跨步：广播维 (dim==1) 跨步为 0，非广播维为真实物理跨步
     size_t cur_stride = 1;
     for (int i = static_cast<int>(dims) - 1; i >= 0; --i) {
-        if (padded_shape[i] == 1) {
-            strides[i] = 0;  // 广播维度，stride为0
-        } else {
-            strides[i] = cur_stride;
-            cur_stride *= padded_shape[i];
-        }
+        strides[i] = (padded_shape[i] == 1) ? 0 : cur_stride;
+        cur_stride *= padded_shape[i];
     }
 }
 
@@ -172,21 +168,42 @@ CT_HOT Tensor Mul_SIMD_kernel(const Tensor& a, const Tensor& b) {
         size_t rows = broadcast_shape[0];
         size_t cols = broadcast_shape[1];
         
-#ifdef __aarch64__
+#if defined(__AVX2__)
         for (size_t i = 0; i < rows; ++i) {
             size_t a_row_offset = i * a_strides[0];
             size_t b_row_offset = i * b_strides[0];
             
-            float32x4_t a_row_vec = (a_strides[1] == 0) ? vdupq_n_f32(a_data[a_row_offset]) : vdupq_n_f32(0.0f);
-            float32x4_t b_row_vec = (b_strides[1] == 0) ? vdupq_n_f32(b_data[b_row_offset]) : vdupq_n_f32(0.0f);
+            // 当列 stride 为 0 时，整行数据恒为单一标量，直接 splat 广播到 8 个 lane；
+            // 避免 _mm256_loadu_ps 发生越界 7-float 过读或 SIGBUS。
+            __m256 a_splat = (a_strides[1] == 0) ? _mm256_set1_ps(a_data[a_row_offset]) : _mm256_setzero_ps();
+            __m256 b_splat = (b_strides[1] == 0) ? _mm256_set1_ps(b_data[b_row_offset]) : _mm256_setzero_ps();
+            
+            size_t j = 0;
+            for (; j + 7 < cols; j += 8) {
+                __m256 a_vec = (a_strides[1] == 0) ? a_splat : _mm256_loadu_ps(&a_data[a_row_offset + j]);
+                __m256 b_vec = (b_strides[1] == 0) ? b_splat : _mm256_loadu_ps(&b_data[b_row_offset + j]);
+                _mm256_storeu_ps(&result_data[i * cols + j], _mm256_mul_ps(a_vec, b_vec));
+            }
+            for (; j < cols; ++j) {
+                size_t a_idx = a_row_offset + j * a_strides[1];
+                size_t b_idx = b_row_offset + j * b_strides[1];
+                result_data[i * cols + j] = a_data[a_idx] * b_data[b_idx];
+            }
+        }
+#elif defined(__aarch64__)
+        for (size_t i = 0; i < rows; ++i) {
+            size_t a_row_offset = i * a_strides[0];
+            size_t b_row_offset = i * b_strides[0];
+            
+            // 当列 stride 为 0 时，使用 vdupq_n_f32 splat；
+            // 杜绝 vld1q_f32 错误读取邻行数据及末行 3-float 越界崩溃。
+            float32x4_t a_splat = (a_strides[1] == 0) ? vdupq_n_f32(a_data[a_row_offset]) : vdupq_n_f32(0.0f);
+            float32x4_t b_splat = (b_strides[1] == 0) ? vdupq_n_f32(b_data[b_row_offset]) : vdupq_n_f32(0.0f);
             
             size_t j = 0;
             for (; j + 3 < cols; j += 4) {
-                size_t a_idx = a_row_offset + j * a_strides[1];
-                size_t b_idx = b_row_offset + j * b_strides[1];
-                
-                float32x4_t a_vec = (a_strides[1] == 0) ? a_row_vec : vld1q_f32(&a_data[a_idx]);
-                float32x4_t b_vec = (b_strides[1] == 0) ? b_row_vec : vld1q_f32(&b_data[b_idx]);
+                float32x4_t a_vec = (a_strides[1] == 0) ? a_splat : vld1q_f32(&a_data[a_row_offset + j]);
+                float32x4_t b_vec = (b_strides[1] == 0) ? b_splat : vld1q_f32(&b_data[b_row_offset + j]);
                 vst1q_f32(&result_data[i * cols + j], vmulq_f32(a_vec, b_vec));
             }
             for (; j < cols; ++j) {
