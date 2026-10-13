@@ -32,13 +32,14 @@ static void computeBroadcastStrides(
         padded_shape[offset + i] = shape[i];
     }
     
-    // 计算stride：如果维度为1（广播维度），stride为0
-    strides[dims - 1] = (padded_shape[dims - 1] == 1) ? 0 : 1;
-    for (int i = dims - 2; i >= 0; --i) {
+    // 从最低有效维开始逆向累乘计算物理跨步：广播维 (dim==1) 跨步为 0，非广播维为真实物理跨步
+    size_t cur_stride = 1;
+    for (int i = static_cast<int>(dims) - 1; i >= 0; --i) {
         if (padded_shape[i] == 1) {
             strides[i] = 0;  // 广播维度，stride为0
         } else {
-            strides[i] = strides[i + 1] * padded_shape[i + 1];
+            strides[i] = cur_stride;
+            cur_stride *= padded_shape[i];
         }
     }
 }
@@ -168,14 +169,16 @@ CT_HOT Tensor Add_SIMD_kernel(const Tensor& a, const Tensor& b) {
             size_t a_row_offset = i * a_strides[0];
             size_t b_row_offset = i * b_strides[0];
             
+            float32x4_t a_row_vec = (a_strides[1] == 0) ? vdupq_n_f32(a_data[a_row_offset]) : vdupq_n_f32(0.0f);
+            float32x4_t b_row_vec = (b_strides[1] == 0) ? vdupq_n_f32(b_data[b_row_offset]) : vdupq_n_f32(0.0f);
+            
             size_t j = 0;
             for (; j + 3 < cols; j += 4) {
-                // 用stride计算索引
                 size_t a_idx = a_row_offset + j * a_strides[1];
                 size_t b_idx = b_row_offset + j * b_strides[1];
                 
-                float32x4_t a_vec = vld1q_f32(&a_data[a_idx]);
-                float32x4_t b_vec = vld1q_f32(&b_data[b_idx]);
+                float32x4_t a_vec = (a_strides[1] == 0) ? a_row_vec : vld1q_f32(&a_data[a_idx]);
+                float32x4_t b_vec = (b_strides[1] == 0) ? b_row_vec : vld1q_f32(&b_data[b_idx]);
                 vst1q_f32(&result_data[i * cols + j], vaddq_f32(a_vec, b_vec));
             }
             for (; j < cols; ++j) {

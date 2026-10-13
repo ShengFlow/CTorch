@@ -1009,6 +1009,14 @@ add_executable(test_sum_mean_grad src/tests/standalone/test_sum_mean_grad.cpp)
 target_link_libraries(test_sum_mean_grad PRIVATE CTorch)
 target_include_directories(test_sum_mean_grad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(test_r1_adversarial src/tests/standalone/test_r1_adversarial.cpp)
+target_link_libraries(test_r1_adversarial PRIVATE CTorch)
+target_include_directories(test_r1_adversarial PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(test_r2_adversarial src/tests/standalone/test_r2_adversarial.cpp)
+target_link_libraries(test_r2_adversarial PRIVATE CTorch)
+target_include_directories(test_r2_adversarial PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(bench_accessor_overhead src/tests/standalone/bench_accessor_overhead.cpp)
 target_link_libraries(bench_accessor_overhead PRIVATE CTorch)
 target_include_directories(bench_accessor_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

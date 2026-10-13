@@ -1610,8 +1610,6 @@ void Tensor::setRelatedNode(std::shared_ptr<Node> ptr) const {
 void Tensor::setGrad(std::shared_ptr<Tensor> grad) { _autograd_meta._grad = std::move(grad); }
 // 求张量的和
 Tensor Tensor::sum(int dim, bool keepdim) const {
-    Tensor result;
-
     if (dim < 0) {
         dim += _shape.size();
     }
@@ -1620,14 +1618,17 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
                                     "sum: 维度超出范围");
     }
 
+    // [R1 Memory Safety Fix]: 物化非连续视图, 杜绝越界读取与零填充错乱
+    const Tensor src = is_contiguous() ? *this : this->contiguous();
+
     std::vector<size_t> output_shape;
-    for (size_t i = 0; i < _shape.size(); ++i) {
+    for (size_t i = 0; i < src._shape.size(); ++i) {
         if (i == static_cast<size_t>(dim)) {
             if (keepdim) {
                 output_shape.push_back(1);
             }
         } else {
-            output_shape.push_back(_shape[i]);
+            output_shape.push_back(src._shape[i]);
         }
     }
 
@@ -1635,7 +1636,7 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         output_shape = {1};
     }
 
-    result = Tensor(ShapeTag{}, output_shape, _dtype, _device);
+    Tensor result(ShapeTag{}, output_shape, _dtype, _device);
 
 #ifdef __APPLE__
     if (_device == DeviceType::kMPS) {
@@ -1643,28 +1644,27 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
     }
 #endif
 
-    size_t dim_size   = _shape[dim];
-    size_t stride_dim = _strides[dim];
-
+    const size_t dim_size = src._shape[dim];
     size_t pre_dim_elements = 1;
     for (int i = 0; i < dim; ++i) {
-        pre_dim_elements *= _shape[i];
+        pre_dim_elements *= src._shape[i];
     }
 
     size_t post_dim_elements = 1;
-    for (size_t i = dim + 1; i < _shape.size(); ++i) {
-        post_dim_elements *= _shape[i];
+    for (size_t i = dim + 1; i < src._shape.size(); ++i) {
+        post_dim_elements *= src._shape[i];
     }
 
-    size_t pre_dim_stride = stride_dim * dim_size;
+    // 在连续张量中, dim 维步长恒为 post_dim_elements, 外部步长恒为 dim_size * post_dim_elements
+    const size_t stride_dim = post_dim_elements;
+    const size_t pre_dim_stride = dim_size * post_dim_elements;
 
     switch (_dtype) {
     case DType::kFloat: {
-        const float *data  = this->data_read<float>();
+        const float *data  = src.data_read<float>();
         float *result_data = result.data_write<float>();
-        if (stride_dim == 1) {
-            // [SIMD 2026-09-06] 最内维归约(contiguous): 每 pre 行 dim_size 连续元素,
-            // NEON 4-wide 累加器 + 尾部, 替换原三重标量循环。
+        // 仅当最内维归约(post_dim_elements == 1)时, 每行 dim_size 个元素才是连续的
+        if (post_dim_elements == 1) {
             ctorch::kernels::simd::reduce_rows_sum_f32(data, pre_dim_elements, dim_size, result_data);
         } else {
             for (size_t i = 0; i < pre_dim_elements; ++i) {
@@ -1681,7 +1681,7 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         break;
     }
     case DType::kDouble: {
-        const double *data  = this->data_read<double>();
+        const double *data  = src.data_read<double>();
         double *result_data = result.data_write<double>();
         for (size_t i = 0; i < pre_dim_elements; ++i) {
             for (size_t k = 0; k < post_dim_elements; ++k) {
@@ -1700,8 +1700,7 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
                                     "sum: 不支持的数据类型");
     }
 
-    // [Fix 2026-09-06] 反向传播: sum(dim) 此前完全未挂节点 → backward 静默断链。
-    // 挂 DimReduceNode(scale=1), 反向 = grad 沿 dim 广播(SIMD 填充)。
+    // 反向传播: 节点连接到 *this (保留图拓扑), 但记录正确的连续归约步长
     if (AutoGrad::EnableGrad && requires_grad()) {
         result.requires_grad(true);
         auto result_ptr = std::make_shared<Tensor>(result);
@@ -1804,8 +1803,6 @@ Tensor Tensor::mean() const {
 }
 
 Tensor Tensor::mean(int dim, bool keepdim) const {
-    // [Fix 2026-09-06] 此前 mean(dim) 只有声明无实现(链接错误)且反向断链。
-    // 与 sum(dim) 同构: SIMD 归约(最内维) + 除以 dim_size, 挂 DimReduceNode(scale=1/dim_size)。
     if (dim < 0) {
         dim += static_cast<int>(_shape.size());
     }
@@ -1814,12 +1811,15 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
                                     "mean: 维度超出范围");
     }
 
+    // [R1 Memory Safety Fix]: 物化非连续视图, 杜绝越界读取与零填充错乱
+    const Tensor src = is_contiguous() ? *this : this->contiguous();
+
     std::vector<size_t> output_shape;
-    for (size_t i = 0; i < _shape.size(); ++i) {
+    for (size_t i = 0; i < src._shape.size(); ++i) {
         if (i == static_cast<size_t>(dim)) {
             if (keepdim) output_shape.push_back(1);
         } else {
-            output_shape.push_back(_shape[i]);
+            output_shape.push_back(src._shape[i]);
         }
     }
     if (output_shape.empty()) output_shape = {1};
@@ -1832,21 +1832,23 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
     }
 #endif
 
-    const size_t dim_size      = _shape[dim];
-    const size_t stride_dim    = _strides[dim];
-    size_t pre_dim_elements    = 1;
-    for (int i = 0; i < dim; ++i) pre_dim_elements *= _shape[i];
-    size_t post_dim_elements   = 1;
-    for (size_t i = dim + 1; i < _shape.size(); ++i) post_dim_elements *= _shape[i];
-    const size_t pre_dim_stride = stride_dim * dim_size;
+    const size_t dim_size       = src._shape[dim];
+    size_t pre_dim_elements     = 1;
+    for (int i = 0; i < dim; ++i) pre_dim_elements *= src._shape[i];
+    size_t post_dim_elements    = 1;
+    for (size_t i = dim + 1; i < src._shape.size(); ++i) post_dim_elements *= src._shape[i];
+
+    // 在连续张量中, dim 维步长恒为 post_dim_elements, 外部步长恒为 dim_size * post_dim_elements
+    const size_t stride_dim     = post_dim_elements;
+    const size_t pre_dim_stride = dim_size * post_dim_elements;
     const float inv_dim         = 1.0f / static_cast<float>(dim_size);
 
     switch (_dtype) {
     case DType::kFloat: {
-        const float *data  = this->data_read<float>();
+        const float *data  = src.data_read<float>();
         float *result_data = result.data_write<float>();
-        if (stride_dim == 1) {
-            // [SIMD 2026-09-06] 最内维归约: NEON 4-wide 累加 + SIMD 缩放 1/dim_size
+        // 仅当最内维归约(post_dim_elements == 1)时, 每行 dim_size 个元素才是连续的
+        if (post_dim_elements == 1) {
             ctorch::kernels::simd::reduce_rows_sum_f32(data, pre_dim_elements, dim_size, result_data);
             ctorch::kernels::simd::scale_f32(result_data, pre_dim_elements * post_dim_elements, inv_dim);
         } else {
@@ -1863,7 +1865,7 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
         break;
     }
     case DType::kDouble: {
-        const double *data  = this->data_read<double>();
+        const double *data  = src.data_read<double>();
         double *result_data = result.data_write<double>();
         const double inv_d  = 1.0 / static_cast<double>(dim_size);
         for (size_t i = 0; i < pre_dim_elements; ++i) {
@@ -1882,7 +1884,7 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
                                     "mean: 不支持的数据类型");
     }
 
-    // 反向: 挂 DimReduceNode, scale=1/dim_size
+    // 反向传播: 节点连接到 *this (保留图拓扑), 但记录正确的连续归约步长
     if (AutoGrad::EnableGrad && requires_grad()) {
         result.requires_grad(true);
         auto result_ptr = std::make_shared<Tensor>(result);

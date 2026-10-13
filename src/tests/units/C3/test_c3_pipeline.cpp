@@ -9,6 +9,14 @@
 #include "C3Pipeline.h"
 #endif
 
+#if __has_include("C3/C3KernelRegistry.h")
+#include "C3/C3KernelRegistry.h"
+#include "C3/C3Engine.h"
+#else
+#include "C3KernelRegistry.h"
+#include "C3Engine.h"
+#endif
+
 #include <gtest/gtest.h>
 #include <iostream>
 #include <vector>
@@ -88,8 +96,13 @@ void test_lock_free_dispatch_concurrency() {
     std::cout << " - Average Dispatch Latency: " << avg_ns << " ns / lookup\n";
     std::cout << " - Dispatch Throughput     : " << throughput_mops << " Million lookups / sec\n";
 
-    assert(avg_ns < 50.0 && "Lock-free lookup latency must be under 50 ns!");
-    std::cout << " [PASS] Sub-50ns lock-free dispatch performance verified!\n\n";
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    constexpr double kMaxDispatchLatencyNs = 1000.0;
+#else
+    constexpr double kMaxDispatchLatencyNs = 50.0;
+#endif
+    assert(avg_ns < kMaxDispatchLatencyNs && "Lock-free lookup latency must be under latency limit!");
+    std::cout << " [PASS] Lock-free dispatch performance verified!\n\n";
 }
 
 void test_zero_allocation_execution_context() {
@@ -129,7 +142,12 @@ void test_zero_allocation_execution_context() {
     std::cout << " - Iterations              : " << kIterations << " (Zero heap allocations)\n";
     std::cout << " - Average Indexing Latency: " << avg_ns << " ns / op\n";
 
-    assert(avg_ns < 50.0 && "Static arena pointer indexing must be nanosecond level!");
+#if defined(__SANITIZE_THREAD__) || (defined(__has_feature) && __has_feature(thread_sanitizer))
+    constexpr double kMaxArenaLatencyNs = 1000.0;
+#else
+    constexpr double kMaxArenaLatencyNs = 50.0;
+#endif
+    assert(avg_ns < kMaxArenaLatencyNs && "Static arena pointer indexing must be nanosecond level!");
     std::cout << " [PASS] Zero-allocation static arena performance verified!\n\n";
 }
 
@@ -444,6 +462,176 @@ TEST(C3PipelineTest, ArenaBoundsAndKernelDefensiveGuards) {
     std::span<float*> empty_out;
     EXPECT_NO_FATAL_FAILURE(kernel.execute(ctx, empty_in, empty_out, 0));
     EXPECT_NO_FATAL_FAILURE(kernel.execute(ctx, empty_in, empty_out, 10));
+}
+
+namespace {
+
+class MockTierKernel : public CompiledKernel {
+public:
+    MockTierKernel(int opt_lvl, std::string key = "tier_kernel")
+        : key_(std::move(key)) {
+        opt_level_ = opt_lvl;
+    }
+    ~MockTierKernel() override {
+        destroyed_.store(true, std::memory_order_release);
+    }
+    std::vector<Tensor> execute(const std::vector<Tensor>& inputs) override {
+        // Assert kernel is valid and has not been destroyed before this execution
+        EXPECT_FALSE(destroyed_.load(std::memory_order_acquire));
+        if (inputs.empty()) return {};
+        Tensor out(ShapeTag{}, inputs[0].shape(), inputs[0].dtype(), inputs[0].device());
+        const float* in_p = inputs[0].data_read<float>();
+        float* out_p = out.data_write<float>();
+        if (in_p && out_p) {
+            for (size_t i = 0; i < inputs[0].numel(); ++i) {
+                out_p[i] = in_p[i] + static_cast<float>(opt_level_);
+            }
+        }
+        exec_count_.fetch_add(1, std::memory_order_relaxed);
+        return {out};
+    }
+    const std::string& cacheKey() const override { return key_; }
+    DeviceType targetDevice() const override { return DeviceType::kCPU; }
+    size_t workspaceBytes() const override { return 0; }
+    size_t execCount() const { return exec_count_.load(std::memory_order_relaxed); }
+private:
+    std::string key_;
+    std::atomic<bool> destroyed_{false};
+    std::atomic<size_t> exec_count_{0};
+};
+
+} // anonymous namespace
+
+TEST(C3PipelineTest, FastSlotSeqlockLifecycleAndABA) {
+    auto& registry = C3KernelRegistry::getInstance();
+    registry.uninstallAll();
+
+    // 1. Zero hash queries return nullptr
+    EXPECT_EQ(registry.lookupFast(0), nullptr);
+
+    // 2. Install kernel and verify lookupFast returns valid refcounted shared_ptr
+    uint64_t hashA = 0x12345678ULL;
+    auto kA = std::make_shared<MockTierKernel>(2, "kernel_A");
+    registry.installFast(hashA, kA);
+
+    auto retrievedA = registry.lookupFast(hashA);
+    ASSERT_NE(retrievedA, nullptr);
+    EXPECT_EQ(retrievedA.get(), kA.get());
+    EXPECT_EQ(retrievedA->optLevel(), 2);
+
+    // 3. Slot collision overwrite: hashB with same slot index (hashA + kFastTableSize)
+    uint64_t hashB = hashA + C3KernelRegistry::kFastTableSize;
+    auto kB = std::make_shared<MockTierKernel>(4, "kernel_B");
+    registry.installFast(hashB, kB);
+
+    // hashA is evicted/replaced, lookup(hashA) must return nullptr (no ABA or stale data)
+    EXPECT_EQ(registry.lookupFast(hashA), nullptr);
+    auto retrievedB = registry.lookupFast(hashB);
+    ASSERT_NE(retrievedB, nullptr);
+    EXPECT_EQ(retrievedB.get(), kB.get());
+    EXPECT_EQ(retrievedB->optLevel(), 4);
+
+    // 4. clearFastSlots resets slot safely
+    registry.clearFastSlots();
+    EXPECT_EQ(registry.lookupFast(hashA), nullptr);
+    EXPECT_EQ(registry.lookupFast(hashB), nullptr);
+}
+
+TEST(C3PipelineTest, ConcurrentPromotionAndUninstallStress) {
+    auto& registry = C3KernelRegistry::getInstance();
+    registry.uninstallAll();
+
+    op target_op = op::Add;
+    DeviceType dev = DeviceType::kCPU;
+    KernelShapeInfo shapes;
+    shapes.lhs_shape = {4, 4};
+    shapes.rhs_shape = {4, 4};
+    shapes.out_shape = {4, 4};
+
+    uint64_t sig_hash = C3KernelRegistry::computeFastHash(target_op, dev, shapes.lhs_shape, shapes.rhs_shape);
+
+    std::atomic<bool> stop_flag{false};
+    std::atomic<size_t> tier1_execs{0};
+    std::atomic<size_t> tier2_execs{0};
+    std::atomic<size_t> null_lookups{0};
+    std::atomic<size_t> successful_dispatches{0};
+
+    Tensor a(ShapeTag{}, {4, 4}, DType::kFloat, dev);
+    Tensor b(ShapeTag{}, {4, 4}, DType::kFloat, dev);
+    float* pa = a.data_write<float>();
+    float* pb = b.data_write<float>();
+    for (size_t i = 0; i < 16; ++i) {
+        pa[i] = 1.0f;
+        pb[i] = 2.0f;
+    }
+
+    constexpr int kNumReaders = 6;
+    std::vector<std::thread> readers;
+    for (int r = 0; r < kNumReaders; ++r) {
+        readers.emplace_back([&, r]() {
+            while (!stop_flag.load(std::memory_order_acquire)) {
+                if (r % 2 == 0) {
+                    std::shared_ptr<CompiledKernel> kernel = registry.lookupFast(sig_hash);
+                    if (kernel) {
+                        int opt = kernel->optLevel();
+                        EXPECT_TRUE(opt == 2 || opt == 4);
+                        if (opt == 2) tier1_execs.fetch_add(1, std::memory_order_relaxed);
+                        else if (opt == 4) tier2_execs.fetch_add(1, std::memory_order_relaxed);
+                        std::vector<Tensor> ins = {a, b};
+                        auto outs = kernel->execute(ins);
+                        EXPECT_FALSE(outs.empty());
+                    } else {
+                        null_lookups.fetch_add(1, std::memory_order_relaxed);
+                    }
+                } else {
+                    auto res = registry.tryExecute(target_op, a, b);
+                    if (res.has_value()) {
+                        successful_dispatches.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        null_lookups.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        });
+    }
+
+    // Promoter thread: repeatedly installs Tier 1, then promotes to Tier 2
+    std::thread promoter([&]() {
+        for (int i = 0; i < 1000; ++i) {
+            auto k_tier1 = std::make_shared<MockTierKernel>(2, "tier1_" + std::to_string(i));
+            registry.install(target_op, dev, k_tier1, shapes);
+            std::this_thread::yield();
+
+            auto k_tier2 = std::make_shared<MockTierKernel>(4, "tier2_" + std::to_string(i));
+            registry.install(target_op, dev, k_tier2, shapes);
+            std::this_thread::yield();
+        }
+    });
+
+    // Uninstaller thread: periodically uninstalls while promoter and readers run
+    std::thread uninstaller([&]() {
+        for (int i = 0; i < 200; ++i) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            if (i % 2 == 0) {
+                registry.uninstall(target_op, dev);
+            } else {
+                registry.uninstallAll();
+            }
+        }
+    });
+
+    promoter.join();
+    uninstaller.join();
+    stop_flag.store(true, std::memory_order_release);
+
+    for (auto& t : readers) {
+        t.join();
+    }
+
+    registry.uninstallAll();
+
+    EXPECT_GT(tier1_execs.load() + tier2_execs.load() + successful_dispatches.load(), 0u)
+        << "Expected at least one successful execution during stress test";
 }
 
 int main(int argc, char** argv) {

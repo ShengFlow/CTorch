@@ -48,7 +48,8 @@ std::vector<GradPack> DimReduceNode::backward(const std::vector<Tensor>& downStr
         return ret;
     }
     const Tensor& input = _inputs[0];
-    const float* g = downStreamGrads[0].data_read<float>();
+    const Tensor g_tensor = downStreamGrads[0].is_contiguous() ? downStreamGrads[0] : downStreamGrads[0].contiguous();
+    const float* g = g_tensor.data_read<float>();
     if (!g) {
         return ret;
     }
@@ -56,7 +57,7 @@ std::vector<GradPack> DimReduceNode::backward(const std::vector<Tensor>& downStr
     Tensor grad_input(ShapeTag{}, input.sizes(), input.dtype(), input.device());
     float* gp = grad_input.data_write<float>();
 
-    if (stride_dim_ == 1) {
+    if (post_ == 1) {
         // 最内维归约(contiguous): 每个 pre 行的 dim_size 连续元素 = 同一个 grad 值
         for (size_t r = 0; r < pre_; ++r) {
             fill_f32(gp + r * dim_size_, dim_size_, g[r] * scale_);

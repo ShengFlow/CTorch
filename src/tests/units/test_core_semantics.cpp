@@ -12,6 +12,8 @@
 #include "AutoGrad/Node.h"
 #include "AutoGrad/Nodes/GradAccumulator.h"
 #include "CtorchScheduler.h"
+#include "C3/Graph.h"
+#include "C3/JITCache.h"
 
 static std::vector<float> make_values(size_t n) {
     std::vector<float> v(n);
@@ -268,6 +270,89 @@ TEST(TensorSemantics, ToCrossDeviceAndBack) {
     EXPECT_EQ(cpu_t2.data_read<float>()[0], values[0]);
 }
 
+TEST(TensorSemantics, NonContiguousReductionSafety) {
+    AutoGrad::EnableGrad = true;
+    Tensor t(ShapeTag{}, {10, 4}, DType::kFloat, DeviceType::kCPU);
+    float* p = t.data_write<float>();
+    for (int i = 0; i < 40; ++i) p[i] = static_cast<float>(i + 1);
+
+    Tensor tt = t.transpose(0, 1);
+    EXPECT_FALSE(tt.is_contiguous());
+
+    // Forward checks
+    Tensor s1 = tt.sum(1);
+    EXPECT_EQ(s1.numel(), 4u);
+    EXPECT_NEAR(s1.data_read<float>()[0], 190.0f, 1e-4f);
+    EXPECT_NEAR(s1.data_read<float>()[1], 200.0f, 1e-4f);
+    EXPECT_NEAR(s1.data_read<float>()[2], 210.0f, 1e-4f);
+    EXPECT_NEAR(s1.data_read<float>()[3], 220.0f, 1e-4f);
+
+    Tensor s0 = tt.sum(0);
+    EXPECT_EQ(s0.numel(), 10u);
+    EXPECT_NEAR(s0.data_read<float>()[0], 10.0f, 1e-4f);
+    EXPECT_NEAR(s0.data_read<float>()[9], 154.0f, 1e-4f);
+
+    Tensor m1 = tt.mean(1);
+    EXPECT_EQ(m1.numel(), 4u);
+    EXPECT_NEAR(m1.data_read<float>()[0], 19.0f, 1e-4f);
+    EXPECT_NEAR(m1.data_read<float>()[3], 22.0f, 1e-4f);
+
+    Tensor m0 = tt.mean(0);
+    EXPECT_EQ(m0.numel(), 10u);
+    EXPECT_NEAR(m0.data_read<float>()[0], 2.5f, 1e-4f);
+    EXPECT_NEAR(m0.data_read<float>()[9], 38.5f, 1e-4f);
+
+    // Backward checks
+    {
+        Tensor tg(ShapeTag{}, {10, 4}, DType::kFloat, DeviceType::kCPU);
+        for (int i = 0; i < 40; ++i) tg.data_write<float>()[i] = static_cast<float>(i + 1);
+        tg.requires_grad(true);
+        Tensor ttg = tg.transpose(0, 1);
+        Tensor loss = ttg.sum(1).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        ASSERT_NE(tg.grad_ptr(), nullptr);
+        for (int i = 0; i < 40; ++i) {
+            EXPECT_NEAR(tg.grad_ptr()[i], 1.0f, 1e-5f);
+        }
+    }
+    {
+        Tensor tg(ShapeTag{}, {10, 4}, DType::kFloat, DeviceType::kCPU);
+        for (int i = 0; i < 40; ++i) tg.data_write<float>()[i] = static_cast<float>(i + 1);
+        tg.requires_grad(true);
+        Tensor ttg = tg.transpose(0, 1);
+        Tensor loss = ttg.sum(0).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        ASSERT_NE(tg.grad_ptr(), nullptr);
+        for (int i = 0; i < 40; ++i) {
+            EXPECT_NEAR(tg.grad_ptr()[i], 1.0f, 1e-5f);
+        }
+    }
+    {
+        Tensor tg(ShapeTag{}, {10, 4}, DType::kFloat, DeviceType::kCPU);
+        for (int i = 0; i < 40; ++i) tg.data_write<float>()[i] = static_cast<float>(i + 1);
+        tg.requires_grad(true);
+        Tensor ttg = tg.transpose(0, 1);
+        Tensor loss = ttg.mean(1).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        ASSERT_NE(tg.grad_ptr(), nullptr);
+        for (int i = 0; i < 40; ++i) {
+            EXPECT_NEAR(tg.grad_ptr()[i], 0.1f, 1e-5f);
+        }
+    }
+    {
+        Tensor tg(ShapeTag{}, {10, 4}, DType::kFloat, DeviceType::kCPU);
+        for (int i = 0; i < 40; ++i) tg.data_write<float>()[i] = static_cast<float>(i + 1);
+        tg.requires_grad(true);
+        Tensor ttg = tg.transpose(0, 1);
+        Tensor loss = ttg.mean(0).sum();
+        AutoGrad::backward(loss.getRelatedNode(), false);
+        ASSERT_NE(tg.grad_ptr(), nullptr);
+        for (int i = 0; i < 40; ++i) {
+            EXPECT_NEAR(tg.grad_ptr()[i], 0.25f, 1e-5f);
+        }
+    }
+}
+
 // ======================= Node / GradPack 生命周期 =======================
 
 TEST(NodeSemantics, GradPackConstruct) {
@@ -284,6 +369,121 @@ TEST(NodeSemantics, GradAccumulatorLifetime) {
         auto node = std::make_shared<GradAccumulator>(t.getWeakPtr());
         EXPECT_NE(node, nullptr);
     }
+}
+
+// ======================= R3: SIMD 广播跨步与 Over-Read 防御回归测试 =======================
+
+TEST(SIMDBroadcastSemantics, ColumnBroadcastAddMul) {
+    // 形状 [10, 1] 与 [10, 8] 列广播加法、乘法
+    const size_t M = 10;
+    const size_t N = 8;
+    Tensor a(ShapeTag{}, {M, 1}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {M, N}, DType::kFloat, DeviceType::kCPU);
+
+    for (size_t i = 0; i < M; ++i) {
+        a.data_write<float>()[i] = static_cast<float>(i + 1); // a[i, 0] = i + 1
+    }
+    for (size_t i = 0; i < M * N; ++i) {
+        b.data_write<float>()[i] = static_cast<float>(i + 10);
+    }
+
+    // 1. a + b
+    Tensor c_add = a + b;
+    ASSERT_EQ(c_add.shape(), (std::vector<size_t>{M, N}));
+    const float* c_add_data = c_add.data_read<float>();
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            float expected = static_cast<float>(i + 1) + static_cast<float>(i * N + j + 10);
+            EXPECT_NEAR(c_add_data[i * N + j], expected, 1e-5f);
+        }
+    }
+
+    // 2. b + a (反向操作数顺序)
+    Tensor c_add_rev = b + a;
+    ASSERT_EQ(c_add_rev.shape(), (std::vector<size_t>{M, N}));
+    const float* c_add_rev_data = c_add_rev.data_read<float>();
+    for (size_t i = 0; i < M * N; ++i) {
+        EXPECT_NEAR(c_add_rev_data[i], c_add_data[i], 1e-5f);
+    }
+
+    // 3. a * b
+    Tensor c_mul = a * b;
+    ASSERT_EQ(c_mul.shape(), (std::vector<size_t>{M, N}));
+    const float* c_mul_data = c_mul.data_read<float>();
+    for (size_t i = 0; i < M; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            float expected = static_cast<float>(i + 1) * static_cast<float>(i * N + j + 10);
+            EXPECT_NEAR(c_mul_data[i * N + j], expected, 1e-5f);
+        }
+    }
+
+    // 4. b * a
+    Tensor c_mul_rev = b * a;
+    ASSERT_EQ(c_mul_rev.shape(), (std::vector<size_t>{M, N}));
+    const float* c_mul_rev_data = c_mul_rev.data_read<float>();
+    for (size_t i = 0; i < M * N; ++i) {
+        EXPECT_NEAR(c_mul_rev_data[i], c_mul_data[i], 1e-5f);
+    }
+}
+
+// ======================= R4: C3 JIT Cache Graph Key 差异化回归测试 =======================
+
+TEST(C3GraphSerialization, AttributeAndDTypeKeyDifferentiation) {
+    using namespace ct::c3;
+
+    auto desc_float = TensorDesc::fromShape({4, 4}, DType::kFloat, DeviceType::kCPU);
+    auto desc_double = TensorDesc::fromShape({4, 4}, DType::kDouble, DeviceType::kCPU);
+
+    // 1. SumReduce(axis=0) vs SumReduce(axis=1)
+    Graph g_red0, g_red1;
+    size_t in0 = g_red0.addInput(desc_float);
+    g_red0.addNode(SumReduceNode{desc_float, 0, false}, {in0}, TensorDesc::fromShape({4}, DType::kFloat));
+    size_t in1 = g_red1.addInput(desc_float);
+    g_red1.addNode(SumReduceNode{desc_float, 1, false}, {in1}, TensorDesc::fromShape({4}, DType::kFloat));
+
+    EXPECT_NE(g_red0.toString(), g_red1.toString());
+    EXPECT_NE(JITCache::makeKey(g_red0.toString(), 2), JITCache::makeKey(g_red1.toString(), 2));
+
+    // 2. SumReduce(keepdim=false) vs SumReduce(keepdim=true)
+    Graph g_keep_f, g_keep_t;
+    size_t in_kf = g_keep_f.addInput(desc_float);
+    g_keep_f.addNode(SumReduceNode{desc_float, 1, false}, {in_kf}, TensorDesc::fromShape({4}, DType::kFloat));
+    size_t in_kt = g_keep_t.addInput(desc_float);
+    g_keep_t.addNode(SumReduceNode{desc_float, 1, true}, {in_kt}, TensorDesc::fromShape({4, 1}, DType::kFloat));
+
+    EXPECT_NE(g_keep_f.toString(), g_keep_t.toString());
+    EXPECT_NE(JITCache::makeKey(g_keep_f.toString(), 2), JITCache::makeKey(g_keep_t.toString(), 2));
+
+    // 3. Softmax(axis=0) vs Softmax(axis=1)
+    Graph g_sm0, g_sm1;
+    size_t in_sm0 = g_sm0.addInput(desc_float);
+    g_sm0.addNode(ct::c3::SoftmaxNode{desc_float, 0}, {in_sm0}, desc_float);
+    size_t in_sm1 = g_sm1.addInput(desc_float);
+    g_sm1.addNode(ct::c3::SoftmaxNode{desc_float, 1}, {in_sm1}, desc_float);
+
+    EXPECT_NE(g_sm0.toString(), g_sm1.toString());
+    EXPECT_NE(JITCache::makeKey(g_sm0.toString(), 2), JITCache::makeKey(g_sm1.toString(), 2));
+
+    // 4. Transpose(0, 1) vs Transpose(1, 2)
+    auto desc_3d = TensorDesc::fromShape({2, 3, 4}, DType::kFloat);
+    Graph g_tr01, g_tr12;
+    size_t in_tr01 = g_tr01.addInput(desc_3d);
+    g_tr01.addNode(ct::c3::TransposeNode{desc_3d, 0, 1}, {in_tr01}, TensorDesc::fromShape({3, 2, 4}, DType::kFloat));
+    size_t in_tr12 = g_tr12.addInput(desc_3d);
+    g_tr12.addNode(ct::c3::TransposeNode{desc_3d, 1, 2}, {in_tr12}, TensorDesc::fromShape({2, 4, 3}, DType::kFloat));
+
+    EXPECT_NE(g_tr01.toString(), g_tr12.toString());
+    EXPECT_NE(JITCache::makeKey(g_tr01.toString(), 2), JITCache::makeKey(g_tr12.toString(), 2));
+
+    // 5. DType Float vs Double on identical topology
+    Graph g_fl, g_db;
+    size_t in_fl = g_fl.addInput(desc_float);
+    g_fl.addNode(ct::c3::NegNode{desc_float}, {in_fl}, desc_float);
+    size_t in_db = g_db.addInput(desc_double);
+    g_db.addNode(ct::c3::NegNode{desc_double}, {in_db}, desc_double);
+
+    EXPECT_NE(g_fl.toString(), g_db.toString());
+    EXPECT_NE(JITCache::makeKey(g_fl.toString(), 2), JITCache::makeKey(g_db.toString(), 2));
 }
 
 int main(int argc, char** argv) {
