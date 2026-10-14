@@ -11,12 +11,8 @@
 #include "../../../include/CtorchError.h"
 #include "../../../include/Tensor.h"
 #include <cmath>
+#include <mutex>
 
-namespace {
-inline float silu_scalar(float x) {
-    return x / (1.0f + std::exp(-x));
-}
-}
 
 // AMX 槽位: SiLU 不是 AMX 原生算子 (AMX 主要支持 MatMul-like 矩阵运算),
 // 按 performance-optimization-prompt §13 NR-3 AMX 降级规则, 直接调用 SIMD kernel

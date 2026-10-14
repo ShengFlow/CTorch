@@ -11,13 +11,8 @@
 #include "../../../include/CtorchError.h"
 #include "../../../include/Tensor.h"
 #include <cmath>
+#include <mutex>
 
-namespace {
-inline float swiglu_scalar(float x, float gate) {
-    float silu_x = x / (1.0f + std::exp(-x));
-    return silu_x * gate;
-}
-}
 
 // AMX 降级: SwiGLU 不是 AMX 原生, 标量 fallback
 Tensor SwiGLU_AMX_kernel(const Tensor& a, const Tensor& b) {

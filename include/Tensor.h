@@ -405,8 +405,8 @@ class Tensor {
           _strides(other._strides),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
           _storage(other._storage),
-          _shape(other._shape),
-          _lazy(other._lazy) {
+          _lazy(other._lazy),
+          _shape(other._shape) {
         initAutogradSelf();
         _autograd_meta._requires_grad = other._autograd_meta._requires_grad;
         _autograd_meta._grad = nullptr;  // 现代语义：copy/assign 不深拷 grad（独立张量各自按需累积）
@@ -457,8 +457,9 @@ class Tensor {
         : _autograd_meta(std::move(other._autograd_meta)), tensor_id_(other.tensor_id_),
           _strides(std::move(other._strides)),
           _storage_offset(other._storage_offset), _device(other._device), _dtype(other._dtype),
-          _storage(std::move(other._storage)), _shape(std::move(other._shape)),
-          _lazy(std::move(other._lazy)) {
+          _storage(std::move(other._storage)),
+          _lazy(std::move(other._lazy)),
+          _shape(std::move(other._shape)) {
         initAutogradSelf();
         // [Fix 2026-09-10 §4.95 P1-03] move 后原地 rebind _node 的弱引用:
         // initAutogradSelf() 用 this 重建了 _self 控制块, 而 move 来的 _node 内

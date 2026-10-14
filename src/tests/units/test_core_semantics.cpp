@@ -1235,6 +1235,7 @@ TEST(P2SweepFinalClean, GridSearchOptimizerEmptySpaceSafe) {
 }
 
 TEST(P2SweepFinalClean, RotAMXNonContiguousView) {
+#ifdef __APPLE__
     // 构造 2D 转置非连续视图，验证 Rot_AMX_kernel 走高维安全跨步映射无堆越界
     Tensor X(ShapeTag{}, {4, 6}, DType::kFloat, DeviceType::kCPU);
     Tensor Y(ShapeTag{}, {4, 6}, DType::kFloat, DeviceType::kCPU);
@@ -1262,6 +1263,9 @@ TEST(P2SweepFinalClean, RotAMXNonContiguousView) {
     // y' = 0.8 * 4 - 0.6 * 2 = 3.2 - 1.2 = 2.0
     EXPECT_NEAR(Xt.data_read<float>()[1], 4.0f, 1e-5f);
     EXPECT_NEAR(Yt.data_read<float>()[1], 2.0f, 1e-5f);
+#else
+    GTEST_SKIP() << "Rot_AMX_kernel is macOS AMX Accelerate-only";
+#endif
 }
 
 TEST(P2SweepFinalClean, SwiGLUAMXShapeMismatchThrows) {

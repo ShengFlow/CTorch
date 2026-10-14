@@ -78,8 +78,6 @@ void Rot_AMX_kernel(Tensor& x, Tensor& y, float c, float s) {
     // 对于行主序 1D Tensor：data 连续，stride=1
     // 对于行主序 2D Tensor 的列访问：stride = leading_dim > 1，需要 pack/unpack
     // 简化处理：要求 x/y 必须是 1D 或 stride=1 的连续内存
-    const std::size_t x_stride = x.numel() > 0 ? (x.strides().empty() ? 1 : x.strides().back()) : 1;
-    const std::size_t y_stride = y.numel() > 0 ? (y.strides().empty() ? 1 : y.strides().back()) : 1;
 
     if (x.is_contiguous() && y.is_contiguous()) {
         // 快速路径：cblas_srot（BLAS 内部用 NEON SIMD）

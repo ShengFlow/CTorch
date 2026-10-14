@@ -11,6 +11,7 @@
 #include "./../../../include/CtorchError.h"
 #include "./../../../include/Tensor.h"
 #include "./../kernels.h"
+#include <mutex>
 
 Tensor GELU_AMX_kernel(const Tensor& a) {
     static std::once_flag warned;
