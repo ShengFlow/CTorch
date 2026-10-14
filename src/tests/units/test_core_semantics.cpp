@@ -17,6 +17,7 @@
 #include "CtorchScheduler.h"
 #include "C3/Graph.h"
 #include "C3/JITCache.h"
+#include "C3/C3BackwardCapture.h"
 #include "kernels/kernels.h"
 #include "ThreadPool.h"
 
@@ -1016,6 +1017,123 @@ TEST(P2DefectRemediation, CtorchStatsThreadSafety) {
     }
 }
 
+
+// 15. 方向二: C3 JIT 编译流水线增强 (SumReduce lowering, 广播 Mul/Div/Add/Sub 编译图构建与数值正确性)
+TEST(Direction2C3Pipeline, ReduceAxisComputation) {
+    using ct::c3::C3BackwardCapture;
+
+    // 相同形状 -> -1 (无需归约)
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {4, 8}), -1);
+
+    // 全量归约 (标量或单元素) -> -1
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {}), -1);
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {1}), -1);
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {1, 1}), -1);
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({8}, {1}), -1);
+
+    // 单轴归约: [4, 8] -> [8] (axis 0)
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {8}), 0);
+    // [4, 8] -> [1, 8] (axis 0)
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {1, 8}), 0);
+    // [4, 8] -> [4, 1] (axis 1)
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({4, 8}, {4, 1}), 1);
+
+    // 多轴归约: [2, 4, 8] -> [8] (两轴归约无法被单轴 SumReduce 表示 -> -2 安全回退)
+    EXPECT_EQ(C3BackwardCapture::computeReduceAxis({2, 4, 8}, {8}), -2);
+}
+
+TEST(Direction2C3Pipeline, BroadcastMulDivBackwardGraphLowering) {
+    using ct::c3::C3BackwardCapture;
+    using ct::c3::TensorDesc;
+    using ct::c3::SumReduceNode;
+    using ct::c3::MulNode;
+    using ct::c3::DivNode;
+    using ct::c3::NegNode;
+
+    auto& capture = C3BackwardCapture::getInstance();
+
+    TensorDesc grad_desc = TensorDesc::fromShape({4, 8});
+    TensorDesc a_desc = TensorDesc::fromShape({4, 8});
+    TensorDesc b_desc = TensorDesc::fromShape({8});
+
+    // 1. Mul backward: grad_a (无广播/无 reduce), target = [4, 8]
+    auto mul_bw_a = capture.buildMulBackwardGraph(grad_desc, a_desc, b_desc, 0);
+    ASSERT_EQ(mul_bw_a.first.outputs().size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<MulNode>(mul_bw_a.first.node(mul_bw_a.first.outputs()[0]).op));
+    EXPECT_EQ(mul_bw_a.second.size(), 1u);
+    EXPECT_EQ(mul_bw_a.second[0], 1u); // forward_inputs[1] is B
+
+    // 2. Mul backward: grad_b (广播侧需要 SumReduce), target = [8]
+    auto mul_bw_b = capture.buildMulBackwardGraph(grad_desc, a_desc, b_desc, 1);
+    ASSERT_EQ(mul_bw_b.first.outputs().size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<SumReduceNode>(mul_bw_b.first.node(mul_bw_b.first.outputs()[0]).op));
+    const auto& sr_node = std::get<SumReduceNode>(mul_bw_b.first.node(mul_bw_b.first.outputs()[0]).op);
+    EXPECT_EQ(sr_node.axis, 0);
+    EXPECT_EQ(mul_bw_b.second.size(), 1u);
+    EXPECT_EQ(mul_bw_b.second[0], 0u); // forward_inputs[0] is A
+
+    // 3. Div backward: grad_a (target = [4, 8], 无 reduce)
+    auto div_bw_a = capture.buildDivBackwardGraph(grad_desc, a_desc, b_desc, 0);
+    ASSERT_EQ(div_bw_a.first.outputs().size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<DivNode>(div_bw_a.first.node(div_bw_a.first.outputs()[0]).op));
+    EXPECT_EQ(div_bw_a.second.size(), 1u);
+    EXPECT_EQ(div_bw_a.second[0], 1u);
+
+    // 4. Div backward: grad_b (target = [8], 广播侧需 SumReduce)
+    auto div_bw_b = capture.buildDivBackwardGraph(grad_desc, a_desc, b_desc, 1);
+    ASSERT_EQ(div_bw_b.first.outputs().size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<SumReduceNode>(div_bw_b.first.node(div_bw_b.first.outputs()[0]).op));
+    const auto& div_sr = std::get<SumReduceNode>(div_bw_b.first.node(div_bw_b.first.outputs()[0]).op);
+    EXPECT_EQ(div_sr.axis, 0);
+    EXPECT_EQ(div_bw_b.second.size(), 2u);
+    EXPECT_EQ(div_bw_b.second[0], 0u);
+    EXPECT_EQ(div_bw_b.second[1], 1u);
+
+    // 5. Scalar full reduction backward: target = [1]
+    TensorDesc b_scalar = TensorDesc::fromShape({1});
+    auto mul_bw_scalar = capture.buildMulBackwardGraph(grad_desc, a_desc, b_scalar, 1);
+    ASSERT_EQ(mul_bw_scalar.first.outputs().size(), 1u);
+    EXPECT_TRUE(std::holds_alternative<SumReduceNode>(mul_bw_scalar.first.node(mul_bw_scalar.first.outputs()[0]).op));
+    const auto& sr_scalar = std::get<SumReduceNode>(mul_bw_scalar.first.node(mul_bw_scalar.first.outputs()[0]).op);
+    EXPECT_EQ(sr_scalar.axis, -1); // 全量归约
+}
+
+TEST(Direction2C3Pipeline, EndToEndBroadcastAutoGradCorrectness) {
+    // 验证 Tensor 级端到端梯度正确性
+    Tensor A(ShapeTag{}, {4, 8}, DType::kFloat, DeviceType::kCPU);
+    Tensor B(ShapeTag{}, {8}, DType::kFloat, DeviceType::kCPU);
+
+    float* ap = A.data_write<float>();
+    for (size_t i = 0; i < 32; ++i) ap[i] = static_cast<float>(i + 1);
+
+    float* bp = B.data_write<float>();
+    for (size_t j = 0; j < 8; ++j) bp[j] = static_cast<float>(j + 2);
+
+    A.requires_grad(true);
+    B.requires_grad(true);
+
+    // 1. 广播乘法
+    Tensor C = A * B;
+    AutoGrad::backward(C.getRelatedNode(), false);
+
+    // 检查 A 梯度: 广播后的 B
+    Tensor gA = A.grad();
+    for (size_t i = 0; i < 4; ++i) {
+        for (size_t j = 0; j < 8; ++j) {
+            EXPECT_FLOAT_EQ(gA.data_read<float>()[i * 8 + j], static_cast<float>(j + 2));
+        }
+    }
+
+    // 检查 B 梯度: A 沿 axis 0 求和 (每列求和: 4*(2*start + 3*8)/2 等)
+    Tensor gB = B.grad();
+    for (size_t j = 0; j < 8; ++j) {
+        float expected_bj = 0.0f;
+        for (size_t i = 0; i < 4; ++i) {
+            expected_bj += static_cast<float>(i * 8 + j + 1);
+        }
+        EXPECT_FLOAT_EQ(gB.data_read<float>()[j], expected_bj);
+    }
+}
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
