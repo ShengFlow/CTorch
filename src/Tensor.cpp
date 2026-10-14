@@ -1978,14 +1978,15 @@ Tensor Tensor::sum(int dim, bool keepdim) const {
         auto result_ptr = std::make_shared<Tensor>(result);
         std::weak_ptr<Tensor> result_weak = result_ptr;
         AutoGrad::registerNode<DimReduceNode>(*this, result_weak);
-        if (result_ptr->getRelatedNode()) {
-            result.setRelatedNode(result_ptr->getRelatedNode());
-            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
-            auto node = std::dynamic_pointer_cast<DimReduceNode>(result_ptr->getRelatedNode());
+        auto related = result_ptr->getRelatedNode();
+        if (related) {
+            result.setRelatedNode(related);
+            auto node = std::dynamic_pointer_cast<DimReduceNode>(related);
             if (node) {
                 node->setReduceMeta(static_cast<int>(dim), keepdim, dim_size, stride_dim,
                                     pre_dim_elements, post_dim_elements, pre_dim_stride, 1.0f);
             }
+            related->setResultOwner(result_ptr);
         }
     }
 
@@ -2176,14 +2177,15 @@ Tensor Tensor::mean(int dim, bool keepdim) const {
         auto result_ptr = std::make_shared<Tensor>(result);
         std::weak_ptr<Tensor> result_weak = result_ptr;
         AutoGrad::registerNode<DimReduceNode>(*this, result_weak);
-        if (result_ptr->getRelatedNode()) {
-            result.setRelatedNode(result_ptr->getRelatedNode());
-            result_ptr->getRelatedNode()->setResultOwner(result_ptr);
-            auto node = std::dynamic_pointer_cast<DimReduceNode>(result_ptr->getRelatedNode());
+        auto related = result_ptr->getRelatedNode();
+        if (related) {
+            result.setRelatedNode(related);
+            auto node = std::dynamic_pointer_cast<DimReduceNode>(related);
             if (node) {
                 node->setReduceMeta(static_cast<int>(dim), keepdim, dim_size, stride_dim,
                                     pre_dim_elements, post_dim_elements, pre_dim_stride, inv_dim);
             }
+            related->setResultOwner(result_ptr);
         }
     }
 

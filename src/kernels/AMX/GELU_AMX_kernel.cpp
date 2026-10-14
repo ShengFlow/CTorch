@@ -13,7 +13,10 @@
 #include "./../kernels.h"
 
 Tensor GELU_AMX_kernel(const Tensor& a) {
-    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
-                      "AMX GELU_Kernel: 无专用实现，降级到 SIMD");
+    static std::once_flag warned;
+    std::call_once(warned, []() {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
+                          "AMX GELU_Kernel: 无专用实现，降级到 SIMD");
+    });
     return GELU_SIMD_kernel(a);
 }

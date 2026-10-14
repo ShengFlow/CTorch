@@ -65,6 +65,7 @@ public:
         : param_space_(std::move(param_space))
         , config_(config)
         , n_params_(param_space_.size())
+        , rng_(config.seed)
     {
         assert(n_params_ > 0 && "GA: param_space must not be empty");
         for (size_t i = 0; i < n_params_; ++i) {
@@ -290,9 +291,10 @@ size_t GAOptimizer<T>::tournamentSelect(
     // 从排序列表的前部 (更好的个体) 中随机选择
     size_t best = 0;
     double best_f = std::numeric_limits<double>::max();
+    size_t pool_size = std::max(size_t(1), std::min(config_.population_size, config_.tournament_size * 3));
     for (size_t t = 0; t < config_.tournament_size; ++t) {
         // 偏向从较优个体中选择
-        size_t idx = sorted_indices[rng_.next_u64() % std::min(config_.population_size, config_.tournament_size * 3)];
+        size_t idx = sorted_indices[rng_.next_u64() % pool_size];
         if (fitness[idx] < best_f) {
             best_f = fitness[idx];
             best = idx;
@@ -306,6 +308,11 @@ void GAOptimizer<T>::crossover(const Individual& p1, const Individual& p2,
                                 Individual& c1, Individual& c2)
 {
     size_t n = p1.size();
+    if (n <= 1) {
+        c1 = p1;
+        c2 = p2;
+        return;
+    }
     size_t point = rng_.next_u64() % (n - 1) + 1;
 
     for (size_t i = 0; i < point; ++i) {

@@ -616,7 +616,15 @@ class Tensor {
     /**
      * @brief 设置存储偏移量（JIT 3.0 零拷贝输出分配）
      */
-    void set_storage_offset(size_t offset) { _storage_offset = offset; }
+    void set_storage_offset(size_t offset) {
+        if (_storage.size() > 0 && (offset > _storage.size() || offset + numel() > _storage.size())) {
+            CtorchError::throwException(ErrorPlatform::kGENERAL, ErrorType::MEMORY,
+                "set_storage_offset: offset " + std::to_string(offset) + 
+                " with numel " + std::to_string(numel()) + 
+                " exceeds storage capacity " + std::to_string(_storage.size()));
+        }
+        _storage_offset = offset;
+    }
 
     /**
      * @brief 检查存储偏移量是否有效

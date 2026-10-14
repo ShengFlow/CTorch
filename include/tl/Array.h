@@ -823,6 +823,7 @@ template <
     typename... TIndices
 >
 struct SliceHelper<T, N, D, FLAGS, std::enable_if_t<std::is_same_v<std::decay_t<TIndex>, details::ReserveAxis>>, TIndex, TIndices...> {
+  static_assert(D < N, "Cannot reserve more axes than original array dimensions");
   using Next = SliceHelper<T, N, D + 1, FLAGS, void, TIndices...>;
   static constexpr int64_t NewLength = Next::NewLength;
   static_assert(NewLength >= 0);
@@ -933,7 +934,7 @@ constexpr decltype(auto) Array<T, N, FLAGS>::operator()(TIndices... indices) con
   using Helper = typename details::SliceHelper<T, N, 0, FLAGS, void, TIndices...>;
   constexpr int64_t new_length = Helper::NewLength;
 
-  std::array<int64_t, new_length> new_sizes, new_strides;
+  std::array<int64_t, std::max(int64_t(1), new_length)> new_sizes{}, new_strides{};
   int64_t offset = Helper().apply(sizes().data(), strides().data(), new_sizes.data(), new_strides.data(), indices...);
   T* ptr = (T*) data() + offset;
 

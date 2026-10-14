@@ -20,6 +20,9 @@
 #include "C3/C3BackwardCapture.h"
 #include "kernels/kernels.h"
 #include "ThreadPool.h"
+#include "tl/util/Math.h"
+#include "ctQALS/GAOptimizer.h"
+#include "ctQALS/GridSearchOptimizer.h"
 
 static std::vector<float> make_values(size_t n) {
     std::vector<float> v(n);
@@ -1135,7 +1138,140 @@ TEST(Direction2C3Pipeline, EndToEndBroadcastAutoGradCorrectness) {
     }
 }
 
+// 16. 方向 B: P2 缺陷全景清零回归测试集 (全库 0-Defect 终极收敛)
+TEST(P2SweepFinalClean, SetStorageOffsetValidation) {
+    Tensor t(ShapeTag{}, {4, 4}, DType::kFloat, DeviceType::kCPU);
+    EXPECT_NO_THROW(t.set_storage_offset(0));
+    // 允许 offset + numel <= storage.size()
+    // t.storage().size() >= 16
+    size_t cap = t.storage().size();
+    if (cap > 16) {
+        EXPECT_NO_THROW(t.set_storage_offset(cap - 16));
+    }
+    // 越界 offset 必须抛出异常
+    EXPECT_THROW(t.set_storage_offset(cap + 10), std::runtime_error);
+    EXPECT_THROW(t.set_storage_offset(cap), std::runtime_error);
+}
+
+TEST(P2SweepFinalClean, SecondBackwardWithoutRetainGraphThrows) {
+    Tensor a(2.0f);
+    Tensor b(3.0f);
+    a.requires_grad(true);
+    b.requires_grad(true);
+
+    Tensor c = a * b;
+    // 第一次 backward（retainGraph = false，默认）
+    EXPECT_NO_THROW(AutoGrad::backward(c.getRelatedNode(), false));
+    EXPECT_FLOAT_EQ(a.grad().data_read<float>()[0], 3.0f);
+    EXPECT_FLOAT_EQ(b.grad().data_read<float>()[0], 2.0f);
+
+    // 第二次对已被 clearGraph 的相同图调用 backward，必须抛出 PyTorch 风格异常而非静默 no-op
+    EXPECT_THROW(AutoGrad::backward(c.getRelatedNode(), false), std::runtime_error);
+}
+
+TEST(P2SweepFinalClean, RetainGraphAllowsMultipleBackwards) {
+    Tensor x(5.0f);
+    x.requires_grad(true);
+
+    Tensor y = x * x;
+    // retainGraph = true 时允许反复 backward
+    EXPECT_NO_THROW(AutoGrad::backward(y.getRelatedNode(), true));
+    EXPECT_FLOAT_EQ(x.grad().data_read<float>()[0], 10.0f);
+
+    // 再次 backward：梯度累加为 20.0f
+    EXPECT_NO_THROW(AutoGrad::backward(y.getRelatedNode(), false));
+    EXPECT_FLOAT_EQ(x.grad().data_read<float>()[0], 20.0f);
+}
+
+TEST(P2SweepFinalClean, TlMathIsAlignedPowerOfTwo) {
+    alignas(64) char buffer[128];
+    // alignment = 1 过去会被断言误杀，现已修复
+    EXPECT_TRUE(ct::tl::is_aligned(1, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(2, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(4, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(8, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(16, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(32, buffer));
+    EXPECT_TRUE(ct::tl::is_aligned(64, buffer));
+
+    // 非 2 的幂断言防御
+    void* unaligned_ptr = buffer + 1;
+    EXPECT_FALSE(ct::tl::is_aligned(2, unaligned_ptr));
+}
+
+TEST(P2SweepFinalClean, GAOptimizerSingleBitCrossoverAndSeed) {
+    // 只有 1 个参数且仅有 2 个候选值 -> 染色体长度为 1 位 (n = 1)
+    // 过去会在 crossover 中触发 (n - 1) 模零崩溃，且 seed 被忽略
+    std::vector<std::vector<int>> space = {{10, 20}};
+    ctQALS::optimize::GAConfig cfg;
+    cfg.population_size = 10;
+    cfg.max_generations = 5;
+    cfg.seed = 123456789ULL;
+
+    ctQALS::optimize::GAOptimizer<int> opt(space, cfg);
+    auto res = opt.optimize([](const std::vector<int>& v) {
+        return static_cast<double>(v[0]);
+    });
+
+    EXPECT_EQ(res.best_params.size(), 1u);
+    EXPECT_EQ(res.best_params[0], 0u); // 10 < 20
+    EXPECT_DOUBLE_EQ(res.best_fitness, 10.0);
+}
+
+TEST(P2SweepFinalClean, GridSearchOptimizerEmptySpaceSafe) {
+    // 空参数空间
+    std::vector<std::vector<double>> empty_space;
+    ctQALS::optimize::GridSearchOptimizer<double> opt_empty(empty_space);
+    EXPECT_EQ(opt_empty.totalCombinations(), 0u);
+    auto res_empty = opt_empty.optimize([](const std::vector<double>&) { return 0.0; });
+    EXPECT_EQ(res_empty.evaluations, 0u);
+
+    // 含空维度的参数空间
+    std::vector<std::vector<double>> space_with_empty = {{1.0, 2.0}, {}};
+    ctQALS::optimize::GridSearchOptimizer<double> opt_with_empty(space_with_empty);
+    EXPECT_EQ(opt_with_empty.totalCombinations(), 0u);
+    auto res2 = opt_with_empty.optimize([](const std::vector<double>&) { return 0.0; });
+    EXPECT_EQ(res2.evaluations, 0u);
+}
+
+TEST(P2SweepFinalClean, RotAMXNonContiguousView) {
+    // 构造 2D 转置非连续视图，验证 Rot_AMX_kernel 走高维安全跨步映射无堆越界
+    Tensor X(ShapeTag{}, {4, 6}, DType::kFloat, DeviceType::kCPU);
+    Tensor Y(ShapeTag{}, {4, 6}, DType::kFloat, DeviceType::kCPU);
+
+    float* px = X.data_write<float>();
+    float* py = Y.data_write<float>();
+    for (size_t i = 0; i < 24; ++i) {
+        px[i] = static_cast<float>(i + 1);
+        py[i] = static_cast<float>((i + 1) * 2);
+    }
+
+    Tensor Xt = X.transpose(0, 1); // shape [6, 4], strides [1, 6], 非连续
+    Tensor Yt = Y.transpose(0, 1);
+
+    EXPECT_FALSE(Xt.is_contiguous());
+    EXPECT_FALSE(Yt.is_contiguous());
+
+    float c = 0.8f;
+    float s = 0.6f;
+    EXPECT_NO_THROW(Rot_AMX_kernel(Xt, Yt, c, s));
+
+    // 抽样验证数值:
+    // 原 X[0, 1] (即 Xt[1, 0]) 初始为 2, Y 为 4:
+    // x' = 0.8 * 2 + 0.6 * 4 = 1.6 + 2.4 = 4.0
+    // y' = 0.8 * 4 - 0.6 * 2 = 3.2 - 1.2 = 2.0
+    EXPECT_NEAR(Xt.data_read<float>()[1], 4.0f, 1e-5f);
+    EXPECT_NEAR(Yt.data_read<float>()[1], 2.0f, 1e-5f);
+}
+
+TEST(P2SweepFinalClean, SwiGLUAMXShapeMismatchThrows) {
+    Tensor a(ShapeTag{}, {4, 4}, DType::kFloat, DeviceType::kCPU);
+    Tensor b(ShapeTag{}, {4, 8}, DType::kFloat, DeviceType::kCPU);
+    EXPECT_THROW(SwiGLU_AMX_kernel(a, b), std::runtime_error);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+

@@ -81,16 +81,35 @@ void Rot_AMX_kernel(Tensor& x, Tensor& y, float c, float s) {
     const std::size_t x_stride = x.numel() > 0 ? (x.strides().empty() ? 1 : x.strides().back()) : 1;
     const std::size_t y_stride = y.numel() > 0 ? (y.strides().empty() ? 1 : y.strides().back()) : 1;
 
-    if (x_stride == 1 && y_stride == 1) {
+    if (x.is_contiguous() && y.is_contiguous()) {
         // 快速路径：cblas_srot（BLAS 内部用 NEON SIMD）
         cblas_srot((int)n, x_data, 1, y_data, 1, c, s);
+    } else if (x.dim() == 1 && y.dim() == 1) {
+        // 1D 跨步路径：BLAS 原生支持任意正跨步
+        int sx = static_cast<int>(x.strides().empty() ? 1 : x.strides()[0]);
+        int sy = static_cast<int>(y.strides().empty() ? 1 : y.strides()[0]);
+        cblas_srot((int)n, x_data, sx, y_data, sy, c, s);
     } else {
-        // 回退路径：朴素循环（stride > 1 时不能用 cblas_srot）
-        for (std::size_t i = 0; i < n; ++i) {
-            const float xi = x_data[i * x_stride];
-            const float yi = y_data[i * y_stride];
-            x_data[i * x_stride] = c * xi + s * yi;
-            y_data[i * y_stride] = c * yi - s * xi;
+        // 回退路径：高维非连续视图按各轴 strides 安全寻址，防止跨步累乘越界
+        const auto& shape = x.shape();
+        const auto& x_strides = x.strides();
+        const auto& y_strides = y.strides();
+        std::vector<size_t> coord(shape.size(), 0);
+        for (std::size_t lin = 0; lin < n; ++lin) {
+            size_t off_x = 0;
+            size_t off_y = 0;
+            for (size_t d = 0; d < coord.size(); ++d) {
+                off_x += coord[d] * x_strides[d];
+                off_y += coord[d] * y_strides[d];
+            }
+            const float xi = x_data[off_x];
+            const float yi = y_data[off_y];
+            x_data[off_x] = c * xi + s * yi;
+            y_data[off_y] = c * yi - s * xi;
+            for (int d = static_cast<int>(coord.size()) - 1; d >= 0; --d) {
+                if (++coord[d] < shape[d]) break;
+                coord[d] = 0;
+            }
         }
     }
 }

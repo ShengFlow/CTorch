@@ -28,7 +28,10 @@ Tensor SiLU_AMX_kernel(const Tensor& a) {
 
     // [Fix §4.95 P2] 注释称"直接调用 SIMD kernel"实为标量 exp 循环(潜在 ~10x 退化陷阱);
     // 改为真正委托 SIMD(与 GELU_AMX 降级范式一致)
-    CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
-                      "AMX SiLU_Kernel: 无专用实现，降级到 SIMD");
+    static std::once_flag warned;
+    std::call_once(warned, []() {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
+                          "AMX SiLU_Kernel: 无专用实现，降级到 SIMD");
+    });
     return SiLU_SIMD_kernel(a);
 }

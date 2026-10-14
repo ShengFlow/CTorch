@@ -74,38 +74,7 @@ class Arena {
      */
     static char* allocateFromBlock(Block& block, size_t align, size_t size);
 
-    /**
-     * @brief 分配指定类型大小的内存
-     * @tparam T 要分配的类型
-     * @return 分配的内存指针，失败返回nullptr
-     */
-    template <typename T>
-    char* allocate() {
-        auto allocateFrom = [](std::unique_ptr<Block>& block, size_t align, size_t size) {
-            return allocateFromBlock(*block, align, size);
-        };
 
-        if (_blocks.empty()) {
-            if (sizeof(T) + alignof(T) > 1024*1024) addBlock(sizeof(T) + alignof(T) -1);
-            else addBlock();
-        }
-
-        char* ptr = allocateFrom(_blocks.back(),alignof(T),sizeof(T));
-        if (ptr) return ptr;
-
-        for (auto it = _blocks.rbegin() + 1;it != _blocks.rend();++it) {
-            ptr = allocateFrom((*it),alignof(T),sizeof(T));
-            if (ptr) return ptr;
-        }
-
-        if (sizeof(T) + alignof(T) > 1024*1024) addBlock(sizeof(T) + alignof(T) - 1);
-        else addBlock();
-
-        ptr = allocateFrom(_blocks.back(),alignof(T),sizeof(T));
-        if (ptr) return ptr;
-        CtorchError::error(ErrorPlatform::kAutoDiff,ErrorType::UNKNOWN,"Unable to allocate for the object.");
-        return nullptr;
-    }
 
     /** @brief 私有构造函数，防止外部实例化 */
     Arena();

@@ -41,10 +41,16 @@ public:
         : param_space_(std::move(param_space))
         , n_params_(param_space_.size())
     {
-        assert(n_params_ > 0 && "GridSearch: param_space must not be empty");
+        if (n_params_ == 0) {
+            total_combinations_ = 0;
+            return;
+        }
         total_combinations_ = 1;
         for (size_t i = 0; i < n_params_; ++i) {
-            assert(!param_space_[i].empty() && "GridSearch: each param must have at least 1 value");
+            if (param_space_[i].empty()) {
+                total_combinations_ = 0;
+                return;
+            }
             total_combinations_ *= param_space_[i].size();
         }
     }
@@ -71,6 +77,10 @@ GridSearchResult GridSearchOptimizer<T>::optimize(
     result.best_fitness = std::numeric_limits<double>::max();
     result.evaluations = 0;
     result.total_combinations = total_combinations_;
+
+    if (total_combinations_ == 0 || n_params_ == 0) {
+        return result;
+    }
 
     // 使用嵌套循环穷举所有组合
     std::vector<size_t> indices(n_params_, 0);

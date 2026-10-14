@@ -45,21 +45,20 @@ size_t Node::getCount() const { return _count.load(std::memory_order_acquire); }
 
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes,
            const std::vector<Tensor> &inputs)
-               :_upStreamNodes(upStreamNodes),_inputs(inputs), _dependencies(upStreamNodes.size()) {
-    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队
+               :_upStreamNodes(upStreamNodes),_inputs(inputs), _dependencies(0) {
+    // 依赖计数表示下游消费节点数，初始为 0，由下游节点注册时调用 increase() 递增
 }
 
 Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs)
                :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),
-                _dependencies(_upStreamNodes.size()) {
-    // 初始依赖计数等于上游节点数，保证 Leaf 节点也能正确入队。
-    // 注意：必须在 move 完成后从被赋值成员读取 size，源参数已被 move 置空。
+                _dependencies(0) {
+    // 依赖计数表示下游消费节点数，初始为 0，由下游节点注册时调用 increase() 递增
 }
 
 Node::Node(const std::vector<std::shared_ptr<Node>> &upStreamNodes, const std::vector<Tensor> &inputs,
            const std::weak_ptr<Tensor> &result)
-               :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result), _dependencies(upStreamNodes.size())
+               :_upStreamNodes(upStreamNodes),_inputs(inputs),_result(result), _dependencies(0)
 {
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
@@ -70,9 +69,8 @@ Node::Node(std::vector<std::shared_ptr<Node>>&& upStreamNodes,
            std::vector<Tensor>&& inputs,
            const std::weak_ptr<Tensor>& result)
                :_upStreamNodes(std::move(upStreamNodes)),_inputs(std::move(inputs)),_result(result),
-                _dependencies(_upStreamNodes.size())
+                _dependencies(0)
 {
-    // 注意：必须在 move 完成后从被赋值成员读取 size，源参数已被 move 置空。
     if (auto t = result.lock()) {
         _resultShape = t->sizes();
     }
@@ -146,6 +144,7 @@ void Node::clearGraph(const std::shared_ptr<Node> &self,
     for (auto it = order.rbegin(); it != order.rend(); ++it) {
         Node *n = it->get();
         n->clearResultOwner();
+        n->setCleared(true);
         auto result_copy = n->_result.lock();
         n->_upStreamNodes.clear();
         n->_inputs.clear();

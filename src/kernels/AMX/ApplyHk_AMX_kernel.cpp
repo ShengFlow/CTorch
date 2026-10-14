@@ -116,20 +116,24 @@ void ApplyHk_AMX_kernel(Tensor& M, const Tensor& v, float tau,
                    M_data + k_offset * p, (int)p);         // A = M[k_offset:, :]
     } else {
         // === 朴素回退路径 ===
+        const std::size_t m_stride0 = M.strides()[0];
+        const std::size_t m_stride1 = M.strides()[1];
+        const std::size_t v_stride = v.strides().empty() ? 1 : v.strides()[0];
+
         // w[j] = sum_{i=k..m-1} v[i] * M[i, j]
         std::vector<float> w(p_cols, 0.0f);
         for (std::size_t j = 0; j < p_cols; ++j) {
             float sum = 0.0f;
             for (std::size_t i = k_offset; i < m; ++i) {
-                sum += v_data[i] * M_data[i * p + j];
+                sum += v_data[i * v_stride] * M_data[i * m_stride0 + j * m_stride1];
             }
             w[j] = sum;
         }
         // M[i, j] -= tau * v[i] * w[j]
         for (std::size_t i = k_offset; i < m; ++i) {
-            const float v_i = v_data[i];
+            const float v_i = v_data[i * v_stride];
             for (std::size_t j = 0; j < p_cols; ++j) {
-                M_data[i * p + j] -= tau * v_i * w[j];
+                M_data[i * m_stride0 + j * m_stride1] -= tau * v_i * w[j];
             }
         }
     }

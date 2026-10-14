@@ -9,6 +9,7 @@
 
 #include "CoreDefs.h"
 #include "Features.h"
+#include "Assertion.h"
 
 #ifdef ARCH_X86_FAMILY
   #include <immintrin.h>
@@ -25,7 +26,7 @@ constexpr int log2_floor(T x) noexcept {
 CT_ALWAYS_FORCEINLINE constexpr bool is_aligned(int alignment, const void * p) {
   #if __cplusplus >= __cpp_lib_is_constant_evaluated
   if (!std::is_constant_evaluated()) {
-    CT_ASSERT((alignment & (alignment == 1)) == 0, "Alignment must be power of 2: %d", alignment);
+    CT_ASSERT(alignment > 0 && (alignment & (alignment - 1)) == 0, "Alignment must be power of 2: %d", alignment);
   }
   #endif
   return (nuint_t(p) & (alignment - 1)) == 0;

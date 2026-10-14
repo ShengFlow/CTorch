@@ -22,22 +22,18 @@ inline float swiglu_scalar(float x, float gate) {
 // AMX 降级: SwiGLU 不是 AMX 原生, 标量 fallback
 Tensor SwiGLU_AMX_kernel(const Tensor& a, const Tensor& b) {
     if (a.shape() != b.shape()) {
-        CtorchError::log(ErrorLevel::ERROR, ErrorPlatform::kAutoDiff, ErrorType::DIMENSION,
-                          "CPU-AMX SwiGLU_Kernel: a 和 b shape 必须一致");
+        CtorchError::throwException(ErrorPlatform::kAutoDiff, ErrorType::DIMENSION,
+                                     "CPU-AMX SwiGLU_Kernel: a 和 b shape 必须一致");
     }
     if (a.device() != DeviceType::kCPU) {
-        CtorchError::log(ErrorLevel::ERROR, DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
-                          "CPU-AMX SwiGLU_Kernel: 仅在CPU支持");
+        CtorchError::throwException(DeviceTypeToErrorPlatform(a.device()), ErrorType::DEVICE_COMPAT,
+                                     "CPU-AMX SwiGLU_Kernel: 仅在CPU支持");
     }
 
-    Tensor result(ShapeTag{}, a.sizes(), a.dtype(), a.device(), false);
-
-    size_t count = a.numel();
-    const float* a_data = a.data_read<float>();
-    const float* b_data = b.data_read<float>();
-    float* result_data = result.data_write<float>();
-    for (size_t i = 0; i < count; ++i) {
-        result_data[i] = swiglu_scalar(a_data[i], b_data[i]);
-    }
-    return result;
+    static std::once_flag warned;
+    std::call_once(warned, []() {
+        CtorchError::log(ErrorLevel::WARN, ErrorPlatform::kAMX, ErrorType::DEVICE_COMPAT,
+                          "AMX SwiGLU_Kernel: 无专用实现，降级到 SIMD");
+    });
+    return SwiGLU_SIMD_kernel(a, b);
 }

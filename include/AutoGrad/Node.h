@@ -57,6 +57,8 @@ protected:
     std::atomic<size_t> _downstreamCount{0};
     /** @brief 是否需要加速计算 */
     bool _requireAccelerate{false};
+    /** @brief 是否已经经历过 backward 且已清理（用于二次 backward 报错拦截） */
+    bool _is_cleared{false};
 public:
     /** @brief 默认构造函数 */
     Node() = default;
@@ -192,12 +194,26 @@ public:
 
     /** @brief 设置输出张量的强引用所有者，防止反向传播时result被释放 */
     void setResultOwner(std::shared_ptr<Tensor> owner) {
+        if (owner) {
+            // [Fix P2] 断开循环引用：输出快照不得反向持有本节点的强引用，消除未 backward 子图内存泄漏
+            owner->setRelatedNode(nullptr);
+        }
         _result_owner = std::move(owner);
     }
 
     /** @brief 清理输出张量引用，用于打破循环引用 */
     void clearResultOwner() {
         _result_owner.reset();
+    }
+
+    /** @brief 查询节点是否已经历 clearGraph 清理 */
+    [[nodiscard]] bool isCleared() const noexcept {
+        return _is_cleared;
+    }
+
+    /** @brief 设置节点清理状态 */
+    void setCleared(bool c) noexcept {
+        _is_cleared = c;
     }
 
     /** @brief 获取输出张量的形状 */

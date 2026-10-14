@@ -163,6 +163,13 @@ void ComputeCore::backward(std::shared_ptr<Node> root, bool retainGraph) {
             "backward: 反向起点节点为空（该张量不需要梯度，或前向期间未参与建图）");
     }
 
+    if (root->isCleared()) {
+        CtorchError::throwException(
+            ErrorPlatform::kAutoDiff, ErrorType::TENSOR_STATE,
+            "Trying to backward through the graph a second time, but the saved intermediate values "
+            "have already been freed. Specify retain_graph=True when calling backward for the first time.");
+    }
+
     // DEBT-NEW-7 H2 修复:在 backward 期间标记 in_backward=true，
     // 调度器的 inAutogradScope guard 借此识别反向传播路径（其 matmul 输入
     // 通常 requires_grad=false,如 x.T @ grad），跳过 c3 单 kernel 注入。
