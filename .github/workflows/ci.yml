@@ -83,6 +83,7 @@ jobs:
         run: |
           cmake --build build --target test_core_semantics test_unary_inplace test_autograd_v2 MnistTest \
             test_c3_graph test_c3_pipeline test_c3_memory_planner test_c3_graph_fusion_clusterer \
+            test_fusion_planner test_c3_trait_auto_fusion \
             test_ram_ad_multi_output test_ctorch_new_algorithms_integration test_mnist_c3_replacement \
             test_amx_flash_attention test_flash_attention_3_fp8 test_amx_cluster_mpgemm \
             test_c3_jitcache_and_combine \
@@ -113,6 +114,8 @@ jobs:
             test_c3_pipeline \
             test_c3_memory_planner \
             test_c3_graph_fusion_clusterer \
+            test_fusion_planner \
+            test_c3_trait_auto_fusion \
             test_ram_ad_multi_output \
             test_ctorch_new_algorithms_integration \
             test_mnist_c3_replacement \
